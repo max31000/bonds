@@ -11,6 +11,17 @@
     <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="8.0.0" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.0" />
     <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version="8.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Http" Version="8.0.0" />
+    <!-- Этап 04: коннекторы MOEX ISS (через IHttpClientFactory выше) и T-Invest (официальный gRPC SDK,
+         plan/00 §3 "Стек"). Контракт верифицирован отражением сборки SDK — см.
+         Connectors/TInvest/README.md (spec §12.2). -->
+    <PackageReference Include="Tinkoff.InvestApi" Version="0.6.22.1" />
+    <!-- Tinkoff.InvestApi публикует только netstandard2.0/net10.0 lib-сборки; его netstandard2.0
+         DLL несёт жёсткую ссылку на Microsoft.Bcl.AsyncInterfaces, но собственный .nuspec пакета
+         не объявляет эту зависимость явно для net8.0-таргета — без явного PackageReference здесь
+         сборка падает в рантайме с FileNotFoundException при первом обращении к InvestApiClient
+         (обнаружено эмпирически при прогоне интеграционных тестов этого этапа). -->
+    <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" Version="8.0.0" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Bonds.Core\Bonds.Core.csproj" />

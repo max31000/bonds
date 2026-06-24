@@ -13,10 +13,18 @@
     </PackageReference>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.0" />
     <PackageReference Include="Moq" Version="4.20.70" />
+    <PackageReference Include="FluentAssertions" Version="6.12.2" />
     <PackageReference Include="Microsoft.Extensions.Configuration" Version="8.0.0" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\Bonds.Core\Bonds.Core.csproj" />
     <ProjectReference Include="..\..\src\Bonds.Infrastructure\Bonds.Infrastructure.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Этап 04: сохранённые фикстуры реальных ответов MOEX ISS — парсеры коннектора тестируются
+         на них без сетевых вызовов в момент прогона тестов (см. Fixtures/Moex). -->
+    <None Include="Fixtures\**\*.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
 </Project>

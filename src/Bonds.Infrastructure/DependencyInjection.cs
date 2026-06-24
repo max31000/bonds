@@ -1,7 +1,10 @@
 using Bonds.Core.Interfaces.Repositories;
 using Bonds.Core.Services;
+using Bonds.Infrastructure.Connectors.Moex;
+using Bonds.Infrastructure.Connectors.TInvest;
 using Bonds.Infrastructure.Repositories;
 using Bonds.Infrastructure.Services;
+using Bonds.Infrastructure.Sync;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -52,6 +55,35 @@ public static class DependencyInjection
         services.AddSingleton(sp => new MigrationRunner(
             GetConnStr(sp),
             sp.GetRequiredService<ILogger<MigrationRunner>>()));
+
+        // Connectors (этап 04) — MOEX ISS (справочно-историческое) и T-Invest (истина про счёт,
+        // plan/00 §4 "Разделение источников данных").
+
+        // MOEX ISS: бесплатный публичный API без авторизации — именованный HttpClient с базовым
+        // адресом, без секретов в конфиге.
+        services.AddHttpClient(MoexIssClient.HttpClientName, client =>
+        {
+            client.BaseAddress = new Uri("https://iss.moex.com");
+            client.Timeout = TimeSpan.FromSeconds(15);
+        });
+        services.AddScoped<IMoexIssClient, MoexIssClient>();
+
+        // T-Invest: токен read-only читается лениво из конфигурации при первом резолве клиента
+        // (тот же паттерн ленивого чтения конфига, что и GetConnStr выше) — чтобы тестовая
+        // конфигурация (без реального токена) не ломала регистрацию DI на старте процесса.
+        // Токен НЕ логируется (см. README.md коннектора, spec §11).
+        services.AddInvestApiClient((sp, settings) =>
+        {
+            var config = sp.GetRequiredService<IConfiguration>();
+            settings.AccessToken = config["TInvest:Token"] ?? string.Empty;
+            settings.AppName = "bonds-portfolio-analytics";
+            settings.Sandbox = config.GetValue<bool?>("TInvest:Sandbox") ?? false;
+        });
+        services.AddScoped<ITInvestPortfolioClient, TInvestPortfolioClient>();
+
+        // Оркестрация синка (этап 04 Часть C) — без HTTP-эндпоинта/шедулера на этом этапе,
+        // вызывается программно/из тестов (см. plan/04).
+        services.AddScoped<BondSyncService>();
 
         return services;
     }
