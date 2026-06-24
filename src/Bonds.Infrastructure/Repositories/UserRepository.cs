@@ -19,7 +19,7 @@ public class UserRepository : IUserRepository
         using var conn = CreateConnection();
         return await conn.QueryFirstOrDefaultAsync<User>(
             @"SELECT id AS Id, telegram_id AS TelegramId, username AS Username,
-                     first_name AS FirstName, last_name AS LastName,
+                     first_name AS FirstName, last_name AS LastName, base_currency AS BaseCurrency,
                      created_at AS CreatedAt, updated_at AS UpdatedAt
               FROM users WHERE telegram_id = @TelegramId",
             new { TelegramId = telegramId });
@@ -30,7 +30,7 @@ public class UserRepository : IUserRepository
         using var conn = CreateConnection();
         return await conn.QueryFirstOrDefaultAsync<User>(
             @"SELECT id AS Id, telegram_id AS TelegramId, username AS Username,
-                     first_name AS FirstName, last_name AS LastName,
+                     first_name AS FirstName, last_name AS LastName, base_currency AS BaseCurrency,
                      created_at AS CreatedAt, updated_at AS UpdatedAt
               FROM users WHERE id = @Id",
             new { Id = id });
@@ -57,8 +57,9 @@ public class UserRepository : IUserRepository
     {
         using var conn = CreateConnection();
         await conn.ExecuteAsync(
-            @"UPDATE users SET username = @Username, first_name = @FirstName, last_name = @LastName
+            @"UPDATE users SET username = @Username, first_name = @FirstName, last_name = @LastName,
+                     base_currency = @BaseCurrency
               WHERE id = @Id",
-            new { user.Username, user.FirstName, user.LastName, user.Id });
+            new { user.Username, user.FirstName, user.LastName, user.BaseCurrency, user.Id });
     }
 }

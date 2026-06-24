@@ -12,6 +12,10 @@ public class User
     public string? Username { get; set; }
     public string? FirstName { get; set; }
     public string? LastName { get; set; }
+
+    /// <summary>Базовая валюта пользователя. MVP — портфель рублёвый (spec §11).</summary>
+    public string BaseCurrency { get; set; } = "RUB";
+
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
 }
