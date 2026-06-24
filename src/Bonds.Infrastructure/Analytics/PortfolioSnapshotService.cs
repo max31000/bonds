@@ -103,19 +103,29 @@ public sealed class PortfolioSnapshotService
     /// возвращают часть вложенного капитала, уменьшая базу), без учёта купонов/налогов/комиссий
     /// (те не меняют тело вложенного капитала). Может быть отрицательным при отсутствии открытых
     /// позиций (весь капитал возвращён) — это не ошибка, а сигнал "ничего не вложено сейчас".
+    /// <para>
+    /// <b>Знак.</b> Использует <see cref="Operation.AmountRub"/> напрямую (брокер уже отдаёт его
+    /// со знаком потока — Buy отрицательный, Sell/Amortization/Redemption положительные, см.
+    /// doc-comment <see cref="PortfolioXirrService"/>), а не <c>Math.Abs()</c> + переписывание по
+    /// типу. Формула "Buy − Sell − Amortization − Redemption" в терминах уже знаковых величин
+    /// превращается в "минус сумма знаковых amount по этим четырём типам" — т.е. покупка (которая
+    /// хранится отрицательной) даёт положительный вклад в InvestedRub при отрицании, а продажа
+    /// (положительная) — отрицательный, что и нужно. Единственный источник истины по знаку — тот
+    /// же, что и в <see cref="PortfolioXirrService"/> (согласованность между этими двумя сервисами
+    /// исправлена при ревью этапов 04-06 — раньше оба независимо переписывали знак по типу).
+    /// </para>
     /// </summary>
     private static decimal CalculateInvestedRub(IEnumerable<Operation> operations)
     {
         decimal invested = 0m;
         foreach (var op in operations)
         {
-            var magnitude = Math.Abs(op.AmountRub);
             invested += op.Type switch
             {
-                OperationType.Buy => magnitude,
-                OperationType.Sell => -magnitude,
-                OperationType.Amortization => -magnitude,
-                OperationType.Redemption => -magnitude,
+                OperationType.Buy => -op.AmountRub,
+                OperationType.Sell => -op.AmountRub,
+                OperationType.Amortization => -op.AmountRub,
+                OperationType.Redemption => -op.AmountRub,
                 _ => 0m,
             };
         }

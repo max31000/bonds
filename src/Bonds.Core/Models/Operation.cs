@@ -16,8 +16,13 @@ public class Operation
     public OperationType Type { get; set; }
     public DateTime Date { get; set; }
 
-    /// <summary>Сумма в рублях; знак отражает направление денежного потока (покупка — минус и т.п.) —
-    /// конвенция знака закрепляется движком XIRR на этапе 06, на этом этапе храним как получено от брокера.</summary>
+    /// <summary>Сумма в рублях; знак отражает направление денежного потока (покупка — минус,
+    /// поступление — плюс). Источник истины — T-Invest: брокер отдаёт <c>Payment</c> уже со
+    /// знаком потока (см. Bonds.Infrastructure/Connectors/TInvest/README.md), синк копирует это
+    /// значение без модификации. <see cref="Bonds.Core.Analytics.PortfolioXirrService"/> (этап 06)
+    /// использует это поле как есть для XIRR, не переписывая знак по <see cref="Type"/> (пересмотрено
+    /// при ревью этапов 04-06 — раньше было два независимых источника знака, что было риском
+    /// расхождения; теперь единственный источник истины — это поле).</summary>
     public decimal AmountRub { get; set; }
 
     public decimal? Quantity { get; set; }

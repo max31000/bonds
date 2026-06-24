@@ -102,6 +102,7 @@ public sealed class CashFlowProjectionOrchestrator
             MaturityDate = instrument.MaturityDate,
             CouponType = instrument.CouponType,
             IsOutOfScopeCurrency = instrument.IsOutOfScopeCurrency,
+            DataIncomplete = instrument.DataIncomplete,
             Coupons = coupons,
             Amortizations = amortizations,
             Offers = offers,

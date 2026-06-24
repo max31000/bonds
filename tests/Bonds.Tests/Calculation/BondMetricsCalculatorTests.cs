@@ -82,7 +82,9 @@ public class BondMetricsCalculatorTests
             TestModelFactory.Coupon(InstrumentId, AsOf.AddDays(365), 100m, periodDays: 365),
             TestModelFactory.Coupon(InstrumentId, maturity, 100m, periodDays: 365),
         };
-        var curve = TestModelFactory.CurveSnapshot(b1: 0.09m, b2: 0m, b3: 0m, t1: 1m);
+        // B1 в базисных пунктах (методика MOEX, не в долях) — exp(861.776976.../10000)-1 = 0.09
+        // ровно, при b2=b3=0 (Свенссон вырождается в константу, без поправок Gi).
+        var curve = TestModelFactory.CurveSnapshot(b1: 861.7769624105241m, b2: 0m, b3: 0m, t1: 1m);
 
         var input = FixedCouponInput(maturity, cleanPrice: 966.1989795918366m, coupons, curve: curve)
             with
@@ -91,7 +93,7 @@ public class BondMetricsCalculatorTests
         var metrics = BondMetricsCalculator.Calculate(input);
 
         metrics.GSpread.Should().NotBeNull();
-        // Кривая константная (b2=b3=0) => значение кривой на любой срок = 0.09; G-спред = YTM(0.12) - 0.09.
+        // Кривая константная (b2=b3=0, Gi=0) => значение кривой на любой срок = 0.09; G-спред = YTM(0.12) - 0.09.
         metrics.GSpread!.Value.Should().BeApproximately(0.03m, 1e-3m);
     }
 

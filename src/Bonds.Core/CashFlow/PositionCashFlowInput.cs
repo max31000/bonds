@@ -19,6 +19,17 @@ public sealed record PositionCashFlowInput
     public required CouponType CouponType { get; init; }
     public required bool IsOutOfScopeCurrency { get; init; }
 
+    /// <summary>
+    /// Зеркалит <see cref="Instrument.DataIncomplete"/> (spec §4.4 — MOEX bondization мог вернуть
+    /// не все купоны). Пересмотрено при ревью этапов 04-06: до этого исправления флаг не
+    /// прокидывался в проекцию вовсе — позиция с неполным графиком купонов проецировалась как
+    /// полностью надёжная (молчаливый пропуск пропавших платежей в календаре, тот самый класс
+    /// ошибок, который spec §4.4 явно требует не допускать). Если true — все потоки результата
+    /// помечаются <see cref="Bonds.Core.Models.ProjectedCashFlow.IsEstimated"/>=true, т.к. в графике
+    /// могут отсутствовать платежи, на наличие которых пользователь не должен полагаться.
+    /// </summary>
+    public required bool DataIncomplete { get; init; }
+
     public required IReadOnlyList<CouponSchedule> Coupons { get; init; }
     public IReadOnlyList<AmortizationSchedule> Amortizations { get; init; } = Array.Empty<AmortizationSchedule>();
     public IReadOnlyList<OfferSchedule> Offers { get; init; } = Array.Empty<OfferSchedule>();

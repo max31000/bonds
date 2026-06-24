@@ -25,6 +25,7 @@ public class CashFlowProjectionServiceTests
         IReadOnlyList<OfferSchedule>? offers = null,
         CouponType couponType = CouponType.Fixed,
         bool isOutOfScopeCurrency = false,
+        bool dataIncomplete = false,
         CashFlowHorizonMode horizonMode = CashFlowHorizonMode.ToNearestOffer) => new()
     {
         PositionId = PositionId,
@@ -35,6 +36,7 @@ public class CashFlowProjectionServiceTests
         MaturityDate = maturity,
         CouponType = couponType,
         IsOutOfScopeCurrency = isOutOfScopeCurrency,
+        DataIncomplete = dataIncomplete,
         Coupons = coupons,
         Amortizations = amortizations ?? Array.Empty<AmortizationSchedule>(),
         Offers = offers ?? Array.Empty<OfferSchedule>(),
@@ -111,6 +113,25 @@ public class CashFlowProjectionServiceTests
 
         flows.Should().NotBeEmpty();
         flows.Should().OnlyContain(f => f.IsEstimated, "флоатер — все потоки оценочные (spec §7.1)");
+    }
+
+    [Fact]
+    public void Project_InstrumentDataIncomplete_MarksAllFlowsAsEstimated()
+    {
+        // Регрессия для бага, найденного при ревью этапов 04-06: Instrument.DataIncomplete
+        // (spec §4.4 — MOEX bondization мог вернуть не все купоны) раньше не прокидывался в
+        // проекцию вовсе. Пропавший в "дырке" графика купон отсутствует в Coupons целиком (не
+        // присутствует с IsKnown=false), поэтому сам по себе не помечает поток оценочным — без
+        // явного DataIncomplete календарь выглядел бы полным там, где платежи могут отсутствовать.
+        var maturity = AsOf.AddDays(365);
+        var coupons = new[] { TestModelFactory.Coupon(InstrumentId, maturity, 80m) };
+
+        var input = BaseInput(quantity: 1, faceValue: 1000m, maturity, coupons, dataIncomplete: true);
+        var flows = CashFlowProjectionService.Project(input);
+
+        flows.Should().NotBeEmpty();
+        flows.Should().OnlyContain(f => f.IsEstimated,
+            "инструмент помечен DataIncomplete — календарь может быть неполным, доверять нельзя");
     }
 
     [Fact]

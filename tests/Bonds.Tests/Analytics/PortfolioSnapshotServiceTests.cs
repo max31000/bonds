@@ -76,8 +76,8 @@ public class PortfolioSnapshotServiceTests
         _positions.Setup(r => r.GetByAccountIdAsync(AccountId)).ReturnsAsync(Array.Empty<Position>());
         _operations.Setup(r => r.GetByAccountIdAsync(AccountId, null, null)).ReturnsAsync(new[]
         {
-            Op(OperationType.Buy, 10000m),
-            Op(OperationType.Amortization, 2000m),
+            Op(OperationType.Buy, -10000m), // брокер отдаёт покупку со знаком минус (отток со счёта)
+            Op(OperationType.Amortization, 2000m), // возврат тела — приток, знак плюс
             Op(OperationType.Coupon, 500m), // купон не уменьшает вложенное тело
         });
 

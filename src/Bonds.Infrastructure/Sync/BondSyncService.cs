@@ -199,6 +199,19 @@ public sealed class BondSyncService
                 {
                     if (!liveQuotes.TryGetValue(figi, out var q) || q.LastPrice is null) continue;
 
+                    // q.BestBid/q.BestAsk (стакан) намеренно НЕ пишутся здесь — это осознанное
+                    // решение, не недосмотр. Спека §8 относит "предупреждение о низкой
+                    // ликвидности по позиции (тонкий стакан)" явно к категории "на будущее, при
+                    // появлении планирования вывода" — вне MVP. MarketQuote (этап 03) не несёт
+                    // полей под bid/ask: добавлять миграцию/колонки под данные, которые сейчас
+                    // никто не читает, было бы преждевременным расширением схемы. Стакан всё
+                    // равно ЗАПРАШИВАЕТСЯ у T-Invest (ITInvestPortfolioClient.GetQuotesAsync) —
+                    // это сознательно сохранено, а не убрано, потому что Signal.LowLiquidityWarning
+                    // (см. Bonds.Core.Models.Signal) уже существует как точка расширения для
+                    // этапа 07 — когда сигнал понадобится, его реализация сможет читать
+                    // q.BestBid/q.BestAsk прямо из ITInvestPortfolioClient без отдельного похода
+                    // в API заново. Если этап 07 решит, что нужна персистентность стакана
+                    // (история, а не только "сейчас") — тогда и добавить миграцию полей.
                     await _quotes.UpsertAsync(new MarketQuote
                     {
                         InstrumentId = instrumentId,
