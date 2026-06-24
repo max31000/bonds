@@ -1,5 +1,7 @@
 using Bonds.Core.Interfaces.Repositories;
 using Bonds.Core.Services;
+using Bonds.Infrastructure.Analytics;
+using Bonds.Infrastructure.CashFlow;
 using Bonds.Infrastructure.Connectors.Moex;
 using Bonds.Infrastructure.Connectors.TInvest;
 using Bonds.Infrastructure.Repositories;
@@ -84,6 +86,12 @@ public static class DependencyInjection
         // Оркестрация синка (этап 04 Часть C) — без HTTP-эндпоинта/шедулера на этом этапе,
         // вызывается программно/из тестов (см. plan/04).
         services.AddScoped<BondSyncService>();
+
+        // Cash-Flow Projection + Portfolio Analytics (этап 06) — координирующие сервисы поверх
+        // чистого Bonds.Core.CashFlow/Bonds.Core.Analytics; без HTTP-эндпоинта (этап 08) и без
+        // планирования по расписанию (этап 07) — вызываются программно/из тестов на этом этапе.
+        services.AddScoped<CashFlowProjectionOrchestrator>();
+        services.AddScoped<PortfolioSnapshotService>();
 
         return services;
     }
