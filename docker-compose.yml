@@ -1,0 +1,47 @@
+version: '3.8'
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: bonds-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-bonds_dev}
+      MYSQL_DATABASE: bonds
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - bonds-network
+
+  api:
+    build:
+      context: .
+      dockerfile: src/Bonds.Api/Dockerfile
+    container_name: bonds-api
+    restart: unless-stopped
+    ports:
+      - "5001:5001"
+    environment:
+      ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Development}
+      ASPNETCORE_URLS: http://+:5001
+      ConnectionStrings__DefaultConnection: "Server=mysql;Database=bonds;User=root;Password=${MYSQL_ROOT_PASSWORD:-bonds_dev};AllowPublicKeyRetrieval=true;"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - bonds-network
+
+volumes:
+  mysql_data:
+
+networks:
+  bonds-network:
+    name: bonds-network
+    # external: true  # на VDS bonds-api подключается к сети общего MySQL-контейнера — см. README "Деплой — TODO"
