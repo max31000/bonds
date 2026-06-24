@@ -1,3 +1,7 @@
+using Bonds.Core.Interfaces.Repositories;
+using Bonds.Core.Services;
+using Bonds.Infrastructure.Repositories;
+using Bonds.Infrastructure.Services;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -19,7 +23,11 @@ public static class DependencyInjection
               ?? throw new InvalidOperationException("DefaultConnection string is not configured");
 
         // Repositories/Connectors/доменные сервисы регистрируются здесь по мере появления
-        // (этапы 02-08): IUserRepository, IInstrumentRepository, ITInvestClient, IMoexClient, ...
+        // (этапы 02-08): IInstrumentRepository, ITInvestClient, IMoexClient, ...
+
+        // Auth (этап 02)
+        services.AddScoped<IUserRepository>(sp => new UserRepository(GetConnStr(sp)));
+        services.AddScoped<ITelegramAuthService, TelegramAuthService>();
 
         // Migration runner
         services.AddSingleton(sp => new MigrationRunner(

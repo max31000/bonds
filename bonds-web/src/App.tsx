@@ -1,9 +1,14 @@
+import { useEffect } from 'react';
 import { MantineProvider, ColorSchemeScript } from '@mantine/core';
 import { Notifications } from '@mantine/notifications';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { theme } from './theme';
 import { ComingSoon } from './pages/ComingSoon';
+import Login from './pages/Login';
+import { ProtectedRoute } from './components/ProtectedRoute';
 import { useShellSync } from './hooks/useShellSync';
+import { useAuthStore } from './store/useAuthStore';
+import { fetchMe } from './api/auth';
 
 import '@mantine/core/styles.css';
 import '@mantine/notifications/styles.css';
@@ -13,10 +18,22 @@ import '@mantine/dates/styles.css';
 function AppRoutes() {
   useShellSync('bonds');
 
+  // Проверка сессии на старте приложения: если токен невалиден/истёк,
+  // GET /api/auth/me вернёт 401 → apiClient разлогинит и уведёт на /login.
+  const token = useAuthStore((s) => s.token);
+  const logout = useAuthStore((s) => s.logout);
+  useEffect(() => {
+    if (!token) return;
+    fetchMe(token).catch(() => logout());
+  }, [token, logout]);
+
   return (
     <Routes>
-      <Route index element={<ComingSoon />} />
-      <Route path="*" element={<ComingSoon />} />
+      <Route path="login" element={<Login />} />
+      <Route element={<ProtectedRoute />}>
+        <Route index element={<ComingSoon />} />
+        <Route path="*" element={<ComingSoon />} />
+      </Route>
     </Routes>
   );
 }

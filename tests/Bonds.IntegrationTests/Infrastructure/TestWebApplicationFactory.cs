@@ -9,10 +9,14 @@ namespace Bonds.IntegrationTests.Infrastructure;
 
 /// <summary>
 /// WebApplicationFactory с подключённой Testcontainers MySQL-базой.
-/// Паттерн скопирован из cashpulse; JWT-конфиг добавится в этапе 02.
+/// Паттерн скопирован из cashpulse. Jwt:Secret/Issuer/Audience подменяются на значения
+/// из JwtTestHelper, чтобы тестовые токены проверялись тем же секретом, что и в Program.cs.
 /// </summary>
 public class TestWebApplicationFactory : WebApplicationFactory<Program>, IAsyncLifetime
 {
+    /// <summary>Telegram id владельца, используемый в тестовой конфигурации Telegram:OwnerId.</summary>
+    public const long TestOwnerTelegramId = 123456789;
+
     private readonly DatabaseFixture _dbFixture = new();
 
     public DatabaseFixture Database => _dbFixture;
@@ -39,6 +43,12 @@ public class TestWebApplicationFactory : WebApplicationFactory<Program>, IAsyncL
             config.AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["ConnectionStrings:DefaultConnection"] = _dbFixture.ConnectionString,
+                ["Jwt:Secret"] = JwtTestHelper.TestSecret,
+                ["Jwt:Issuer"] = JwtTestHelper.TestIssuer,
+                ["Jwt:Audience"] = JwtTestHelper.TestAudience,
+                ["Telegram:BotToken"] = "test-bot-token-not-real",
+                ["Telegram:BotUsername"] = "test_bot",
+                ["Telegram:OwnerId"] = TestOwnerTelegramId.ToString(),
             });
         });
 
