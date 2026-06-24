@@ -5,6 +5,7 @@ obj/
 *.suo
 .vs/
 publish/
+.idea/
 
 # Node
 bonds-web/node_modules/
