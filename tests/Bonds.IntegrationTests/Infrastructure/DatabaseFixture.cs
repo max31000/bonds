@@ -6,9 +6,11 @@ using Xunit;
 namespace Bonds.IntegrationTests.Infrastructure;
 
 /// <summary>
-/// Поднимает контейнер MySQL 8.0 и прогоняет миграции через MigrationRunner.
-/// На этапе 01 доменных таблиц нет — миграция только создаёт schema_version.
-/// Сидинг тестовых данных добавится вместе с доменными миграциями (этап 03).
+/// Поднимает контейнер MySQL 8.0 и прогоняет все embedded-миграции через MigrationRunner
+/// (включая доменную схему этапа 03 — instruments/positions/operations/... см.
+/// 003_domain_schema.sql/004_add_user_base_currency.sql). Тесты репозиториев сидируют
+/// свои собственные данные через сами репозитории (см. *RepositoryTests.cs) — здесь
+/// фикстура только поднимает чистую мигрированную БД.
 /// </summary>
 public class DatabaseFixture : IAsyncLifetime
 {
