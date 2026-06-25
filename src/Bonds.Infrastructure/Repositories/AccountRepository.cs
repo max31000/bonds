@@ -65,4 +65,11 @@ public class AccountRepository : IAccountRepository
             account.UserId,
         });
     }
+
+    public async Task<ulong?> GetPrimaryAccountIdAsync()
+    {
+        using var conn = CreateConnection();
+        return await conn.QueryFirstOrDefaultAsync<ulong?>(
+            "SELECT id FROM accounts ORDER BY id LIMIT 1");
+    }
 }

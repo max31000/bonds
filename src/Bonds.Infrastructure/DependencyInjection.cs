@@ -1,10 +1,12 @@
 using Bonds.Core.Interfaces.Repositories;
 using Bonds.Core.Services;
+using Bonds.Core.Signals;
 using Bonds.Infrastructure.Analytics;
 using Bonds.Infrastructure.CashFlow;
 using Bonds.Infrastructure.Connectors.Moex;
 using Bonds.Infrastructure.Connectors.TInvest;
 using Bonds.Infrastructure.Repositories;
+using Bonds.Infrastructure.Scheduling;
 using Bonds.Infrastructure.Services;
 using Bonds.Infrastructure.Sync;
 using Microsoft.Extensions.Configuration;
@@ -92,6 +94,18 @@ public static class DependencyInjection
         // планирования по расписанию (этап 07) — вызываются программно/из тестов на этом этапе.
         services.AddScoped<CashFlowProjectionOrchestrator>();
         services.AddScoped<PortfolioSnapshotService>();
+
+        // Signals Engine + Scheduler (этап 07, plan/07) — options читаются из конфига с дефолтами
+        // самого класса опций, если секция не задана (см. doc-comment SignalEngineOptions/SchedulerOptions).
+        services.Configure<SignalEngineOptions>(configuration.GetSection("Signals"));
+        services.Configure<SchedulerOptions>(configuration.GetSection("Scheduler"));
+
+        // ISyncCycleRunner — Singleton (держит статус последнего синка и семафор защиты от
+        // параллельного запуска между тиками хостед-сервиса и будущим HTTP force-refresh,
+        // этап 08), сам резолвит Scoped-зависимости через IServiceScopeFactory внутри RunCycleAsync
+        // (см. doc-comment SyncCycleService).
+        services.AddSingleton<ISyncCycleRunner, SyncCycleService>();
+        services.AddHostedService<SyncSchedulerHostedService>();
 
         return services;
     }
