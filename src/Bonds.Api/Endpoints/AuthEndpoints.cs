@@ -26,6 +26,7 @@ public static class AuthEndpoints
         TelegramAuthData data,
         ITelegramAuthService telegramAuth,
         IUserRepository userRepo,
+        IAccountRepository accountRepo,
         IConfiguration config)
     {
         // 1. Проверяем подпись Telegram
@@ -61,6 +62,17 @@ public static class AuthEndpoints
             user.FirstName = data.FirstName;
             user.LastName = data.LastName;
             await userRepo.UpdateAsync(user);
+        }
+
+        // 3a. Single-user продукт (spec §2): весь остальной API (sync/positions/cashflow/...)
+        // резолвит "единственный счёт" через IAccountRepository.GetPrimaryAccountIdAsync и без
+        // этой записи никогда не находит ни одного — см. doc-comment там же ("чистая БД до
+        // первого логина/онбординга через UI"). Это и есть тот онбординг. Проверяем на каждом
+        // логине (не только при создании User), чтобы самовосстановиться и для уже
+        // существующих пользователей, у которых Account по какой-то причине не создан.
+        if (await accountRepo.GetPrimaryAccountIdAsync() is null)
+        {
+            await accountRepo.CreateAsync(new Account { UserId = user.Id });
         }
 
         // 4. Выдаём JWT

@@ -4,8 +4,10 @@ using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Bonds.Core.Interfaces.Repositories;
 using Bonds.IntegrationTests.Infrastructure;
 using FluentAssertions;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace Bonds.IntegrationTests;
@@ -106,6 +108,34 @@ public class AuthEndpointsTests
         var body = await response.Content.ReadFromJsonAsync<JsonElement>();
         body.GetProperty("token").GetString().Should().NotBeNullOrEmpty();
         body.GetProperty("user").GetProperty("telegramId").GetInt64().Should().Be(ownerId);
+    }
+
+    [Fact]
+    public async Task TelegramLogin_FirstLoginForOwner_ProvisionsAccount()
+    {
+        // Single-user продукт: sync/positions/cashflow/... все резолвят "единственный счёт"
+        // через IAccountRepository.GetPrimaryAccountIdAsync — без авто-провижининга счёта на
+        // первом логине цикл синка молча ничего не находит (см. SyncCycleService.NoAccountConfigured).
+        var client = _factory.CreateClient();
+
+        var ownerId = TestWebApplicationFactory.TestOwnerTelegramId;
+        var authDate = FreshAuthDate();
+        var hash = ComputeHash(ownerId, authDate, firstName: "Owner");
+
+        var response = await client.PostAsJsonAsync("/api/auth/telegram", new
+        {
+            id = ownerId,
+            firstName = "Owner",
+            authDate,
+            hash,
+        });
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        using var scope = _factory.Services.CreateScope();
+        var accountRepo = scope.ServiceProvider.GetRequiredService<IAccountRepository>();
+        var accountId = await accountRepo.GetPrimaryAccountIdAsync();
+
+        accountId.Should().NotBeNull();
     }
 
     [Fact]
