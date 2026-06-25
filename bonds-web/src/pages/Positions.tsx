@@ -10,8 +10,11 @@ import {
   Text,
   UnstyledButton,
   Group,
+  Button,
 } from '@mantine/core';
+import { useNavigate } from 'react-router-dom';
 import { usePositionsStore } from '../store/usePositionsStore';
+import { useSettingsStore } from '../store/useSettingsStore';
 import { Disclaimer } from '../components/Disclaimer';
 import type { PositionRow } from '../api/types';
 import { formatRub, formatDaysUntil, formatPercent, formatNumber } from '../utils/format';
@@ -36,11 +39,14 @@ const COUPON_TYPE_LABEL: Record<PositionRow['couponType'], string> = {
  */
 export function Positions() {
   const { positions, disclaimer, isLoading, error, load } = usePositionsStore();
+  const { settings, load: loadSettings } = useSettingsStore();
+  const navigate = useNavigate();
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
 
   useEffect(() => {
     load();
-  }, [load]);
+    loadSettings();
+  }, [load, loadSettings]);
 
   const sorted = useMemo(() => {
     const copy = [...positions];
@@ -73,9 +79,29 @@ export function Positions() {
         </Alert>
       )}
 
-      {!isLoading && !error && positions.length === 0 && (
+      {!isLoading && !error && positions.length === 0 && settings && !settings.tInvestTokenConfigured && (
+        <Alert color="violet" title="Нужно подключить брокерский счёт" data-testid="positions-empty-no-token">
+          <Stack gap="sm">
+            <Text size="sm">
+              Чтобы увидеть позиции, укажите токен T-Invest (только на чтение) в настройках —
+              он хранится в зашифрованном виде и используется для синхронизации портфеля.
+            </Text>
+            <Button
+              variant="light"
+              w="fit-content"
+              onClick={() => navigate('/settings')}
+              data-testid="goto-settings-button"
+            >
+              Перейти в настройки
+            </Button>
+          </Stack>
+        </Alert>
+      )}
+
+      {!isLoading && !error && positions.length === 0 && settings?.tInvestTokenConfigured && (
         <Alert color="gray" title="Портфель пуст" data-testid="positions-empty">
-          Позиции появятся здесь после синхронизации с брокерским счётом.
+          Токен подключён. Позиции появятся здесь после синхронизации с брокерским счётом —
+          нажмите «Обновить данные» в шапке или подождите следующего автоматического цикла.
         </Alert>
       )}
 

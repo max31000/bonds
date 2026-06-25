@@ -117,9 +117,33 @@ describe('Positions', () => {
     expect(screen.getByText('к оферте')).toBeInTheDocument();
   });
 
-  it('shows an empty-state message for an empty portfolio', async () => {
+  it('shows an onboarding prompt to set up the T-Invest token when none is configured', async () => {
     server.use(
       http.get('*/api/positions', () => HttpResponse.json({ positions: [], disclaimer: '' })),
+    );
+
+    renderPositions();
+
+    await waitFor(() => expect(screen.getByTestId('positions-empty-no-token')).toBeInTheDocument());
+  });
+
+  it('shows a plain empty-state message for an empty portfolio once the token is configured', async () => {
+    server.use(
+      http.get('*/api/positions', () => HttpResponse.json({ positions: [], disclaimer: '' })),
+      http.get('*/api/settings', () =>
+        HttpResponse.json({
+          baseCurrency: 'RUB',
+          tInvestTokenConfigured: true,
+          tInvestTokenMasked: '...1234',
+          upcomingEventDaysThreshold: 14,
+          uninvestedCashThresholdRub: 10000,
+          uninvestedCashLookbackDays: 7,
+          yieldBelowAlternativeBpsThreshold: 50,
+          maturityWindowDaysForAlternativeComparison: 30,
+          defaultMaxConcentrationPercent: 25,
+          durationDriftToleranceYears: 0.5,
+        }),
+      ),
     );
 
     renderPositions();

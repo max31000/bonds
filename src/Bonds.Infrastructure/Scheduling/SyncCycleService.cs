@@ -147,6 +147,14 @@ public sealed class SyncCycleService : ISyncCycleRunner
             result.YieldCurveUpdated = syncResult.YieldCurveUpdated;
             if (syncResult.HasErrors) result.Errors.AddRange(syncResult.Errors.Select(e => $"Sync: {e}"));
         }
+        catch (InvalidOperationException ex)
+        {
+            // Известное восстановимое состояние (например, токен T-Invest ещё не задан в
+            // настройках — см. TInvestPortfolioClient.GetClientAsync) — сообщение уже написано
+            // как user-facing подсказка, прокидываем его как есть, а не маскируем типом исключения.
+            _logger.LogWarning("Sync step skipped for account {AccountId}: {Reason}", accountId, ex.Message);
+            result.Errors.Add($"Sync: {ex.Message}");
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Sync step failed for account {AccountId}", accountId);
