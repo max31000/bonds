@@ -22,7 +22,16 @@ describe('App', () => {
     await waitFor(() => expect(screen.getByText('Войти')).toBeInTheDocument());
   });
 
-  it('renders the coming-soon placeholder once authenticated', async () => {
+  it('renders the positions screen once authenticated', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ positions: [], disclaimer: '' }),
+      }),
+    );
+
     useAuthStore.getState().setAuth('test-token', {
       id: 1,
       telegramId: 123456789,
@@ -32,7 +41,7 @@ describe('App', () => {
     render(<App />);
 
     await waitFor(() =>
-      expect(screen.getByText('MVP в разработке')).toBeInTheDocument(),
+      expect(screen.getByRole('heading', { name: 'Позиции' })).toBeInTheDocument(),
     );
   });
 });

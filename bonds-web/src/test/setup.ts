@@ -17,6 +17,17 @@ Object.defineProperty(window, 'matchMedia', {
   }),
 });
 
+// jsdom не реализует ResizeObserver — используется Mantine ScrollArea/Table.ScrollContainer.
+class ResizeObserverStub {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+Object.defineProperty(window, 'ResizeObserver', {
+  writable: true,
+  value: ResizeObserverStub,
+});
+
 beforeAll(() => server.listen({ onUnhandledRequest: 'warn' }));
 afterEach(() => server.resetHandlers());
 afterAll(() => server.close());

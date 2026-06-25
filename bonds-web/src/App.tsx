@@ -4,8 +4,10 @@ import { Notifications } from '@mantine/notifications';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { theme } from './theme';
 import { ComingSoon } from './pages/ComingSoon';
+import { Positions } from './pages/Positions';
 import Login from './pages/Login';
 import { ProtectedRoute } from './components/ProtectedRoute';
+import { AppLayout } from './components/AppLayout';
 import { useShellSync } from './hooks/useShellSync';
 import { useAuthStore } from './store/useAuthStore';
 import { fetchMe } from './api/auth';
@@ -31,8 +33,15 @@ function AppRoutes() {
     <Routes>
       <Route path="login" element={<Login />} />
       <Route element={<ProtectedRoute />}>
-        <Route index element={<ComingSoon />} />
-        <Route path="*" element={<ComingSoon />} />
+        <Route element={<AppLayout />}>
+          <Route index element={<Positions />} />
+          {/* Экраны 09b/09c — пункты навигации заведены заранее, см. components/AppLayout.tsx */}
+          <Route path="cashflow" element={<ComingSoon />} />
+          <Route path="analytics" element={<ComingSoon />} />
+          <Route path="signals" element={<ComingSoon />} />
+          <Route path="settings" element={<ComingSoon />} />
+          <Route path="*" element={<ComingSoon />} />
+        </Route>
       </Route>
     </Routes>
   );

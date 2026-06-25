@@ -11,6 +11,11 @@ export const handlers = [
   http.get('*/api/auth/me', () =>
     HttpResponse.json({ id: 1, telegramId: 123456789, firstName: 'Owner' }),
   ),
+  // Дефолтный кейс — пустой портфель; конкретные сценарии (обычная бумага/флоатер/
+  // dataIncomplete/401) переопределяются через server.use(...) в тестах экрана позиций.
+  http.get('*/api/positions', () =>
+    HttpResponse.json({ positions: [], disclaimer: '' }),
+  ),
 ];
 
 export const server = setupServer(...handlers);
