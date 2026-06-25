@@ -62,4 +62,11 @@ public class UserRepository : IUserRepository
               WHERE id = @Id",
             new { user.Username, user.FirstName, user.LastName, user.BaseCurrency, user.Id });
     }
+
+    public async Task<ulong?> GetPrimaryUserIdAsync()
+    {
+        using var conn = CreateConnection();
+        return await conn.QueryFirstOrDefaultAsync<ulong?>(
+            "SELECT id FROM users ORDER BY id LIMIT 1");
+    }
 }

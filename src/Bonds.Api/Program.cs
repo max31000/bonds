@@ -1,5 +1,6 @@
 using System.Text;
 using Bonds.Api.Endpoints;
+using Bonds.Api.Middleware;
 using Bonds.Infrastructure;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
@@ -79,11 +80,18 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 
 var app = builder.Build();
 
+// Единый формат ошибок (plan/08) — должен оборачивать весь остальной конвейер, иначе
+// необработанные исключения дальше по цепочке не попадут в этот middleware.
+app.UseMiddleware<ErrorHandlingMiddleware>();
+
 app.UseCors();
 
-app.UseAuthentication();
-app.UseAuthorization();
-
+// Swagger ДО UseAuthentication/UseAuthorization: FallbackPolicy (RequireAuthenticatedUser)
+// применяется к ЛЮБОМУ эндпоинту маршрутизации, включая те, что UseSwagger/UseSwaggerUI
+// регистрируют внутри себя через IEndpointRouteBuilder — если поставить блок после
+// UseAuthorization(), swagger.json и Swagger UI сами требуют Bearer-токен и становятся
+// недоступны (обнаружено эмпирически при smoke-проверке этого этапа: curl возвращал 401
+// вместо JSON-схемы). Размещение здесь выводит их из-под действия middleware авторизации.
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
@@ -92,6 +100,9 @@ if (app.Environment.IsDevelopment())
         c.SwaggerEndpoint("/swagger/v1/swagger.json", "Bonds API v1");
     });
 }
+
+app.UseAuthentication();
+app.UseAuthorization();
 
 // Миграции на старте (пропускаются в Testing — там работает DatabaseFixture)
 if (!app.Environment.IsEnvironment("Testing"))
@@ -111,7 +122,14 @@ if (!app.Environment.IsEnvironment("Testing"))
 // Auth (этап 02): POST /api/auth/telegram — публичный (AllowAnonymous внутри), GET /api/auth/me — защищён
 app.MapAuthEndpoints();
 
-// Здесь будут app.MapXxxEndpoints() по мере появления доменных модулей (этапы 03+)
+// Этап 08: контракты для фронта (plan/08) — все защищены FallbackPolicy по умолчанию.
+app.MapPositionsEndpoints();
+app.MapCashFlowEndpoints();
+app.MapAnalyticsEndpoints();
+app.MapSignalsEndpoints();
+app.MapSyncEndpoints();
+app.MapSettingsEndpoints();
+
 // Внимание: FallbackPolicy требует авторизацию по умолчанию — новые публичные маршруты
 // нужно явно помечать .AllowAnonymous().
 

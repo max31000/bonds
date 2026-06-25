@@ -9,6 +9,7 @@ using Bonds.Infrastructure.Repositories;
 using Bonds.Infrastructure.Scheduling;
 using Bonds.Infrastructure.Services;
 using Bonds.Infrastructure.Sync;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -55,6 +56,9 @@ public static class DependencyInjection
         services.AddScoped<ISignalRepository>(sp => new SignalRepository(GetConnStr(sp)));
         services.AddScoped<ITargetAllocationRepository>(sp => new TargetAllocationRepository(GetConnStr(sp)));
 
+        // Этап 08: настройки пользователя (пороги Signals Engine + токен T-Invest зашифрованный).
+        services.AddScoped<IUserSettingsRepository>(sp => new UserSettingsRepository(GetConnStr(sp)));
+
         // Migration runner
         services.AddSingleton(sp => new MigrationRunner(
             GetConnStr(sp),
@@ -94,6 +98,16 @@ public static class DependencyInjection
         // планирования по расписанию (этап 07) — вызываются программно/из тестов на этом этапе.
         services.AddScoped<CashFlowProjectionOrchestrator>();
         services.AddScoped<PortfolioSnapshotService>();
+
+        // Этап 08: сборщик holdings (между репозиториями и аналитическими сервисами) — общий
+        // вход для positions/composition/scatter/comparison/replacement эндпоинтов.
+        services.AddScoped<PortfolioHoldingsBuilder>();
+
+        // DataProtection — шифрование токена T-Invest, вводимого через UI (PUT /api/settings/tinvest-token).
+        // Ключи персистируются на диске контейнера по умолчанию (ASP.NET Core default key ring) —
+        // достаточно для single-instance деплоя этого продукта (plan/00 §5: один контейнер bonds-api).
+        services.AddDataProtection();
+        services.AddScoped<ITInvestTokenProvider, TInvestTokenProvider>();
 
         // Signals Engine + Scheduler (этап 07, plan/07) — options читаются из конфига с дефолтами
         // самого класса опций, если секция не задана (см. doc-comment SignalEngineOptions/SchedulerOptions).
