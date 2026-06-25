@@ -94,7 +94,7 @@ jobs:
             docker stop bonds-api && docker rm bonds-api || true
             docker run -d \
               --name bonds-api \
-              --network <DB_NETWORK> \
+              --network cashpulse-network \
               --restart unless-stopped \
               -p 127.0.0.1:5001:5001 \
               -e "ConnectionStrings__DefaultConnection=${DB_CONNECTION_STRING}" \

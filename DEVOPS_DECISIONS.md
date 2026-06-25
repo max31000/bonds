@@ -8,7 +8,7 @@
 - Docker-образ собирается в CI, пушится в **GitHub Container Registry** (`ghcr.io/max31000/bonds-api`), на VDS — `docker pull` + `docker run`.
 - Причина отличия от cashpulse (там SCP tar.gz, нет registry): план `00-overview-and-architecture.md` §3 явно фиксирует GHCR как целевую инфраструктуру для bonds; имитировать паттерн cashpulse 1:1 здесь не требовалось.
 - Чтобы `docker pull` на VDS работал **без логина** (как у cashpulse — там просто другой механизм, но тот же принцип «не хранить креды на VDS»): пакет `bonds-api` в GHCR должен быть переключён в **Public** после первого успешного пуша (`Packages → bonds-api → Package settings → Change visibility → Public`). Альтернатива — `docker login ghcr.io` с PAT на VDS, если приватность пакета важнее.
-- Контейнер `bonds-api` подключается к docker-сети общего MySQL-контейнера (та же БД, что у cashpulse, отдельная база `bonds` + отдельный пользователь) — **точное имя сети нужно сверить по факту на живом сервере** (`docker ps --format '{{.Names}}\t{{.Networks}}'`), placeholder `<DB_NETWORK>` в `backend.yml` оставлен намеренно до этой проверки.
+- Контейнер `bonds-api` подключается к docker-сети общего MySQL-контейнера (та же БД, что у cashpulse, отдельная база `bonds` + отдельный пользователь `bonds_app`) — имя сети сверено по факту на живом сервере (`cashpulse-network`, тот же `docker network`, где живёт `cashpulse-mysql`) и зафиксировано в `backend.yml` (`--network cashpulse-network`).
 - Деплой-скрипт оперирует **только** контейнером `bonds-api` (`docker stop/rm/run bonds-api`) — не трогает `cashpulse-api`, VPN, `credit_calc` и другие контейнеры на VDS.
 
 ### Фронтенд (VDS, статика через SCP — не GitHub Pages, в отличие от cashpulse)
@@ -45,9 +45,9 @@
 
 | Secret/Variable | Тип | Назначение | Готово сейчас? |
 |---|---|---|---|
-| `VDS_HOST`, `VDS_USER` | Secret | `89.167.34.3` / `root` | Известны, не секретны сами по себе |
-| `VDS_SSH_KEY` | Secret | Приватный ключ деплоя | **Нет** — нужно сгенерировать пару и добавить публичный ключ на VDS |
-| `DB_CONNECTION_STRING` | Secret | Строка подключения к базе `bonds` | **Нет** — зависит от шага создания БД/пользователя на живом сервере (план 01, C2) |
+| `VDS_HOST`, `VDS_USER` | Secret | `31.220.15.26` (или `mvv42.ru`) / `root` | Готово |
+| `VDS_SSH_KEY` | Secret | Приватный ключ деплоя | Готово — пара сгенерирована (`~/.ssh/bonds_deploy`), публичный ключ добавлен в `authorized_keys` на VDS |
+| `DB_CONNECTION_STRING` | Secret | Строка подключения к базе `bonds` | Готово — БД `bonds` + пользователь `bonds_app` созданы на `cashpulse-mysql` (сеть `cashpulse-network`) |
 | `JWT_SECRET` | Secret | Подпись JWT | Можно сгенерировать сразу (`openssl rand -base64 32`), не зависит от инфраструктуры |
 | `TELEGRAM_BOT_TOKEN` | Secret | Тот же бот, что у cashpulse | **Нужно уточнить у владельца** — переиспользовать существующий бот или новый |
 | `TELEGRAM_CHAT_ID` | Secret | Алерты CI о падении деплоя | **Нет** — у владельца |
