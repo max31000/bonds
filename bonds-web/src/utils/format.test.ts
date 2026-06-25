@@ -1,5 +1,14 @@
 import { describe, it, expect } from 'vitest';
-import { formatRub, daysUntil, formatDaysUntil, formatPercent, formatNumber } from './format';
+import {
+  formatRub,
+  daysUntil,
+  formatDaysUntil,
+  formatPercent,
+  formatNumber,
+  formatMonthLabel,
+  formatDate,
+  formatSharePercent,
+} from './format';
 
 describe('formatRub', () => {
   it('formats a positive amount with RUB currency and no decimals', () => {
@@ -92,5 +101,46 @@ describe('formatNumber', () => {
     expect(formatNumber(null)).toBe('—');
     expect(formatNumber(undefined)).toBe('—');
     expect(formatNumber(NaN)).toBe('—');
+  });
+});
+
+describe('formatMonthLabel', () => {
+  it('formats a YYYY-MM string into a Russian month + year', () => {
+    expect(formatMonthLabel('2026-07')).toBe('июль 2026');
+    expect(formatMonthLabel('2026-01')).toBe('январь 2026');
+    expect(formatMonthLabel('2026-12')).toBe('декабрь 2026');
+  });
+
+  it('returns the original string for malformed input', () => {
+    expect(formatMonthLabel('not-a-month')).toBe('not-a-month');
+  });
+
+  it('returns a dash for missing input', () => {
+    expect(formatMonthLabel(null)).toBe('—');
+    expect(formatMonthLabel(undefined)).toBe('—');
+  });
+});
+
+describe('formatDate', () => {
+  it('formats an ISO date into DD.MM.YYYY', () => {
+    expect(formatDate('2026-07-01')).toBe('01.07.2026');
+  });
+
+  it('returns a dash for missing/invalid input', () => {
+    expect(formatDate(null)).toBe('—');
+    expect(formatDate(undefined)).toBe('—');
+    expect(formatDate('not-a-date')).toBe('—');
+  });
+});
+
+describe('formatSharePercent', () => {
+  it('formats with 1 decimal digit', () => {
+    expect(formatSharePercent(12.345)).toBe('12.3%');
+  });
+
+  it('returns a dash for null/undefined/NaN', () => {
+    expect(formatSharePercent(null)).toBe('—');
+    expect(formatSharePercent(undefined)).toBe('—');
+    expect(formatSharePercent(NaN)).toBe('—');
   });
 });

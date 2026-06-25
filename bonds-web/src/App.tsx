@@ -5,6 +5,8 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { theme } from './theme';
 import { ComingSoon } from './pages/ComingSoon';
 import { Positions } from './pages/Positions';
+import { Cashflow } from './pages/Cashflow';
+import { Analytics } from './pages/Analytics';
 import Login from './pages/Login';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { AppLayout } from './components/AppLayout';
@@ -35,9 +37,9 @@ function AppRoutes() {
       <Route element={<ProtectedRoute />}>
         <Route element={<AppLayout />}>
           <Route index element={<Positions />} />
-          {/* Экраны 09b/09c — пункты навигации заведены заранее, см. components/AppLayout.tsx */}
-          <Route path="cashflow" element={<ComingSoon />} />
-          <Route path="analytics" element={<ComingSoon />} />
+          <Route path="cashflow" element={<Cashflow />} />
+          <Route path="analytics" element={<Analytics />} />
+          {/* Экраны 09c — пункты навигации заведены заранее, см. components/AppLayout.tsx */}
           <Route path="signals" element={<ComingSoon />} />
           <Route path="settings" element={<ComingSoon />} />
           <Route path="*" element={<ComingSoon />} />

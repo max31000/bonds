@@ -51,3 +51,44 @@ export function formatNumber(value: number | null | undefined, fractionDigits = 
   if (value === null || value === undefined || Number.isNaN(value)) return '—';
   return value.toFixed(fractionDigits);
 }
+
+/** Форматирует месяц вида "2026-07" в человекочитаемый "июль 2026". */
+export function formatMonthLabel(month: string | null | undefined): string {
+  if (!month) return '—';
+  const match = /^(\d{4})-(\d{2})$/.exec(month);
+  if (!match) return month;
+  const [, year, monthNum] = match;
+  const monthNames = [
+    'январь',
+    'февраль',
+    'март',
+    'апрель',
+    'май',
+    'июнь',
+    'июль',
+    'август',
+    'сентябрь',
+    'октябрь',
+    'ноябрь',
+    'декабрь',
+  ];
+  const idx = Number(monthNum) - 1;
+  if (idx < 0 || idx > 11) return month;
+  return `${monthNames[idx]} ${year}`;
+}
+
+/** Форматирует дату ISO ("2026-07-01") в краткий человекочитаемый вид ("01.07.2026"). */
+export function formatDate(dateIso: string | null | undefined): string {
+  if (!dateIso) return '—';
+  const date = new Date(dateIso);
+  if (Number.isNaN(date.getTime())) return '—';
+  return new Intl.DateTimeFormat('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(
+    date,
+  );
+}
+
+/** Форматирует долю в процентах (например, состав портфеля), 1 знак после запятой. */
+export function formatSharePercent(value: number | null | undefined): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return '—';
+  return `${value.toFixed(1)}%`;
+}
