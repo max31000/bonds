@@ -83,12 +83,11 @@ jobs:
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           OWNER_TELEGRAM_ID: ${{ secrets.OWNER_TELEGRAM_ID }}
-          TINVEST_TOKEN: ${{ secrets.TINVEST_TOKEN }}
         with:
           host: ${{ secrets.VDS_HOST }}
           username: ${{ secrets.VDS_USER }}
           key: ${{ secrets.VDS_SSH_KEY }}
-          envs: DB_CONNECTION_STRING,JWT_SECRET,TELEGRAM_BOT_TOKEN,OWNER_TELEGRAM_ID,TINVEST_TOKEN
+          envs: DB_CONNECTION_STRING,JWT_SECRET,TELEGRAM_BOT_TOKEN,OWNER_TELEGRAM_ID
           script: |
             set -e
             docker pull ghcr.io/${{ github.repository_owner }}/bonds-api:latest
@@ -102,7 +101,6 @@ jobs:
               -e "Jwt__Secret=${JWT_SECRET}" \
               -e "Telegram__BotToken=${TELEGRAM_BOT_TOKEN}" \
               -e "Telegram__OwnerId=${OWNER_TELEGRAM_ID}" \
-              -e "TInvest__Token=${TINVEST_TOKEN}" \
               ghcr.io/${{ github.repository_owner }}/bonds-api:latest
             sleep 3
             curl -sf http://localhost:5001/health || (echo "Health check failed!" && exit 1)

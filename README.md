@@ -196,13 +196,16 @@ GitHub-репозитория (когда он будет создан и под
 | `VDS_USER` | Secret | SSH-пользователь VDS (`root`) | известен владельцу |
 | `VDS_SSH_KEY` | Secret | Приватный SSH-ключ для деплоя | сгенерировать отдельную ключевую пару для CI, публичный ключ добавить на VDS |
 | `DB_CONNECTION_STRING` | Secret | Строка подключения к базе `bonds` на общем MySQL VDS | создаётся вручную на VDS (см. "Деплой — TODO", шаг 2) |
-| `TINVEST_TOKEN` | Secret | Read-only токен T-Invest API | личный кабинет Т-Инвестиций → выпуск токена с правами только на чтение |
 | `JWT_SECRET` | Secret | Подпись JWT (≥32 символа, случайная строка) | сгенерировать (`openssl rand -base64 32`) |
 | `TELEGRAM_BOT_TOKEN` | Secret | Токен Telegram-бота (тот же бот, что у cashpulse) | у владельца, из настроек существующего бота |
 | `TELEGRAM_CHAT_ID` | Secret | Chat ID для алертов CI о падении деплоя | у владельца |
 | `OWNER_TELEGRAM_ID` | Secret | Telegram user id владельца (allowlist авторизации, этап 02) | узнать у `@userinfobot` или аналога |
 | `VITE_API_BASE` | Variable | Базовый путь API для фронта (по умолчанию `/bonds/api`) | задать как Variable, не Secret |
 | `TELEGRAM_BOT_USERNAME` | Variable | Имя бота для Telegram Login Widget на фронте | задать как Variable, не Secret |
+
+**Токен T-Invest НЕ заводится через GitHub Secrets и ENV вообще** — он хранится только в БД,
+привязан к аккаунту и вводится через UI (`Settings → PUT /api/settings/tinvest-token`,
+шифруется `DataProtection`). Деплой-пайплайн его не знает и не передаёт в контейнер.
 
 Локальная разработка использует dev-заглушки из `.env.example` /
 `appsettings.Development.json` (например `Jwt:Secret = dev-secret-change-me-...`,
@@ -297,8 +300,9 @@ VDS. Когда репозиторий будет подключён к GitHub:
 
 - T-Invest коннектор (этап 04) написан и протестирован против мока SDK — без реального
   read-only токена живые вызовы не выполнялись (см. `Connectors/TInvest/README.md`).
-  Через `PUT /api/settings/tinvest-token` токен можно завести из UI (приоритет над ENV),
-  но реальный синк с живым счётом всё равно не проверялся в этом запуске.
+  Токен заводится единственным способом — через `PUT /api/settings/tinvest-token` (хранится
+  только в БД на аккаунт, без ENV/Secrets-фолбэка), но реальный синк с живым счётом всё равно
+  не проверялся в этом запуске.
 - Стакан (bid/ask) запрашивается у T-Invest, но не персистируется — осознанно вне MVP
   (спека §8 относит предупреждение о низкой ликвидности к категории "на будущее").
 - Деплой на живой VDS не выполнялся ни на одном из этапов 01–09 — см. "Деплой — TODO".

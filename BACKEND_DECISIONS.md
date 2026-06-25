@@ -107,7 +107,9 @@
 
 **План** (§7 этапа 00, §08) требовал шифрование, не уточняя механизм.
 
-**Решение:** `Microsoft.AspNetCore.DataProtection` (`IDataProtectionProvider`) вместо ручного AES с отдельным секретом в конфиге — идиоматично для ASP.NET Core, не требует управления ещё одним ключом. Хранится в таблице `user_settings` (миграция `005_add_user_settings.sql`): `tinvest_token_encrypted` + `tinvest_token_last4` (открытым текстом, только для маски в UI). Приоритет источника токена для синка: БД (если задан) → ENV `TInvest:Token`. **Коннектор T-Invest (этап 04) пока не переключён** на чтение из этого провайдера — продолжает читать ENV напрямую, чтобы не трогать уже протестированный путь синка; интерфейс `ITInvestTokenProvider` заведён на будущее подключение (см. TODO в коде).
+**Решение:** `Microsoft.AspNetCore.DataProtection` (`IDataProtectionProvider`) вместо ручного AES с отдельным секретом в конфиге — идиоматично для ASP.NET Core, не требует управления ещё одним ключом. Хранится в таблице `user_settings` (миграция `005_add_user_settings.sql`): `tinvest_token_encrypted` + `tinvest_token_last4` (открытым текстом, только для маски в UI). Источник токена — **только БД, без ENV-фолбэка** (явное решение владельца при подготовке к этапу 10: токен для T-Invest хранится исключительно на аккаунт, не как GitHub Secret/ENV-переменная деплоя).
+
+`TInvestPortfolioClient` (этап 04) был переключён с DI-time `InvestApiClient` (токен из ENV `TInvest:Token` через `services.AddInvestApiClient(...)`) на ленивое построение клиента внутри scoped-экземпляра: `GetClientAsync(ct)` резолвит токен через `ITInvestTokenProvider.GetTokenAsync()` при первом обращении любого метода клиента, кэширует `InvestApiClient` на время жизни scope (один цикл синка), и бросает `InvalidOperationException` с понятным сообщением, если токен не задан — `BondSyncService`/`SyncCycleService` уже умеют деградировать на ошибке одного шага без падения всего цикла (spec §4.4). `services.AddInvestApiClient(...)` удалён из `DependencyInjection.cs`; `TINVEST_TOKEN` удалён из `backend.yml` (секретов GitHub Actions и ENV контейнера).
 
 ---
 

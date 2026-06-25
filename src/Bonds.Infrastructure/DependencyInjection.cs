@@ -76,17 +76,10 @@ public static class DependencyInjection
         });
         services.AddScoped<IMoexIssClient, MoexIssClient>();
 
-        // T-Invest: токен read-only читается лениво из конфигурации при первом резолве клиента
-        // (тот же паттерн ленивого чтения конфига, что и GetConnStr выше) — чтобы тестовая
-        // конфигурация (без реального токена) не ломала регистрацию DI на старте процесса.
-        // Токен НЕ логируется (см. README.md коннектора, spec §11).
-        services.AddInvestApiClient((sp, settings) =>
-        {
-            var config = sp.GetRequiredService<IConfiguration>();
-            settings.AccessToken = config["TInvest:Token"] ?? string.Empty;
-            settings.AppName = "bonds-portfolio-analytics";
-            settings.Sandbox = config.GetValue<bool?>("TInvest:Sandbox") ?? false;
-        });
+        // T-Invest: gRPC-клиент НЕ регистрируется здесь готовым (нет статического токена в DI) —
+        // TInvestPortfolioClient сам резолвит токен через ITInvestTokenProvider (БД на пользователя,
+        // без ENV-фолбэка) и лениво строит InvestApiClient внутри своего scoped-экземпляра
+        // (см. doc-comment TInvestPortfolioClient, BACKEND_DECISIONS.md решение 12).
         services.AddScoped<ITInvestPortfolioClient, TInvestPortfolioClient>();
 
         // Оркестрация синка (этап 04 Часть C) — без HTTP-эндпоинта/шедулера на этом этапе,
