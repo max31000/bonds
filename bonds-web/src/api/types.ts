@@ -146,3 +146,85 @@ export interface XirrResponse {
   history: XirrHistoryPoint[];
   disclaimer: string;
 }
+
+// ---- GET /api/signals, POST /api/signals/{id}/read (см. plan/09c §B.6) ----
+
+/** Уровень важности сигнала. */
+export type SignalSeverity = 'Low' | 'Medium' | 'High';
+
+/** Сигнал по позиции/портфелю (купон, оферта, концентрация и т.д., см. спека §8). */
+export interface Signal {
+  id: number;
+  type: string;
+  severity: SignalSeverity;
+  positionId: number | null;
+  instrumentId: number | null;
+  suggestedAction: string;
+  date: string;
+  isRead: boolean;
+}
+
+/** Ответ GET /api/signals. */
+export interface SignalsResponse {
+  signals: Signal[];
+}
+
+/** Ответ POST /api/signals/{id}/read. */
+export interface SignalReadResponse {
+  id: number;
+  isRead: boolean;
+}
+
+// ---- POST /api/sync, GET /api/sync/status (см. plan/09c §B.7) ----
+
+/** Ответ POST /api/sync — результат единичного цикла форс-синхронизации. */
+export interface SyncRunResult {
+  alreadyRunning: boolean;
+  noAccountConfigured: boolean;
+  instrumentsSynced: number;
+  operationsUpserted: number;
+  yieldCurveUpdated: boolean;
+  positionsProjected: number;
+  flowsWritten: number;
+  snapshotStored: boolean;
+  signalsCreated: number;
+  errors: string[];
+  hasErrors: boolean;
+}
+
+/** Ответ GET /api/sync/status — текущий статус планировщика синхронизации. */
+export interface SyncStatus {
+  isRunning: boolean;
+  lastRunStartedAtUtc: string | null;
+  lastSuccessAtUtc: string | null;
+  lastFailureAtUtc: string | null;
+  lastRunErrors: string[];
+}
+
+// ---- GET/PUT /api/settings, PUT /api/settings/tinvest-token (см. plan/09c §B.8) ----
+
+/** Настройки пользователя — пороги триггеров сигналов и базовая валюта. */
+export interface SettingsResponse {
+  baseCurrency: 'RUB';
+  tInvestTokenConfigured: boolean;
+  tInvestTokenMasked: string | null;
+  upcomingEventDaysThreshold: number;
+  uninvestedCashThresholdRub: number;
+  uninvestedCashLookbackDays: number;
+  yieldBelowAlternativeBpsThreshold: number;
+  maturityWindowDaysForAlternativeComparison: number;
+  defaultMaxConcentrationPercent: number;
+  durationDriftToleranceYears: number;
+}
+
+/** Тело PUT /api/settings — все поля кроме токена/статуса токена (read-only производные). */
+export type SettingsUpdateRequest = Omit<
+  SettingsResponse,
+  'tInvestTokenConfigured' | 'tInvestTokenMasked'
+>;
+
+/** Ответ PUT /api/settings/tinvest-token. */
+export interface TInvestTokenResponse {
+  tInvestTokenConfigured: boolean;
+  tInvestTokenMasked: string | null;
+}

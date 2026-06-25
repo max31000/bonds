@@ -1,0 +1,217 @@
+import { useEffect, useState } from 'react';
+import {
+  Title,
+  Stack,
+  Paper,
+  Text,
+  Alert,
+  Loader,
+  Center,
+  Group,
+  NumberInput,
+  Button,
+  PasswordInput,
+  Badge,
+  Divider,
+} from '@mantine/core';
+import { useForm } from '@mantine/form';
+import { notifications } from '@mantine/notifications';
+import { useSettingsStore } from '../store/useSettingsStore';
+import type { SettingsUpdateRequest } from '../api/types';
+
+type ThresholdsForm = Omit<SettingsUpdateRequest, 'baseCurrency'>;
+
+/**
+ * Экран настроек: пороги триггеров сигналов + токен T-Invest (write-only) (план 09c §B.8).
+ * Токен никогда не приходит обратно от API — после сохранения поле очищается, показываем
+ * только tInvestTokenMasked/статус «задан».
+ */
+export function Settings() {
+  const { settings, isLoading, error, load, save, saveToken } = useSettingsStore();
+  const [tokenInput, setTokenInput] = useState('');
+  const [savingToken, setSavingToken] = useState(false);
+  const [savingThresholds, setSavingThresholds] = useState(false);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const form = useForm<ThresholdsForm>({
+    initialValues: {
+      upcomingEventDaysThreshold: 0,
+      uninvestedCashThresholdRub: 0,
+      uninvestedCashLookbackDays: 0,
+      yieldBelowAlternativeBpsThreshold: 0,
+      maturityWindowDaysForAlternativeComparison: 0,
+      defaultMaxConcentrationPercent: 0,
+      durationDriftToleranceYears: 0,
+    },
+    validate: {
+      upcomingEventDaysThreshold: (v) => (v < 0 || v > 365 ? 'От 0 до 365 дней' : null),
+      uninvestedCashThresholdRub: (v) => (v < 0 ? 'Не может быть отрицательным' : null),
+      uninvestedCashLookbackDays: (v) => (v < 0 || v > 365 ? 'От 0 до 365 дней' : null),
+      yieldBelowAlternativeBpsThreshold: (v) => (v < 0 ? 'Не может быть отрицательным' : null),
+      maturityWindowDaysForAlternativeComparison: (v) =>
+        v < 0 || v > 3650 ? 'От 0 до 3650 дней' : null,
+      defaultMaxConcentrationPercent: (v) => (v < 0 || v > 100 ? 'От 0 до 100%' : null),
+      durationDriftToleranceYears: (v) => (v < 0 || v > 30 ? 'От 0 до 30 лет' : null),
+    },
+  });
+
+  useEffect(() => {
+    if (!settings) return;
+    form.setValues({
+      upcomingEventDaysThreshold: settings.upcomingEventDaysThreshold,
+      uninvestedCashThresholdRub: settings.uninvestedCashThresholdRub,
+      uninvestedCashLookbackDays: settings.uninvestedCashLookbackDays,
+      yieldBelowAlternativeBpsThreshold: settings.yieldBelowAlternativeBpsThreshold,
+      maturityWindowDaysForAlternativeComparison: settings.maturityWindowDaysForAlternativeComparison,
+      defaultMaxConcentrationPercent: settings.defaultMaxConcentrationPercent,
+      durationDriftToleranceYears: settings.durationDriftToleranceYears,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings]);
+
+  const handleSaveThresholds = form.onSubmit(async (values) => {
+    if (!settings) return;
+    setSavingThresholds(true);
+    const ok = await save({ baseCurrency: settings.baseCurrency, ...values });
+    setSavingThresholds(false);
+    notifications.show({
+      color: ok ? 'green' : 'red',
+      title: ok ? 'Настройки сохранены' : 'Не удалось сохранить настройки',
+      message: ok ? 'Пороги триггеров обновлены.' : 'Попробуйте ещё раз позже.',
+    });
+  });
+
+  const handleSaveToken = async () => {
+    if (!tokenInput.trim()) return;
+    setSavingToken(true);
+    const ok = await saveToken(tokenInput.trim());
+    setSavingToken(false);
+    setTokenInput(''); // токен — write-only, очищаем форму независимо от результата
+    notifications.show({
+      color: ok ? 'green' : 'red',
+      title: ok ? 'Токен сохранён' : 'Не удалось сохранить токен',
+      message: ok ? 'Токен T-Invest обновлён.' : 'Попробуйте ещё раз позже.',
+    });
+  };
+
+  return (
+    <Stack gap="md">
+      <Title order={2}>Настройки</Title>
+
+      {isLoading && (
+        <Center py="xl">
+          <Loader />
+        </Center>
+      )}
+
+      {!isLoading && error && (
+        <Alert color="red" title="Не удалось загрузить настройки" data-testid="settings-error">
+          {error}
+        </Alert>
+      )}
+
+      {!isLoading && settings && (
+        <>
+          <Paper withBorder p="md" radius="md" data-testid="tinvest-token-section">
+            <Text fw={600} mb="xs">
+              Токен T-Invest
+            </Text>
+            <Group mb="sm">
+              {settings.tInvestTokenConfigured ? (
+                <Badge color="teal" variant="light">
+                  задан{settings.tInvestTokenMasked ? `: ${settings.tInvestTokenMasked}` : ''}
+                </Badge>
+              ) : (
+                <Badge color="gray" variant="light">
+                  не задан
+                </Badge>
+              )}
+            </Group>
+            <Group align="flex-end" wrap="wrap">
+              <PasswordInput
+                placeholder="Новый read-only токен T-Invest"
+                value={tokenInput}
+                onChange={(e) => setTokenInput(e.currentTarget.value)}
+                style={{ flex: 1, minWidth: 240 }}
+                data-testid="tinvest-token-input"
+              />
+              <Button
+                onClick={handleSaveToken}
+                loading={savingToken}
+                disabled={!tokenInput.trim()}
+                data-testid="tinvest-token-save"
+              >
+                Сохранить токен
+              </Button>
+            </Group>
+            <Text size="xs" c="dimmed" mt="xs">
+              Токен никогда не отображается повторно после сохранения — только статус «задан».
+            </Text>
+          </Paper>
+
+          <Divider />
+
+          <Paper withBorder p="md" radius="md" data-testid="thresholds-section">
+            <Text fw={600} mb="sm">
+              Пороги триггеров сигналов
+            </Text>
+            <form onSubmit={handleSaveThresholds}>
+              <Stack gap="sm">
+                <NumberInput
+                  label="Горизонт предстоящих событий, дней"
+                  min={0}
+                  max={365}
+                  {...form.getInputProps('upcomingEventDaysThreshold')}
+                />
+                <NumberInput
+                  label="Порог незаинвестированного кэша, ₽"
+                  min={0}
+                  {...form.getInputProps('uninvestedCashThresholdRub')}
+                />
+                <NumberInput
+                  label="Окно проверки незаинвестированного кэша, дней"
+                  min={0}
+                  max={365}
+                  {...form.getInputProps('uninvestedCashLookbackDays')}
+                />
+                <NumberInput
+                  label="Порог «доходность ниже альтернативы», б.п."
+                  min={0}
+                  {...form.getInputProps('yieldBelowAlternativeBpsThreshold')}
+                />
+                <NumberInput
+                  label="Окно сравнения с альтернативой до погашения, дней"
+                  min={0}
+                  max={3650}
+                  {...form.getInputProps('maturityWindowDaysForAlternativeComparison')}
+                />
+                <NumberInput
+                  label="Максимальная концентрация по эмитенту, %"
+                  min={0}
+                  max={100}
+                  {...form.getInputProps('defaultMaxConcentrationPercent')}
+                />
+                <NumberInput
+                  label="Допуск дрейфа дюрации, лет"
+                  min={0}
+                  max={30}
+                  step={0.1}
+                  decimalScale={2}
+                  {...form.getInputProps('durationDriftToleranceYears')}
+                />
+                <Group justify="flex-end">
+                  <Button type="submit" loading={savingThresholds} data-testid="thresholds-save">
+                    Сохранить пороги
+                  </Button>
+                </Group>
+              </Stack>
+            </form>
+          </Paper>
+        </>
+      )}
+    </Stack>
+  );
+}

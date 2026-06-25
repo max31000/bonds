@@ -7,6 +7,8 @@ import { ComingSoon } from './pages/ComingSoon';
 import { Positions } from './pages/Positions';
 import { Cashflow } from './pages/Cashflow';
 import { Analytics } from './pages/Analytics';
+import { Signals } from './pages/Signals';
+import { Settings } from './pages/Settings';
 import Login from './pages/Login';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { AppLayout } from './components/AppLayout';
@@ -39,9 +41,8 @@ function AppRoutes() {
           <Route index element={<Positions />} />
           <Route path="cashflow" element={<Cashflow />} />
           <Route path="analytics" element={<Analytics />} />
-          {/* Экраны 09c — пункты навигации заведены заранее, см. components/AppLayout.tsx */}
-          <Route path="signals" element={<ComingSoon />} />
-          <Route path="settings" element={<ComingSoon />} />
+          <Route path="signals" element={<Signals />} />
+          <Route path="settings" element={<Settings />} />
           <Route path="*" element={<ComingSoon />} />
         </Route>
       </Route>

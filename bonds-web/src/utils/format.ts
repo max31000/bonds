@@ -92,3 +92,17 @@ export function formatSharePercent(value: number | null | undefined): string {
   if (value === null || value === undefined || Number.isNaN(value)) return '—';
   return `${value.toFixed(1)}%`;
 }
+
+/** Форматирует дату-время ISO (UTC) в краткий локальный вид ("01.07.2026, 14:30"). */
+export function formatDateTime(dateIso: string | null | undefined): string {
+  if (!dateIso) return '—';
+  const date = new Date(dateIso);
+  if (Number.isNaN(date.getTime())) return '—';
+  return new Intl.DateTimeFormat('ru-RU', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date);
+}
