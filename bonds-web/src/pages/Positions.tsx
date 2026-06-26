@@ -189,6 +189,11 @@ export function Positions() {
                               данные неполные
                             </Badge>
                           )}
+                          {row.isOutOfScopeCurrency && (
+                            <Badge size="sm" color="grape" variant="light">
+                              валютная / вне скоупа
+                            </Badge>
+                          )}
                         </Group>
                       </Table.Td>
                     </Table.Tr>

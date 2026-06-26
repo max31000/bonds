@@ -41,6 +41,7 @@ const basePosition: PositionRow = {
   isIndexed: false,
   isEstimated: false,
   dataIncomplete: false,
+  isOutOfScopeCurrency: false,
 };
 
 describe('Positions', () => {
@@ -100,6 +101,25 @@ describe('Positions', () => {
 
     await waitFor(() => expect(screen.getByText('Газпром')).toBeInTheDocument());
     expect(screen.getByText('данные неполные')).toBeInTheDocument();
+  });
+
+  it('shows an out-of-scope currency badge for a USD-nominal bond', async () => {
+    const currencyBond: PositionRow = {
+      ...basePosition,
+      positionId: 7,
+      issuer: 'НОВАТЭК',
+      isOutOfScopeCurrency: true,
+      ytmEffective: null,
+      gSpread: null,
+    };
+    server.use(
+      http.get('*/api/positions', () => HttpResponse.json({ positions: [currencyBond], disclaimer: '' })),
+    );
+
+    renderPositions();
+
+    await waitFor(() => expect(screen.getByText('НОВАТЭК')).toBeInTheDocument());
+    expect(screen.getByText('валютная / вне скоупа')).toBeInTheDocument();
   });
 
   it('shows a calculatedToOffer badge', async () => {

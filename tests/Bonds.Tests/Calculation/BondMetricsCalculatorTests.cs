@@ -187,6 +187,36 @@ public class BondMetricsCalculatorTests
         metrics.CurrentYield.Should().NotBeNull();
     }
 
+    // ─── Валютная (вне рублёвого скоупа) бумага ───────────────────────────────
+
+    [Fact]
+    public void Calculate_OutOfScopeCurrency_DoesNotComputeYtmOrGSpread_FlagsEstimated()
+    {
+        // T-2/N-2: USD-номинал (замещающая облигация). Цена в ₽, номинал/купон в смешанных
+        // единицах → YTM/дюрация/G-спред бессмысленны. Не считаем их, помечаем оценочной.
+        var maturity = AsOf.AddDays(730);
+        var coupons = new[]
+        {
+            TestModelFactory.Coupon(InstrumentId, AsOf.AddDays(365), 100m, periodDays: 365),
+            TestModelFactory.Coupon(InstrumentId, maturity, 100m, periodDays: 365),
+        };
+        var curve = TestModelFactory.CurveSnapshot(b1: 861.7769624105241m, b2: 0m, b3: 0m, t1: 1m);
+
+        var input = FixedCouponInput(maturity, cleanPrice: 966.1989795918366m, coupons, curve: curve)
+            with
+        { AccruedInterestFromSource = 0m, IsOutOfScopeCurrency = true };
+
+        var metrics = BondMetricsCalculator.Calculate(input);
+
+        metrics.YtmEffective.Should().BeNull("валютная бумага не считается в рублёвом контуре");
+        metrics.ModifiedDuration.Should().BeNull();
+        metrics.Convexity.Should().BeNull();
+        metrics.Pvbp.Should().BeNull();
+        metrics.GSpread.Should().BeNull("нет рублёвого G-спреда −800 б.п. у USD-бумаги");
+        metrics.IsEstimated.Should().BeTrue();
+        metrics.Notes.Should().Contain(n => n.Contains("валют", StringComparison.OrdinalIgnoreCase));
+    }
+
     // ─── Амортизация ─────────────────────────────────────────────────────────
 
     [Fact]

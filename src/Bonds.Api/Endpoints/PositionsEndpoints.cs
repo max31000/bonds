@@ -92,6 +92,7 @@ public static class PositionsEndpoints
             IsIndexed = metrics.IsIndexed,
             IsEstimated = metrics.IsEstimated,
             DataIncomplete = metrics.DataIncomplete,
+            IsOutOfScopeCurrency = instrument.IsOutOfScopeCurrency,
             Notes = metrics.Notes,
             Disclaimer = Disclaimers.Metrics,
         };
@@ -121,6 +122,7 @@ public static class PositionsEndpoints
         IsIndexed = h.IsIndexed,
         IsEstimated = h.IsEstimated,
         DataIncomplete = h.DataIncomplete,
+        IsOutOfScopeCurrency = h.IsOutOfScopeCurrency,
     };
 
     /// <summary>
@@ -176,6 +178,9 @@ public sealed record PositionRowDto
     public required bool IsIndexed { get; init; }
     public required bool IsEstimated { get; init; }
     public required bool DataIncomplete { get; init; }
+
+    /// <summary>§11: номинал в иностранной валюте — вне рублёвого контура MVP (UI помечает бейджем).</summary>
+    public bool IsOutOfScopeCurrency { get; init; }
 }
 
 /// <summary>Детальная карточка позиции/инструмента (GET /api/positions/{id}).</summary>
@@ -215,6 +220,9 @@ public sealed record PositionDetailDto
     public required bool IsIndexed { get; init; }
     public required bool IsEstimated { get; init; }
     public required bool DataIncomplete { get; init; }
+
+    /// <summary>§11: номинал в иностранной валюте — вне рублёвого контура MVP (UI помечает бейджем).</summary>
+    public bool IsOutOfScopeCurrency { get; init; }
     public required IReadOnlyList<string> Notes { get; init; }
     public required string Disclaimer { get; init; }
 }

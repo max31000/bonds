@@ -28,6 +28,8 @@ export interface PositionRow {
   isIndexed: boolean;
   isEstimated: boolean;
   dataIncomplete: boolean;
+  /** §11: номинал в иностранной валюте — вне рублёвого контура MVP. */
+  isOutOfScopeCurrency: boolean;
 }
 
 /** Ответ GET /api/positions. */

@@ -48,4 +48,8 @@ public sealed record PortfolioHolding
     public required bool IsIndexed { get; init; }
     public required bool IsEstimated { get; init; }
     public required bool DataIncomplete { get; init; }
+
+    /// <summary>§11/§3: номинал в иностранной валюте — бумага вне рублёвого контура MVP. У таких
+    /// YTM/дюрация/G-спред не считаются; UI помечает бейджем, агрегаты их не искажают.</summary>
+    public bool IsOutOfScopeCurrency { get; init; }
 }

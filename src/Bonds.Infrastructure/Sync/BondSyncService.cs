@@ -321,9 +321,14 @@ public sealed class BondSyncService
         {
             instrument.FaceValue = info.FaceValue ?? instrument.FaceValue;
             instrument.MaturityDate = info.MatDate ?? instrument.MaturityDate;
-            instrument.IsOutOfScopeCurrency = info.FaceUnit is not null
-                && !string.Equals(info.FaceUnit, "SUR", StringComparison.OrdinalIgnoreCase)
-                && !string.Equals(info.FaceUnit, "RUB", StringComparison.OrdinalIgnoreCase);
+            // T-2/N-2: валюту номинала берём из MOEX FACEUNIT и нормализуем (SUR/RUR→RUB; иначе как
+            // есть и вне скоупа). Раньше Currency не обновлялась и оставалась "RUB" даже для USD-бумаг.
+            if (info.FaceUnit is not null)
+            {
+                var (currency, outOfScope) = CurrencyNormalizer.Normalize(info.FaceUnit);
+                instrument.Currency = currency;
+                instrument.IsOutOfScopeCurrency = outOfScope;
+            }
         }
 
         instrument.Name = info?.ShortName ?? info?.SecName ?? instrument.Isin;

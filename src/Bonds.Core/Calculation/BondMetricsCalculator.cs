@@ -35,6 +35,47 @@ public static class BondMetricsCalculator
         decimal? accrued = input.AccruedInterestFromSource;
         var accruedEstimatedByEngine = false;
 
+        // ─── Валютная (вне рублёвого скоупа) бумага: рублёвые метрики не считаем (T-2/N-2, §11/§3) ───
+        // Цена приходит в ₽, а номинал/купон — в иной валюте → YTM/дюрация/G-спред в смешанных
+        // единицах бессмысленны (маркер бага — G-спред −800…−1600 б.п.). Деградируем как флоатер:
+        // отдаём цену/НКД, но без производных метрик, и помечаем оценочной.
+        if (input.IsOutOfScopeCurrency)
+        {
+            notes.Add("Номинал в иностранной валюте — бумага вне рублёвого контура MVP; YTM/дюрация/G-спред не рассчитываются (§11).");
+
+            var horizonCur = OfferCutoffResolver.Resolve(input.AsOf, input.MaturityDate, input.Offers);
+            decimal? dirtyCur = cleanPrice is not null && accrued is not null
+                ? AccruedInterestCalculator.DirtyPrice(cleanPrice.Value, accrued.Value)
+                : null;
+
+            return new BondMetrics
+            {
+                InstrumentId = input.InstrumentId,
+                AsOf = input.AsOf,
+                CleanPrice = cleanPrice ?? 0m,
+                AccruedInterest = accrued ?? 0m,
+                DirtyPrice = dirtyCur ?? 0m,
+                AccruedInterestEstimatedByEngine = false,
+                CurrentYield = null,
+                YtmEffective = null,
+                YtmSimple = null,
+                MacaulayDuration = null,
+                ModifiedDuration = null,
+                Convexity = null,
+                Pvbp = null,
+                GSpread = null,
+                HorizonDate = horizonCur.Date,
+                IsFloater = isFloater,
+                IsIndexed = isIndexed,
+                IsEstimated = true,
+                DataIncomplete = input.DataIncomplete,
+                CalculatedToOffer = horizonCur.IsOffer,
+                HasAmortization = input.HasAmortization,
+                YtmConvergedByNewton = null,
+                Notes = notes,
+            };
+        }
+
         if (accrued is null)
         {
             accrued = AccruedInterestCalculator.Calculate(input.AsOf, input.Coupons);

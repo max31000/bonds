@@ -120,6 +120,7 @@ public sealed class PortfolioHoldingsBuilder
             HasAmortization = instrument.HasAmortization,
             HasOffers = instrument.HasOffers,
             DataIncomplete = instrument.DataIncomplete || position.DataIncomplete,
+            IsOutOfScopeCurrency = instrument.IsOutOfScopeCurrency,
             CleanPrice = quote?.CleanPrice,
             AccruedInterestFromSource = quote?.Accrued ?? position.Accrued,
             Coupons = coupons,
@@ -164,6 +165,7 @@ public sealed class PortfolioHoldingsBuilder
             IsIndexed = metrics.IsIndexed,
             IsEstimated = metrics.IsEstimated,
             DataIncomplete = metrics.DataIncomplete,
+            IsOutOfScopeCurrency = instrument.IsOutOfScopeCurrency,
         };
     }
 }

@@ -19,6 +19,13 @@ public sealed record BondMetricsCalculatorInput
     public required bool HasOffers { get; init; }
     public required bool DataIncomplete { get; init; }
 
+    /// <summary>
+    /// §11/§3: номинал в иностранной валюте (замещающая/еврооблигация). Цена в ₽, а номинал/купон
+    /// в иной валюте → рублёвые YTM/дюрация/G-спред бессмысленны. Движок их не считает (как у флоатера),
+    /// помечает результат оценочным. По умолчанию false (рублёвый контур MVP).
+    /// </summary>
+    public bool IsOutOfScopeCurrency { get; init; }
+
     /// <summary>Чистая цена на дату расчёта. Null, если котировка недоступна.</summary>
     public decimal? CleanPrice { get; init; }
 
