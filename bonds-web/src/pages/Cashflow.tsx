@@ -170,7 +170,7 @@ export function Cashflow() {
                   <Table.Tbody>
                     {byPosition.map((p) => (
                       <Table.Tr key={p.positionId}>
-                        <Table.Td>#{p.positionId}</Table.Td>
+                        <Table.Td>{p.name ?? p.issuer ?? `#${p.positionId}`}</Table.Td>
                         <Table.Td>{formatRub(p.grossRub)}</Table.Td>
                         <Table.Td>{formatRub(p.taxRub)}</Table.Td>
                         <Table.Td>{formatRub(p.netRub)}</Table.Td>

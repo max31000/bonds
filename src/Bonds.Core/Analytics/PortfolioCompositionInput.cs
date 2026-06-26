@@ -18,6 +18,8 @@ public sealed record PortfolioHolding
     /// <summary>Рыночная стоимость holding'а в рублях (Quantity × грязная цена) — база для весов композиции.</summary>
     public required decimal MarketValueRub { get; init; }
 
+    public string? Name { get; init; }
+    public string? Isin { get; init; }
     public string? Issuer { get; init; }
     public string? Sector { get; init; }
     public required CouponType CouponType { get; init; }

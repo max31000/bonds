@@ -101,7 +101,7 @@ function ScatterWidget({ scatter }: { scatter: { points: ScatterPoint[]; curve: 
                 return (
                   <Paper withBorder p="xs" radius="sm" shadow="sm">
                     <Text size="xs" fw={600}>
-                      {point.issuer ?? `Позиция #${point.positionId}`}
+                      {point.name ?? point.issuer ?? `Позиция #${point.positionId}`}
                     </Text>
                     <Text size="xs">Дюрация: {point.modifiedDuration.toFixed(2)} г.</Text>
                     <Text size="xs">Доходность: {formatPercent(point.effectiveYield)}</Text>

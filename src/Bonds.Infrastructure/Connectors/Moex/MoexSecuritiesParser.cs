@@ -81,4 +81,30 @@ public static class MoexSecuritiesParser
 
         return null;
     }
+
+    public static MoexSecuritySearch? ParseSearchInfo(string json, string isin)
+    {
+        using var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
+        var table = IssTable.Parse(root, "securities");
+        if (table is null) return null;
+
+        foreach (var row in table.Rows())
+        {
+            var rowIsin = row.GetString("isin");
+            var group = row.GetString("group");
+            if (string.Equals(rowIsin, isin, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(group, "stock_bonds", StringComparison.OrdinalIgnoreCase))
+            {
+                return new MoexSecuritySearch
+                {
+                    Secid = row.GetString("secid"),
+                    EmitentTitle = row.GetString("emitent_title"),
+                    TypeCode = row.GetString("type"),
+                };
+            }
+        }
+
+        return null;
+    }
 }

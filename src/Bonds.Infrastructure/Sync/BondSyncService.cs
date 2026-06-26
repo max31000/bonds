@@ -326,6 +326,12 @@ public sealed class BondSyncService
                 && !string.Equals(info.FaceUnit, "RUB", StringComparison.OrdinalIgnoreCase);
         }
 
+        instrument.Name = info?.ShortName ?? info?.SecName ?? instrument.Isin;
+
+        var searchInfo = await _moex.GetSecuritySearchAsync(instrument.Isin, ct);
+        instrument.Issuer = searchInfo?.EmitentTitle ?? instrument.Issuer;
+        instrument.Sector = MoexSegmentMapper.MapTypeToSegment(searchInfo?.TypeCode) ?? instrument.Sector;
+
         // CouponType/HasAmortization/HasOffers выводятся из ФАКТИЧЕСКОГО графика bondization
         // (приоритетнее эвристики BONDTYPE из securities.json — последняя используется только
         // как fallback, если bondization не вернул купонов вовсе).

@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using Bonds.Core.CashFlow;
 using Bonds.Core.Interfaces.Repositories;
+using Bonds.Core.Models;
 
 namespace Bonds.Api.Endpoints;
 
@@ -24,6 +25,7 @@ public static class CashFlowEndpoints
         ClaimsPrincipal principal,
         IAccountRepository accountRepo,
         IProjectedCashFlowRepository projectedCashFlows,
+        IInstrumentRepository instrumentRepo,
         DateOnly? from,
         DateOnly? to)
     {
@@ -41,6 +43,15 @@ public static class CashFlowEndpoints
 
         var flows = (await projectedCashFlows.GetByAccountIdAsync(accountId.Value, from, to)).ToList();
 
+        var byPositionAgg = CashFlowAggregator.ByPosition(flows).ToList();
+        var instrumentIds = byPositionAgg.Select(p => p.InstrumentId).Distinct().ToList();
+        var instruments = new Dictionary<ulong, Instrument>();
+        foreach (var instrumentId in instrumentIds)
+        {
+            var instrument = await instrumentRepo.GetByIdAsync(instrumentId);
+            if (instrument is not null) instruments[instrumentId] = instrument;
+        }
+
         var dto = new CashFlowResponseDto
         {
             ByMonth = CashFlowAggregator.ByMonth(flows).Select(m => new MonthlyCashFlowDto
@@ -53,14 +64,20 @@ public static class CashFlowEndpoints
                 PrincipalGrossRub = m.PrincipalGrossRub,
                 HasEstimatedFlows = m.HasEstimatedFlows,
             }).ToList(),
-            ByPosition = CashFlowAggregator.ByPosition(flows).Select(p => new PositionCashFlowDto
+            ByPosition = byPositionAgg.Select(p =>
             {
-                PositionId = p.PositionId,
-                InstrumentId = p.InstrumentId,
-                GrossRub = p.GrossRub,
-                TaxRub = p.TaxRub,
-                NetRub = p.NetRub,
-                HasEstimatedFlows = p.HasEstimatedFlows,
+                instruments.TryGetValue(p.InstrumentId, out var instr);
+                return new PositionCashFlowDto
+                {
+                    PositionId = p.PositionId,
+                    InstrumentId = p.InstrumentId,
+                    Name = instr?.Name,
+                    Issuer = instr?.Issuer,
+                    GrossRub = p.GrossRub,
+                    TaxRub = p.TaxRub,
+                    NetRub = p.NetRub,
+                    HasEstimatedFlows = p.HasEstimatedFlows,
+                };
             }).ToList(),
             PrincipalReleases = CashFlowAggregator.PrincipalReleases(flows).Select(r => new PrincipalReleaseDto
             {
@@ -101,6 +118,8 @@ public sealed record PositionCashFlowDto
 {
     public required ulong PositionId { get; init; }
     public required ulong InstrumentId { get; init; }
+    public string? Name { get; init; }
+    public string? Issuer { get; init; }
     public required decimal GrossRub { get; init; }
     public required decimal TaxRub { get; init; }
     public required decimal NetRub { get; init; }

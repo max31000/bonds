@@ -60,8 +60,8 @@ public static class SignalsEngine
                     InstrumentId = position.InstrumentId,
                     Date = coupon.CouponDate,
                     SuggestedAction = coupon.IsKnown
-                        ? $"Купон {coupon.ValueRub:F2} руб. по позиции {position.Issuer ?? position.InstrumentId.ToString()} ожидается {coupon.CouponDate:yyyy-MM-dd}"
-                        : $"Купон по позиции {position.Issuer ?? position.InstrumentId.ToString()} ожидается {coupon.CouponDate:yyyy-MM-dd} (точная сумма не известна — флоатер)",
+                        ? $"Купон {coupon.ValueRub:F2} руб. по позиции {position.Name ?? position.Issuer ?? position.InstrumentId.ToString()} ожидается {coupon.CouponDate:yyyy-MM-dd}"
+                        : $"Купон по позиции {position.Name ?? position.Issuer ?? position.InstrumentId.ToString()} ожидается {coupon.CouponDate:yyyy-MM-dd} (точная сумма не известна — флоатер)",
                 };
             }
         }
@@ -87,7 +87,7 @@ public static class SignalsEngine
                     PositionId = position.PositionId,
                     InstrumentId = position.InstrumentId,
                     Date = amortization.Date,
-                    SuggestedAction = $"Частичное погашение номинала {amortization.AmountRub:F2} руб. по позиции {position.Issuer ?? position.InstrumentId.ToString()} ожидается {amortization.Date:yyyy-MM-dd}",
+                    SuggestedAction = $"Частичное погашение номинала {amortization.AmountRub:F2} руб. по позиции {position.Name ?? position.Issuer ?? position.InstrumentId.ToString()} ожидается {amortization.Date:yyyy-MM-dd}",
                 };
             }
         }
@@ -111,7 +111,7 @@ public static class SignalsEngine
                 PositionId = position.PositionId,
                 InstrumentId = position.InstrumentId,
                 Date = position.MaturityDate,
-                SuggestedAction = $"Погашение позиции {position.Issuer ?? position.InstrumentId.ToString()} ожидается {position.MaturityDate:yyyy-MM-dd}",
+                SuggestedAction = $"Погашение позиции {position.Name ?? position.Issuer ?? position.InstrumentId.ToString()} ожидается {position.MaturityDate:yyyy-MM-dd}",
             };
         }
     }
@@ -135,8 +135,8 @@ public static class SignalsEngine
                 // важность put/call в перечне триггеров, поэтому оба получают Critical, а текст
                 // SuggestedAction отдельно подчёркивает, что именно put требует действия.
                 var actionText = offer.OfferType == OfferType.Put
-                    ? $"Put-оферта по позиции {position.Issuer ?? position.InstrumentId.ToString()} {offer.Date:yyyy-MM-dd} — требуется активно подать заявку через брокера, иначе бумага останется в портфеле"
-                    : $"Call-оферта по позиции {position.Issuer ?? position.InstrumentId.ToString()} {offer.Date:yyyy-MM-dd} — эмитент может отозвать бумагу";
+                    ? $"Put-оферта по позиции {position.Name ?? position.Issuer ?? position.InstrumentId.ToString()} {offer.Date:yyyy-MM-dd} — требуется активно подать заявку через брокера, иначе бумага останется в портфеле"
+                    : $"Call-оферта по позиции {position.Name ?? position.Issuer ?? position.InstrumentId.ToString()} {offer.Date:yyyy-MM-dd} — эмитент может отозвать бумагу";
 
                 yield return new Signal
                 {
@@ -179,7 +179,7 @@ public static class SignalsEngine
                 PositionId = position.PositionId,
                 InstrumentId = position.InstrumentId,
                 Date = nextReset.CouponDate,
-                SuggestedAction = $"Пересчёт ставки купона флоатера по позиции {position.Issuer ?? position.InstrumentId.ToString()} ожидается {nextReset.CouponDate:yyyy-MM-dd}",
+                SuggestedAction = $"Пересчёт ставки купона флоатера по позиции {position.Name ?? position.Issuer ?? position.InstrumentId.ToString()} ожидается {nextReset.CouponDate:yyyy-MM-dd}",
             };
         }
     }
@@ -284,7 +284,7 @@ public static class SignalsEngine
                 PositionId = holding.PositionId,
                 InstrumentId = holding.InstrumentId,
                 Date = input.AsOf,
-                SuggestedAction = $"Доходность позиции {holding.Issuer ?? holding.InstrumentId.ToString()} ({ownYield:P2}) ниже сопоставимой по сроку альтернативы в портфеле ({bestAlternative.Yield:P2}) на {gap * 10_000m:F0} б.п.",
+                SuggestedAction = $"Доходность позиции {holding.Name ?? holding.Issuer ?? holding.InstrumentId.ToString()} ({ownYield:P2}) ниже сопоставимой по сроку альтернативы в портфеле ({bestAlternative.Yield:P2}) на {gap * 10_000m:F0} б.п.",
             };
         }
     }

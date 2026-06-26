@@ -116,6 +116,7 @@ export function Positions() {
             <Table striped highlightOnHover data-testid="positions-table">
               <Table.Thead>
                 <Table.Tr>
+                  <Table.Th>Бумага</Table.Th>
                   <Table.Th>Эмитент</Table.Th>
                   <Table.Th>Сектор</Table.Th>
                   <Table.Th>Кол-во</Table.Th>
@@ -145,6 +146,7 @@ export function Positions() {
                   const isCurrentYield = row.isFloater || row.isIndexed;
                   return (
                     <Table.Tr key={row.positionId} data-testid={`position-row-${row.positionId}`}>
+                      <Table.Td>{row.name ?? row.issuer ?? row.isin ?? '—'}</Table.Td>
                       <Table.Td>{row.issuer ?? '—'}</Table.Td>
                       <Table.Td>{row.sector ?? '—'}</Table.Td>
                       <Table.Td>{row.quantity}</Table.Td>

@@ -135,6 +135,7 @@ public static class AnalyticsEndpoints
             {
                 PositionId = h.PositionId,
                 InstrumentId = h.InstrumentId,
+                Name = h.Name,
                 Issuer = h.Issuer,
                 ModifiedDuration = h.ModifiedDuration!.Value,
                 EffectiveYield = (h.IsFloater || h.IsIndexed) ? h.CurrentYield : h.YtmEffective,
@@ -194,6 +195,7 @@ public static class AnalyticsEndpoints
             {
                 PositionId = r.PositionId,
                 InstrumentId = r.InstrumentId,
+                Name = r.Name,
                 Issuer = r.Issuer,
                 EffectiveYield = r.EffectiveYield,
                 YieldKind = r.YieldKind.ToString(),
@@ -314,6 +316,7 @@ public sealed record ScatterPointDto
 {
     public required ulong PositionId { get; init; }
     public required ulong InstrumentId { get; init; }
+    public string? Name { get; init; }
     public string? Issuer { get; init; }
     public required decimal ModifiedDuration { get; init; }
     public decimal? EffectiveYield { get; init; }
@@ -340,6 +343,7 @@ public sealed record ComparisonRowDto
 {
     public required ulong PositionId { get; init; }
     public required ulong InstrumentId { get; init; }
+    public string? Name { get; init; }
     public string? Issuer { get; init; }
     public decimal? EffectiveYield { get; init; }
     public required string YieldKind { get; init; }

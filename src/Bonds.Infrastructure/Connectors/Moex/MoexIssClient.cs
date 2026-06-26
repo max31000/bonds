@@ -98,6 +98,15 @@ public sealed class MoexIssClient : IMoexIssClient
         }
     }
 
+    public async Task<MoexSecuritySearch?> GetSecuritySearchAsync(string isin, CancellationToken ct = default)
+    {
+        var url = $"/iss/securities.json?q={Uri.EscapeDataString(isin)}&iss.meta=off";
+        var json = await GetStringSafeAsync(url, ct);
+        if (json is null) return null;
+        try { return MoexSecuritiesParser.ParseSearchInfo(json, isin); }
+        catch (Exception ex) { _logger.LogWarning(ex, "Failed to parse MOEX search for {Isin}", isin); return null; }
+    }
+
     private async Task<string?> GetStringSafeAsync(string url, CancellationToken ct)
     {
         try

@@ -14,6 +14,7 @@ public sealed record SignalPositionContext
     public required ulong PositionId { get; init; }
     public required ulong InstrumentId { get; init; }
     public required string? Issuer { get; init; }
+    public string? Name { get; init; }
     public required DateOnly MaturityDate { get; init; }
 
     public IReadOnlyList<CouponSchedule> Coupons { get; init; } = Array.Empty<CouponSchedule>();

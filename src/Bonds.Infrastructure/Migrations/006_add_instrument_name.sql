@@ -1,0 +1,1 @@
+ALTER TABLE instruments ADD COLUMN name VARCHAR(255) NULL AFTER figi;

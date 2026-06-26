@@ -9,6 +9,8 @@ export type CouponType = 'Fixed' | 'Floating' | 'Indexed';
 export interface PositionRow {
   positionId: number;
   instrumentId: number;
+  name: string | null;
+  isin: string | null;
   issuer: string | null;
   sector: string | null;
   quantity: number;
@@ -54,6 +56,8 @@ export interface CashflowMonth {
 export interface CashflowByPosition {
   positionId: number;
   instrumentId: number;
+  name: string | null;
+  issuer: string | null;
   grossRub: number;
   taxRub: number;
   netRub: number;
@@ -87,6 +91,7 @@ export type YieldKind = 'Ytm' | 'Current';
 export interface ScatterPoint {
   positionId: number;
   instrumentId: number;
+  name: string | null;
   issuer: string | null;
   modifiedDuration: number;
   effectiveYield: number;

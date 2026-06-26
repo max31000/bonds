@@ -22,4 +22,7 @@ public interface IMoexIssClient
 
     /// <summary>Последний снимок безрисковой кривой (zcyc.json). Null, если ISS не вернул параметры NSS.</summary>
     Task<YieldCurveSnapshot?> GetYieldCurveAsync(CancellationToken ct = default);
+
+    /// <summary>Поиск бумаги по ISIN — возвращает эмитента и тип для маппинга в сегмент. Null, если ISIN не найден.</summary>
+    Task<MoexSecuritySearch?> GetSecuritySearchAsync(string isin, CancellationToken ct = default);
 }

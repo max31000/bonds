@@ -64,6 +64,7 @@ public static class PositionsEndpoints
             PositionId = position.Id,
             InstrumentId = instrument.Id,
             Isin = instrument.Isin,
+            Name = instrument.Name,
             Issuer = instrument.Issuer,
             Sector = instrument.Sector,
             Quantity = position.Quantity,
@@ -102,6 +103,8 @@ public static class PositionsEndpoints
     {
         PositionId = h.PositionId,
         InstrumentId = h.InstrumentId,
+        Name = h.Name,
+        Isin = h.Isin,
         Issuer = h.Issuer,
         Sector = h.Sector,
         Quantity = h.Quantity,
@@ -154,6 +157,8 @@ public sealed record PositionRowDto
 {
     public required ulong PositionId { get; init; }
     public required ulong InstrumentId { get; init; }
+    public string? Name { get; init; }
+    public string? Isin { get; init; }
     public string? Issuer { get; init; }
     public string? Sector { get; init; }
     public required decimal Quantity { get; init; }
@@ -179,6 +184,7 @@ public sealed record PositionDetailDto
     public required ulong PositionId { get; init; }
     public required ulong InstrumentId { get; init; }
     public required string Isin { get; init; }
+    public string? Name { get; init; }
     public string? Issuer { get; init; }
     public string? Sector { get; init; }
     public required decimal Quantity { get; init; }

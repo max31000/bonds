@@ -22,6 +22,8 @@ function renderPositions() {
 const basePosition: PositionRow = {
   positionId: 1,
   instrumentId: 10,
+  name: 'ОФЗ 26238',
+  isin: 'RU000A1038V6',
   issuer: 'Минфин РФ',
   sector: 'ОФЗ',
   quantity: 100,

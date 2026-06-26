@@ -147,6 +147,8 @@ public sealed class PortfolioHoldingsBuilder
             InstrumentId = instrument.Id,
             Quantity = position.Quantity,
             MarketValueRub = marketValue,
+            Name = instrument.Name,
+            Isin = instrument.Isin,
             Issuer = instrument.Issuer,
             Sector = instrument.Sector,
             CouponType = instrument.CouponType,

@@ -18,6 +18,8 @@ public class Instrument
     /// <summary>Идентификатор T-Invest (FIGI).</summary>
     public string? Figi { get; set; }
 
+    public string? Name { get; set; }
+
     public string? Issuer { get; set; }
     public string? Sector { get; set; }
 

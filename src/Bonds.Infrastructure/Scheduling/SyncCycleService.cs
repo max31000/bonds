@@ -250,6 +250,7 @@ public sealed class SyncCycleService : ISyncCycleRunner
                 PositionId = position.Id,
                 InstrumentId = instrument.Id,
                 Issuer = instrument.Issuer,
+                Name = instrument.Name,
                 MaturityDate = instrument.MaturityDate,
                 Coupons = coupons,
                 Amortizations = amortizations,

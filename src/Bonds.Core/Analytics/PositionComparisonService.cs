@@ -50,6 +50,7 @@ public static class PositionComparisonService
         {
             PositionId = h.PositionId,
             InstrumentId = h.InstrumentId,
+            Name = h.Name,
             Issuer = h.Issuer,
             EffectiveYield = effectiveYield,
             YieldKind = isFloaterLike ? YieldKind.CurrentYield : YieldKind.Ytm,
@@ -92,6 +93,7 @@ public sealed record ComparisonRow
 {
     public required ulong PositionId { get; init; }
     public required ulong InstrumentId { get; init; }
+    public string? Name { get; init; }
     public string? Issuer { get; init; }
 
     /// <summary>YTM или CurrentYield — см. <see cref="YieldKind"/> для различения в UI.</summary>

@@ -81,4 +81,39 @@ public class MoexSecuritiesParserTests
 
         secid.Should().BeNull();
     }
+
+    [Fact]
+    public void ParseSearchInfo_ParsesEmitentTitleAndTypeCode()
+    {
+        var json = ReadFixture("securities_search_ofz_su26244.json");
+
+        var result = MoexSecuritiesParser.ParseSearchInfo(json, "RU000A1074G2");
+
+        result.Should().NotBeNull();
+        result!.EmitentTitle.Should().Be("Министерство финансов Российской Федерации");
+        result.TypeCode.Should().Be("ofz_bond");
+        result.Secid.Should().Be("SU26244RMFS2");
+    }
+
+    [Fact]
+    public void ParseSearchInfo_ExistingFixture_ParsesCorrectly()
+    {
+        var json = ReadFixture("securities_search_by_isin.json");
+
+        var result = MoexSecuritiesParser.ParseSearchInfo(json, "RU000A1038V6");
+
+        result.Should().NotBeNull();
+        result!.EmitentTitle.Should().Be("Министерство финансов Российской Федерации");
+        result.TypeCode.Should().Be("ofz_bond");
+    }
+
+    [Fact]
+    public void ParseSearchInfo_UnknownIsin_ReturnsNull()
+    {
+        var json = ReadFixture("securities_search_by_isin.json");
+
+        var result = MoexSecuritiesParser.ParseSearchInfo(json, "RU000UNKNOWN0");
+
+        result.Should().BeNull();
+    }
 }
