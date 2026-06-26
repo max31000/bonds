@@ -2,6 +2,7 @@ using System.Security.Claims;
 using Bonds.Api.Middleware;
 using Bonds.Core.Analytics;
 using Bonds.Core.Calculation;
+using Bonds.Core.CashFlow;
 using Bonds.Core.Interfaces.Repositories;
 using Bonds.Infrastructure.Analytics;
 
@@ -23,6 +24,7 @@ public static class AnalyticsEndpoints
         app.MapGet("/api/analytics/comparison", GetComparison);
         app.MapPost("/api/analytics/replacement", PostReplacement);
         app.MapGet("/api/analytics/rate-scenario", GetRateScenario);
+        app.MapGet("/api/analytics/trajectory", GetTrajectory);
     }
 
     // ─── GET /api/analytics/xirr ────────────────────────────────────────────────────────────
@@ -314,6 +316,61 @@ public static class AnalyticsEndpoints
             Disclaimer = Disclaimers.Metrics,
         });
     }
+
+    // ─── GET /api/analytics/trajectory ──────────────────────────────────────────────────────
+
+    private static async Task<IResult> GetTrajectory(
+        ClaimsPrincipal principal,
+        IAccountRepository accountRepo,
+        PortfolioHoldingsBuilder holdingsBuilder,
+        IProjectedCashFlowRepository projectedCashFlows,
+        int? horizonMonths,
+        decimal? reinvestRate)
+    {
+        var accountId = await PositionsEndpoints.ResolveAccountIdAsync(principal, accountRepo);
+        if (accountId is null)
+        {
+            return Results.Ok(new TrajectoryResponseDto
+            {
+                InitialValueRub = 0,
+                WithReinvest = [],
+                WithoutReinvest = [],
+                ReinvestRateUsed = 0,
+                Disclaimer = Disclaimers.Metrics,
+            });
+        }
+
+        var horizon = horizonMonths ?? 36;
+        var asOf = DateOnly.FromDateTime(DateTime.Today);
+        var holdings = (await holdingsBuilder.BuildForAccountAsync(accountId.Value, asOf)).ToList();
+        var effectiveRate = reinvestRate ?? PortfolioTrajectoryService.DefaultReinvestRate(holdings);
+
+        var from = DateOnly.FromDateTime(DateTime.Today);
+        var to = from.AddMonths(horizon);
+        var flows = await projectedCashFlows.GetByAccountIdAsync(accountId.Value, from, to);
+        var monthlySummaries = CashFlowAggregator.ByMonth(flows);
+
+        var result = PortfolioTrajectoryService.Compute(holdings, monthlySummaries, horizon, effectiveRate);
+
+        return Results.Ok(new TrajectoryResponseDto
+        {
+            InitialValueRub = result.InitialValueRub,
+            WithReinvest = result.WithReinvest.Select(p => new TrajectoryPointDto
+            {
+                Month = p.Month,
+                PortfolioValueRub = p.PortfolioValueRub,
+                CumulativeIncomeRub = p.CumulativeIncomeRub,
+            }).ToList(),
+            WithoutReinvest = result.WithoutReinvest.Select(p => new TrajectoryPointDto
+            {
+                Month = p.Month,
+                PortfolioValueRub = p.PortfolioValueRub,
+                CumulativeIncomeRub = p.CumulativeIncomeRub,
+            }).ToList(),
+            ReinvestRateUsed = effectiveRate,
+            Disclaimer = Disclaimers.Metrics,
+        });
+    }
 }
 
 public sealed record XirrResponseDto
@@ -438,4 +495,20 @@ public sealed record RateScenarioPointDto
     public required decimal NewValueRub { get; init; }
     public required decimal DeltaRub { get; init; }
     public required decimal DeltaPercent { get; init; }
+}
+
+public sealed record TrajectoryResponseDto
+{
+    public required decimal InitialValueRub { get; init; }
+    public required IReadOnlyList<TrajectoryPointDto> WithReinvest { get; init; }
+    public required IReadOnlyList<TrajectoryPointDto> WithoutReinvest { get; init; }
+    public required decimal ReinvestRateUsed { get; init; }
+    public required string Disclaimer { get; init; }
+}
+
+public sealed record TrajectoryPointDto
+{
+    public required string Month { get; init; }
+    public required decimal PortfolioValueRub { get; init; }
+    public required decimal CumulativeIncomeRub { get; init; }
 }

@@ -1,5 +1,5 @@
 import { apiClient } from './client';
-import type { CompositionResponse, RateScenarioResponse, ScatterResponse, XirrResponse } from './types';
+import type { CompositionResponse, RateScenarioResponse, ScatterResponse, TrajectoryResponse, XirrResponse } from './types';
 
 /** GET /api/analytics/scatter — точки «дюрация × доходность» + безрисковая кривая (plan/09b §B.3). */
 export function fetchScatter(): Promise<ScatterResponse> {
@@ -23,4 +23,13 @@ export function fetchXirr(params?: { from?: string; to?: string }): Promise<Xirr
 /** GET /api/analytics/rate-scenario — портфель при параллельном сдвиге ставок. */
 export function fetchRateScenario(): Promise<RateScenarioResponse> {
   return apiClient.get<RateScenarioResponse>('/analytics/rate-scenario');
+}
+
+/** GET /api/analytics/trajectory — траектория стоимости портфеля во времени. */
+export function fetchTrajectory(params?: { horizonMonths?: number; reinvestRate?: number }): Promise<TrajectoryResponse> {
+  const query = new URLSearchParams();
+  if (params?.horizonMonths) query.set('horizonMonths', String(params.horizonMonths));
+  if (params?.reinvestRate !== undefined) query.set('reinvestRate', String(params.reinvestRate));
+  const qs = query.toString();
+  return apiClient.get<TrajectoryResponse>(`/analytics/trajectory${qs ? `?${qs}` : ''}`);
 }

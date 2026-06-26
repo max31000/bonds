@@ -245,6 +245,22 @@ export interface RateScenarioResponse {
   disclaimer: string;
 }
 
+// ---- GET /api/analytics/trajectory ----
+
+export interface TrajectoryPoint {
+  month: string;
+  portfolioValueRub: number;
+  cumulativeIncomeRub: number;
+}
+
+export interface TrajectoryResponse {
+  initialValueRub: number;
+  withReinvest: TrajectoryPoint[];
+  withoutReinvest: TrajectoryPoint[];
+  reinvestRateUsed: number;
+  disclaimer: string;
+}
+
 // ---- GET/PUT /api/settings, PUT /api/settings/tinvest-token (см. plan/09c §B.8) ----
 
 /** Настройки пользователя — пороги триггеров сигналов и базовая валюта. */

@@ -7,7 +7,7 @@ import { server } from '../test/msw-handlers';
 import { Analytics } from './Analytics';
 import { useAnalyticsStore } from '../store/useAnalyticsStore';
 import { useAuthStore } from '../store/useAuthStore';
-import type { CompositionResponse, RateScenarioResponse, ScatterResponse, XirrResponse } from '../api/types';
+import type { CompositionResponse, RateScenarioResponse, ScatterResponse, TrajectoryResponse, XirrResponse } from '../api/types';
 
 function renderAnalytics() {
   return render(
@@ -86,6 +86,20 @@ const baseXirr: XirrResponse = {
   disclaimer: '',
 };
 
+const baseTrajectory: TrajectoryResponse = {
+  initialValueRub: 200000,
+  withReinvest: [
+    { month: '2026-07', portfolioValueRub: 201010, cumulativeIncomeRub: 1000 },
+    { month: '2026-08', portfolioValueRub: 202030, cumulativeIncomeRub: 2000 },
+  ],
+  withoutReinvest: [
+    { month: '2026-07', portfolioValueRub: 201000, cumulativeIncomeRub: 1000 },
+    { month: '2026-08', portfolioValueRub: 202000, cumulativeIncomeRub: 2000 },
+  ],
+  reinvestRateUsed: 0.12,
+  disclaimer: '',
+};
+
 describe('Analytics', () => {
   beforeEach(() => {
     useAnalyticsStore.setState({
@@ -93,6 +107,7 @@ describe('Analytics', () => {
       composition: null,
       xirr: null,
       rateScenario: null,
+      trajectory: null,
       isLoading: false,
       error: null,
     });
@@ -258,5 +273,19 @@ describe('Analytics', () => {
     renderAnalytics();
 
     await waitFor(() => expect(screen.getByTestId('rate-scenario-widget')).toBeInTheDocument());
+  });
+
+  it('shows trajectory widget when data is present', async () => {
+    server.use(
+      http.get('*/api/analytics/scatter', () => HttpResponse.json(baseScatter)),
+      http.get('*/api/analytics/composition', () => HttpResponse.json(baseComposition)),
+      http.get('*/api/analytics/xirr', () => HttpResponse.json(baseXirr)),
+      http.get('*/api/analytics/rate-scenario', () => HttpResponse.json(baseRateScenario)),
+      http.get('*/api/analytics/trajectory', () => HttpResponse.json(baseTrajectory)),
+    );
+
+    renderAnalytics();
+
+    await waitFor(() => expect(screen.getByTestId('trajectory-widget')).toBeInTheDocument());
   });
 });

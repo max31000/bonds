@@ -20,8 +20,8 @@ import {
 } from 'recharts';
 import { useAnalyticsStore } from '../store/useAnalyticsStore';
 import { Disclaimer } from '../components/Disclaimer';
-import { formatPercent, formatRub, formatSharePercent, formatDate } from '../utils/format';
-import type { CompositionSlice, RateScenarioPoint, ScatterPoint } from '../api/types';
+import { formatPercent, formatRub, formatSharePercent, formatDate, formatMonthLabel } from '../utils/format';
+import type { CompositionSlice, RateScenarioPoint, ScatterPoint, TrajectoryResponse } from '../api/types';
 
 const PIE_COLORS = [
   'var(--mantine-color-violet-6)',
@@ -337,12 +337,57 @@ function RateScenarioWidget({ rateScenario }: { rateScenario: { scenarios: RateS
   );
 }
 
+function TrajectoryWidget({ trajectory }: { trajectory: TrajectoryResponse }) {
+  const chartData = trajectory.withReinvest.map((p, i) => ({
+    month: formatMonthLabel(p.month),
+    'С реинвестированием': p.portfolioValueRub,
+    'Без реинвестирования': trajectory.withoutReinvest[i]?.portfolioValueRub ?? p.portfolioValueRub,
+  }));
+
+  return (
+    <Paper withBorder p="md" radius="md" data-testid="trajectory-widget">
+      <Text fw={600} mb="xs">
+        Траектория портфеля
+      </Text>
+
+      {trajectory.withReinvest.length === 0 ? (
+        <Text size="sm" c="dimmed">
+          Данные появятся после синхронизации с брокерским счётом.
+        </Text>
+      ) : (
+        <>
+          <ResponsiveContainer width="100%" height={300}>
+            <LineChart data={chartData}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="month" label={{ value: 'Месяц', position: 'insideBottom', offset: -5 }} />
+              <YAxis
+                tickFormatter={(v: number) => formatRub(v)}
+                label={{ value: 'Стоимость, ₽', angle: -90, position: 'insideLeft' }}
+              />
+              <Tooltip formatter={(value) => formatRub(Number(value))} />
+              <Legend />
+              <Line type="monotone" dataKey="С реинвестированием" stroke="var(--mantine-color-teal-6)" dot={false} />
+              <Line type="monotone" dataKey="Без реинвестирования" stroke="var(--mantine-color-gray-6)" strokeDasharray="5 5" dot={false} />
+            </LineChart>
+          </ResponsiveContainer>
+
+          <Text size="sm" c="dimmed" mt="sm">
+            Ставка реинвестирования: {formatPercent(trajectory.reinvestRateUsed)}
+          </Text>
+
+          <Disclaimer text={trajectory.disclaimer} />
+        </>
+      )}
+    </Paper>
+  );
+}
+
 /**
  * Экран аналитики: scatter «дюрация × доходность», композиция портфеля, кривая XIRR во времени
  * (этап 09b §B.3–B.5). Календарь поступлений — отдельный экран `/cashflow` (§B.2).
  */
 export function Analytics() {
-  const { scatter, composition, xirr, rateScenario, isLoading, error, load } = useAnalyticsStore();
+  const { scatter, composition, xirr, rateScenario, trajectory, isLoading, error, load } = useAnalyticsStore();
 
   useEffect(() => {
     load();
@@ -368,6 +413,7 @@ export function Analytics() {
       {!isLoading && !error && composition && <CompositionWidget composition={composition} />}
       {!isLoading && !error && xirr && <XirrWidget xirr={xirr} />}
       {!isLoading && !error && rateScenario && <RateScenarioWidget rateScenario={rateScenario} />}
+      {!isLoading && !error && trajectory && <TrajectoryWidget trajectory={trajectory} />}
 
       <Disclaimer text={scatter?.disclaimer || composition?.disclaimer || xirr?.disclaimer} />
     </Stack>

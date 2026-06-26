@@ -39,6 +39,9 @@ export const handlers = [
   http.get('*/api/analytics/rate-scenario', () =>
     HttpResponse.json({ currentValueRub: 0, scenarios: [], disclaimer: '' }),
   ),
+  http.get('*/api/analytics/trajectory', () =>
+    HttpResponse.json({ initialValueRub: 0, withReinvest: [], withoutReinvest: [], reinvestRateUsed: 0, disclaimer: '' }),
+  ),
   // Дефолтные кейсы для 09c — пустые/неактивные данные; переопределяются в тестах экранов.
   http.get('*/api/signals', () => HttpResponse.json({ signals: [] })),
   http.post('*/api/signals/:id/read', ({ params }) =>
