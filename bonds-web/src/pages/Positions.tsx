@@ -17,7 +17,7 @@ import { usePositionsStore } from '../store/usePositionsStore';
 import { useSettingsStore } from '../store/useSettingsStore';
 import { Disclaimer } from '../components/Disclaimer';
 import type { PositionRow } from '../api/types';
-import { formatRub, formatDaysUntil, formatPercent, formatNumber, formatBp, formatDate } from '../utils/format';
+import { formatRub, formatDaysUntil, formatPercent, formatNumber, formatBp } from '../utils/format';
 
 type SortDirection = 'asc' | 'desc';
 

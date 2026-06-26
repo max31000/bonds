@@ -155,7 +155,7 @@ export function Cashflow() {
                   data={chartData}
                   style={{ cursor: 'pointer' }}
                   onClick={(data) => {
-                    const monthKey = (data?.activePayload?.[0]?.payload as { raw?: { month?: string } })?.raw?.month;
+                    const monthKey = ((data as unknown) as { activePayload?: Array<{ payload: { raw?: { month?: string } } }> })?.activePayload?.[0]?.payload?.raw?.month;
                     if (monthKey) setSelectedMonth((prev) => (prev === monthKey ? null : monthKey));
                   }}
                 >

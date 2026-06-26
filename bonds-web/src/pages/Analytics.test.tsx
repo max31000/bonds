@@ -24,6 +24,7 @@ const baseScatter: ScatterResponse = {
     {
       positionId: 1,
       instrumentId: 10,
+      name: null,
       issuer: 'Минфин РФ',
       modifiedDuration: 3.2,
       effectiveYield: 0.125,
@@ -36,6 +37,7 @@ const baseScatter: ScatterResponse = {
     {
       positionId: 2,
       instrumentId: 11,
+      name: null,
       issuer: 'РЖД',
       modifiedDuration: 1.5,
       effectiveYield: 0.094,

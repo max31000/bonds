@@ -44,7 +44,7 @@ const baseResponse: CashflowResponse = {
     },
   ],
   byPosition: [
-    { positionId: 1, instrumentId: 10, grossRub: 10000, taxRub: 1300, netRub: 8700, hasEstimatedFlows: false },
+    { positionId: 1, instrumentId: 10, name: null, issuer: null, grossRub: 10000, taxRub: 1300, netRub: 8700, hasEstimatedFlows: false },
   ],
   principalReleases: [
     {
