@@ -178,6 +178,43 @@ public class Stage08EndpointsTests
         body.GetProperty("principalReleases").GetArrayLength().Should().Be(0);
     }
 
+    [Fact]
+    public async Task GetCashFlow_WithSeededFlows_ByMonthItemsIncludePositionsArray()
+    {
+        var (client, _, accountId) = await CreateAuthorizedClientAsync();
+        var (instrumentId, positionId) = await SeedPositionAsync(accountId);
+
+        var flowRepo = new ProjectedCashFlowRepository(_factory.Database.ConnectionString);
+        await flowRepo.ReplaceForPositionAsync(positionId, new[]
+        {
+            new ProjectedCashFlow
+            {
+                PositionId = positionId,
+                InstrumentId = instrumentId,
+                Date = new DateOnly(DateTime.UtcNow.Year + 1, 1, 15),
+                FlowType = CashFlowType.Coupon,
+                GrossRub = 1000m,
+                TaxRub = 130m,
+                NetRub = 870m,
+                IsEstimated = false,
+            },
+        });
+
+        var response = await client.GetAsync("/api/cashflow");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var byMonth = body.GetProperty("byMonth");
+        byMonth.GetArrayLength().Should().BeGreaterThan(0);
+        var firstMonth = byMonth[0];
+        firstMonth.TryGetProperty("positions", out var positions).Should().BeTrue();
+        positions.ValueKind.Should().Be(JsonValueKind.Array);
+        positions.GetArrayLength().Should().Be(1);
+        var pos = positions[0];
+        pos.GetProperty("positionId").GetUInt64().Should().Be(positionId);
+        pos.GetProperty("flowType").GetString().Should().Be("Coupon");
+    }
+
     // ─── /api/analytics/* ───────────────────────────────────────────────────────────────────
 
     [Fact]

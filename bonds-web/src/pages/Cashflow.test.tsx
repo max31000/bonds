@@ -29,6 +29,18 @@ const baseResponse: CashflowResponse = {
       couponGrossRub: 10000,
       principalGrossRub: 0,
       hasEstimatedFlows: false,
+      positions: [
+        {
+          positionId: 1,
+          name: 'ОФЗ 26238',
+          issuer: 'Минфин РФ',
+          flowType: 'Coupon',
+          grossRub: 10000,
+          taxRub: 1300,
+          netRub: 8700,
+          isEstimated: false,
+        },
+      ],
     },
   ],
   byPosition: [
@@ -135,6 +147,39 @@ describe('Cashflow', () => {
     renderCashflow();
 
     await waitFor(() => expect(screen.getByTestId('cashflow-error')).toBeInTheDocument());
+  });
+
+  it('shows drill-down table with bond name when selectedMonth is set via store', async () => {
+    server.use(http.get('*/api/cashflow', () => HttpResponse.json(baseResponse)));
+
+    renderCashflow();
+
+    await waitFor(() => expect(screen.getByTestId('cashflow-chart')).toBeInTheDocument());
+
+    useCashflowStore.setState({
+      byMonth: baseResponse.byMonth,
+      byPosition: baseResponse.byPosition,
+      principalReleases: baseResponse.principalReleases,
+      disclaimer: '',
+      isLoading: false,
+      error: null,
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('cashflow-chart')).toBeInTheDocument();
+    });
+  });
+
+  it('drill-down positions array is present on byMonth items from the API', async () => {
+    server.use(http.get('*/api/cashflow', () => HttpResponse.json(baseResponse)));
+
+    renderCashflow();
+
+    await waitFor(() => expect(screen.getByTestId('cashflow-chart')).toBeInTheDocument());
+
+    const state = useCashflowStore.getState();
+    expect(state.byMonth[0].positions).toBeDefined();
+    expect(state.byMonth[0].positions[0].name).toBe('ОФЗ 26238');
   });
 
   it('shows the disclaimer', async () => {

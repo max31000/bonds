@@ -106,6 +106,58 @@ public class CashFlowAggregatorTests
     }
 
     [Fact]
+    public void ByMonthPosition_GroupsSameMonthPositionType_IntoOneRow()
+    {
+        var flows = new[]
+        {
+            Flow(1, 10, new DateOnly(2025, 1, 5), CashFlowType.Coupon, 100m, 13m),
+            Flow(1, 10, new DateOnly(2025, 1, 20), CashFlowType.Coupon, 200m, 26m),
+            Flow(2, 20, new DateOnly(2025, 1, 15), CashFlowType.Coupon, 50m, 6.5m),
+        };
+
+        var result = CashFlowAggregator.ByMonthPosition(flows);
+
+        result.Should().HaveCount(2);
+        var pos1 = result.Single(r => r.PositionId == 1);
+        pos1.GrossRub.Should().Be(300m);
+        pos1.TaxRub.Should().Be(39m);
+        pos1.NetRub.Should().Be(261m);
+        pos1.Month.Should().Be(new DateOnly(2025, 1, 1));
+        var pos2 = result.Single(r => r.PositionId == 2);
+        pos2.GrossRub.Should().Be(50m);
+    }
+
+    [Fact]
+    public void ByMonthPosition_SeparatesFlowTypes_WhenSamePositionHasCouponAndAmortization()
+    {
+        var flows = new[]
+        {
+            Flow(1, 10, new DateOnly(2025, 3, 1), CashFlowType.Coupon, 100m, 13m),
+            Flow(1, 10, new DateOnly(2025, 3, 15), CashFlowType.Amortization, 500m, 0m),
+        };
+
+        var result = CashFlowAggregator.ByMonthPosition(flows);
+
+        result.Should().HaveCount(2);
+        result.Should().Contain(r => r.FlowType == CashFlowType.Coupon && r.GrossRub == 100m);
+        result.Should().Contain(r => r.FlowType == CashFlowType.Amortization && r.GrossRub == 500m);
+    }
+
+    [Fact]
+    public void ByMonthPosition_IsEstimated_WhenAnyFlowInGroupIsEstimated()
+    {
+        var flows = new[]
+        {
+            Flow(1, 10, new DateOnly(2025, 5, 1), CashFlowType.Coupon, 100m, 13m, isEstimated: false),
+            Flow(1, 10, new DateOnly(2025, 5, 15), CashFlowType.Coupon, 100m, 13m, isEstimated: true),
+        };
+
+        var result = CashFlowAggregator.ByMonthPosition(flows);
+
+        result.Should().ContainSingle().Which.IsEstimated.Should().BeTrue();
+    }
+
+    [Fact]
     public void PrincipalReleases_FiltersByMinAmount()
     {
         var flows = new[]

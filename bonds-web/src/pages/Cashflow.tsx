@@ -28,7 +28,9 @@ import { Disclaimer } from '../components/Disclaimer';
 import { formatRub, formatMonthLabel, formatDate } from '../utils/format';
 
 const FLOW_TYPE_LABEL: Record<string, string> = {
+  Coupon: 'Купон',
   Amortization: 'Амортизация',
+  Redemption: 'Погашение',
   Maturity: 'Погашение',
   Offer: 'Оферта',
   Call: 'Колл-опцион',
@@ -42,6 +44,7 @@ export function Cashflow() {
   const { byMonth, byPosition, principalReleases, disclaimer, isLoading, error, load } =
     useCashflowStore();
   const [byPositionOpen, setByPositionOpen] = useState(false);
+  const [selectedMonth, setSelectedMonth] = useState<string | null>(null);
 
   useEffect(() => {
     load();
@@ -88,8 +91,18 @@ export function Cashflow() {
                   </Badge>
                 )}
               </Group>
+              <Text size="xs" c="dimmed" mb="xs">
+                Нажмите на столбец месяца, чтобы увидеть, какие бумаги формируют поступление.
+              </Text>
               <ResponsiveContainer width="100%" height={320}>
-                <BarChart data={chartData}>
+                <BarChart
+                  data={chartData}
+                  style={{ cursor: 'pointer' }}
+                  onClick={(data) => {
+                    const monthKey = (data?.activePayload?.[0]?.payload as { raw?: { month?: string } })?.raw?.month;
+                    if (monthKey) setSelectedMonth((prev) => (prev === monthKey ? null : monthKey));
+                  }}
+                >
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="month" />
                   <YAxis tickFormatter={(v: number) => formatRub(v)} width={100} />
@@ -105,6 +118,43 @@ export function Cashflow() {
                   <Bar dataKey="Налог" stackId="flow" fill="var(--mantine-color-red-5)" />
                 </BarChart>
               </ResponsiveContainer>
+              {selectedMonth && (() => {
+                const monthData = byMonth.find((m) => m.month === selectedMonth);
+                if (!monthData || monthData.positions.length === 0) return null;
+                return (
+                  <Paper withBorder p="sm" radius="sm" mt="sm" data-testid="cashflow-month-drill-down">
+                    <Text fw={500} mb="xs">Поступления в {formatMonthLabel(selectedMonth)}</Text>
+                    <Table>
+                      <Table.Thead>
+                        <Table.Tr>
+                          <Table.Th>Бумага</Table.Th>
+                          <Table.Th>Тип</Table.Th>
+                          <Table.Th>Брутто</Table.Th>
+                          <Table.Th>Налог</Table.Th>
+                          <Table.Th>Нетто</Table.Th>
+                          <Table.Th>Пометки</Table.Th>
+                        </Table.Tr>
+                      </Table.Thead>
+                      <Table.Tbody>
+                        {monthData.positions.map((pos, idx) => (
+                          <Table.Tr key={`${pos.positionId}-${pos.flowType}-${idx}`}>
+                            <Table.Td>{pos.name ?? pos.issuer ?? `#${pos.positionId}`}</Table.Td>
+                            <Table.Td>{FLOW_TYPE_LABEL[pos.flowType] ?? pos.flowType}</Table.Td>
+                            <Table.Td>{formatRub(pos.grossRub)}</Table.Td>
+                            <Table.Td>{formatRub(pos.taxRub)}</Table.Td>
+                            <Table.Td>{formatRub(pos.netRub)}</Table.Td>
+                            <Table.Td>
+                              {pos.isEstimated && (
+                                <Badge size="sm" color="yellow" variant="light">оценочно</Badge>
+                              )}
+                            </Table.Td>
+                          </Table.Tr>
+                        ))}
+                      </Table.Tbody>
+                    </Table>
+                  </Paper>
+                );
+              })()}
             </Paper>
           )}
 

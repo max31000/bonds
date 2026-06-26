@@ -49,6 +49,26 @@ public static class CashFlowAggregator
             .ToList();
     }
 
+    /// <summary>Разбивка по месяцу+позиции+типу потока — для drill-down из месячного бара (plan/11 A4).</summary>
+    public static IReadOnlyList<MonthlyPositionFlow> ByMonthPosition(IEnumerable<ProjectedCashFlow> flows)
+    {
+        return flows
+            .GroupBy(f => (Month: new DateOnly(f.Date.Year, f.Date.Month, 1), f.PositionId, f.InstrumentId, f.FlowType))
+            .Select(g => new MonthlyPositionFlow
+            {
+                Month = g.Key.Month,
+                PositionId = g.Key.PositionId,
+                InstrumentId = g.Key.InstrumentId,
+                FlowType = g.Key.FlowType,
+                GrossRub = g.Sum(f => f.GrossRub),
+                TaxRub = g.Sum(f => f.TaxRub),
+                NetRub = g.Sum(f => f.NetRub),
+                IsEstimated = g.Any(f => f.IsEstimated),
+            })
+            .OrderBy(x => x.Month).ThenByDescending(x => x.NetRub)
+            .ToList();
+    }
+
     /// <summary>
     /// Даты освобождения тела (spec §7.4): погашение и амортизации, отдельно от купонов — момент,
     /// когда в портфеле появляется свободная ликвидность, которую можно реинвестировать.
@@ -93,6 +113,19 @@ public sealed record MonthlyCashFlowSummary
 
     /// <summary>true — в месяце есть хотя бы один оценочный поток (флоатер/неизвестный купон).</summary>
     public required bool HasEstimatedFlows { get; init; }
+}
+
+/// <summary>Разбивка потоков за месяц по одной позиции и одному типу (план/11 A4 drill-down).</summary>
+public sealed record MonthlyPositionFlow
+{
+    public required DateOnly Month { get; init; }
+    public required ulong PositionId { get; init; }
+    public required ulong InstrumentId { get; init; }
+    public required CashFlowType FlowType { get; init; }
+    public required decimal GrossRub { get; init; }
+    public required decimal TaxRub { get; init; }
+    public required decimal NetRub { get; init; }
+    public required bool IsEstimated { get; init; }
 }
 
 /// <summary>Сумма потоков по одной позиции за весь горизонт проекции.</summary>

@@ -41,6 +41,18 @@ export interface PositionsResponse {
 /** Тип денежного потока, освобождающего тело долга. */
 export type PrincipalFlowType = 'Amortization' | 'Maturity' | 'Offer' | 'Call';
 
+/** Разбивка потока за месяц по одной позиции и типу (drill-down, план/11 A4). */
+export interface PositionFlowInMonth {
+  positionId: number;
+  name: string | null;
+  issuer: string | null;
+  flowType: string;
+  grossRub: number;
+  taxRub: number;
+  netRub: number;
+  isEstimated: boolean;
+}
+
 /** Агрегат денежного потока по календарному месяцу. */
 export interface CashflowMonth {
   month: string;
@@ -50,6 +62,7 @@ export interface CashflowMonth {
   couponGrossRub: number;
   principalGrossRub: number;
   hasEstimatedFlows: boolean;
+  positions: PositionFlowInMonth[];
 }
 
 /** Агрегат денежного потока по позиции. */
