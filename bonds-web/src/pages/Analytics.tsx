@@ -21,7 +21,7 @@ import {
 import { useAnalyticsStore } from '../store/useAnalyticsStore';
 import { Disclaimer } from '../components/Disclaimer';
 import { formatPercent, formatRub, formatSharePercent, formatDate, formatMonthLabel } from '../utils/format';
-import type { CompositionSlice, RateScenarioPoint, ScatterPoint, TrajectoryResponse } from '../api/types';
+import type { CompositionSlice, RateScenarioPoint, RateScenarioResponse, ScatterPoint, TrajectoryResponse } from '../api/types';
 
 const PIE_COLORS = [
   'var(--mantine-color-violet-6)',
@@ -274,8 +274,12 @@ function XirrWidget({ xirr }: { xirr: { currentXirr: number | null; history: { d
   );
 }
 
-function RateScenarioWidget({ rateScenario }: { rateScenario: { scenarios: RateScenarioPoint[]; disclaimer: string } }) {
+function RateScenarioWidget({ rateScenario }: { rateScenario: RateScenarioResponse }) {
   const plus100 = rateScenario.scenarios.find((s) => s.shiftBp === 100);
+  const { currentValueRub, rateSensitiveValueRub } = rateScenario;
+  // H-1/M-1: Δ относится ко всему портфелю как к базе, но чувствительна к сдвигу только часть с
+  // дюрацией — флоатеры/бумаги без дюрации в Δ не входят. Показываем охват честно.
+  const hasInsensitivePart = rateSensitiveValueRub < currentValueRub;
 
   return (
     <Paper withBorder p="md" radius="md" data-testid="rate-scenario-widget">
@@ -326,7 +330,10 @@ function RateScenarioWidget({ rateScenario }: { rateScenario: { scenarios: RateS
 
           {plus100 && (
             <Text size="sm" c="dimmed" mt="sm">
-              При росте ставок на 100 б.п. портфель подешевеет примерно на {formatRub(Math.abs(plus100.deltaRub))} ({Math.abs(plus100.deltaPercent).toFixed(2)}%)
+              При росте ставок на 100 б.п. стоимость портфеля изменится примерно на {formatRub(Math.abs(plus100.deltaRub))} ({Math.abs(plus100.deltaPercent).toFixed(2)}% от всего портфеля)
+              {hasInsensitivePart && (
+                <> . Процентно-чувствительная часть: {formatRub(rateSensitiveValueRub)} из {formatRub(currentValueRub)}; флоатеры и бумаги без дюрации к параллельному сдвигу малочувствительны и в Δ не входят.</>
+              )}
             </Text>
           )}
 

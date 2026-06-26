@@ -79,7 +79,30 @@ public class RateScenarioServiceTests
         var result = RateScenarioService.Compute(holdings, [100]);
 
         var point = result.Single();
-        // only holding 2 participates: -3 * 0.01 * 50000 = -1500
+        // only holding 2 contributes to Δ: -3 * 0.01 * 50000 = -1500
         point.DeltaRub.Should().Be(-1500m);
+    }
+
+    [Fact]
+    public void BaseValueIncludesAllHoldings()
+    {
+        // H-1/M-1: база = весь портфель (вкл. флоатер без дюрации), чувствительность — только у
+        // позиций с дюрацией. Иначе NewValue ≠ CurrentValue + Δ при наличии флоатеров.
+        var holdings = new[]
+        {
+            Holding(1, 1000m, modifiedDuration: 3m, convexity: null), // фикс
+            Holding(2, 1000m, modifiedDuration: null),                // флоатер — в базе, но 0 в Δ
+        };
+
+        var point = RateScenarioService.Compute(holdings, [100]).Single();
+
+        var currentValue = point.NewValueRub - point.DeltaRub;
+        currentValue.Should().Be(2000m, "база включает флоатер");
+        point.DeltaRub.Should().Be(-30m, "Δ только от фикса: -3·0.01·1000; флоатер 0");
+        point.NewValueRub.Should().Be(1970m);
+        point.DeltaPercent.Should().Be(-1.5m, "процент берётся от всего портфеля (2000), не от подмножества");
+
+        RateScenarioService.RateSensitiveValue(holdings).Should().Be(1000m,
+            "процентно-чувствительная часть — только бумаги с дюрацией");
     }
 }

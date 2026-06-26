@@ -243,6 +243,8 @@ export interface RateScenarioPoint {
 
 export interface RateScenarioResponse {
   currentValueRub: number;
+  /** H-1/M-1: процентно-чувствительная часть портфеля (бумаги с дюрацией) — база для Δ. */
+  rateSensitiveValueRub: number;
   scenarios: RateScenarioPoint[];
   disclaimer: string;
 }

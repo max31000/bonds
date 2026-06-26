@@ -306,6 +306,7 @@ public static class AnalyticsEndpoints
         return Results.Ok(new RateScenarioResponseDto
         {
             CurrentValueRub = currentValue,
+            RateSensitiveValueRub = RateScenarioService.RateSensitiveValue(holdings),
             Scenarios = scenarios.Select(s => new RateScenarioPointDto
             {
                 ShiftBp = s.ShiftBp,
@@ -485,6 +486,10 @@ public sealed record ReplacementResponseDto
 public sealed record RateScenarioResponseDto
 {
     public required decimal CurrentValueRub { get; init; }
+
+    /// <summary>H-1/M-1: процентно-чувствительная часть портфеля (бумаги с дюрацией). Δ считается
+    /// только от неё; флоатеры/бумаги без дюрации входят в CurrentValueRub, но не в Δ.</summary>
+    public decimal RateSensitiveValueRub { get; init; }
     public required IReadOnlyList<RateScenarioPointDto> Scenarios { get; init; }
     public required string Disclaimer { get; init; }
 }

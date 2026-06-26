@@ -67,6 +67,7 @@ const baseComposition: CompositionResponse = {
 
 const baseRateScenario: RateScenarioResponse = {
   currentValueRub: 200000,
+  rateSensitiveValueRub: 200000,
   scenarios: [
     { shiftBp: -200, newValueRub: 212000, deltaRub: 12000, deltaPercent: 6 },
     { shiftBp: -100, newValueRub: 206000, deltaRub: 6000, deltaPercent: 3 },
