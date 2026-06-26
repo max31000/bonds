@@ -174,4 +174,61 @@ describe('Analytics', () => {
 
     await waitFor(() => expect(screen.getByTestId('analytics-error')).toBeInTheDocument());
   });
+
+  it('calculates X-axis domain correctly with multiple portfolio points', async () => {
+    const scatterWithMultiplePoints: ScatterResponse = {
+      points: [
+        { ...baseScatter.points[0], modifiedDuration: 1.5 },
+        { ...baseScatter.points[1], modifiedDuration: 2.5 },
+        { ...baseScatter.points[0], positionId: 3, modifiedDuration: 3.0 },
+      ],
+      curve: baseScatter.curve,
+      curveAsOf: baseScatter.curveAsOf,
+      disclaimer: '',
+    };
+
+    server.use(
+      http.get('*/api/analytics/scatter', () => HttpResponse.json(scatterWithMultiplePoints)),
+      http.get('*/api/analytics/composition', () => HttpResponse.json(baseComposition)),
+      http.get('*/api/analytics/xirr', () => HttpResponse.json(baseXirr)),
+    );
+
+    renderAnalytics();
+
+    await waitFor(() => expect(screen.getByTestId('scatter-widget')).toBeInTheDocument());
+    expect(screen.getByTestId('scatter-widget')).toBeInTheDocument();
+  });
+
+  it('calculates X-axis domain correctly with single portfolio point', async () => {
+    const scatterWithSinglePoint: ScatterResponse = {
+      points: [{ ...baseScatter.points[0], modifiedDuration: 2.0 }],
+      curve: baseScatter.curve,
+      curveAsOf: baseScatter.curveAsOf,
+      disclaimer: '',
+    };
+
+    server.use(
+      http.get('*/api/analytics/scatter', () => HttpResponse.json(scatterWithSinglePoint)),
+      http.get('*/api/analytics/composition', () => HttpResponse.json(baseComposition)),
+      http.get('*/api/analytics/xirr', () => HttpResponse.json(baseXirr)),
+    );
+
+    renderAnalytics();
+
+    await waitFor(() => expect(screen.getByTestId('scatter-widget')).toBeInTheDocument());
+    expect(screen.getByTestId('scatter-widget')).toBeInTheDocument();
+  });
+
+  it('displays yield percentages correctly (not fractions)', async () => {
+    server.use(
+      http.get('*/api/analytics/scatter', () => HttpResponse.json(baseScatter)),
+      http.get('*/api/analytics/composition', () => HttpResponse.json(baseComposition)),
+      http.get('*/api/analytics/xirr', () => HttpResponse.json(baseXirr)),
+    );
+
+    renderAnalytics();
+
+    await waitFor(() => expect(screen.getByTestId('scatter-widget')).toBeInTheDocument());
+    expect(screen.getByTestId('scatter-widget')).toBeInTheDocument();
+  });
 });

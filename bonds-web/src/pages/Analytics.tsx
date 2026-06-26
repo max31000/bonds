@@ -57,7 +57,44 @@ const CATEGORY_COLOR: Record<string, string> = {
 };
 
 function ScatterWidget({ scatter }: { scatter: { points: ScatterPoint[]; curve: { termYears: number; yield: number }[]; curveAsOf: string | null } }) {
-  const categories = Array.from(new Set(scatter.points.map(pointCategory)));
+  // Convert to percent for Y-axis (keep fraction for tooltip)
+  const chartPoints = scatter.points
+    .filter(p => p.effectiveYield != null)
+    .map(p => ({
+      ...p,
+      yieldFraction: p.effectiveYield,
+      yieldPercent: (p.effectiveYield ?? 0) * 100,
+    }));
+
+  // Compute X-axis domain from portfolio data
+  const durations = chartPoints.map(p => p.modifiedDuration).filter(Boolean) as number[];
+  const dMin = durations.length > 0 ? Math.min(...durations) : 0;
+  const dMax = durations.length > 0 ? Math.max(...durations) : 5;
+  const xDomainMin = Math.max(0, dMin - 0.5);
+  const xDomainMax = dMax + 0.5;
+
+  // Clip curve to X range + convert to percent
+  let chartCurve = scatter.curve
+    .filter(c => c.termYears >= xDomainMin && c.termYears <= xDomainMax)
+    .sort((a, b) => a.termYears - b.termYears)
+    .map(c => ({
+      modifiedDuration: c.termYears,
+      yieldPercent: c.yield * 100,
+      yieldFraction: c.yield,
+    }));
+
+  // If curve is empty after clipping but scatter.curve is not, include all curve
+  if (chartCurve.length === 0 && scatter.curve.length > 0) {
+    chartCurve = scatter.curve
+      .sort((a, b) => a.termYears - b.termYears)
+      .map(c => ({
+        modifiedDuration: c.termYears,
+        yieldPercent: c.yield * 100,
+        yieldFraction: c.yield,
+      }));
+  }
+
+  const categories = Array.from(new Set(chartPoints.map(pointCategory)));
 
   return (
     <Paper withBorder p="md" radius="md" data-testid="scatter-widget">
@@ -70,7 +107,7 @@ function ScatterWidget({ scatter }: { scatter: { points: ScatterPoint[]; curve: 
         )}
       </Group>
 
-      {scatter.points.length === 0 ? (
+      {chartPoints.length === 0 ? (
         <Text size="sm" c="dimmed" data-testid="scatter-empty">
           Нет позиций с рассчитанной дюрацией и доходностью.
         </Text>
@@ -83,11 +120,12 @@ function ScatterWidget({ scatter }: { scatter: { points: ScatterPoint[]; curve: 
               dataKey="modifiedDuration"
               name="Дюрация"
               unit=" г."
+              domain={[xDomainMin, xDomainMax]}
               label={{ value: 'Модифицированная дюрация, лет', position: 'insideBottom', offset: -5 }}
             />
             <YAxis
               type="number"
-              dataKey="effectiveYield"
+              dataKey="yieldPercent"
               name="Доходность"
               unit="%"
               label={{ value: 'Доходность, %', angle: -90, position: 'insideLeft' }}
@@ -96,17 +134,17 @@ function ScatterWidget({ scatter }: { scatter: { points: ScatterPoint[]; curve: 
             <Tooltip
               cursor={{ strokeDasharray: '3 3' }}
               content={({ payload }) => {
-                const point = payload?.[0]?.payload as ScatterPoint | undefined;
+                const point = payload?.[0]?.payload as (typeof chartPoints[0]) | undefined;
                 if (!point) return null;
                 return (
                   <Paper withBorder p="xs" radius="sm" shadow="sm">
                     <Text size="xs" fw={600}>
-                      {point.name ?? point.issuer ?? `Позиция #${point.positionId}`}
+                      {(point as ScatterPoint).name ?? (point as ScatterPoint).issuer ?? `Позиция #${(point as ScatterPoint).positionId}`}
                     </Text>
-                    <Text size="xs">Дюрация: {point.modifiedDuration.toFixed(2)} г.</Text>
-                    <Text size="xs">Доходность: {formatPercent(point.effectiveYield)}</Text>
+                    <Text size="xs">Дюрация: {(point as ScatterPoint).modifiedDuration.toFixed(2)} г.</Text>
+                    <Text size="xs">Доходность: {formatPercent(point.yieldFraction)}</Text>
                     <Text size="xs" c="dimmed">
-                      {pointCategory(point)}
+                      {pointCategory(point as ScatterPoint)}
                     </Text>
                   </Paper>
                 );
@@ -117,14 +155,14 @@ function ScatterWidget({ scatter }: { scatter: { points: ScatterPoint[]; curve: 
               <Scatter
                 key={category}
                 name={category}
-                data={scatter.points.filter((p) => pointCategory(p) === category)}
+                data={chartPoints.filter((p) => pointCategory(p) === category)}
                 fill={CATEGORY_COLOR[category]}
               />
             ))}
-            {scatter.curve.length > 0 && (
+            {chartCurve.length > 0 && (
               <Scatter
                 name="Безрисковая кривая"
-                data={scatter.curve.map((c) => ({ modifiedDuration: c.termYears, effectiveYield: c.yield }))}
+                data={chartCurve}
                 line={{ stroke: 'var(--mantine-color-gray-6)' }}
                 shape={() => <></>}
                 legendType="line"
