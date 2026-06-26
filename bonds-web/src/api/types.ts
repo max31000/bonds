@@ -87,11 +87,22 @@ export interface PrincipalRelease {
   isEstimated: boolean;
 }
 
+/** Одно из ближайших поступлений (GET /api/cashflow → nextPayments, task C1). */
+export interface NextPayment {
+  date: string;
+  name: string | null;
+  issuer: string | null;
+  flowType: string;
+  netRub: number;
+  isEstimated: boolean;
+}
+
 /** Ответ GET /api/cashflow. */
 export interface CashflowResponse {
   byMonth: CashflowMonth[];
   byPosition: CashflowByPosition[];
   principalReleases: PrincipalRelease[];
+  nextPayments: NextPayment[];
   disclaimer: string;
 }
 

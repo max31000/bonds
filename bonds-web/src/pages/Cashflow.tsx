@@ -13,6 +13,8 @@ import {
   Collapse,
   UnstyledButton,
   Tooltip as MantineTooltip,
+  SegmentedControl,
+  SimpleGrid,
 } from '@mantine/core';
 import {
   Bar,
@@ -37,19 +39,30 @@ const FLOW_TYPE_LABEL: Record<string, string> = {
   Call: 'Колл-опцион',
 };
 
+type Horizon = '6m' | '12m' | '24m' | 'all';
+
+function toDateParam(horizon: Horizon): string | undefined {
+  if (horizon === 'all') return undefined;
+  const months = { '6m': 6, '12m': 12, '24m': 24 }[horizon];
+  const d = new Date();
+  d.setMonth(d.getMonth() + months);
+  return d.toISOString().slice(0, 10);
+}
+
 /**
  * Экран денежного потока: календарь поступлений по месяцам (брутто/налог/нетто) +
  * даты освобождения тела долга (этап 09b §B.2).
  */
 export function Cashflow() {
-  const { byMonth, byPosition, principalReleases, disclaimer, isLoading, error, load } =
+  const { byMonth, byPosition, principalReleases, nextPayments, disclaimer, isLoading, error, load } =
     useCashflowStore();
   const [byPositionOpen, setByPositionOpen] = useState(false);
   const [selectedMonth, setSelectedMonth] = useState<string | null>(null);
+  const [horizon, setHorizon] = useState<Horizon>('12m');
 
   useEffect(() => {
-    load();
-  }, [load]);
+    load(toDateParam(horizon));
+  }, [load, horizon]);
 
   const hasEstimatedAny = byMonth.some((m) => m.hasEstimatedFlows);
 
@@ -59,6 +72,11 @@ export function Cashflow() {
     'Нетто': m.netRub,
     raw: m,
   }));
+
+  const totalNetRub = byMonth.reduce((s, m) => s + m.netRub, 0);
+  const totalCouponGross = byMonth.reduce((s, m) => s + m.couponGrossRub, 0);
+  const totalPrincipalGross = byMonth.reduce((s, m) => s + m.principalGrossRub, 0);
+  const totalTaxRub = byMonth.reduce((s, m) => s + m.taxRub, 0);
 
   return (
     <Stack gap="md">
@@ -78,6 +96,41 @@ export function Cashflow() {
 
       {!isLoading && !error && (
         <>
+          <Group justify="flex-end" mb="md">
+            <SegmentedControl
+              value={horizon}
+              onChange={(v) => setHorizon(v as Horizon)}
+              data={[
+                { value: '6m', label: '6 мес' },
+                { value: '12m', label: '12 мес' },
+                { value: '24m', label: '24 мес' },
+                { value: 'all', label: 'Весь срок' },
+              ]}
+              size="xs"
+            />
+          </Group>
+
+          {byMonth.length > 0 && (
+            <SimpleGrid cols={4} mb="md" data-testid="cashflow-kpi-cards">
+              <Paper withBorder p="sm" radius="md">
+                <Text size="xs" c="dimmed">Нетто за период</Text>
+                <Text fw={700} size="lg">{formatRub(totalNetRub)}</Text>
+              </Paper>
+              <Paper withBorder p="sm" radius="md">
+                <Text size="xs" c="dimmed">Купоны (брутто)</Text>
+                <Text fw={700} size="lg">{formatRub(totalCouponGross)}</Text>
+              </Paper>
+              <Paper withBorder p="sm" radius="md">
+                <Text size="xs" c="dimmed">Возврат тела</Text>
+                <Text fw={700} size="lg">{formatRub(totalPrincipalGross)}</Text>
+              </Paper>
+              <Paper withBorder p="sm" radius="md">
+                <Text size="xs" c="dimmed">Налог</Text>
+                <Text fw={700} size="lg">{formatRub(totalTaxRub)}</Text>
+              </Paper>
+            </SimpleGrid>
+          )}
+
           {byMonth.length === 0 ? (
             <Alert color="gray" title="Нет данных" data-testid="cashflow-empty">
               Календарь поступлений пуст — появится после синхронизации с брокерским счётом.
@@ -200,6 +253,39 @@ export function Cashflow() {
               </Table>
             )}
           </Paper>
+
+          {nextPayments.length > 0 && (
+            <Paper withBorder p="md" radius="md" data-testid="next-payments">
+              <Text fw={600} mb="xs">Ближайшие поступления</Text>
+              <Table>
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th>Дата</Table.Th>
+                    <Table.Th>Бумага</Table.Th>
+                    <Table.Th>Тип</Table.Th>
+                    <Table.Th>Нетто</Table.Th>
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
+                  {nextPayments.map((p, idx) => (
+                    <Table.Tr key={idx}>
+                      <Table.Td>{formatDate(p.date)}</Table.Td>
+                      <Table.Td>{p.name ?? p.issuer ?? '—'}</Table.Td>
+                      <Table.Td>{FLOW_TYPE_LABEL[p.flowType] ?? p.flowType}</Table.Td>
+                      <Table.Td>
+                        {formatRub(p.netRub)}
+                        {p.isEstimated && (
+                          <MantineTooltip label="Оценка: будущий купон флоатера неизвестен, посчитан по текущей ставке" withArrow>
+                            <Badge size="xs" color="yellow" variant="light" ml={4}>~</Badge>
+                          </MantineTooltip>
+                        )}
+                      </Table.Td>
+                    </Table.Tr>
+                  ))}
+                </Table.Tbody>
+              </Table>
+            </Paper>
+          )}
 
           {byPosition.length > 0 && (
             <Paper withBorder p="md" radius="md">

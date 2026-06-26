@@ -37,6 +37,7 @@ public static class CashFlowEndpoints
                 ByMonth = [],
                 ByPosition = [],
                 PrincipalReleases = [],
+                NextPayments = [],
                 Disclaimer = Disclaimers.Metrics,
             });
         }
@@ -46,6 +47,21 @@ public static class CashFlowEndpoints
         var byPositionAgg = CashFlowAggregator.ByPosition(flows).ToList();
         var allInstruments = await instrumentRepo.GetAllAsync();
         var instrumentLookup = allInstruments.ToDictionary(i => i.Id, i => (i.Name, i.Issuer));
+
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        var nextPayments = flows
+            .Where(f => f.Date >= today)
+            .OrderBy(f => f.Date)
+            .Take(5)
+            .Select(f => new NextPaymentDto
+            {
+                Date = f.Date,
+                Name = instrumentLookup.GetValueOrDefault(f.InstrumentId).Name,
+                Issuer = instrumentLookup.GetValueOrDefault(f.InstrumentId).Issuer,
+                FlowType = f.FlowType.ToString(),
+                NetRub = f.NetRub,
+                IsEstimated = f.IsEstimated,
+            }).ToList();
 
         var monthPositionFlows = CashFlowAggregator.ByMonthPosition(flows);
         var positionsByMonth = monthPositionFlows
@@ -96,6 +112,7 @@ public static class CashFlowEndpoints
                 AmountRub = r.AmountRub,
                 IsEstimated = r.IsEstimated,
             }).ToList(),
+            NextPayments = nextPayments,
             Disclaimer = Disclaimers.Metrics,
         };
 
@@ -108,6 +125,7 @@ public sealed record CashFlowResponseDto
     public required IReadOnlyList<MonthlyCashFlowDto> ByMonth { get; init; }
     public required IReadOnlyList<PositionCashFlowDto> ByPosition { get; init; }
     public required IReadOnlyList<PrincipalReleaseDto> PrincipalReleases { get; init; }
+    public required IReadOnlyList<NextPaymentDto> NextPayments { get; init; }
     public required string Disclaimer { get; init; }
 }
 
@@ -154,5 +172,15 @@ public sealed record PrincipalReleaseDto
     public required ulong InstrumentId { get; init; }
     public required string FlowType { get; init; }
     public required decimal AmountRub { get; init; }
+    public required bool IsEstimated { get; init; }
+}
+
+public sealed record NextPaymentDto
+{
+    public required DateOnly Date { get; init; }
+    public string? Name { get; init; }
+    public string? Issuer { get; init; }
+    public required string FlowType { get; init; }
+    public required decimal NetRub { get; init; }
     public required bool IsEstimated { get; init; }
 }

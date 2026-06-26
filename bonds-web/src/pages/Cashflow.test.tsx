@@ -56,6 +56,7 @@ const baseResponse: CashflowResponse = {
       isEstimated: false,
     },
   ],
+  nextPayments: [],
   disclaimer: '',
 };
 
@@ -65,6 +66,7 @@ describe('Cashflow', () => {
       byMonth: [],
       byPosition: [],
       principalReleases: [],
+      nextPayments: [],
       disclaimer: '',
       isLoading: false,
       error: null,
@@ -172,6 +174,7 @@ describe('Cashflow', () => {
       byMonth: baseResponse.byMonth,
       byPosition: baseResponse.byPosition,
       principalReleases: baseResponse.principalReleases,
+      nextPayments: [],
       disclaimer: '',
       isLoading: false,
       error: null,
@@ -204,5 +207,38 @@ describe('Cashflow', () => {
     renderCashflow();
 
     await waitFor(() => expect(screen.getByText('тестовый дисклеймер')).toBeInTheDocument());
+  });
+
+  it('shows KPI cards when data is present', async () => {
+    server.use(http.get('*/api/cashflow', () => HttpResponse.json(baseResponse)));
+
+    renderCashflow();
+
+    await waitFor(() => expect(screen.getByTestId('cashflow-kpi-cards')).toBeInTheDocument());
+  });
+
+  it('shows next payments section when data has nextPayments', async () => {
+    server.use(
+      http.get('*/api/cashflow', () =>
+        HttpResponse.json({
+          ...baseResponse,
+          nextPayments: [
+            {
+              date: '2026-07-15',
+              name: 'ОФЗ 26238',
+              issuer: 'Минфин РФ',
+              flowType: 'Coupon',
+              netRub: 8700,
+              isEstimated: false,
+            },
+          ],
+        }),
+      ),
+    );
+
+    renderCashflow();
+
+    await waitFor(() => expect(screen.getByTestId('next-payments')).toBeInTheDocument());
+    expect(screen.getAllByText('ОФЗ 26238').length).toBeGreaterThan(0);
   });
 });
