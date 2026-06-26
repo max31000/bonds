@@ -2,6 +2,7 @@ using System.Security.Claims;
 using Bonds.Api.Middleware;
 using Bonds.Core.Interfaces.Repositories;
 using Bonds.Core.Models;
+using Bonds.Core.Time;
 using Bonds.Infrastructure.Analytics;
 
 namespace Bonds.Api.Endpoints;
@@ -28,7 +29,7 @@ public static class PositionsEndpoints
         var accountId = await ResolveAccountIdAsync(principal, accountRepo);
         if (accountId is null) return Results.Ok(new PositionsResponseDto { Positions = [], Disclaimer = Disclaimers.Metrics });
 
-        var asOf = DateOnly.FromDateTime(DateTime.UtcNow);
+        var asOf = BusinessClock.MoscowToday();
         var holdings = await holdingsBuilder.BuildForAccountAsync(accountId.Value, asOf);
 
         var dto = new PositionsResponseDto
@@ -53,7 +54,7 @@ public static class PositionsEndpoints
         var position = await positionRepo.GetByIdAsync(id, accountId.Value);
         if (position is null) throw new NotFoundException($"Позиция {id} не найдена");
 
-        var asOf = DateOnly.FromDateTime(DateTime.UtcNow);
+        var asOf = BusinessClock.MoscowToday();
         var built = await holdingsBuilder.BuildDetailedAsync(position, asOf);
         if (built is null) throw new NotFoundException($"Инструмент по позиции {id} не найден");
 

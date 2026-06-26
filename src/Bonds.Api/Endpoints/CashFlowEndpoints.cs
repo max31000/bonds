@@ -2,6 +2,7 @@ using System.Security.Claims;
 using Bonds.Core.CashFlow;
 using Bonds.Core.Interfaces.Repositories;
 using Bonds.Core.Models;
+using Bonds.Core.Time;
 
 namespace Bonds.Api.Endpoints;
 
@@ -48,7 +49,7 @@ public static class CashFlowEndpoints
         var allInstruments = await instrumentRepo.GetAllAsync();
         var instrumentLookup = allInstruments.ToDictionary(i => i.Id, i => (i.Name, i.Issuer));
 
-        var today = DateOnly.FromDateTime(DateTime.Today);
+        var today = BusinessClock.MoscowToday();
         var nextPayments = flows
             .Where(f => f.Date >= today)
             .OrderBy(f => f.Date)

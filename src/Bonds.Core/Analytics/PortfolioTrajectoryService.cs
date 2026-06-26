@@ -8,7 +8,8 @@ public static class PortfolioTrajectoryService
         IEnumerable<PortfolioHolding> holdings,
         IEnumerable<MonthlyCashFlowSummary> monthlySummaries,
         int horizonMonths,
-        decimal reinvestRate)
+        decimal reinvestRate,
+        DateOnly asOf)
     {
         var holdingsList = holdings.ToList();
         var initialValue = holdingsList.Sum(h => h.MarketValueRub);
@@ -16,8 +17,9 @@ public static class PortfolioTrajectoryService
         var monthFlows = monthlySummaries
             .ToDictionary(m => m.Month, m => m);
 
-        var today = DateOnly.FromDateTime(DateTime.Today);
-        var firstOfCurrentMonth = new DateOnly(today.Year, today.Month, 1);
+        // T-5/M-3: «сегодня» приходит извне (московская бизнес-дата), а не из DateTime.Today —
+        // так горизонт траектории согласован с остальными расчётными путями.
+        var firstOfCurrentMonth = new DateOnly(asOf.Year, asOf.Month, 1);
 
         // Месячный множитель реинвеста: годовая эффективная ставка → месячный корень (M-4),
         // а не линейное /12. Для линии «без реинвеста» множитель = 1.

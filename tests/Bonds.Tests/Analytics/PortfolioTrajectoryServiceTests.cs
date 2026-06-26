@@ -50,11 +50,9 @@ public class PortfolioTrajectoryServiceTests
         HasEstimatedFlows = false,
     };
 
-    private static DateOnly FirstOfCurrentMonth()
-    {
-        var today = DateOnly.FromDateTime(DateTime.Today);
-        return new DateOnly(today.Year, today.Month, 1);
-    }
+    // Фиксированная бизнес-дата — траектория теперь принимает asOf явно (T-5), тесты детерминированы.
+    private static readonly DateOnly AsOf = new(2026, 6, 15);
+    private static DateOnly FirstOfCurrentMonth() => new(AsOf.Year, AsOf.Month, 1);
 
     // ─── T-3 (C-1/C-2/M-2): корректная модель учёта тела и дохода ─────────────
 
@@ -71,7 +69,7 @@ public class PortfolioTrajectoryServiceTests
             Summary(firstOfMonth.AddMonths(1), couponGross: 0m, tax: 0m, principalGross: 1000m),   // месяц 2 — погашение тела
         };
 
-        var result = PortfolioTrajectoryService.Compute(holdings, summaries, horizonMonths: 2, reinvestRate: 0m);
+        var result = PortfolioTrajectoryService.Compute(holdings, summaries, horizonMonths: 2, reinvestRate: 0m, asOf: AsOf);
 
         // Месяц 2: бумага погашена (bondValue=0), стоимость = кэш = купон-нетто 43.5 + тело 1000.
         result.WithoutReinvest[1].PortfolioValueRub.Should().BeApproximately(1043.5m, 0.01m,
@@ -91,7 +89,7 @@ public class PortfolioTrajectoryServiceTests
             Summary(firstOfMonth.AddMonths(1), couponGross: 0m, tax: 0m, principalGross: 500m),
         };
 
-        var result = PortfolioTrajectoryService.Compute(holdings, summaries, horizonMonths: 3, reinvestRate: 0m);
+        var result = PortfolioTrajectoryService.Compute(holdings, summaries, horizonMonths: 3, reinvestRate: 0m, asOf: AsOf);
 
         result.WithoutReinvest.Should().OnlyContain(p => p.CumulativeIncomeRub == 0m,
             "возврат тела не должен попадать в накопленный доход");
@@ -108,7 +106,7 @@ public class PortfolioTrajectoryServiceTests
             Summary(firstOfMonth, couponGross: 100m, tax: 13m, principalGross: 0m),
         };
 
-        var result = PortfolioTrajectoryService.Compute(holdings, summaries, horizonMonths: 3, reinvestRate: 0m);
+        var result = PortfolioTrajectoryService.Compute(holdings, summaries, horizonMonths: 3, reinvestRate: 0m, asOf: AsOf);
 
         result.WithoutReinvest[0].CumulativeIncomeRub.Should().Be(87m,
             "купон текущего месяца (100 − 13 налог) должен войти уже в первую точку");
@@ -118,7 +116,7 @@ public class PortfolioTrajectoryServiceTests
     public void MonotonicWithNoFlows()
     {
         var holdings = new[] { Holding(1, 100_000m, 0.15m) };
-        var result = PortfolioTrajectoryService.Compute(holdings, [], 36, 0.12m);
+        var result = PortfolioTrajectoryService.Compute(holdings, [], 36, 0.12m, AsOf);
 
         result.WithReinvest.Should().HaveCount(36);
         result.WithoutReinvest.Should().HaveCount(36);
@@ -140,13 +138,12 @@ public class PortfolioTrajectoryServiceTests
     {
         var holdings = new[] { Holding(1, 100_000m, 0.15m) };
 
-        // Build 12 monthly summaries with 1000 each, all in future months
-        var today = DateOnly.FromDateTime(DateTime.Today);
-        var summaries = Enumerable.Range(1, 12)
-            .Select(i => MonthSummary(new DateOnly(today.Year, today.Month, 1).AddMonths(i), 1000m))
+        // Build 12 monthly summaries with 1000 each, aligned to the asOf month
+        var summaries = Enumerable.Range(0, 12)
+            .Select(i => MonthSummary(FirstOfCurrentMonth().AddMonths(i), 1000m))
             .ToList();
 
-        var result = PortfolioTrajectoryService.Compute(holdings, summaries, 12, 0.12m);
+        var result = PortfolioTrajectoryService.Compute(holdings, summaries, 12, 0.12m, AsOf);
 
         result.WithReinvest[11].PortfolioValueRub
             .Should().BeGreaterThan(result.WithoutReinvest[11].PortfolioValueRub);

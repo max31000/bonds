@@ -4,6 +4,7 @@ using Bonds.Core.Analytics;
 using Bonds.Core.Calculation;
 using Bonds.Core.CashFlow;
 using Bonds.Core.Interfaces.Repositories;
+using Bonds.Core.Time;
 using Bonds.Infrastructure.Analytics;
 
 namespace Bonds.Api.Endpoints;
@@ -84,7 +85,7 @@ public static class AnalyticsEndpoints
             });
         }
 
-        var asOf = DateOnly.FromDateTime(DateTime.UtcNow);
+        var asOf = BusinessClock.MoscowToday();
         var holdings = await holdingsBuilder.BuildForAccountAsync(accountId.Value, asOf);
         var composition = PortfolioCompositionService.Calculate(holdings);
 
@@ -128,7 +129,7 @@ public static class AnalyticsEndpoints
         IReadOnlyList<Core.Analytics.PortfolioHolding> holdings = [];
         if (accountId is not null)
         {
-            var asOf = DateOnly.FromDateTime(DateTime.UtcNow);
+            var asOf = BusinessClock.MoscowToday();
             holdings = await holdingsBuilder.BuildForAccountAsync(accountId.Value, asOf);
         }
 
@@ -188,7 +189,7 @@ public static class AnalyticsEndpoints
             return Results.Ok(new ComparisonResponseDto { Rows = [], Disclaimer = PositionComparisonService.YieldDisclaimer });
         }
 
-        var asOf = DateOnly.FromDateTime(DateTime.UtcNow);
+        var asOf = BusinessClock.MoscowToday();
         var holdings = await holdingsBuilder.BuildForAccountAsync(accountId.Value, asOf);
         var result = PositionComparisonService.Compare(holdings, asOf);
 
@@ -228,7 +229,7 @@ public static class AnalyticsEndpoints
         var accountId = await PositionsEndpoints.ResolveAccountIdAsync(principal, accountRepo);
         if (accountId is null) throw new NotFoundException("Счёт не найден");
 
-        var asOf = DateOnly.FromDateTime(DateTime.UtcNow);
+        var asOf = BusinessClock.MoscowToday();
         var holdings = await holdingsBuilder.BuildForAccountAsync(accountId.Value, asOf);
 
         var holdPosition = holdings.FirstOrDefault(h => h.PositionId == request.HoldPositionId);
@@ -293,7 +294,7 @@ public static class AnalyticsEndpoints
             });
         }
 
-        var asOf = DateOnly.FromDateTime(DateTime.UtcNow);
+        var asOf = BusinessClock.MoscowToday();
         var holdings = (await holdingsBuilder.BuildForAccountAsync(accountId.Value, asOf)).ToList();
         var currentValue = holdings.Sum(h => h.MarketValueRub);
 
@@ -342,16 +343,16 @@ public static class AnalyticsEndpoints
         }
 
         var horizon = horizonMonths ?? 36;
-        var asOf = DateOnly.FromDateTime(DateTime.Today);
+        var asOf = BusinessClock.MoscowToday();
         var holdings = (await holdingsBuilder.BuildForAccountAsync(accountId.Value, asOf)).ToList();
         var effectiveRate = reinvestRate ?? PortfolioTrajectoryService.DefaultReinvestRate(holdings);
 
-        var from = DateOnly.FromDateTime(DateTime.Today);
+        var from = BusinessClock.MoscowToday();
         var to = from.AddMonths(horizon);
         var flows = await projectedCashFlows.GetByAccountIdAsync(accountId.Value, from, to);
         var monthlySummaries = CashFlowAggregator.ByMonth(flows);
 
-        var result = PortfolioTrajectoryService.Compute(holdings, monthlySummaries, horizon, effectiveRate);
+        var result = PortfolioTrajectoryService.Compute(holdings, monthlySummaries, horizon, effectiveRate, asOf);
 
         return Results.Ok(new TrajectoryResponseDto
         {

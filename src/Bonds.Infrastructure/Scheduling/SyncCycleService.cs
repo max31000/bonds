@@ -3,6 +3,7 @@ using Bonds.Core.Calculation;
 using Bonds.Core.Interfaces.Repositories;
 using Bonds.Core.Models;
 using Bonds.Core.Signals;
+using Bonds.Core.Time;
 using Bonds.Infrastructure.Analytics;
 using Bonds.Infrastructure.CashFlow;
 using Bonds.Infrastructure.Sync;
@@ -135,7 +136,7 @@ public sealed class SyncCycleService : ISyncCycleRunner
             return result;
         }
 
-        var asOf = DateOnly.FromDateTime(DateTime.UtcNow);
+        var asOf = BusinessClock.MoscowToday();
 
         // --- 1. BondSyncService ---
         try
