@@ -13,7 +13,9 @@ public static class SwitchAnalysisService
     public const string Disclaimer =
         "Анализ замены сравнивает только текущие позиции портфеля (не скринер по всей вселенной бумаг). " +
         "Налог при продаже (НДФЛ на разницу цены покупки/продажи, сальдирование убытков) не учтён — " +
-        "это плоская оценка, не финансовая рекомендация. Перед сделкой проверьте фактические условия у брокера.";
+        "это плоская оценка, не финансовая рекомендация. Выгода спреда оценивается линейно (спред × " +
+        "горизонт, без сложного начисления/компаундирования) на капитале после комиссии продажи; " +
+        "комиссия каждой сделки учтена один раз. Перед сделкой проверьте фактические условия у брокера.";
 
     /// <summary>
     /// Сравнивает удержание позиции <paramref name="holdPosition"/> с переходом в
@@ -46,23 +48,22 @@ public static class SwitchAnalysisService
         var buyCommissionRub = netProceedsAfterSale * buyCommissionRate;
         var totalSwitchCostRub = sellCommissionRub + buyCommissionRub;
 
-        // Выгода/проигрыш от самой замены считается на ОДНОЙ и той же базе (MarketValueRub
-        // holdPosition) для обеих доходностей — иначе комиссии оказались бы учтены дважды:
-        // один раз явно в totalSwitchCostRub, второй раз скрыто через уменьшение базы для
-        // switchYieldGainRub (баг, исправленный при ревью этого сервиса). Комиссии вычитаются
-        // из чистого выигрыша один раз, отдельным членом ниже.
+        // Выгода/проигрыш от замены считается на ОДНОЙ и той же базе для обеих доходностей —
+        // иначе комиссии оказались бы учтены дважды (T-10/L-5). База — капитал ПОСЛЕ комиссии
+        // продажи (netProceedsAfterSale): именно столько денег физически перекладывается в target
+        // и зарабатывает спред; на полной стоимости hold выгода была бы чуть завышена. Оценка
+        // линейная (спред × горизонт), без сложного начисления — горизонт сравнения и так оценочный.
         var yieldSpread = (targetPosition.EffectiveYield ?? 0m) - (holdPosition.EffectiveYield ?? 0m);
-        var spreadGainRub = holdPosition.MarketValueRub * yieldSpread * horizonYears;
+        var spreadGainRub = netProceedsAfterSale * yieldSpread * horizonYears;
 
         var netBenefitRub = spreadGainRub - totalSwitchCostRub;
 
         // Сколько лет нужно держать targetPosition, чтобы выгода от разницы доходностей окупила
-        // комиссии перехода (простая линейная оценка — без сложного начисления, т.к. горизонт
-        // сравнения и так оценочный; достаточно для ответа "когда окупится переход").
+        // комиссии перехода (та же линейная оценка на том же капитале после комиссии продажи).
         decimal? breakEvenYears = null;
-        if (yieldSpread > 0m && holdPosition.MarketValueRub > 0m)
+        if (yieldSpread > 0m && netProceedsAfterSale > 0m)
         {
-            breakEvenYears = totalSwitchCostRub / (holdPosition.MarketValueRub * yieldSpread);
+            breakEvenYears = totalSwitchCostRub / (netProceedsAfterSale * yieldSpread);
         }
 
         var hasUsableYields = holdPosition.EffectiveYield.HasValue && targetPosition.EffectiveYield.HasValue;

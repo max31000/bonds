@@ -85,6 +85,35 @@ public class SwitchAnalysisServiceTests
     }
 
     [Fact]
+    public void Compare_SpreadGain_ComputedOnCapitalAfterSaleCommission()
+    {
+        // T-10/L-5: в target идёт меньший капитал, чем полная стоимость hold (после комиссии продажи).
+        // Выгода спреда должна считаться на капитале ПОСЛЕ комиссии продажи, а не на полной стоимости.
+        var hold = new SwitchCandidate { PositionId = 1, MarketValueRub = 100_000m, EffectiveYield = 0.10m };
+        var target = new SwitchCandidate { PositionId = 2, MarketValueRub = 100_000m, EffectiveYield = 0.20m };
+
+        var result = SwitchAnalysisService.Compare(hold, target, horizonYears: 1m,
+            sellCommissionRate: 0.01m, buyCommissionRate: 0m);
+
+        // netProceedsAfterSale = 99000; spreadGain = 99000·0.10·1 = 9900; netBenefit = 9900 − 1000 = 8900.
+        // На полной базе (старое поведение) было бы 10000 − 1000 = 9000.
+        result.NetBenefitRub.Should().BeApproximately(8900m, 0.01m,
+            "спред считается на капитале после комиссии продажи, не на полной стоимости hold");
+    }
+
+    [Fact]
+    public void Compare_Disclaimer_NotesLinearNonCompoundingEstimate()
+    {
+        var hold = new SwitchCandidate { PositionId = 1, MarketValueRub = 1000m, EffectiveYield = 0.1m };
+        var target = new SwitchCandidate { PositionId = 2, MarketValueRub = 1000m, EffectiveYield = 0.1m };
+
+        var result = SwitchAnalysisService.Compare(hold, target, horizonYears: 1m);
+
+        result.Disclaimer.Should().Contain("линейн",
+            "дисклеймер должен явно оговаривать линейность оценки без компаундирования (T-10/L-5)");
+    }
+
+    [Fact]
     public void Compare_InvalidHorizon_Throws()
     {
         var hold = new SwitchCandidate { PositionId = 1, MarketValueRub = 1000m, EffectiveYield = 0.1m };
