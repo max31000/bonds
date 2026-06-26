@@ -17,7 +17,7 @@ import { usePositionsStore } from '../store/usePositionsStore';
 import { useSettingsStore } from '../store/useSettingsStore';
 import { Disclaimer } from '../components/Disclaimer';
 import type { PositionRow } from '../api/types';
-import { formatRub, formatDaysUntil, formatPercent, formatNumber } from '../utils/format';
+import { formatRub, formatDaysUntil, formatPercent, formatNumber, formatBp } from '../utils/format';
 
 type SortDirection = 'asc' | 'desc';
 
@@ -134,7 +134,7 @@ export function Positions() {
                     </UnstyledButton>
                   </Table.Th>
                   <Table.Th>Дюрация</Table.Th>
-                  <Table.Th>G-спред</Table.Th>
+                  <Table.Th>G-спред, б.п.</Table.Th>
                   <Table.Th>Дней до даты</Table.Th>
                   <Table.Th>Тип купона</Table.Th>
                   <Table.Th>Пометки</Table.Th>
@@ -162,7 +162,7 @@ export function Positions() {
                         </Group>
                       </Table.Td>
                       <Table.Td>{formatNumber(row.modifiedDuration)}</Table.Td>
-                      <Table.Td>{formatNumber(row.gSpread)}</Table.Td>
+                      <Table.Td>{formatBp(row.gSpread)}</Table.Td>
                       <Table.Td>
                         {formatDaysUntil(row.calculatedToOffer ? row.horizonDate : row.maturityDate)}
                       </Table.Td>

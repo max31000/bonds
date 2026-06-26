@@ -33,10 +33,10 @@ const basePosition: PositionRow = {
   maturityDate: '2030-01-01',
   horizonDate: '2030-01-01',
   calculatedToOffer: false,
-  ytmEffective: 12.5,
-  currentYield: 11.8,
+  ytmEffective: 0.125,
+  currentYield: 0.118,
   modifiedDuration: 3.2,
-  gSpread: 50,
+  gSpread: 0.005,
   isFloater: false,
   isIndexed: false,
   isEstimated: false,
@@ -72,7 +72,7 @@ describe('Positions', () => {
       couponType: 'Floating',
       isFloater: true,
       ytmEffective: null,
-      currentYield: 9.4,
+      currentYield: 0.094,
     };
     server.use(
       http.get('*/api/positions', () => HttpResponse.json({ positions: [floater], disclaimer: '' })),
@@ -154,8 +154,8 @@ describe('Positions', () => {
   });
 
   it('sorts by yield when the column header is clicked', async () => {
-    const low: PositionRow = { ...basePosition, positionId: 5, issuer: 'Нижняя', ytmEffective: 5 };
-    const high: PositionRow = { ...basePosition, positionId: 6, issuer: 'Верхняя', ytmEffective: 20 };
+    const low: PositionRow = { ...basePosition, positionId: 5, issuer: 'Нижняя', ytmEffective: 0.05 };
+    const high: PositionRow = { ...basePosition, positionId: 6, issuer: 'Верхняя', ytmEffective: 0.20 };
     server.use(
       http.get('*/api/positions', () => HttpResponse.json({ positions: [low, high], disclaimer: '' })),
     );

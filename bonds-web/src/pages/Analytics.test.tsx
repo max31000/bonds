@@ -26,7 +26,7 @@ const baseScatter: ScatterResponse = {
       instrumentId: 10,
       issuer: 'Минфин РФ',
       modifiedDuration: 3.2,
-      effectiveYield: 12.5,
+      effectiveYield: 0.125,
       yieldKind: 'Ytm',
       isFloater: false,
       isIndexed: false,
@@ -38,7 +38,7 @@ const baseScatter: ScatterResponse = {
       instrumentId: 11,
       issuer: 'РЖД',
       modifiedDuration: 1.5,
-      effectiveYield: 9.4,
+      effectiveYield: 0.094,
       yieldKind: 'Current',
       isFloater: true,
       isIndexed: false,
@@ -47,8 +47,8 @@ const baseScatter: ScatterResponse = {
     },
   ],
   curve: [
-    { termYears: 0.25, yield: 10 },
-    { termYears: 5, yield: 11 },
+    { termYears: 0.25, yield: 0.10 },
+    { termYears: 5, yield: 0.11 },
   ],
   curveAsOf: '2026-06-25',
   disclaimer: '',
@@ -64,10 +64,10 @@ const baseComposition: CompositionResponse = {
 };
 
 const baseXirr: XirrResponse = {
-  currentXirr: 13.2,
+  currentXirr: 0.132,
   history: [
-    { date: '2026-06-01', marketValueRub: 200000, investedRub: 180000, xirr: 12.8 },
-    { date: '2026-06-25', marketValueRub: 205000, investedRub: 180000, xirr: 13.2 },
+    { date: '2026-06-01', marketValueRub: 200000, investedRub: 180000, xirr: 0.128 },
+    { date: '2026-06-25', marketValueRub: 205000, investedRub: 180000, xirr: 0.132 },
   ],
   disclaimer: '',
 };

@@ -8,6 +8,7 @@ import {
   formatMonthLabel,
   formatDate,
   formatSharePercent,
+  formatBp,
 } from './format';
 
 describe('formatRub', () => {
@@ -77,8 +78,12 @@ describe('formatDaysUntil', () => {
 });
 
 describe('formatPercent', () => {
-  it('formats with 2 decimal digits', () => {
-    expect(formatPercent(12.3456)).toBe('12.35%');
+  it('formats a fraction as a percentage with 2 decimal digits', () => {
+    expect(formatPercent(0.1234)).toBe('12.34%');
+  });
+
+  it('formats zero', () => {
+    expect(formatPercent(0)).toBe('0.00%');
   });
 
   it('returns a dash for null/undefined/NaN', () => {
@@ -142,5 +147,21 @@ describe('formatSharePercent', () => {
     expect(formatSharePercent(null)).toBe('—');
     expect(formatSharePercent(undefined)).toBe('—');
     expect(formatSharePercent(NaN)).toBe('—');
+  });
+});
+
+describe('formatBp', () => {
+  it('formats a fraction as basis points', () => {
+    expect(formatBp(0.015)).toBe('150 б.п.');
+  });
+
+  it('formats G-spread correctly', () => {
+    expect(formatBp(0.02)).toBe('200 б.п.');
+  });
+
+  it('returns a dash for null/undefined/NaN', () => {
+    expect(formatBp(null)).toBe('—');
+    expect(formatBp(undefined)).toBe('—');
+    expect(formatBp(NaN)).toBe('—');
   });
 });

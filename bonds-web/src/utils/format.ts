@@ -40,10 +40,16 @@ export function formatDaysUntil(dateIso: string | null | undefined, now: Date = 
   return `${Math.abs(days)} дн. назад`;
 }
 
-/** Форматирует процентное значение (например, доходность) с 2 знаками после запятой. */
+/** Форматирует процентное значение (например, доходность) с 2 знаками после запятой. Ожидает дробь (0-1), умножает на 100. */
 export function formatPercent(value: number | null | undefined): string {
   if (value === null || value === undefined || Number.isNaN(value)) return '—';
-  return `${value.toFixed(2)}%`;
+  return `${(value * 100).toFixed(2)}%`;
+}
+
+/** Форматирует значение в базисные пункты (б.п.). Ожидает дробь (0-1), умножает на 10000. */
+export function formatBp(value: number | null | undefined): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return '—';
+  return `${Math.round(value * 10000)} б.п.`;
 }
 
 /** Форматирует число (например, дюрацию в годах) с заданной точностью, по умолчанию 2 знака. */
