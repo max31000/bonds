@@ -43,6 +43,28 @@ public class CurrentYieldCalculatorTests
     }
 
     [Fact]
+    public void Calculate_ShortIrregularFirstCoupon_StaysCloseToNormalRate()
+    {
+        // T-8/L-3: первый купон — короткий нерегулярный «огрызок» (5 дней) с полной суммой 10.
+        // Старый код брал именно его и аннуализировал ×365/5 → ~0.73 (абсурд). Должны игнорировать
+        // аномальный крайний период и оценивать ставку по регулярному (30-дневному) купону → ~0.12.
+        var coupons = new[]
+        {
+            TestModelFactory.Coupon(InstrumentId, AsOf.AddDays(5), 10m, periodDays: 5),   // короткий огрызок
+            TestModelFactory.Coupon(InstrumentId, AsOf.AddDays(35), 10m, periodDays: 30),
+            TestModelFactory.Coupon(InstrumentId, AsOf.AddDays(65), 10m, periodDays: 30),
+            TestModelFactory.Coupon(InstrumentId, AsOf.AddDays(95), 10m, periodDays: 30),
+        };
+
+        var result = CurrentYieldCalculator.Calculate(AsOf, dirtyPrice: 1000m, coupons);
+
+        result.Should().NotBeNull();
+        // «Нормальная» текущая доходность ≈ 10·365/30 / 1000 ≈ 0.1217; в пределах ~5%, не 0.73.
+        result!.Value.Should().BeInRange(0.114m, 0.126m,
+            "аномальный короткий первый период не должен задваивать оценку ставки");
+    }
+
+    [Fact]
     public void Calculate_AllKnownCouponsInPast_UsesLastKnownAsBestEstimate()
     {
         var pastCoupon = TestModelFactory.Coupon(InstrumentId, AsOf.AddDays(-10), 20m, periodDays: 91);
