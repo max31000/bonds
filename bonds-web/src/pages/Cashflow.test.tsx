@@ -94,7 +94,11 @@ describe('Cashflow', () => {
 
     renderCashflow();
 
-    await waitFor(() => expect(screen.getByText('есть оценочные потоки')).toBeInTheDocument());
+    await waitFor(() => {
+      const badge = screen.getByTestId('estimated-flows-badge');
+      expect(badge).toBeInTheDocument();
+      expect(badge).toHaveTextContent('есть оценочные потоки');
+    });
   });
 
   it('shows an empty state when there is no monthly data', async () => {
@@ -131,14 +135,22 @@ describe('Cashflow', () => {
     renderCashflow();
 
     await waitFor(() => expect(screen.getByTestId('toggle-by-position')).toBeInTheDocument());
-    expect(screen.queryByTestId('cashflow-by-position-table')).not.toBeInTheDocument();
+
+    // Initially, the table should be hidden (display: none due to Collapse being closed)
+    await waitFor(() => {
+      const table = screen.getByTestId('cashflow-by-position-table');
+      expect(table).toBeInTheDocument();
+      expect(table.parentElement).toHaveStyle({ display: 'none' });
+    });
 
     const { default: userEvent } = await import('@testing-library/user-event');
     await userEvent.click(screen.getByTestId('toggle-by-position'));
 
-    await waitFor(() =>
-      expect(screen.getByTestId('cashflow-by-position-table')).toBeInTheDocument(),
-    );
+    // After clicking, the table should be visible
+    await waitFor(() => {
+      const table = screen.getByTestId('cashflow-by-position-table');
+      expect(table.parentElement).not.toHaveStyle({ display: 'none' });
+    });
   });
 
   it('shows an error state without crashing when the request fails', async () => {

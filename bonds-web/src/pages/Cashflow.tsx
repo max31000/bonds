@@ -86,7 +86,7 @@ export function Cashflow() {
               <Group justify="space-between" mb="xs">
                 <Text fw={600}>Поступления по месяцам</Text>
                 {hasEstimatedAny && (
-                  <Badge size="sm" color="yellow" variant="light">
+                  <Badge size="sm" color="yellow" variant="light" data-testid="estimated-flows-badge" title="Оценка: будущий купон флоатера неизвестен, посчитан по текущей ставке">
                     есть оценочные потоки
                   </Badge>
                 )}
@@ -145,7 +145,7 @@ export function Cashflow() {
                             <Table.Td>{formatRub(pos.netRub)}</Table.Td>
                             <Table.Td>
                               {pos.isEstimated && (
-                                <Badge size="sm" color="yellow" variant="light">оценочно</Badge>
+                                <Badge size="sm" color="yellow" variant="light" title="Оценка: будущий купон флоатера неизвестен, посчитан по текущей ставке">оценочно</Badge>
                               )}
                             </Table.Td>
                           </Table.Tr>
@@ -184,7 +184,7 @@ export function Cashflow() {
                       <Table.Td>{formatRub(r.amountRub)}</Table.Td>
                       <Table.Td>
                         {r.isEstimated && (
-                          <Badge size="sm" color="yellow" variant="light">
+                          <Badge size="sm" color="yellow" variant="light" title="Оценка: будущий купон флоатера неизвестен, посчитан по текущей ставке">
                             оценочно
                           </Badge>
                         )}
@@ -226,7 +226,7 @@ export function Cashflow() {
                         <Table.Td>{formatRub(p.netRub)}</Table.Td>
                         <Table.Td>
                           {p.hasEstimatedFlows && (
-                            <Badge size="sm" color="yellow" variant="light">
+                            <Badge size="sm" color="yellow" variant="light" title="Оценка: будущий купон флоатера неизвестен, посчитан по текущей ставке">
                               оценочно
                             </Badge>
                           )}

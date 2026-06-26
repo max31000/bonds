@@ -17,7 +17,7 @@ import { usePositionsStore } from '../store/usePositionsStore';
 import { useSettingsStore } from '../store/useSettingsStore';
 import { Disclaimer } from '../components/Disclaimer';
 import type { PositionRow } from '../api/types';
-import { formatRub, formatDaysUntil, formatPercent, formatNumber, formatBp } from '../utils/format';
+import { formatRub, formatDaysUntil, formatPercent, formatNumber, formatBp, formatDate } from '../utils/format';
 
 type SortDirection = 'asc' | 'desc';
 
@@ -133,9 +133,9 @@ export function Positions() {
                       </Group>
                     </UnstyledButton>
                   </Table.Th>
-                  <Table.Th>Дюрация</Table.Th>
+                  <Table.Th>Дюрация, лет</Table.Th>
                   <Table.Th>G-спред, б.п.</Table.Th>
-                  <Table.Th>Дней до даты</Table.Th>
+                  <Table.Th>До погашения/оферты</Table.Th>
                   <Table.Th>Тип купона</Table.Th>
                   <Table.Th>Пометки</Table.Th>
                 </Table.Tr>
@@ -164,7 +164,7 @@ export function Positions() {
                       <Table.Td>{formatNumber(row.modifiedDuration)}</Table.Td>
                       <Table.Td>{formatBp(row.gSpread)}</Table.Td>
                       <Table.Td>
-                        {formatDaysUntil(row.calculatedToOffer ? row.horizonDate : row.maturityDate)}
+                        {formatDaysUntil(row.calculatedToOffer ? row.horizonDate : row.maturityDate)}{row.calculatedToOffer ? ' (оферта)' : ''}
                       </Table.Td>
                       <Table.Td>{COUPON_TYPE_LABEL[row.couponType]}</Table.Td>
                       <Table.Td>

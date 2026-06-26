@@ -109,7 +109,7 @@ function ScatterWidget({ scatter }: { scatter: { points: ScatterPoint[]; curve: 
 
       {chartPoints.length === 0 ? (
         <Text size="sm" c="dimmed" data-testid="scatter-empty">
-          Нет позиций с рассчитанной дюрацией и доходностью.
+          Данные появятся после синхронизации с брокерским счётом.
         </Text>
       ) : (
         <ResponsiveContainer width="100%" height={360}>
