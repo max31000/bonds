@@ -12,6 +12,7 @@ import {
   Table,
   Collapse,
   UnstyledButton,
+  Tooltip as MantineTooltip,
 } from '@mantine/core';
 import {
   Bar,
@@ -86,9 +87,11 @@ export function Cashflow() {
               <Group justify="space-between" mb="xs">
                 <Text fw={600}>Поступления по месяцам</Text>
                 {hasEstimatedAny && (
-                  <Badge size="sm" color="yellow" variant="light" data-testid="estimated-flows-badge" title="Оценка: будущий купон флоатера неизвестен, посчитан по текущей ставке">
-                    есть оценочные потоки
-                  </Badge>
+                  <MantineTooltip label="Оценка: будущий купон флоатера неизвестен, посчитан по текущей ставке" withArrow>
+                    <Badge size="sm" color="yellow" variant="light" data-testid="estimated-flows-badge">
+                      есть оценочные потоки
+                    </Badge>
+                  </MantineTooltip>
                 )}
               </Group>
               <Text size="xs" c="dimmed" mb="xs">
@@ -145,7 +148,9 @@ export function Cashflow() {
                             <Table.Td>{formatRub(pos.netRub)}</Table.Td>
                             <Table.Td>
                               {pos.isEstimated && (
-                                <Badge size="sm" color="yellow" variant="light" title="Оценка: будущий купон флоатера неизвестен, посчитан по текущей ставке">оценочно</Badge>
+                                <MantineTooltip label="Оценка: будущий купон флоатера неизвестен, посчитан по текущей ставке" withArrow>
+                                  <Badge size="sm" color="yellow" variant="light">оценочно</Badge>
+                                </MantineTooltip>
                               )}
                             </Table.Td>
                           </Table.Tr>
@@ -184,9 +189,9 @@ export function Cashflow() {
                       <Table.Td>{formatRub(r.amountRub)}</Table.Td>
                       <Table.Td>
                         {r.isEstimated && (
-                          <Badge size="sm" color="yellow" variant="light" title="Оценка: будущий купон флоатера неизвестен, посчитан по текущей ставке">
-                            оценочно
-                          </Badge>
+                          <MantineTooltip label="Оценка: будущий купон флоатера неизвестен, посчитан по текущей ставке" withArrow>
+                            <Badge size="sm" color="yellow" variant="light">оценочно</Badge>
+                          </MantineTooltip>
                         )}
                       </Table.Td>
                     </Table.Tr>
@@ -226,9 +231,9 @@ export function Cashflow() {
                         <Table.Td>{formatRub(p.netRub)}</Table.Td>
                         <Table.Td>
                           {p.hasEstimatedFlows && (
-                            <Badge size="sm" color="yellow" variant="light" title="Оценка: будущий купон флоатера неизвестен, посчитан по текущей ставке">
-                              оценочно
-                            </Badge>
+                            <MantineTooltip label="Оценка: будущий купон флоатера неизвестен, посчитан по текущей ставке" withArrow>
+                              <Badge size="sm" color="yellow" variant="light">оценочно</Badge>
+                            </MantineTooltip>
                           )}
                         </Table.Td>
                       </Table.Tr>
