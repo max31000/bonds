@@ -4,7 +4,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { MantineProvider } from '@mantine/core';
 import { http, HttpResponse } from 'msw';
 import { server } from '../test/msw-handlers';
-import { Analytics } from './Analytics';
+import { Analytics, buildScatterChartData } from './Analytics';
 import { useAnalyticsStore } from '../store/useAnalyticsStore';
 import { useAuthStore } from '../store/useAuthStore';
 import type { CompositionResponse, RateScenarioResponse, ScatterResponse, TrajectoryResponse, XirrResponse } from '../api/types';
@@ -27,6 +27,7 @@ const baseScatter: ScatterResponse = {
       name: null,
       issuer: 'Минфин РФ',
       modifiedDuration: 3.2,
+      macaulayDuration: 3.4,
       effectiveYield: 0.125,
       yieldKind: 'Ytm',
       isFloater: false,
@@ -40,6 +41,7 @@ const baseScatter: ScatterResponse = {
       name: null,
       issuer: 'РЖД',
       modifiedDuration: 1.5,
+      macaulayDuration: 1.6,
       effectiveYield: 0.094,
       yieldKind: 'Current',
       isFloater: true,
@@ -290,5 +292,23 @@ describe('Analytics', () => {
     renderAnalytics();
 
     await waitFor(() => expect(screen.getByTestId('trajectory-widget')).toBeInTheDocument());
+  });
+});
+
+describe('buildScatterChartData (T-7/L-1)', () => {
+  it('plots points by Macaulay duration, not modified duration', () => {
+    const { points } = buildScatterChartData(baseScatter);
+
+    const minfin = points.find((p) => p.issuer === 'Минфин РФ')!;
+    // macaulayDuration = 3.4 в фикстуре, modifiedDuration = 3.2 — ось X должна брать Маколея,
+    // чтобы положение точки относительно кривой совпадало со знаком G-спреда (он на Маколее).
+    expect(minfin.durationYears).toBe(3.4);
+    expect(minfin.durationYears).not.toBe(minfin.modifiedDuration);
+  });
+
+  it('keeps the risk-free curve on its own term axis', () => {
+    const { curve } = buildScatterChartData(baseScatter);
+
+    expect(curve.map((c) => c.durationYears)).toContain(5);
   });
 });

@@ -33,6 +33,10 @@ public sealed record PortfolioHolding
     /// <summary>Модифицированная дюрация (в годах) — null, если метрика не посчиталась (флоатер без дюрации/неполные данные).</summary>
     public decimal? ModifiedDuration { get; init; }
 
+    /// <summary>Дюрация Маколея (в годах) — единый измеритель «срока» для scatter-оси и G-спреда (T-7).
+    /// Null там же, где и модифицированная.</summary>
+    public decimal? MacaulayDuration { get; init; }
+
     /// <summary>Выпуклость (convexity) в годах² — null если не посчиталась (флоатер/неполные данные).</summary>
     public decimal? Convexity { get; init; }
 

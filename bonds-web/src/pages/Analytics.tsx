@@ -58,43 +58,50 @@ const CATEGORY_COLOR: Record<string, string> = {
   'Неполные данные': 'var(--mantine-color-red-5)',
 };
 
-function ScatterWidget({ scatter }: { scatter: { points: ScatterPoint[]; curve: { termYears: number; yield: number }[]; curveAsOf: string | null } }) {
-  // Convert to percent for Y-axis (keep fraction for tooltip)
-  const chartPoints = scatter.points
-    .filter(p => p.effectiveYield != null)
-    .map(p => ({
+/**
+ * T-7/L-1: и ось X scatter, и G-спред должны мерить «срок» одним измерителем — дюрацией Маколея.
+ * Раньше точки наносились по модифицированной дюрации, а G-спред считался по Маколею, поэтому
+ * визуальное «над/под кривой» не совпадало со знаком G-спреда. Здесь точки строятся по
+ * macaulayDuration (нейтральный ключ durationYears), кривая — по своему сроку (termYears).
+ * Вынесено в чистую функцию ради юнит-теста (recharts не рендерит ось в jsdom).
+ */
+export function buildScatterChartData(scatter: { points: ScatterPoint[]; curve: { termYears: number; yield: number }[] }) {
+  const points = scatter.points
+    .filter((p) => p.effectiveYield != null)
+    .map((p) => ({
       ...p,
+      durationYears: p.macaulayDuration,
       yieldFraction: p.effectiveYield,
       yieldPercent: (p.effectiveYield ?? 0) * 100,
     }));
 
-  // Compute X-axis domain from portfolio data
-  const durations = chartPoints.map(p => p.modifiedDuration).filter(Boolean) as number[];
+  const durations = points.map((p) => p.durationYears).filter(Boolean) as number[];
   const dMin = durations.length > 0 ? Math.min(...durations) : 0;
   const dMax = durations.length > 0 ? Math.max(...durations) : 5;
   const xDomainMin = Math.max(0, dMin - 0.5);
   const xDomainMax = dMax + 0.5;
 
-  // Clip curve to X range + convert to percent
-  let chartCurve = scatter.curve
-    .filter(c => c.termYears >= xDomainMin && c.termYears <= xDomainMax)
+  const toCurvePoint = (c: { termYears: number; yield: number }) => ({
+    durationYears: c.termYears,
+    yieldPercent: c.yield * 100,
+    yieldFraction: c.yield,
+  });
+
+  let curve = scatter.curve
+    .filter((c) => c.termYears >= xDomainMin && c.termYears <= xDomainMax)
     .sort((a, b) => a.termYears - b.termYears)
-    .map(c => ({
-      modifiedDuration: c.termYears,
-      yieldPercent: c.yield * 100,
-      yieldFraction: c.yield,
-    }));
+    .map(toCurvePoint);
 
   // If curve is empty after clipping but scatter.curve is not, include all curve
-  if (chartCurve.length === 0 && scatter.curve.length > 0) {
-    chartCurve = scatter.curve
-      .sort((a, b) => a.termYears - b.termYears)
-      .map(c => ({
-        modifiedDuration: c.termYears,
-        yieldPercent: c.yield * 100,
-        yieldFraction: c.yield,
-      }));
+  if (curve.length === 0 && scatter.curve.length > 0) {
+    curve = scatter.curve.slice().sort((a, b) => a.termYears - b.termYears).map(toCurvePoint);
   }
+
+  return { points, curve, xDomainMin, xDomainMax };
+}
+
+function ScatterWidget({ scatter }: { scatter: { points: ScatterPoint[]; curve: { termYears: number; yield: number }[]; curveAsOf: string | null } }) {
+  const { points: chartPoints, curve: chartCurve, xDomainMin, xDomainMax } = buildScatterChartData(scatter);
 
   const categories = Array.from(new Set(chartPoints.map(pointCategory)));
 
@@ -119,11 +126,11 @@ function ScatterWidget({ scatter }: { scatter: { points: ScatterPoint[]; curve: 
             <CartesianGrid strokeDasharray="3 3" />
             <XAxis
               type="number"
-              dataKey="modifiedDuration"
-              name="Дюрация"
+              dataKey="durationYears"
+              name="Дюрация Маколея"
               unit=" г."
               domain={[xDomainMin, xDomainMax]}
-              label={{ value: 'Модифицированная дюрация, лет', position: 'insideBottom', offset: -5 }}
+              label={{ value: 'Дюрация Маколея, лет', position: 'insideBottom', offset: -5 }}
             />
             <YAxis
               type="number"
@@ -143,7 +150,7 @@ function ScatterWidget({ scatter }: { scatter: { points: ScatterPoint[]; curve: 
                     <Text size="xs" fw={600}>
                       {(point as ScatterPoint).name ?? (point as ScatterPoint).issuer ?? `Позиция #${(point as ScatterPoint).positionId}`}
                     </Text>
-                    <Text size="xs">Дюрация: {(point as ScatterPoint).modifiedDuration.toFixed(2)} г.</Text>
+                    <Text size="xs">Дюрация Маколея: {(point as ScatterPoint).macaulayDuration.toFixed(2)} г.</Text>
                     <Text size="xs">Доходность: {formatPercent(point.yieldFraction)}</Text>
                     <Text size="xs" c="dimmed">
                       {pointCategory(point as ScatterPoint)}

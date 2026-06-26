@@ -134,7 +134,7 @@ public static class AnalyticsEndpoints
         }
 
         var points = holdings
-            .Where(h => h.ModifiedDuration is not null)
+            .Where(h => h.ModifiedDuration is not null && h.MacaulayDuration is not null)
             .Select(h => new ScatterPointDto
             {
                 PositionId = h.PositionId,
@@ -142,6 +142,7 @@ public static class AnalyticsEndpoints
                 Name = h.Name,
                 Issuer = h.Issuer,
                 ModifiedDuration = h.ModifiedDuration!.Value,
+                MacaulayDuration = h.MacaulayDuration!.Value,
                 EffectiveYield = (h.IsFloater || h.IsIndexed) ? h.CurrentYield : h.YtmEffective,
                 YieldKind = (h.IsFloater || h.IsIndexed) ? "CurrentYield" : "Ytm",
                 IsFloater = h.IsFloater,
@@ -422,6 +423,10 @@ public sealed record ScatterPointDto
     public string? Name { get; init; }
     public string? Issuer { get; init; }
     public required decimal ModifiedDuration { get; init; }
+
+    /// <summary>T-7/L-1: дюрация Маколея — ось X scatter строится по ней, чтобы визуальное «над/под
+    /// кривой» совпадало со знаком G-спреда (он тоже считается по Маколею).</summary>
+    public required decimal MacaulayDuration { get; init; }
     public decimal? EffectiveYield { get; init; }
     public required string YieldKind { get; init; }
     public required bool IsFloater { get; init; }

@@ -120,6 +120,8 @@ export interface ScatterPoint {
   name: string | null;
   issuer: string | null;
   modifiedDuration: number;
+  /** T-7/L-1: дюрация Маколея — по ней строится ось X scatter (согласована с G-спредом). */
+  macaulayDuration: number;
   effectiveYield: number;
   yieldKind: YieldKind;
   isFloater: boolean;
