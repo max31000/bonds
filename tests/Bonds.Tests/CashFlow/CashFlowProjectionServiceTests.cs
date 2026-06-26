@@ -67,6 +67,36 @@ public class CashFlowProjectionServiceTests
     }
 
     [Fact]
+    public void Project_IndexedBond_RedemptionMarkedEstimated()
+    {
+        // T-6/M-5: будущий номинал линкера (ОФЗ-ИН) зависит от инфляции и точно неизвестен —
+        // поток погашения должен быть помечен оценочным, а не выдан как достоверный.
+        var maturity = AsOf.AddDays(365);
+        var coupons = new[] { TestModelFactory.Coupon(InstrumentId, maturity, 30m) };
+
+        var input = BaseInput(quantity: 1, faceValue: 1000m, maturity, coupons, couponType: CouponType.Indexed);
+        var flows = CashFlowProjectionService.Project(input);
+
+        flows.Single(f => f.FlowType == CashFlowType.Redemption).IsEstimated
+            .Should().BeTrue("погашение линкера — оценка (тело индексируется на инфляцию)");
+    }
+
+    [Fact]
+    public void Project_IndexedBond_RedemptionUsesProvidedIndexedFaceValue()
+    {
+        // T-6/M-5: MOEX FACEVALUE для ОФЗ-ИН — уже проиндексированный текущий номинал; проекция
+        // должна гасить по нему (EnrichFromMoexAsync обновляет FaceValue из MOEX), а не по базовым 1000.
+        var maturity = AsOf.AddDays(365);
+        var coupons = new[] { TestModelFactory.Coupon(InstrumentId, maturity, 30m) };
+
+        var input = BaseInput(quantity: 2, faceValue: 1200m, maturity, coupons, couponType: CouponType.Indexed);
+        var flows = CashFlowProjectionService.Project(input);
+
+        flows.Single(f => f.FlowType == CashFlowType.Redemption).GrossRub
+            .Should().Be(2400m, "проиндексированный номинал 1200 * 2 облигации, а не базовый 1000");
+    }
+
+    [Fact]
     public void Project_AmortizingBond_TaxesOnlyCouponNotPrincipalReturn()
     {
         var maturity = AsOf.AddDays(730);
