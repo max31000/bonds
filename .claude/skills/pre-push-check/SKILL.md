@@ -9,7 +9,7 @@ description: >
   locally: .NET restore/build/unit+integration tests AND the frontend yarn install/typecheck/
   test/build (the same TypeScript type check that has broken the pipeline before), plus secret
   and lockfile guards. Always run it and get a clean pass before pushing — do not push on a
-  failed or skipped-required check.
+  failed check.
 ---
 
 # Pre-push check (BondAnalytics)
@@ -22,68 +22,78 @@ VDS ([.github/workflows/backend.yml](../../../.github/workflows/backend.yml),
 Telegram failure alert. The most common breakage is the **frontend TypeScript type check**
 (`yarn typecheck`), which `vite` does not catch during `yarn dev`, so it only blows up in CI.
 
-This skill runs the exact same steps CI runs, locally, so you catch failures before pushing.
+This skill runs the same steps CI runs, locally, so you catch failures before pushing.
 
 ## How to use it
 
-The whole checklist is a single script — **run it, don't reimplement it**:
+Run the checks **relevant to what changed** (mirror CI's path filters), from the repo root.
+Run every relevant check (don't stop at the first failure) so one pass surfaces all problems.
+If unsure what changed, run both backend and frontend.
+
+> The commands below ARE the checklist — run them directly. (There is no `scripts/pre-push-check.sh`
+> in the repo; if one is later added as a convenience wrapper, it must run exactly these steps.)
+
+### 0. Universal guards (cheap, always run)
 
 ```bash
-./scripts/pre-push-check.sh
+# No real .env may be committed (only .env.example). Broker tokens / JWT secrets live there.
+git ls-files --error-unmatch .env 2>/dev/null && echo "FAIL: .env is tracked — must not be committed" || echo "OK: no tracked .env"
+# yarn.lock must not drift from package.json (CI uses --frozen-lockfile and fails on drift).
+git diff --name-only origin/main...HEAD HEAD | grep -q '^bonds-web/package\.json$' \
+  && ! git diff --name-only origin/main...HEAD HEAD | grep -q '^bonds-web/yarn\.lock$' \
+  && echo "WARN: package.json changed but yarn.lock did not — run 'yarn install' and commit yarn.lock" \
+  || echo "OK: lockfile in sync"
 ```
 
-It auto-detects whether backend and/or frontend changed (mirroring CI's path filters) and runs
-the matching checks. It runs **all** checks (doesn't stop at the first failure), then prints a
-PASS/FAIL/SKIP summary and exits non-zero if anything required failed.
+### 1. Backend — run if `src/**`, `tests/**`, or `Bonds.sln` changed (mirrors backend.yml)
 
-Useful variants:
+```bash
+dotnet restore Bonds.sln
+dotnet build Bonds.sln --no-restore -c Release
+dotnet test tests/Bonds.Tests/Bonds.Tests.csproj --no-build -c Release --verbosity normal
+DOTNET_ENVIRONMENT=Testing dotnet test tests/Bonds.IntegrationTests/Bonds.IntegrationTests.csproj --no-build -c Release --verbosity normal
+```
 
-| Command | When |
-|---|---|
-| `./scripts/pre-push-check.sh` | Default — auto-detect scope from changed files vs `origin/main`. |
-| `./scripts/pre-push-check.sh --all` | Force both backend + frontend (use when unsure). |
-| `./scripts/pre-push-check.sh --backend` / `--frontend` | One side only. |
-| `./scripts/pre-push-check.sh --docker` | Also build the backend Docker image (CI builds & pushes it; add before a release-y push). |
-| `./scripts/pre-push-check.sh --format` | Also run `dotnet format --verify-no-changes`. |
+### 2. Frontend — run if `bonds-web/**` changed (mirrors frontend.yml; uses yarn + frozen lockfile)
+
+```bash
+cd bonds-web
+yarn install --frozen-lockfile
+yarn typecheck     # tsc -b --noEmit — THE step that usually reddens CI
+yarn lint          # eslint — extra vs CI; catches real bugs, keeps the bar up
+yarn test:run      # vitest
+yarn build         # tsc -b && vite build
+```
+
+### 3. Optional (before a release-y push)
+
+```bash
+# CI builds & pushes this image; a build failure breaks the pipeline.
+docker build -f src/Bonds.Api/Dockerfile -t bonds-api:prepush-check .
+# Formatting (not in CI today, but keeps the tree clean):
+dotnet format Bonds.sln --verify-no-changes
+```
 
 ## What it checks (and why)
 
-**Backend — mirrors `backend.yml`:**
-1. `dotnet restore Bonds.sln`
-2. `dotnet build Bonds.sln --no-restore -c Release` — build warnings-as-errors / compile breaks.
-3. `dotnet test` unit tests (`tests/Bonds.Tests`).
-4. `dotnet test` integration tests (`tests/Bonds.IntegrationTests`) with `DOTNET_ENVIRONMENT=Testing`.
-
-**Frontend — mirrors `frontend.yml` (uses yarn + frozen lockfile, exactly like CI):**
-1. `yarn install --frozen-lockfile`
-2. `yarn typecheck` (`tsc -b --noEmit`) — **the check that usually reddens CI.**
-3. `yarn lint` (eslint) — extra vs CI; catches real bugs, keeps the bar up.
-4. `yarn test:run` (vitest)
-5. `yarn build` (`tsc -b && vite build`)
-
-**Universal guards (cheap, always run):**
-- No tracked `.env` (only `.env.example` belongs in git — broker tokens / JWT secrets must never be committed).
-- `yarn.lock` not drifted from `package.json` (CI's `--frozen-lockfile` fails on drift).
+- **Backend** — `dotnet restore` → `build -c Release` (compile/warnings-as-errors) → unit tests
+  (`tests/Bonds.Tests`) → integration tests (`tests/Bonds.IntegrationTests`, needs
+  `DOTNET_ENVIRONMENT=Testing`).
+- **Frontend** — `yarn install --frozen-lockfile` → `yarn typecheck` (**the usual CI breaker**) →
+  `yarn lint` → `yarn test:run` (vitest) → `yarn build`.
+- **Guards** — no tracked `.env`; `yarn.lock` not drifted from `package.json`.
 
 ## Interpreting the result
 
-- **All PASS** → safe to push.
-- **Any FAIL** → fix it, then re-run. Treat the failing step's own output as the source of truth
-  (e.g. a `tsc` error points at the file:line and the type mismatch — fix the types, don't loosen
-  the check). Re-run the whole script after fixing; cheap checks running again is fine.
-- **SKIP on a required tool** (e.g. `dotnet`/`yarn` not on PATH) → don't treat the run as green.
-  Install the tool or run the missing side on a machine that has it before pushing.
+- **All steps pass** → safe to push.
+- **Any failure** → fix the root cause, then re-run that step (and the suite). Treat the failing
+  command's own output as the source of truth (e.g. a `tsc` error points at the file:line and the
+  type mismatch — fix the types, don't loosen the check).
+- **A required tool missing** (`dotnet`/`yarn` not on PATH) → don't treat the run as green; install
+  it or run the missing side on a machine that has it before pushing.
 
 ## Hard rule
 
-Do **not** run `git push` until this script exits 0 for the scope you're pushing. If the user
+Do **not** run `git push` until the checks for the scope you're pushing pass. If the user
 explicitly insists on pushing despite a failure, surface exactly which checks failed and that CI
 will likely go red, and let them make the call — but never push silently over a red local check.
-
-## Extending the checklist
-
-If you add a real check, put it in `scripts/pre-push-check.sh` (the single source of truth so a
-git hook and humans run the same thing) rather than only describing it here. Good candidates as
-the project grows: a secrets/regex scan for accidentally committed tokens, `dotnet format` in CI,
-adding `yarn lint` to `frontend.yml`, or an OpenAPI/contract drift check between backend DTOs and
-frontend `api/types.ts`.
