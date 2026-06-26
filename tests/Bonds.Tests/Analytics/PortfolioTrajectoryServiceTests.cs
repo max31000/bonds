@@ -39,6 +39,81 @@ public class PortfolioTrajectoryServiceTests
         HasEstimatedFlows = false,
     };
 
+    private static MonthlyCashFlowSummary Summary(DateOnly month, decimal couponGross, decimal tax, decimal principalGross) => new()
+    {
+        Month = month,
+        GrossRub = couponGross + principalGross,
+        TaxRub = tax,
+        NetRub = couponGross - tax + principalGross,
+        CouponGrossRub = couponGross,
+        PrincipalGrossRub = principalGross,
+        HasEstimatedFlows = false,
+    };
+
+    private static DateOnly FirstOfCurrentMonth()
+    {
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        return new DateOnly(today.Year, today.Month, 1);
+    }
+
+    // ─── T-3 (C-1/C-2/M-2): корректная модель учёта тела и дохода ─────────────
+
+    [Fact]
+    public void Redemption_DoesNotDoubleCountPrincipal()
+    {
+        // C-1: при погашении тело должно ПЕРЕЙТИ из стоимости бумаг в кэш (нейтрально для суммы),
+        // а не прибавиться к кэшу поверх неизменной стоимости бумаг.
+        var holdings = new[] { Holding(1, 1000m) };
+        var firstOfMonth = FirstOfCurrentMonth();
+        var summaries = new[]
+        {
+            Summary(firstOfMonth, couponGross: 50m, tax: 6.5m, principalGross: 0m),               // месяц 1 — купон
+            Summary(firstOfMonth.AddMonths(1), couponGross: 0m, tax: 0m, principalGross: 1000m),   // месяц 2 — погашение тела
+        };
+
+        var result = PortfolioTrajectoryService.Compute(holdings, summaries, horizonMonths: 2, reinvestRate: 0m);
+
+        // Месяц 2: бумага погашена (bondValue=0), стоимость = кэш = купон-нетто 43.5 + тело 1000.
+        result.WithoutReinvest[1].PortfolioValueRub.Should().BeApproximately(1043.5m, 0.01m,
+            "тело не должно учитываться дважды (≈2043 — это баг C-1)");
+        result.WithoutReinvest[1].CumulativeIncomeRub.Should().Be(43.5m,
+            "доход = только купон-нетто, возврат тела доходом не является (C-2)");
+    }
+
+    [Fact]
+    public void Income_ExcludesPrincipal()
+    {
+        // C-2: возврат тела (амортизация/погашение) — возврат капитала, не доход.
+        var holdings = new[] { Holding(1, 1000m) };
+        var firstOfMonth = FirstOfCurrentMonth();
+        var summaries = new[]
+        {
+            Summary(firstOfMonth.AddMonths(1), couponGross: 0m, tax: 0m, principalGross: 500m),
+        };
+
+        var result = PortfolioTrajectoryService.Compute(holdings, summaries, horizonMonths: 3, reinvestRate: 0m);
+
+        result.WithoutReinvest.Should().OnlyContain(p => p.CumulativeIncomeRub == 0m,
+            "возврат тела не должен попадать в накопленный доход");
+    }
+
+    [Fact]
+    public void CurrentMonthIncluded()
+    {
+        // M-2: поток текущего месяца не должен теряться (итерация стартует с i=0).
+        var holdings = new[] { Holding(1, 1000m) };
+        var firstOfMonth = FirstOfCurrentMonth();
+        var summaries = new[]
+        {
+            Summary(firstOfMonth, couponGross: 100m, tax: 13m, principalGross: 0m),
+        };
+
+        var result = PortfolioTrajectoryService.Compute(holdings, summaries, horizonMonths: 3, reinvestRate: 0m);
+
+        result.WithoutReinvest[0].CumulativeIncomeRub.Should().Be(87m,
+            "купон текущего месяца (100 − 13 налог) должен войти уже в первую точку");
+    }
+
     [Fact]
     public void MonotonicWithNoFlows()
     {

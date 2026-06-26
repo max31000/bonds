@@ -11,50 +11,76 @@ public static class PortfolioTrajectoryService
         decimal reinvestRate)
     {
         var holdingsList = holdings.ToList();
-        var currentValue = holdingsList.Sum(h => h.MarketValueRub);
+        var initialValue = holdingsList.Sum(h => h.MarketValueRub);
 
         var monthFlows = monthlySummaries
-            .ToDictionary(m => m.Month, m => m.NetRub);
+            .ToDictionary(m => m.Month, m => m);
 
         var today = DateOnly.FromDateTime(DateTime.Today);
-        var withReinvest = new List<TrajectoryPoint>();
-        var withoutReinvest = new List<TrajectoryPoint>();
+        var firstOfCurrentMonth = new DateOnly(today.Year, today.Month, 1);
 
-        decimal cashWith = 0m;
-        decimal cashWithout = 0m;
-        decimal cumulativeIncome = 0m;
+        // Месячный множитель реинвеста: годовая эффективная ставка → месячный корень (M-4),
+        // а не линейное /12. Для линии «без реинвеста» множитель = 1.
+        var monthlyFactor = reinvestRate == 0m
+            ? 1m
+            : (decimal)Math.Pow(1.0 + (double)reinvestRate, 1.0 / 12.0);
 
-        for (var i = 1; i <= horizonMonths; i++)
-        {
-            var monthStart = new DateOnly(today.Year, today.Month, 1).AddMonths(i);
-            var netFlow = monthFlows.TryGetValue(monthStart, out var flow) ? flow : 0m;
-
-            cumulativeIncome += netFlow;
-            cashWith = (cashWith + netFlow) * (1 + reinvestRate / 12m);
-            cashWithout += netFlow;
-
-            var month = monthStart.ToString("yyyy-MM");
-            withReinvest.Add(new TrajectoryPoint
-            {
-                Month = month,
-                PortfolioValueRub = currentValue + cashWith,
-                CumulativeIncomeRub = cumulativeIncome,
-            });
-            withoutReinvest.Add(new TrajectoryPoint
-            {
-                Month = month,
-                PortfolioValueRub = currentValue + cashWithout,
-                CumulativeIncomeRub = cumulativeIncome,
-            });
-        }
+        var withReinvest = BuildTrajectory(initialValue, firstOfCurrentMonth, horizonMonths, monthFlows, monthlyFactor);
+        var withoutReinvest = BuildTrajectory(initialValue, firstOfCurrentMonth, horizonMonths, monthFlows, 1m);
 
         return new TrajectoryResult
         {
-            InitialValueRub = currentValue,
+            InitialValueRub = initialValue,
             WithReinvest = withReinvest,
             WithoutReinvest = withoutReinvest,
             ReinvestRateUsed = reinvestRate,
         };
+    }
+
+    /// <summary>
+    /// Корректная модель (T-3): два состояния — стоимость бумаг <c>bondValue</c> (старт = Σ рыночной
+    /// стоимости) и <c>cash</c> (старт = 0). Возврат тела УХОДИТ из стоимости бумаг и ПРИХОДИТ в кэш
+    /// (перенос, не новый капитал) — поэтому суммарная стоимость не скачет при погашении (C-1).
+    /// Доходом считается только купон-нетто (C-2). Итерация включает текущий месяц (i=0, M-2).
+    /// </summary>
+    private static List<TrajectoryPoint> BuildTrajectory(
+        decimal initialValue,
+        DateOnly firstOfCurrentMonth,
+        int horizonMonths,
+        IReadOnlyDictionary<DateOnly, MonthlyCashFlowSummary> monthFlows,
+        decimal monthlyFactor)
+    {
+        var points = new List<TrajectoryPoint>(horizonMonths);
+        var bondValue = initialValue;
+        var cash = 0m;
+        var cumulativeIncome = 0m;
+
+        for (var i = 0; i < horizonMonths; i++)
+        {
+            var monthStart = firstOfCurrentMonth.AddMonths(i);
+
+            decimal netCoupon = 0m;
+            decimal netPrincipal = 0m;
+            if (monthFlows.TryGetValue(monthStart, out var m))
+            {
+                netCoupon = m.CouponGrossRub - m.TaxRub; // налог только на купон
+                netPrincipal = m.PrincipalGrossRub;       // возврат тела налогом не облагается
+            }
+
+            bondValue -= netPrincipal;                 // тело уходит из стоимости бумаг
+            cash += netCoupon + netPrincipal;          // …и приходит в кэш (перенос)
+            cash *= monthlyFactor;                      // реинвест (для линии «без» factor = 1)
+            cumulativeIncome += netCoupon;              // доход = только купоны
+
+            points.Add(new TrajectoryPoint
+            {
+                Month = monthStart.ToString("yyyy-MM"),
+                PortfolioValueRub = Math.Max(bondValue, 0m) + cash,
+                CumulativeIncomeRub = cumulativeIncome,
+            });
+        }
+
+        return points;
     }
 
     public static decimal DefaultReinvestRate(IEnumerable<PortfolioHolding> holdings)
