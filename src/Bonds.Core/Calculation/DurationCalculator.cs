@@ -59,9 +59,12 @@ public static class DurationCalculator
 
         if (pvSum <= 0) return null;
 
-        var macaulayYears = weightedTimeSum / pvSum;
+        // T-9/L-4: единая база нормировки — рыночная грязная цена (price), и для Маколея/выпуклости,
+        // и для PVBP. Раньше Маколей/выпуклость делились на ΣPV, а PVBP — на DirtyPrice; при неточном
+        // YTM (ΣPV ≠ price) метрики чуть рассинхронизировались. При точном YTM ΣPV == price → без изменений.
+        var macaulayYears = weightedTimeSum / price;
         var modifiedDuration = macaulayYears / (1.0 + y / couponsPerYear);
-        var convexity = weightedTimeSquaredSum / (pvSum * Math.Pow(1.0 + y, 2));
+        var convexity = weightedTimeSquaredSum / (price * Math.Pow(1.0 + y, 2));
         var pvbp = (decimal)modifiedDuration * dirtyPrice * 0.0001m;
 
         return new DurationResult(

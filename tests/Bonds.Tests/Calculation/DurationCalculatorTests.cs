@@ -66,6 +66,28 @@ public class DurationCalculatorTests
     }
 
     [Fact]
+    public void Calculate_PvSumDiffersFromDirtyPrice_AllMetricsUseDirtyPriceBase()
+    {
+        // T-9/L-4: при неточном YTM сумма приведённых потоков ≠ грязной цене. Выпуклость раньше
+        // нормировалась на ΣPV, а PVBP — на DirtyPrice → метрики рассинхронизированы. Теперь единая
+        // база — рыночная грязная цена. Здесь искусственно задаём dirtyPrice 900 при y=12%
+        // (ΣPV эталонного потока = 966.199), чтобы базы разошлись.
+        const decimal dirtyPrice = 900m;
+        var result = DurationCalculator.Calculate(dirtyPrice, ReferenceYtm, AsOf, ReferenceCashFlow(), couponsPerYear: 1);
+
+        result.Should().NotBeNull();
+
+        // Σ t·PV = 1·89.2857142857 + 2·876.9132653061 = 1843.1122448979; Маколей = ÷ dirtyPrice.
+        const decimal weightedTimeSum = 1843.1122448979591m;
+        result!.Value.MacaulayDurationYears.Should().BeApproximately(weightedTimeSum / dirtyPrice, 1e-4m,
+            "Маколей нормируется на грязную цену, а не на ΣPV");
+
+        // PVBP по-прежнему согласован с модифицированной дюрацией и той же грязной ценой.
+        var expectedPvbp = result.Value.ModifiedDuration * dirtyPrice * 0.0001m;
+        result.Value.Pvbp.Should().BeApproximately(expectedPvbp, 1e-6m);
+    }
+
+    [Fact]
     public void Calculate_NonPositivePrice_ReturnsNull()
     {
         DurationCalculator.Calculate(0m, ReferenceYtm, AsOf, ReferenceCashFlow(), 1).Should().BeNull();
