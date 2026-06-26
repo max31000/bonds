@@ -7,7 +7,7 @@ import { server } from '../test/msw-handlers';
 import { Analytics } from './Analytics';
 import { useAnalyticsStore } from '../store/useAnalyticsStore';
 import { useAuthStore } from '../store/useAuthStore';
-import type { CompositionResponse, ScatterResponse, XirrResponse } from '../api/types';
+import type { CompositionResponse, RateScenarioResponse, ScatterResponse, XirrResponse } from '../api/types';
 
 function renderAnalytics() {
   return render(
@@ -63,6 +63,20 @@ const baseComposition: CompositionResponse = {
   disclaimer: '',
 };
 
+const baseRateScenario: RateScenarioResponse = {
+  currentValueRub: 200000,
+  scenarios: [
+    { shiftBp: -200, newValueRub: 212000, deltaRub: 12000, deltaPercent: 6 },
+    { shiftBp: -100, newValueRub: 206000, deltaRub: 6000, deltaPercent: 3 },
+    { shiftBp: -50, newValueRub: 203000, deltaRub: 3000, deltaPercent: 1.5 },
+    { shiftBp: 0, newValueRub: 200000, deltaRub: 0, deltaPercent: 0 },
+    { shiftBp: 50, newValueRub: 197000, deltaRub: -3000, deltaPercent: -1.5 },
+    { shiftBp: 100, newValueRub: 194000, deltaRub: -6000, deltaPercent: -3 },
+    { shiftBp: 200, newValueRub: 188000, deltaRub: -12000, deltaPercent: -6 },
+  ],
+  disclaimer: '',
+};
+
 const baseXirr: XirrResponse = {
   currentXirr: 0.132,
   history: [
@@ -78,6 +92,7 @@ describe('Analytics', () => {
       scatter: null,
       composition: null,
       xirr: null,
+      rateScenario: null,
       isLoading: false,
       error: null,
     });
@@ -230,5 +245,18 @@ describe('Analytics', () => {
 
     await waitFor(() => expect(screen.getByTestId('scatter-widget')).toBeInTheDocument());
     expect(screen.getByTestId('scatter-widget')).toBeInTheDocument();
+  });
+
+  it('shows rate scenario widget when data is present', async () => {
+    server.use(
+      http.get('*/api/analytics/scatter', () => HttpResponse.json(baseScatter)),
+      http.get('*/api/analytics/composition', () => HttpResponse.json(baseComposition)),
+      http.get('*/api/analytics/xirr', () => HttpResponse.json(baseXirr)),
+      http.get('*/api/analytics/rate-scenario', () => HttpResponse.json(baseRateScenario)),
+    );
+
+    renderAnalytics();
+
+    await waitFor(() => expect(screen.getByTestId('rate-scenario-widget')).toBeInTheDocument());
   });
 });

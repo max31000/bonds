@@ -230,6 +230,21 @@ export interface SyncStatus {
   lastRunErrors: string[];
 }
 
+// ---- GET /api/analytics/rate-scenario ----
+
+export interface RateScenarioPoint {
+  shiftBp: number;
+  newValueRub: number;
+  deltaRub: number;
+  deltaPercent: number;
+}
+
+export interface RateScenarioResponse {
+  currentValueRub: number;
+  scenarios: RateScenarioPoint[];
+  disclaimer: string;
+}
+
 // ---- GET/PUT /api/settings, PUT /api/settings/tinvest-token (см. plan/09c §B.8) ----
 
 /** Настройки пользователя — пороги триггеров сигналов и базовая валюта. */

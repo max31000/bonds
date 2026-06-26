@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Title, Stack, Paper, Text, Alert, Loader, Center, Group, SegmentedControl } from '@mantine/core';
 import {
+  Bar,
+  BarChart,
   CartesianGrid,
   Cell,
   Legend,
@@ -19,7 +21,7 @@ import {
 import { useAnalyticsStore } from '../store/useAnalyticsStore';
 import { Disclaimer } from '../components/Disclaimer';
 import { formatPercent, formatRub, formatSharePercent, formatDate } from '../utils/format';
-import type { CompositionSlice, ScatterPoint } from '../api/types';
+import type { CompositionSlice, RateScenarioPoint, ScatterPoint } from '../api/types';
 
 const PIE_COLORS = [
   'var(--mantine-color-violet-6)',
@@ -272,12 +274,75 @@ function XirrWidget({ xirr }: { xirr: { currentXirr: number | null; history: { d
   );
 }
 
+function RateScenarioWidget({ rateScenario }: { rateScenario: { scenarios: RateScenarioPoint[]; disclaimer: string } }) {
+  const plus100 = rateScenario.scenarios.find((s) => s.shiftBp === 100);
+
+  return (
+    <Paper withBorder p="md" radius="md" data-testid="rate-scenario-widget">
+      <Text fw={600} mb="xs">
+        Сценарии ставок
+      </Text>
+
+      {rateScenario.scenarios.length === 0 ? (
+        <Text size="sm" c="dimmed">
+          Данные появятся после синхронизации с брокерским счётом.
+        </Text>
+      ) : (
+        <>
+          <ResponsiveContainer width="100%" height={300}>
+            <BarChart data={rateScenario.scenarios}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis
+                dataKey="shiftBp"
+                label={{ value: 'Сдвиг ключевой ставки, б.п.', position: 'insideBottom', offset: -5 }}
+              />
+              <YAxis
+                unit="%"
+                label={{ value: 'Изменение стоимости, %', angle: -90, position: 'insideLeft' }}
+              />
+              <Tooltip
+                content={({ active, payload }) => {
+                  if (!active || !payload?.length) return null;
+                  const p = payload[0].payload as RateScenarioPoint;
+                  return (
+                    <Paper p="xs" withBorder>
+                      <Text size="xs" fw={500}>{p.shiftBp > 0 ? '+' : ''}{p.shiftBp} б.п.</Text>
+                      <Text size="xs">Δ стоимость: {formatRub(p.deltaRub)}</Text>
+                      <Text size="xs">Δ%: {p.deltaPercent.toFixed(2)}%</Text>
+                    </Paper>
+                  );
+                }}
+              />
+              <Bar dataKey="deltaPercent" name="Δ%">
+                {rateScenario.scenarios.map((s, idx) => (
+                  <Cell
+                    key={idx}
+                    fill={s.deltaPercent >= 0 ? 'var(--mantine-color-teal-6)' : 'var(--mantine-color-red-5)'}
+                  />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+
+          {plus100 && (
+            <Text size="sm" c="dimmed" mt="sm">
+              При росте ставок на 100 б.п. портфель подешевеет примерно на {formatRub(Math.abs(plus100.deltaRub))} ({Math.abs(plus100.deltaPercent).toFixed(2)}%)
+            </Text>
+          )}
+
+          <Disclaimer text={rateScenario.disclaimer} />
+        </>
+      )}
+    </Paper>
+  );
+}
+
 /**
  * Экран аналитики: scatter «дюрация × доходность», композиция портфеля, кривая XIRR во времени
  * (этап 09b §B.3–B.5). Календарь поступлений — отдельный экран `/cashflow` (§B.2).
  */
 export function Analytics() {
-  const { scatter, composition, xirr, isLoading, error, load } = useAnalyticsStore();
+  const { scatter, composition, xirr, rateScenario, isLoading, error, load } = useAnalyticsStore();
 
   useEffect(() => {
     load();
@@ -302,6 +367,7 @@ export function Analytics() {
       {!isLoading && !error && scatter && <ScatterWidget scatter={scatter} />}
       {!isLoading && !error && composition && <CompositionWidget composition={composition} />}
       {!isLoading && !error && xirr && <XirrWidget xirr={xirr} />}
+      {!isLoading && !error && rateScenario && <RateScenarioWidget rateScenario={rateScenario} />}
 
       <Disclaimer text={scatter?.disclaimer || composition?.disclaimer || xirr?.disclaimer} />
     </Stack>

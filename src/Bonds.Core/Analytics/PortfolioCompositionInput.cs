@@ -33,6 +33,9 @@ public sealed record PortfolioHolding
     /// <summary>Модифицированная дюрация (в годах) — null, если метрика не посчиталась (флоатер без дюрации/неполные данные).</summary>
     public decimal? ModifiedDuration { get; init; }
 
+    /// <summary>Выпуклость (convexity) в годах² — null если не посчиталась (флоатер/неполные данные).</summary>
+    public decimal? Convexity { get; init; }
+
     /// <summary>YTM (эффективная) — null для флоатера/индексируемой бумаги или несошедшегося расчёта.</summary>
     public decimal? YtmEffective { get; init; }
 

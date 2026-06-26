@@ -156,6 +156,7 @@ public sealed class PortfolioHoldingsBuilder
             HorizonDate = metrics.HorizonDate,
             IsCalculatedToOffer = metrics.CalculatedToOffer,
             ModifiedDuration = metrics.ModifiedDuration,
+            Convexity = metrics.Convexity,
             YtmEffective = metrics.YtmEffective,
             CurrentYield = metrics.CurrentYield,
             GSpread = metrics.GSpread,

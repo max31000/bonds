@@ -1,5 +1,5 @@
 import { apiClient } from './client';
-import type { CompositionResponse, ScatterResponse, XirrResponse } from './types';
+import type { CompositionResponse, RateScenarioResponse, ScatterResponse, XirrResponse } from './types';
 
 /** GET /api/analytics/scatter — точки «дюрация × доходность» + безрисковая кривая (plan/09b §B.3). */
 export function fetchScatter(): Promise<ScatterResponse> {
@@ -18,4 +18,9 @@ export function fetchXirr(params?: { from?: string; to?: string }): Promise<Xirr
   if (params?.to) query.set('to', params.to);
   const qs = query.toString();
   return apiClient.get<XirrResponse>(`/analytics/xirr${qs ? `?${qs}` : ''}`);
+}
+
+/** GET /api/analytics/rate-scenario — портфель при параллельном сдвиге ставок. */
+export function fetchRateScenario(): Promise<RateScenarioResponse> {
+  return apiClient.get<RateScenarioResponse>('/analytics/rate-scenario');
 }

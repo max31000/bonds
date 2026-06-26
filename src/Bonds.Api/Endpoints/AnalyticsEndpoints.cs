@@ -22,6 +22,7 @@ public static class AnalyticsEndpoints
         app.MapGet("/api/analytics/scatter", GetScatter);
         app.MapGet("/api/analytics/comparison", GetComparison);
         app.MapPost("/api/analytics/replacement", PostReplacement);
+        app.MapGet("/api/analytics/rate-scenario", GetRateScenario);
     }
 
     // ─── GET /api/analytics/xirr ────────────────────────────────────────────────────────────
@@ -270,6 +271,49 @@ public static class AnalyticsEndpoints
 
         return Results.Ok(dto);
     }
+
+    // ─── GET /api/analytics/rate-scenario ───────────────────────────────────────────────────
+
+    private static async Task<IResult> GetRateScenario(
+        ClaimsPrincipal principal,
+        IAccountRepository accountRepo,
+        PortfolioHoldingsBuilder holdingsBuilder,
+        string? shiftsBp)
+    {
+        var accountId = await PositionsEndpoints.ResolveAccountIdAsync(principal, accountRepo);
+        if (accountId is null)
+        {
+            return Results.Ok(new RateScenarioResponseDto
+            {
+                CurrentValueRub = 0,
+                Scenarios = [],
+                Disclaimer = Disclaimers.Metrics,
+            });
+        }
+
+        var asOf = DateOnly.FromDateTime(DateTime.UtcNow);
+        var holdings = (await holdingsBuilder.BuildForAccountAsync(accountId.Value, asOf)).ToList();
+        var currentValue = holdings.Sum(h => h.MarketValueRub);
+
+        var shifts = string.IsNullOrEmpty(shiftsBp)
+            ? RateScenarioService.DefaultShiftsBp
+            : shiftsBp.Split(',').Select(int.Parse).ToArray();
+
+        var scenarios = RateScenarioService.Compute(holdings, shifts);
+
+        return Results.Ok(new RateScenarioResponseDto
+        {
+            CurrentValueRub = currentValue,
+            Scenarios = scenarios.Select(s => new RateScenarioPointDto
+            {
+                ShiftBp = s.ShiftBp,
+                NewValueRub = s.NewValueRub,
+                DeltaRub = s.DeltaRub,
+                DeltaPercent = s.DeltaPercent,
+            }).ToList(),
+            Disclaimer = Disclaimers.Metrics,
+        });
+    }
 }
 
 public sealed record XirrResponseDto
@@ -379,4 +423,19 @@ public sealed record ReplacementResponseDto
     public decimal? BreakEvenYears { get; init; }
     public required bool YieldDataIncomplete { get; init; }
     public required string Disclaimer { get; init; }
+}
+
+public sealed record RateScenarioResponseDto
+{
+    public required decimal CurrentValueRub { get; init; }
+    public required IReadOnlyList<RateScenarioPointDto> Scenarios { get; init; }
+    public required string Disclaimer { get; init; }
+}
+
+public sealed record RateScenarioPointDto
+{
+    public required int ShiftBp { get; init; }
+    public required decimal NewValueRub { get; init; }
+    public required decimal DeltaRub { get; init; }
+    public required decimal DeltaPercent { get; init; }
 }
