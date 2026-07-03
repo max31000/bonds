@@ -48,6 +48,7 @@ public class SyncCycleServiceTests
     private readonly Mock<ISignalRepository> _signals = new();
     private readonly Mock<ITargetAllocationRepository> _targetAllocations = new();
     private readonly Mock<ITInvestTokenProvider> _tokenProvider = new();
+    private readonly Mock<IWatchlistItemRepository> _watchlistItems = new();
 
     private void SetupNoPositionsHappyPath()
     {
@@ -72,6 +73,9 @@ public class SyncCycleServiceTests
         _yieldCurve.Setup(y => y.GetLatestAsync()).ReturnsAsync((YieldCurveSnapshot?)null);
 
         _snapshots.Setup(s => s.UpsertAsync(It.IsAny<PortfolioValueSnapshot>())).Returns(Task.CompletedTask);
+
+        // Задача 20 часть A: шаг синка watchlist — пустой список по умолчанию (ни одной watchlist-записи).
+        _watchlistItems.Setup(w => w.GetAllAsync()).ReturnsAsync(new List<WatchlistItem>());
     }
 
     private ServiceProvider BuildServiceProvider()
@@ -94,6 +98,7 @@ public class SyncCycleServiceTests
         services.AddSingleton(_snapshots.Object);
         services.AddSingleton(_signals.Object);
         services.AddSingleton(_targetAllocations.Object);
+        services.AddSingleton(_watchlistItems.Object);
 
         services.AddSingleton(NullLoggerFactory.Instance);
         services.AddSingleton(typeof(Microsoft.Extensions.Logging.ILogger<>), typeof(NullLogger<>));
@@ -101,6 +106,7 @@ public class SyncCycleServiceTests
         services.AddScoped<BondSyncService>();
         services.AddScoped<CashFlowProjectionOrchestrator>();
         services.AddScoped<PortfolioSnapshotService>();
+        services.AddScoped<WatchlistSyncService>();
 
         services.AddSingleton<IOptions<SignalEngineOptions>>(Options.Create(new SignalEngineOptions()));
         services.AddSingleton<ISyncCycleRunner, SyncCycleService>();
