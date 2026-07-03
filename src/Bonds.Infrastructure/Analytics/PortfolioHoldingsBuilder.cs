@@ -86,6 +86,78 @@ public sealed class PortfolioHoldingsBuilder
         return holdings;
     }
 
+    /// <summary>
+    /// Задача 20 (watchlist): holdings для бумаг БЕЗ позиции — тот же расчётный путь, что у
+    /// <see cref="BuildForAccountAsync"/> (инструмент + расписания + котировка + Gcurve →
+    /// <see cref="BondMetricsCalculator"/>), но без Position/Operation (watchlist-запись не связана
+    /// со счётом). Quantity фиксируется в 1 (одна бумага) и MarketValueRub = грязная цена ОДНОЙ
+    /// бумаги — так «цена лота» для allocation-эндпоинта (<c>MarketValueRub / Quantity</c>, та же
+    /// формула, что и для обычных holdings) считается без специального ветвления. CostBasis не
+    /// имеет смысла вне портфеля — всегда null. PositionId=0 — синтетическое значение, отличающее
+    /// watchlist-запись от реальной позиции; сами эндпоинты watchlist читают по InstrumentId.
+    /// </summary>
+    public async Task<IReadOnlyList<PortfolioHolding>> BuildForInstrumentsAsync(
+        IReadOnlyCollection<ulong> instrumentIds, DateOnly asOf, CancellationToken ct = default)
+    {
+        if (instrumentIds.Count == 0) return [];
+
+        var curve = await _yieldCurve.GetLatestAsync();
+        var holdings = new List<PortfolioHolding>(instrumentIds.Count);
+
+        foreach (var instrumentId in instrumentIds)
+        {
+            ct.ThrowIfCancellationRequested();
+            var instrument = await _instruments.GetByIdAsync(instrumentId);
+            if (instrument is null) continue; // ссылочная целостность нарушена — пропускаем, не падаем
+
+            var coupons = (await _coupons.GetByInstrumentIdAsync(instrumentId)).ToList();
+            var amortizations = (await _amortizations.GetByInstrumentIdAsync(instrumentId)).ToList();
+            var offers = (await _offers.GetByInstrumentIdAsync(instrumentId)).ToList();
+            var quote = await _quotes.GetLatestAsync(instrumentId);
+
+            var syntheticPosition = new Position
+            {
+                InstrumentId = instrumentId,
+                Quantity = 1m,
+                Accrued = quote?.Accrued ?? 0m,
+                DataIncomplete = instrument.DataIncomplete,
+            };
+
+            var metrics = CalculateMetrics(instrument, syntheticPosition, coupons, amortizations, offers, quote, curve, asOf);
+            var pricePerUnitRub = quote?.DirtyPrice ?? metrics.DirtyPrice;
+
+            holdings.Add(new PortfolioHolding
+            {
+                PositionId = 0,
+                InstrumentId = instrument.Id,
+                Quantity = 1m,
+                MarketValueRub = pricePerUnitRub,
+                Name = instrument.Name,
+                Isin = instrument.Isin,
+                Issuer = instrument.Issuer,
+                Sector = instrument.Sector,
+                CouponType = instrument.CouponType,
+                MaturityDate = instrument.MaturityDate,
+                HorizonDate = metrics.HorizonDate,
+                IsCalculatedToOffer = metrics.CalculatedToOffer,
+                ModifiedDuration = metrics.ModifiedDuration,
+                MacaulayDuration = metrics.MacaulayDuration,
+                Convexity = metrics.Convexity,
+                YtmEffective = metrics.YtmEffective,
+                CurrentYield = metrics.CurrentYield,
+                GSpread = metrics.GSpread,
+                IsFloater = metrics.IsFloater,
+                IsIndexed = metrics.IsIndexed,
+                IsEstimated = metrics.IsEstimated,
+                DataIncomplete = metrics.DataIncomplete,
+                IsOutOfScopeCurrency = instrument.IsOutOfScopeCurrency,
+                CostBasis = null,
+            });
+        }
+
+        return holdings;
+    }
+
     /// <summary>Holding одной позиции (GET /api/positions/{id}) — null, если ссылочная целостность нарушена (инструмент не найден).</summary>
     public async Task<(PortfolioHolding Holding, Instrument Instrument, BondMetrics Metrics)?> BuildDetailedAsync(
         Position position, DateOnly asOf, CancellationToken ct = default)

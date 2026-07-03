@@ -70,6 +70,9 @@ public static class DependencyInjection
         // Этап 08: настройки пользователя (пороги Signals Engine + токен T-Invest зашифрованный).
         services.AddScoped<IUserSettingsRepository>(sp => new UserSettingsRepository(GetConnStr(sp)));
 
+        // Задача 20 часть A: ручной watchlist (бумаги вне текущих позиций, отслеживаемые по ISIN).
+        services.AddScoped<IWatchlistItemRepository>(sp => new WatchlistItemRepository(GetConnStr(sp)));
+
         // Migration runner
         services.AddSingleton(sp => new MigrationRunner(
             GetConnStr(sp),
@@ -111,6 +114,10 @@ public static class DependencyInjection
         // Оркестрация синка (этап 04 Часть C) — без HTTP-эндпоинта/шедулера на этом этапе,
         // вызывается программно/из тестов (см. plan/04).
         services.AddScoped<BondSyncService>();
+
+        // Задача 20 часть A: синк watchlist-бумаг (ISIN без позиции) — переиспользует BondSyncService,
+        // отдельный шаг в SyncCycleService.
+        services.AddScoped<WatchlistSyncService>();
 
         // Cash-Flow Projection + Portfolio Analytics (этап 06) — координирующие сервисы поверх
         // чистого Bonds.Core.CashFlow/Bonds.Core.Analytics; без HTTP-эндпоинта (этап 08) и без

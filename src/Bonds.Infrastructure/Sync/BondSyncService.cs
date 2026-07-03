@@ -249,6 +249,37 @@ public sealed class BondSyncService
     }
 
     /// <summary>
+    /// Резолвит инструмент по ISIN для бумаги БЕЗ позиции (задача 20 — watchlist): если уже есть в
+    /// справочнике — возвращает его Id; иначе создаёт минимальную запись Instrument (без FIGI —
+    /// T-Invest мост здесь не нужен, у бумаги нет позиции/брокерского счёта), которую затем
+    /// дозаполняет <see cref="EnrichFromMoexAsync"/>. Тот же принцип "MOEX — источник истины по
+    /// справочным полям", что и у <see cref="ResolveOrCreateInstrumentAsync"/>, без параллельного
+    /// пайплайна — переиспользует <see cref="EnrichFromMoexAsync"/> один в один.
+    /// </summary>
+    public async Task<ulong?> ResolveOrCreateInstrumentByIsinAsync(string isin, CancellationToken ct = default)
+    {
+        var existing = await _instruments.GetByIsinAsync(isin);
+        if (existing is not null)
+        {
+            await EnrichFromMoexAsync(existing.Id, ct);
+            return existing.Id;
+        }
+
+        var placeholder = new Instrument
+        {
+            Isin = isin,
+            FaceValue = 0m,
+            Currency = "RUB",
+            MaturityDate = DateOnly.FromDateTime(DateTime.UtcNow),
+            DataIncomplete = true,
+        };
+
+        var id = await _instruments.UpsertAsync(placeholder);
+        await EnrichFromMoexAsync(id, ct);
+        return id;
+    }
+
+    /// <summary>
     /// Резолвит инструмент по FIGI: если уже есть в справочнике — возвращает его Id; иначе
     /// узнаёт ISIN через T-Invest (часть B п.2) и создаёт минимальную запись Instrument, которую
     /// затем дозаполнит <see cref="EnrichFromMoexAsync"/>. Источник истины по справочным полям —
@@ -292,8 +323,10 @@ public sealed class BondSyncService
     /// Догружает/обновляет справочные данные инструмента из MOEX: резолвит SECID (если ещё не
     /// закэширован), параметры выпуска, купоны/амортизации/оферты, помечает DataIncomplete.
     /// Источник истины по расписаниям — MOEX, даже если T-Invest что-то задублировал (преамбула plan/04).
+    /// Public — переиспользуется задачей 20 (watchlist) как единственная точка обогащения инструмента,
+    /// чтобы не заводить параллельный пайплайн расчёта для бумаг без позиции.
     /// </summary>
-    private async Task EnrichFromMoexAsync(ulong instrumentId, CancellationToken ct)
+    public async Task EnrichFromMoexAsync(ulong instrumentId, CancellationToken ct = default)
     {
         var instrument = await _instruments.GetByIdAsync(instrumentId);
         if (instrument is null) return;

@@ -173,6 +173,22 @@ public sealed class SyncCycleService : ISyncCycleRunner
             result.Errors.Add($"Sync: непредвиденная ошибка ({ex.GetType().Name})");
         }
 
+        // --- 1a. Watchlist (задача 20 часть A): справочник/расписания/котировка бумаг без позиции.
+        // Отдельный шаг, независимый от счёта/токена T-Invest — не влияет на позиции/сигналы ниже,
+        // поэтому не должен блокировать остальной цикл при собственной ошибке.
+        try
+        {
+            var watchlistSync = sp.GetRequiredService<WatchlistSyncService>();
+            var watchlistResult = await watchlistSync.SyncAllAsync(ct);
+            result.WatchlistInstrumentsSynced = watchlistResult.InstrumentsSynced;
+            if (watchlistResult.HasErrors) result.Errors.AddRange(watchlistResult.Errors);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Watchlist sync step failed");
+            result.Errors.Add($"Watchlist: непредвиденная ошибка ({ex.GetType().Name})");
+        }
+
         // --- 2. Проекция денежного потока ---
         try
         {

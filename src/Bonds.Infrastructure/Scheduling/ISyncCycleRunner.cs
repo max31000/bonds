@@ -38,6 +38,9 @@ public sealed class SyncCycleResult
     public bool TokenMissingOrInvalid { get; set; }
 
     public int InstrumentsSynced { get; set; }
+
+    /// <summary>Задача 20 часть A: сколько уникальных watchlist ISIN обновлено (справочник + котировка) за цикл.</summary>
+    public int WatchlistInstrumentsSynced { get; set; }
     public int OperationsUpserted { get; set; }
     public bool YieldCurveUpdated { get; set; }
     public int PositionsProjected { get; set; }
