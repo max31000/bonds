@@ -136,6 +136,23 @@ describe('Analytics', () => {
     expect(screen.getByTestId('xirr-current')).toHaveTextContent('13.20%');
   });
 
+  it('opens the explanation popover for the scatter widget (plan/18 part C)', async () => {
+    server.use(
+      http.get('*/api/analytics/scatter', () => HttpResponse.json(baseScatter)),
+      http.get('*/api/analytics/composition', () => HttpResponse.json(baseComposition)),
+      http.get('*/api/analytics/xirr', () => HttpResponse.json(baseXirr)),
+    );
+
+    renderAnalytics();
+
+    await waitFor(() => expect(screen.getByTestId('scatter-widget-explain-icon')).toBeInTheDocument());
+
+    const { default: userEvent } = await import('@testing-library/user-event');
+    await userEvent.click(screen.getByTestId('scatter-widget-explain-icon'), { pointerEventsCheck: 0 });
+
+    await waitFor(() => expect(screen.getByText(/Серая линия — безрисковая кривая ОФЗ/)).toBeInTheDocument());
+  });
+
   it('uses a neutral curve label and never renders the MOEX trademark name', async () => {
     server.use(
       http.get('*/api/analytics/scatter', () => HttpResponse.json(baseScatter)),
