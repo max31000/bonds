@@ -97,9 +97,17 @@ public static class DependencyInjection
         services.AddScoped<PortfolioHoldingsBuilder>();
 
         // DataProtection — шифрование токена T-Invest, вводимого через UI (PUT /api/settings/tinvest-token).
-        // Ключи персистируются на диске контейнера по умолчанию (ASP.NET Core default key ring) —
-        // достаточно для single-instance деплоя этого продукта (plan/00 §5: один контейнер bonds-api).
-        services.AddDataProtection();
+        // Ключи ЯВНО персистируются на volume вне UnionFS-слоёв контейнера (DataProtection:KeysPath,
+        // дефолт /app/dataprotection-keys) — по умолчанию ASP.NET Core пишет ключи в domain-профиль
+        // ("/root/.aspnet/DataProtection-Keys"), который живёт только внутри слоя контейнера и
+        // теряется при каждом "docker stop && rm && run" на деплое (plan/13 корневая причина: токен
+        // из БД молча перестаёт расшифровываться после каждого передеплоя). SetApplicationName
+        // фиксирован явной строкой (а не выводится из имени сборки/пути) — стабильность ключей не
+        // должна зависеть от имени бинарника/пути публикации.
+        var keysPath = configuration["DataProtection:KeysPath"] ?? "/app/dataprotection-keys";
+        services.AddDataProtection()
+            .SetApplicationName("bonds-api")
+            .PersistKeysToFileSystem(new DirectoryInfo(keysPath));
         services.AddScoped<ITInvestTokenProvider, TInvestTokenProvider>();
 
         // Signals Engine + Scheduler (этап 07, plan/07) — options читаются из конфига с дефолтами
