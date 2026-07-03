@@ -63,6 +63,10 @@ public static class DependencyInjection
         // Plan/16 часть A: тики лёгкого контура котировок (intraday_quotes).
         services.AddScoped<IIntradayQuoteRepository>(sp => new IntradayQuoteRepository(GetConnStr(sp)));
 
+        // Plan/19 часть A: кэш дневной истории цены инструмента (instrument_price_history) для
+        // графика цены карточки позиции.
+        services.AddScoped<IInstrumentPriceHistoryRepository>(sp => new InstrumentPriceHistoryRepository(GetConnStr(sp)));
+
         // Этап 08: настройки пользователя (пороги Signals Engine + токен T-Invest зашифрованный).
         services.AddScoped<IUserSettingsRepository>(sp => new UserSettingsRepository(GetConnStr(sp)));
 
@@ -116,6 +120,10 @@ public static class DependencyInjection
 
         // Plan/15: ретроспективный бэкфилл истории XIRR из журнала операций + дневных цен MOEX ISS.
         services.AddScoped<PortfolioHistoryBackfillService>();
+
+        // Plan/19 часть A: график цены карточки позиции — та же дозагрузка хвоста, что и у
+        // бэкфилла XIRR, но per-instrument и с персистентным кэшем (instrument_price_history).
+        services.AddScoped<InstrumentPriceHistoryService>();
 
         // Этап 08: сборщик holdings (между репозиториями и аналитическими сервисами) — общий
         // вход для positions/composition/scatter/comparison/replacement эндпоинтов.
