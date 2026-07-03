@@ -139,6 +139,71 @@ public class Stage08EndpointsTests
     }
 
     [Fact]
+    public async Task GetPositions_WithOperationsJournal_Returns200_WithCostBasisFields()
+    {
+        // plan/14 §B — GET /api/positions отдаёт цену входа/P&L, посчитанные PositionCostBasisService
+        // поверх журнала операций, без N+1 (один батч-запрос операций на счёт в PortfolioHoldingsBuilder).
+        var (client, _, accountId) = await CreateAuthorizedClientAsync();
+        var (instrumentId, _) = await SeedPositionAsync(accountId); // Quantity = 10
+
+        var operationRepo = new OperationRepository(_factory.Database.ConnectionString);
+        await operationRepo.UpsertManyByExternalIdAsync(new[]
+        {
+            new Operation
+            {
+                AccountId = accountId,
+                InstrumentId = instrumentId,
+                Type = OperationType.Buy,
+                Date = DateTime.UtcNow.AddMonths(-6),
+                AmountRub = -10_000m,
+                Quantity = 10m,
+                ExternalId = $"buy-{Guid.NewGuid()}",
+            },
+            new Operation
+            {
+                AccountId = accountId,
+                InstrumentId = instrumentId,
+                Type = OperationType.Coupon,
+                Date = DateTime.UtcNow.AddMonths(-3),
+                AmountRub = 300m,
+                ExternalId = $"coupon-{Guid.NewGuid()}",
+            },
+        });
+
+        var response = await client.GetAsync("/api/positions");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var row = body.GetProperty("positions")[0];
+
+        row.GetProperty("averageCostRub").GetDecimal().Should().Be(1000m);
+        row.GetProperty("investedRub").GetDecimal().Should().Be(10_000m);
+        row.GetProperty("couponsReceivedRub").GetDecimal().Should().Be(300m);
+        // Без рыночной котировки в тесте UnrealizedPnl считается от MarketValueRub=0 (нет цены источника).
+        row.GetProperty("unrealizedPnlRub").GetDecimal().Should().Be(-10_000m);
+        row.GetProperty("costBasisIncomplete").GetBoolean().Should().BeFalse("журнал полностью покрывает остаток позиции (10 шт куплено = 10 шт в позиции)");
+    }
+
+    [Fact]
+    public async Task GetPositions_NoOperationsJournal_Returns200_WithCostBasisIncompleteFlag()
+    {
+        // Позиция есть (Quantity=10), но журнала операций по ней нет — журнал не покрывает остаток,
+        // costBasisIncomplete = true, а не молчаливый 0 (spec §4.4 "не подставлять нули молча").
+        var (client, _, accountId) = await CreateAuthorizedClientAsync();
+        await SeedPositionAsync(accountId);
+
+        var response = await client.GetAsync("/api/positions");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var row = body.GetProperty("positions")[0];
+
+        row.GetProperty("costBasisIncomplete").GetBoolean().Should().BeTrue();
+        row.GetProperty("averageCostRub").ValueKind.Should().Be(JsonValueKind.Null);
+        row.GetProperty("couponsReceivedRub").GetDecimal().Should().Be(0m);
+    }
+
+    [Fact]
     public async Task GetPositionById_Unknown_Returns404()
     {
         var (client, _, _) = await CreateAuthorizedClientAsync();

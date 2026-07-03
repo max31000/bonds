@@ -56,4 +56,12 @@ public sealed record PortfolioHolding
     /// <summary>§11/§3: номинал в иностранной валюте — бумага вне рублёвого контура MVP. У таких
     /// YTM/дюрация/G-спред не считаются; UI помечает бейджем, агрегаты их не искажают.</summary>
     public bool IsOutOfScopeCurrency { get; init; }
+
+    /// <summary>
+    /// Цена входа/P&amp;L "от цены входа" (plan/14 §A) — null, если сборщик не считал эту метрику
+    /// для данного потребителя (не все эндпоинты в ней нуждаются). Не путать с nullable-полями
+    /// ВНУТРИ <see cref="PositionCostBasis"/> — те nullable, даже когда сама метрика посчитана, но
+    /// цена входа не определена (пустой журнал/нет остатка).
+    /// </summary>
+    public PositionCostBasis? CostBasis { get; init; }
 }

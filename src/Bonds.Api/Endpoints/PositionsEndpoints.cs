@@ -124,6 +124,13 @@ public static class PositionsEndpoints
         IsEstimated = h.IsEstimated,
         DataIncomplete = h.DataIncomplete,
         IsOutOfScopeCurrency = h.IsOutOfScopeCurrency,
+        AverageCostRub = h.CostBasis?.AverageCostRub,
+        InvestedRub = h.CostBasis?.InvestedRub,
+        UnrealizedPnlRub = h.CostBasis?.UnrealizedPnlRub,
+        UnrealizedPnlPercent = h.CostBasis?.UnrealizedPnlPercent,
+        CouponsReceivedRub = h.CostBasis?.CouponsReceivedRub,
+        TotalReturnPercent = h.CostBasis?.TotalReturnPercent,
+        CostBasisIncomplete = h.CostBasis?.HasUnknownLots ?? false,
     };
 
     /// <summary>
@@ -182,6 +189,29 @@ public sealed record PositionRowDto
 
     /// <summary>§11: номинал в иностранной валюте — вне рублёвого контура MVP (UI помечает бейджем).</summary>
     public bool IsOutOfScopeCurrency { get; init; }
+
+    // ---- Цена входа / P&L "от цены входа" (plan/14 §A/§B) — null, если по журналу не посчитать. ----
+
+    /// <summary>Средняя цена входа за бумагу (average cost, см. doc-comment PositionCostBasisService).</summary>
+    public decimal? AverageCostRub { get; init; }
+
+    /// <summary>Вложено в текущий остаток = AverageCostRub × Quantity.</summary>
+    public decimal? InvestedRub { get; init; }
+
+    /// <summary>Текущая рыночная стоимость минус вложенное.</summary>
+    public decimal? UnrealizedPnlRub { get; init; }
+
+    /// <summary>Доля (0.12 = 12%) — форматтер фронта умножает на 100.</summary>
+    public decimal? UnrealizedPnlPercent { get; init; }
+
+    /// <summary>Сумма купонных операций по бумаге за всё время (не только за текущий остаток).</summary>
+    public decimal? CouponsReceivedRub { get; init; }
+
+    /// <summary>(UnrealizedPnlRub + CouponsReceivedRub) / InvestedRub — доля.</summary>
+    public decimal? TotalReturnPercent { get; init; }
+
+    /// <summary>True — журнал операций не покрывает весь текущий остаток (докуплено/продано до начала истории синка); метрики выше приблизительны.</summary>
+    public required bool CostBasisIncomplete { get; init; }
 }
 
 /// <summary>Детальная карточка позиции/инструмента (GET /api/positions/{id}).</summary>

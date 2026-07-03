@@ -30,6 +30,23 @@ export interface PositionRow {
   dataIncomplete: boolean;
   /** §11: номинал в иностранной валюте — вне рублёвого контура MVP. */
   isOutOfScopeCurrency: boolean;
+
+  // ---- Цена входа / P&L "от цены входа" (plan/14) — null, если по журналу операций не посчитать. ----
+
+  /** Средняя цена входа за бумагу (average cost). */
+  averageCostRub: number | null;
+  /** Вложено в текущий остаток = averageCostRub × quantity. */
+  investedRub: number | null;
+  /** Текущая рыночная стоимость минус вложенное. */
+  unrealizedPnlRub: number | null;
+  /** Доля (0.12 = 12%) — форматировать через formatPercent. */
+  unrealizedPnlPercent: number | null;
+  /** Сумма купонных операций по бумаге за всё время. */
+  couponsReceivedRub: number | null;
+  /** (unrealizedPnlRub + couponsReceivedRub) / investedRub — доля. */
+  totalReturnPercent: number | null;
+  /** True — журнал операций не покрывает весь текущий остаток; метрики выше приблизительны. */
+  costBasisIncomplete: boolean;
 }
 
 /** Ответ GET /api/positions. */
