@@ -34,6 +34,35 @@ export function formatRubCompact(value: number | null | undefined): string {
 }
 
 /**
+ * Range-aware вариант {@link formatRubCompact} для подписей оси Y узких временных рядов (plan/16
+ * интрадей-график портфеля). На узком диапазоне (например, портфель колеблется в пределах пары
+ * тысяч рублей на фоне абсолютной величины в сотни тысяч) обычное округление до "1 знак после
+ * запятой у тыс./млн" схлопывает все деления оси в одну и ту же подпись ("15,5 тыс ₽" четыре раза
+ * подряд) — визуально нечитаемо. Если (max - min) достаточно мал относительно масштаба значений,
+ * показываем точные рубли без компактного округления; иначе — обычный компактный формат.
+ */
+export function formatRubCompactRange(
+  value: number | null | undefined,
+  min: number,
+  max: number,
+): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return '—';
+
+  const range = Math.abs(max - min);
+  const scale = Math.max(Math.abs(max), Math.abs(min), 1);
+
+  // Порог: если диапазон меньше ~2% от масштаба значений, компактное округление (1 знак после
+  // запятой у тыс./млн) даёт точность хуже, чем сам диапазон — переключаемся на целые рубли.
+  const isNarrowRange = range > 0 && range / scale < 0.02;
+
+  if (isNarrowRange) {
+    return formatRub(value);
+  }
+
+  return formatRubCompact(value);
+}
+
+/**
  * Считает целое число календарных дней от сегодня (UTC-полночь) до `dateIso` (включительно).
  * Возвращает null, если дата не распознана.
  * Отрицательное значение — дата уже прошла (используется для дат в прошлом, теоретически

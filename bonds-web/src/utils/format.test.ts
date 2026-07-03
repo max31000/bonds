@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   formatRub,
   formatRubCompact,
+  formatRubCompactRange,
   daysUntil,
   formatDaysUntil,
   formatPercent,
@@ -53,6 +54,48 @@ describe('formatRubCompact', () => {
     expect(formatRubCompact(null)).toBe('—');
     expect(formatRubCompact(undefined)).toBe('—');
     expect(formatRubCompact(NaN)).toBe('—');
+  });
+});
+
+describe('formatRubCompactRange', () => {
+  // Регрессия (задание, пункт 5): на узком диапазоне интрадей-графика (например, портфель
+  // колеблется в пределах 15 480–15 520 ₽) formatRubCompact округляет обе границы до "15,5 тыс ₽" —
+  // все подписи оси Y выглядят одинаковыми. formatRubCompactRange учитывает (max - min) и
+  // переключается на более точный формат, когда компактное округление "схлопывает" диапазон.
+
+  it('falls back to plain rubles when the range is narrow relative to the values', () => {
+    const min = 15_480;
+    const max = 15_520;
+    expect(formatRubCompactRange(15_500, min, max)).toBe(formatRub(15_500));
+    expect(formatRubCompactRange(15_480, min, max)).toBe(formatRub(15_480));
+    expect(formatRubCompactRange(15_520, min, max)).toBe(formatRub(15_520));
+    // И убеждаемся, что это действительно другой (более точный) формат, чем схлопывающий compact.
+    expect(formatRubCompactRange(15_500, min, max)).not.toBe(formatRubCompact(15_500));
+  });
+
+  it('still distinguishes labels that would otherwise collide after compact rounding', () => {
+    const min = 1_234_000;
+    const max = 1_236_000;
+    const lo = formatRubCompactRange(min, min, max);
+    const hi = formatRubCompactRange(max, min, max);
+    expect(lo).not.toBe(hi);
+  });
+
+  it('uses the normal compact format for a wide range', () => {
+    const min = 1_000_000;
+    const max = 5_000_000;
+    expect(formatRubCompactRange(1_234_567, min, max)).toBe(formatRubCompact(1_234_567));
+    expect(formatRubCompactRange(4_800_000, min, max)).toBe(formatRubCompact(4_800_000));
+  });
+
+  it('handles a flat/degenerate range (min === max) using the normal compact format', () => {
+    expect(formatRubCompactRange(850_000, 850_000, 850_000)).toBe(formatRubCompact(850_000));
+  });
+
+  it('returns a dash for null/undefined/NaN value', () => {
+    expect(formatRubCompactRange(null, 0, 100)).toBe('—');
+    expect(formatRubCompactRange(undefined, 0, 100)).toBe('—');
+    expect(formatRubCompactRange(NaN, 0, 100)).toBe('—');
   });
 });
 
