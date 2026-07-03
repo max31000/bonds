@@ -26,6 +26,7 @@ public static class SyncEndpoints
             NoAccountConfigured = result.NoAccountConfigured,
             TokenMissingOrInvalid = result.TokenMissingOrInvalid,
             InstrumentsSynced = result.InstrumentsSynced,
+            WatchlistInstrumentsSynced = result.WatchlistInstrumentsSynced,
             OperationsUpserted = result.OperationsUpserted,
             YieldCurveUpdated = result.YieldCurveUpdated,
             PositionsProjected = result.PositionsProjected,
@@ -65,6 +66,9 @@ public sealed record SyncRunResultDto
     public required bool NoAccountConfigured { get; init; }
     public required bool TokenMissingOrInvalid { get; init; }
     public required int InstrumentsSynced { get; init; }
+
+    /// <summary>Задача 20 часть A: сколько уникальных watchlist ISIN обновлено за цикл.</summary>
+    public required int WatchlistInstrumentsSynced { get; init; }
     public required int OperationsUpserted { get; init; }
     public required bool YieldCurveUpdated { get; init; }
     public required int PositionsProjected { get; init; }

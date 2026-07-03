@@ -130,6 +130,7 @@ app.MapSignalsEndpoints();
 app.MapSyncEndpoints();
 app.MapSettingsEndpoints();
 app.MapLiveEndpoints();
+app.MapWatchlistEndpoints();
 
 // Внимание: FallbackPolicy требует авторизацию по умолчанию — новые публичные маршруты
 // нужно явно помечать .AllowAnonymous().
