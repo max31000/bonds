@@ -29,7 +29,20 @@ const TOP_REPLACEMENTS_PER_CANDIDATE = 2;
 const MAX_REPLACEMENT_REQUESTS = 6;
 const COMPARABLE_DURATION_WINDOW_YEARS = 1.5;
 const UPCOMING_HORIZON_DAYS = 90;
-const DEFAULT_HORIZON_YEARS = 2;
+/** Пол горизонта замены — чтобы SwitchAnalysisService.Compare не упал на нулевом/отрицательном
+ *  горизонте у бумаги с сегодняшним погашением/офертой. Реальный горизонт берётся из daysToHorizon. */
+const MIN_HORIZON_DAYS = 1;
+
+/**
+ * Горизонт сравнения замены (лет) = ближайший из двух горизонтов (min daysToHorizon hold/target),
+ * plan/17 §A.2. Критично для корректности: SwitchAnalysisService считает выгоду ЛИНЕЙНО по горизонту
+ * (spreadGainRub = base × yieldSpread × horizonYears), поэтому фиксированный горизонт систематически
+ * искажал бы выгоду и фильтр «показывать только выгодные» — особенно для бумаг с близкой офертой.
+ */
+function horizonYearsFor(holdRow: ComparisonRow, targetRow: ComparisonRow): number {
+  const minDays = Math.min(holdRow.daysToHorizon, targetRow.daysToHorizon);
+  return Math.max(minDays, MIN_HORIZON_DAYS) / 365;
+}
 
 /** Позиция несравнима по доходности «вне сравнения» (plan/17 §A.1: floater/indexed/dataIncomplete). */
 function isOutOfComparison(row: ComparisonRow): boolean {
@@ -175,7 +188,7 @@ export const useRecommendationsStore = create<RecommendationsStore>()((set, get)
           postReplacement({
             holdPositionId: holdRow.positionId,
             targetPositionId: targetRow.positionId,
-            horizonYears: DEFAULT_HORIZON_YEARS,
+            horizonYears: horizonYearsFor(holdRow, targetRow),
           })
             .then((result): ReplacementPair | null =>
               result.netBenefitRub > 0

@@ -113,6 +113,12 @@ function WeakLinksSection() {
   );
 }
 
+/** Горизонт замены теперь не фиксирован (min daysToHorizon пары) — показываем в месяцах до года, иначе в годах. */
+function formatHorizon(years: number): string {
+  if (years < 1) return `${Math.max(1, Math.round(years * 12))} мес`;
+  return `${years.toFixed(1)} г.`;
+}
+
 function ReplacementsSection() {
   const { replacements, isLoading, error, sellCandidates } = useRecommendationsStore();
 
@@ -159,7 +165,7 @@ function ReplacementsSection() {
                 {pair.holdName} → {pair.targetName}
               </Text>
               <Text size="sm" c="teal" fw={600}>
-                выгода ≈ {formatRub(pair.result.netBenefitRub)} за {formatNumber(pair.result.horizonYears, 0)} лет
+                выгода ≈ {formatRub(pair.result.netBenefitRub)} за {formatHorizon(pair.result.horizonYears)}
               </Text>
               <Text size="xs" c="dimmed">
                 комиссии учтены: {formatRub(pair.result.totalSwitchCostRub)}
@@ -170,6 +176,10 @@ function ReplacementsSection() {
             </Paper>
           ))}
         </SimpleGrid>
+      )}
+
+      {!isLoading && !error && replacements.length > 0 && (
+        <Disclaimer text={replacements[0].result.disclaimer} />
       )}
     </Paper>
   );
