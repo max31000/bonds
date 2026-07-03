@@ -2,6 +2,7 @@ using Bonds.Core.Interfaces.Repositories;
 using Bonds.Core.Models;
 using Bonds.Infrastructure.Connectors.Moex;
 using Bonds.Infrastructure.Connectors.TInvest;
+using Bonds.Infrastructure.Quotes;
 using Microsoft.Extensions.Logging;
 
 namespace Bonds.Infrastructure.Sync;
@@ -199,6 +200,22 @@ public sealed class BondSyncService
                 {
                     if (!liveQuotes.TryGetValue(figi, out var q) || q.LastPrice is null) continue;
 
+                    // T-Invest marketdata (GetQuotesAsync/LastPrice) отдаёт цену облигации в
+                    // ПУНКТАХ (% от номинала), не в рублях — в отличие от GetPortfolio.CurrentPrice
+                    // (часть 2 выше), который брокер уже конвертирует в рубли. См. doc-comment
+                    // TInvestQuote.LastPrice и LiveQuoteConverter. Переводим в рубли через номинал.
+                    var instrument = await _instruments.GetByIdAsync(instrumentId);
+                    if (instrument is null) continue;
+
+                    var cleanPriceRub = LiveQuoteConverter.TryComputeCleanPriceRub(
+                        q.LastPrice.Value, instrument.FaceValue, instrument.IsOutOfScopeCurrency);
+                    if (cleanPriceRub is null)
+                    {
+                        // Валютный номинал — конвертация в рубли без курса невозможна (spec §11),
+                        // не пишем неверную котировку (задание п.2).
+                        continue;
+                    }
+
                     // q.BestBid/q.BestAsk (стакан) намеренно НЕ пишутся здесь — это осознанное
                     // решение, не недосмотр. Спека §8 относит "предупреждение о низкой
                     // ликвидности по позиции (тонкий стакан)" явно к категории "на будущее, при
@@ -216,7 +233,7 @@ public sealed class BondSyncService
                     {
                         InstrumentId = instrumentId,
                         AsOf = DateOnly.FromDateTime(DateTime.UtcNow),
-                        CleanPrice = q.LastPrice,
+                        CleanPrice = cleanPriceRub,
                         Volume = null,
                         Source = MarketQuoteSource.TInvest,
                     });

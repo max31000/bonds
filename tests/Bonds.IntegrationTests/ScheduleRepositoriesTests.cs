@@ -69,15 +69,20 @@ public class ScheduleRepositoriesTests
 
         var schedule = new List<AmortizationSchedule>
         {
-            new() { Date = new DateOnly(2026, 1, 1), AmountRub = 250m },
-            new() { Date = new DateOnly(2027, 1, 1), AmountRub = 250m },
+            new() { Date = new DateOnly(2026, 1, 1), AmountRub = 250m, IsKnown = true },
+            new() { Date = new DateOnly(2027, 1, 1), AmountRub = 250m, IsKnown = true },
+            // Audit(engine) E-1: строка с известной датой, но неизвестной суммой (MBS/ипотечный
+            // агент) должна пройти через БД без потерь — не выбрасываться и не превращаться в
+            // "реальный" 0.
+            new() { Date = new DateOnly(2028, 1, 1), AmountRub = 0m, IsKnown = false },
         };
 
         await repo.ReplaceForInstrumentAsync(instrumentId, schedule);
 
         var loaded = (await repo.GetByInstrumentIdAsync(instrumentId)).ToList();
-        loaded.Should().HaveCount(2);
-        loaded.Sum(a => a.AmountRub).Should().Be(500m);
+        loaded.Should().HaveCount(3);
+        loaded.Where(a => a.IsKnown).Sum(a => a.AmountRub).Should().Be(500m);
+        loaded.Single(a => a.Date == new DateOnly(2028, 1, 1)).IsKnown.Should().BeFalse();
     }
 
     [Fact]

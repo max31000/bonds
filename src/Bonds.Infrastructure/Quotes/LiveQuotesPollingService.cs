@@ -128,13 +128,27 @@ public sealed class LiveQuotesPollingService : BackgroundService
         // синке) — берём последнее известное значение как разумное приближение для грязной цены
         // между полными синками (spec §4.4 деградация, а не точный расчёт).
         var accruedByInstrumentId = new Dictionary<ulong, decimal>();
+        // Номинал нужен, чтобы перевести котировку T-Invest marketdata из пунктов (% от номинала)
+        // в рубли — см. doc-comment LiveQuoteConverter. IsOutOfScopeCurrency — валютные бумаги
+        // исключаются из лёгкого контура целиком (см. ниже), их номинал не в рублях.
+        var faceValueByInstrumentId = new Dictionary<ulong, decimal>();
         foreach (var position in positions)
         {
             var instrument = await instrumentRepo.GetByIdAsync(position.InstrumentId);
             if (instrument?.Figi is { Length: > 0 } figi)
             {
+                if (instrument.IsOutOfScopeCurrency)
+                {
+                    // Валютный номинал — конвертация котировки в пунктах в рубли без курса
+                    // невозможна (spec §11 — вне рублёвого MVP-скоупа). Не поллим такую позицию:
+                    // она честно падает в fallback "последний известный тик"/статичная цена
+                    // полного синка вместо неверного расчёта (задание, п.2).
+                    continue;
+                }
+
                 figiByInstrumentId[position.InstrumentId] = figi;
                 accruedByInstrumentId[position.InstrumentId] = position.Accrued;
+                faceValueByInstrumentId[position.InstrumentId] = instrument.FaceValue;
             }
         }
 
@@ -170,18 +184,25 @@ public sealed class LiveQuotesPollingService : BackgroundService
 
         foreach (var (instrumentId, figi) in figiByInstrumentId)
         {
-            if (!quotes.TryGetValue(figi, out var quote) || quote.LastPrice is not { } cleanPrice)
+            if (!quotes.TryGetValue(figi, out var quote) || quote.LastPrice is not { } lastPricePoints)
             {
                 continue; // Нет свежей цены по этой бумаге в этом тике — пропускаем, не пишем 0.
             }
 
-            // GetQuotesAsync отдаёт только чистую цену (LastPrice, без НКД — см. doc-comment
-            // TInvestQuote и BondSyncService часть 3, где это же поле пишется в MarketQuote.CleanPrice).
+            // GetQuotesAsync (T-Invest marketdata) отдаёт цену в ПУНКТАХ (% от номинала), не в
+            // рублях — см. doc-comment TInvestQuote.LastPrice и LiveQuoteConverter. Переводим в
+            // рубли через номинал инструмента и прибавляем НКД.
             var accrued = accruedByInstrumentId.GetValueOrDefault(instrumentId);
-            var dirtyPrice = cleanPrice + accrued;
+            var faceValue = faceValueByInstrumentId.GetValueOrDefault(instrumentId);
+            var dirtyPrice = LiveQuoteConverter.TryComputeDirtyPriceRub(
+                lastPricePoints, faceValue, accrued, isOutOfScopeCurrency: false);
+            if (dirtyPrice is null)
+            {
+                continue;
+            }
 
             await intradayRepo.InsertAndPruneAsync(
-                new IntradayQuote { InstrumentId = instrumentId, TsUtc = tsUtc, DirtyPriceRub = dirtyPrice },
+                new IntradayQuote { InstrumentId = instrumentId, TsUtc = tsUtc, DirtyPriceRub = dirtyPrice.Value },
                 retentionCutoffUtc);
         }
     }

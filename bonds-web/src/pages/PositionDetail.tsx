@@ -373,9 +373,9 @@ export function PositionDetail() {
                       key: `amort-${a.date}`,
                       date: a.date,
                       label: 'Амортизация',
-                      amount: a.amountForPositionRub as number | null,
+                      amount: a.amountForPositionRub,
                       isPast: a.isPast,
-                      isKnown: true,
+                      isKnown: a.isKnown,
                     })),
                     ...detail.offerSchedule.map((o) => ({
                       key: `offer-${o.date}`,

@@ -32,4 +32,9 @@
   <ItemGroup>
     <EmbeddedResource Include="Migrations\*.sql" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- Юнит-тест MigrationRunner.SplitSqlStatements (footgun из аудита: наивный сплит по ';'
+         ломался на ';' внутри SQL line comments, воспроизведено на миграции 010). -->
+    <InternalsVisibleTo Include="Bonds.Tests" />
+  </ItemGroup>
 </Project>

@@ -675,6 +675,12 @@ public sealed record CompositionShareDto
 {
     public required string Key { get; init; }
     public required decimal MarketValueRub { get; init; }
+
+    /// <summary>
+    /// Audit(portfolio) P-1: В ПРОЦЕНТАХ (0-100), НЕ в долях — осознанное исключение из
+    /// конвенции «бэкенд = доли». Фронт применяет <c>formatSharePercent</c>, НЕ <c>formatPercent</c>.
+    /// См. doc-comment <see cref="Bonds.Core.Analytics.CompositionShare.SharePercent"/>.
+    /// </summary>
     public required decimal SharePercent { get; init; }
 }
 
@@ -788,6 +794,13 @@ public sealed record RateScenarioPointDto
     public required int ShiftBp { get; init; }
     public required decimal NewValueRub { get; init; }
     public required decimal DeltaRub { get; init; }
+
+    /// <summary>
+    /// Audit(portfolio) P-1: В ПРОЦЕНТАХ (0-100), НЕ в долях — осознанное исключение из
+    /// конвенции «бэкенд = доли». Фронт (Analytics.tsx) читает через <c>.toFixed(2)</c>
+    /// напрямую, БЕЗ <c>formatPercent</c>. См. doc-comment
+    /// <see cref="Bonds.Core.Analytics.RateScenarioPoint.DeltaPercent"/>.
+    /// </summary>
     public required decimal DeltaPercent { get; init; }
 }
 

@@ -258,6 +258,37 @@ public class BondMetricsCalculatorTests
             "более ранний возврат номинала при амортизации сокращает средневзвешенный срок потока");
     }
 
+    /// <summary>
+    /// Audit(engine) E-1: амортизация с известной датой, но неизвестной суммой (MBS/ипотечный
+    /// агент) должна деградировать YTM/дюрацию/PVBP/G-спред так же, как неизвестный купон
+    /// флоатера — не считать их вовсе, а не молча посчитать на исковерканной форме потока
+    /// (весь номинал одним платежом на дату юридического погашения).
+    /// </summary>
+    [Fact]
+    public void Calculate_AmortizationWithUnknownAmount_DoesNotComputeYtmOrDuration_MarksEstimated()
+    {
+        var maturity = AsOf.AddDays(365 * 17);
+        var coupons = new[] { TestModelFactory.Coupon(InstrumentId, maturity, 5m, periodDays: 365) };
+        var amortizations = new[]
+        {
+            TestModelFactory.Amortization(InstrumentId, AsOf.AddDays(60), 0m, isKnown: false),
+            TestModelFactory.Amortization(InstrumentId, AsOf.AddDays(150), 0m, isKnown: false),
+        };
+
+        var input = FixedCouponInput(maturity, cleanPrice: 88.84m, coupons, amortizations: amortizations)
+            with
+        { AccruedInterestFromSource = 0m };
+
+        var metrics = BondMetricsCalculator.Calculate(input);
+
+        metrics.YtmEffective.Should().BeNull("остаточный номинал недостоверен из-за неизвестных амортизаций — YTM не считаем");
+        metrics.MacaulayDuration.Should().BeNull();
+        metrics.ModifiedDuration.Should().BeNull();
+        metrics.Pvbp.Should().BeNull();
+        metrics.GSpread.Should().BeNull();
+        metrics.IsEstimated.Should().BeTrue();
+    }
+
     // ─── Оферта ──────────────────────────────────────────────────────────────
 
     [Fact]
@@ -299,6 +330,59 @@ public class BondMetricsCalculatorTests
 
         metrics.CalculatedToOffer.Should().BeFalse();
         metrics.HorizonDate.Should().Be(maturity);
+    }
+
+    // ─── Купон с нулевой суммой (E-2) ───────────────────────────────────────
+
+    /// <summary>
+    /// Audit(engine) E-2: представительный (ближайший регулярный) купон равен ровно 0 (грязные
+    /// данные MOEX, value_rub=0, не null — технически IsKnown=true), а соседние купоны по графику
+    /// ненулевые — подозрительно, вероятно дефект данных. Не блокируем расчёт (текущая доходность
+    /// формально 0% — арифметически верно "как есть"), но добавляем предупреждающую заметку,
+    /// чтобы это не выглядело неотличимо от "всё в порядке".
+    /// </summary>
+    [Fact]
+    public void Calculate_RepresentativeCouponIsZero_AmongNonZeroNeighbors_AddsSuspiciousNote()
+    {
+        var maturity = AsOf.AddDays(365 * 2);
+        var coupons = new[]
+        {
+            TestModelFactory.Coupon(InstrumentId, AsOf.AddDays(365), 0m, periodDays: 365), // ближайший будущий — подозрительный ноль
+            TestModelFactory.Coupon(InstrumentId, maturity, 100m, periodDays: 365),
+        };
+
+        var input = FixedCouponInput(maturity, cleanPrice: 950m, coupons)
+            with
+        { AccruedInterestFromSource = 0m };
+
+        var metrics = BondMetricsCalculator.Calculate(input);
+
+        metrics.CurrentYield.Should().Be(0m, "арифметически ноль — данные берутся as-is, не выдумываем значение");
+        metrics.Notes.Should().Contain(n => n.Contains("нул", StringComparison.OrdinalIgnoreCase),
+            "нулевой купон среди ненулевых соседей должен быть явно помечен как подозрительный, не молча посчитан");
+    }
+
+    [Fact]
+    public void Calculate_AllCouponsAreZero_GenuineZeroCoupon_NoSuspiciousNote()
+    {
+        // Если ВСЕ купоны в графике нулевые — это, скорее всего, настоящая структурированная
+        // бумага с нулевым купоном (нет ненулевых "соседей" для сравнения), а не дефект данных —
+        // не поднимаем ложную тревогу.
+        var maturity = AsOf.AddDays(365 * 2);
+        var coupons = new[]
+        {
+            TestModelFactory.Coupon(InstrumentId, AsOf.AddDays(365), 0m, periodDays: 365),
+            TestModelFactory.Coupon(InstrumentId, maturity, 0m, periodDays: 365),
+        };
+
+        var input = FixedCouponInput(maturity, cleanPrice: 950m, coupons)
+            with
+        { AccruedInterestFromSource = 0m };
+
+        var metrics = BondMetricsCalculator.Calculate(input);
+
+        metrics.CurrentYield.Should().Be(0m);
+        metrics.Notes.Should().NotContain(n => n.Contains("нул", StringComparison.OrdinalIgnoreCase));
     }
 
     // ─── Неполные данные ─────────────────────────────────────────────────────

@@ -161,6 +161,64 @@ public class LiveEndpointsTests
         body.GetProperty("totalMarketValueRub").GetDecimal().Should().Be(10100m);
     }
 
+    // Audit(portfolio): инвариант "changeDayPercent=0, когда live-тик равен дневной базе" —
+    // предыдущее покрытие проверяло только ненулевое изменение (+1%); здесь — вырожденный случай
+    // (тик пришёл, но цена не изменилась с последнего полного синка), где легко словить
+    // off-by-something в знаке/делителе, если он вообще есть.
+    [Fact]
+    public async Task GetLivePositions_TickEqualsReferencePrice_ChangeDayPercentIsExactlyZero()
+    {
+        var (client, accountId) = await CreateAuthorizedClientAsync();
+        var (instrumentId, _) = await SeedPositionAsync(accountId, quantity: 10);
+
+        var quoteRepo = new MarketQuoteRepository(_factory.Database.ConnectionString);
+        await quoteRepo.UpsertAsync(new MarketQuote
+        {
+            InstrumentId = instrumentId,
+            AsOf = DateOnly.FromDateTime(DateTime.UtcNow),
+            CleanPrice = 980m,
+            DirtyPrice = 1000m,
+            Accrued = 20m,
+            Source = MarketQuoteSource.TInvest,
+        });
+
+        var intradayRepo = new IntradayQuoteRepository(_factory.Database.ConnectionString);
+        await intradayRepo.InsertAndPruneAsync(
+            new IntradayQuote { InstrumentId = instrumentId, TsUtc = DateTime.UtcNow, DirtyPriceRub = 1000m },
+            DateTime.UtcNow.AddDays(-8));
+
+        var response = await client.GetAsync("/api/live/positions");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var row = body.GetProperty("positions")[0];
+
+        row.GetProperty("isStale").GetBoolean().Should().BeFalse("тик есть, просто цена не изменилась");
+        row.GetProperty("changeDayPercent").GetDecimal().Should().Be(0m);
+    }
+
+    // Audit(portfolio): null-путь — ни intraday-тика, ни market_quotes снимка вообще (только что
+    // заведена позиция, синк ещё не прошёл ни разу). LastPriceRub/marketValueRub не должны молча
+    // стать 0 с виду валидным — по контракту LastPriceRub остаётся null, а marketValueRub честно 0
+    // (не "неизвестно", коммент в LiveEndpoints это документирует явно).
+    [Fact]
+    public async Task GetLivePositions_NoQuoteAtAll_ReturnsNullPriceAndZeroMarketValue_NotThrow()
+    {
+        var (client, accountId) = await CreateAuthorizedClientAsync();
+        await SeedPositionAsync(accountId, quantity: 10);
+
+        var response = await client.GetAsync("/api/live/positions");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var row = body.GetProperty("positions")[0];
+
+        row.GetProperty("lastPriceRub").ValueKind.Should().Be(JsonValueKind.Null);
+        row.GetProperty("marketValueRub").GetDecimal().Should().Be(0m);
+        row.GetProperty("changeDayPercent").ValueKind.Should().Be(JsonValueKind.Null);
+        row.GetProperty("isStale").GetBoolean().Should().BeTrue();
+    }
+
     // ─── GET /api/live/portfolio-intraday — критерий приёмки плана ─────────────────────────────
 
     [Fact]

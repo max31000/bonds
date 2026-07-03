@@ -173,6 +173,14 @@ public sealed record LivePositionRowDto
     public required ulong InstrumentId { get; init; }
     public decimal? LastPriceRub { get; init; }
     public required decimal MarketValueRub { get; init; }
+
+    /// <summary>
+    /// Audit(portfolio) P-2: несмотря на имя, это ДОЛЯ (0.01 = +1%), а не готовый процент —
+    /// соответствует общей бэкенд-конвенции репо «бэкенд = доли», фронт делает
+    /// <c>formatPercent</c> (×100). Имя поля историческое и вводит в заблуждение при чтении без
+    /// контекста (в отличие от <c>DeltaPercent</c>/<c>SharePercent</c>, которые ИЗ ИМЕНИ похожи,
+    /// но фактически уже готовые проценты — см. P-1). Не переименовывать — ломает контракт фронта.
+    /// </summary>
     public decimal? ChangeDayPercent { get; init; }
     public required bool IsStale { get; init; }
     public required DateTime AsOfUtc { get; init; }

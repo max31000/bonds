@@ -86,6 +86,40 @@ public class MoexBondizationParserTests
         result.Coupons.Should().NotBeEmpty("даже при неполноте сохраняем то, что есть, а не отбрасываем всё");
     }
 
+    /// <summary>
+    /// Audit(engine) E-1 (репродьюсер, было красным до фикса): строка amortizations с известной
+    /// датой (<c>amortdate</c>), но <c>value_rub=null</c> — реалистично для ипотечных агентов/MBS
+    /// (ДОМ.РФ и т.п., где будущая амортизация непредсказуема) — раньше выбрасывалась молча
+    /// (<c>if (date is null || amount is null) continue;</c>), как будто амортизации на эту дату
+    /// не было вовсе. Теперь строка должна сохраняться с IsKnown=false, не пропадать.
+    /// </summary>
+    [Fact]
+    public void Amortization_KnownDateUnknownAmount_KeptWithIsKnownFalse_NotDropped()
+    {
+        const string json = """
+        {
+          "amortizations": {
+            "columns": ["amortdate", "facevalue", "value_rub"],
+            "data": [
+              ["2026-08-28", 88.84, null],
+              ["2026-11-28", 88.84, null],
+              ["2019-02-28", 1000.0, 12.5]
+            ]
+          },
+          "coupons": { "columns": ["coupondate", "value_rub"], "data": [] },
+          "offers": { "columns": ["offerdate"], "data": [] }
+        }
+        """;
+
+        var result = MoexBondizationParser.Parse("RU000A0ZZV86", json);
+
+        result.Amortizations.Should().HaveCount(3, "строки с известной датой не должны молча выбрасываться, даже если сумма неизвестна");
+        result.Amortizations.Where(a => a.Date < new DateOnly(2026, 1, 1))
+            .Should().ContainSingle(a => a.IsKnown && a.AmountRub == 12.5m);
+        result.Amortizations.Where(a => a.Date >= new DateOnly(2026, 1, 1))
+            .Should().OnlyContain(a => !a.IsKnown, "value_rub=null → сумма неизвестна, не должна фабриковаться");
+    }
+
     [Fact]
     public void MissingBlock_ReturnsEmptyList_DoesNotThrow()
     {

@@ -82,8 +82,11 @@ export interface CouponScheduleItem {
 /** Одна амортизация в календаре бумаги. */
 export interface AmortizationScheduleItem {
   date: string;
-  amountRub: number;
-  amountForPositionRub: number;
+  /** Null — сумма неизвестна (MBS/ипотечный агент, isKnown=false); не путать с реальным нулём. */
+  amountRub: number | null;
+  /** Null — сумма неизвестна (isKnown=false). */
+  amountForPositionRub: number | null;
+  isKnown: boolean;
   isPast: boolean;
 }
 
