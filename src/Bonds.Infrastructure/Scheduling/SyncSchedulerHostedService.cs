@@ -31,6 +31,8 @@ public sealed class SyncSchedulerHostedService : BackgroundService
 {
     private readonly ISyncCycleRunner _runner;
     private readonly SchedulerOptions _options;
+    private readonly ITelegramAlertSender _alertSender;
+    private readonly SyncAlertThrottle _alertThrottle;
     private readonly ILogger<SyncSchedulerHostedService> _logger;
     private readonly TimeZoneInfo _moscowTimeZone;
 
@@ -40,10 +42,14 @@ public sealed class SyncSchedulerHostedService : BackgroundService
     public SyncSchedulerHostedService(
         ISyncCycleRunner runner,
         IOptions<SchedulerOptions> options,
+        ITelegramAlertSender alertSender,
+        SyncAlertThrottle alertThrottle,
         ILogger<SyncSchedulerHostedService> logger)
     {
         _runner = runner;
         _options = options.Value;
+        _alertSender = alertSender;
+        _alertThrottle = alertThrottle;
         _logger = logger;
         _moscowTimeZone = ResolveMoscowTimeZone();
     }
@@ -115,7 +121,38 @@ public sealed class SyncSchedulerHostedService : BackgroundService
             _lastTriggeredDate = today;
             _lastTriggeredWindow = window;
 
-            await _runner.RunCycleAsync(ct);
+            var result = await _runner.RunCycleAsync(ct);
+            await MaybeAlertOnFailureAsync(result, today, ct);
         }
+    }
+
+    /// <summary>
+    /// Plan/13 часть D: только для ПЛАНОВОГО (не ручного force-refresh — этот метод вызывается
+    /// исключительно из <see cref="TickAsync"/>) цикла — если он завершился с ошибками или
+    /// протухшим/отсутствующим токеном, шлём Telegram-алерт владельцу, не чаще одного раза в
+    /// сутки на уникальный набор ошибок (<see cref="SyncAlertThrottle"/>). Сбой отправки не
+    /// бросается наружу — <see cref="ITelegramAlertSender.SendAsync"/> сам это гарантирует.
+    /// </summary>
+    private async Task MaybeAlertOnFailureAsync(SyncCycleResult result, DateOnly today, CancellationToken ct)
+    {
+        if (!result.HasErrors && !result.TokenMissingOrInvalid)
+        {
+            return;
+        }
+
+        var errors = result.Errors.Count > 0
+            ? result.Errors
+            : ["Токен T-Invest не подключён или недействителен."];
+
+        if (!_alertThrottle.ShouldAlert(errors, today))
+        {
+            return;
+        }
+
+        // Текст без токена/чувствительных данных (spec §11) — первая ошибка уже была составлена
+        // выше по цепочке (SyncCycleService) как человекочитаемая строка без секретов.
+        var message = $"Bonds: автосинк упал: {errors[0]}";
+        await _alertSender.SendAsync(message, ct);
+        _alertThrottle.MarkAlerted(errors, today);
     }
 }

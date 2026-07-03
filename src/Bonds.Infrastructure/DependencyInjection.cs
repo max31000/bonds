@@ -79,6 +79,17 @@ public static class DependencyInjection
         });
         services.AddScoped<IMoexIssClient, MoexIssClient>();
 
+        // Telegram Bot API — алерт владельцу при падении автосинка (plan/13 часть D). Тот же бот,
+        // что и авторизация/CI-алерты (Telegram:BotToken), base address без секрета в URL самого
+        // клиента (токен подставляется в путь запроса на каждый вызов, см. TelegramAlertSender).
+        services.AddHttpClient(TelegramAlertSender.HttpClientName, client =>
+        {
+            client.BaseAddress = new Uri("https://api.telegram.org");
+            client.Timeout = TimeSpan.FromSeconds(10);
+        });
+        services.AddSingleton<ITelegramAlertSender, TelegramAlertSender>();
+        services.AddSingleton<SyncAlertThrottle>();
+
         // T-Invest: gRPC-клиент НЕ регистрируется здесь готовым (нет статического токена в DI) —
         // TInvestPortfolioClient сам резолвит токен через ITInvestTokenProvider (БД на пользователя,
         // без ENV-фолбэка) и лениво строит InvestApiClient внутри своего scoped-экземпляра
