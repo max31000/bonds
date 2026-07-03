@@ -3,6 +3,7 @@ using Bonds.Api.Middleware;
 using Bonds.Core.Interfaces.Repositories;
 using Bonds.Core.Models;
 using Bonds.Core.Signals;
+using Bonds.Infrastructure.Connectors.TInvest;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.Options;
 
@@ -20,6 +21,12 @@ namespace Bonds.Api.Endpoints;
 /// сохраняется отдельно в открытом виде ИСКЛЮЧИТЕЛЬНО для маски, это не секрет сам по себе).
 /// Токен не логируется ни на одном пути (ни в этом файле, ни в <c>ErrorHandlingMiddleware</c>,
 /// который логирует только <c>ex.Message</c>/тип исключения, не тела запросов).
+/// </para>
+/// <para>
+/// <b>Валидация перед сохранением (plan/13 часть C).</b> PUT делает пробный вызов T-Invest
+/// (<see cref="ITInvestTokenValidator"/>) ДО шифрования/записи в БД — невалидный токен не
+/// сохраняется и отвечает 422 с человекочитаемым сообщением, чтобы пользователь узнавал об
+/// опечатке/протухшем токене сразу, а не по тихо деградировавшему синку.
 /// </para>
 /// </summary>
 public static class SettingsEndpoints
@@ -95,7 +102,9 @@ public static class SettingsEndpoints
         TInvestTokenRequestDto request,
         ClaimsPrincipal principal,
         IUserSettingsRepository settingsRepo,
-        IDataProtectionProvider dataProtection)
+        IDataProtectionProvider dataProtection,
+        ITInvestTokenValidator tokenValidator,
+        CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(request.Token))
         {
@@ -104,6 +113,16 @@ public static class SettingsEndpoints
 
         var userId = ResolveUserId(principal);
         var token = request.Token.Trim();
+
+        // Пробный вызов T-Invest ДО шифрования/записи (plan/13 часть C) — невалидный токен не
+        // должен попадать в БД молча.
+        var validation = await tokenValidator.ValidateAsync(token, ct);
+        if (!validation.IsValid)
+        {
+            return Results.Json(
+                new { error = validation.ErrorMessage ?? "Токен не прошёл проверку T-Invest", type = "TInvestTokenValidationException" },
+                statusCode: StatusCodes.Status422UnprocessableEntity);
+        }
 
         var protector = dataProtection.CreateProtector(Bonds.Infrastructure.Services.TInvestTokenProvider.ProtectorPurpose);
         var encrypted = protector.Protect(token);
@@ -115,11 +134,14 @@ public static class SettingsEndpoints
 
         await settingsRepo.UpsertAsync(existing);
 
-        // Намеренно НЕ возвращаем сам токен — только статус и маску (spec §11).
+        // Намеренно НЕ возвращаем сам токен — только статус, маску и подтверждение счёта (spec §11,
+        // plan/13 часть C: "маскированный идентификатор счёта (последние 4 символа) как подтверждение").
+        var accountId = validation.AccountId ?? string.Empty;
         return Results.Ok(new TInvestTokenResponseDto
         {
             TInvestTokenConfigured = true,
             TInvestTokenMasked = MaskToken(last4),
+            ValidatedAccountIdMasked = MaskToken(accountId.Length >= 4 ? accountId[^4..] : accountId),
         });
     }
 
@@ -170,4 +192,11 @@ public sealed record TInvestTokenResponseDto
 {
     public required bool TInvestTokenConfigured { get; init; }
     public string? TInvestTokenMasked { get; init; }
+
+    /// <summary>
+    /// Plan/13 часть C: маскированный (последние 4 символа) Id брокерского счёта, к которому
+    /// привязан только что провалидированный токен — подтверждение для пользователя, что
+    /// проверка реально прошла, без раскрытия полного Id счёта.
+    /// </summary>
+    public string? ValidatedAccountIdMasked { get; init; }
 }

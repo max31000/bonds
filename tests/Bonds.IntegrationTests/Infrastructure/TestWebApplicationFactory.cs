@@ -1,8 +1,11 @@
+using Bonds.Infrastructure.Connectors.TInvest;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
+using Moq;
 using Xunit;
 
 namespace Bonds.IntegrationTests.Infrastructure;
@@ -18,6 +21,7 @@ public class TestWebApplicationFactory : WebApplicationFactory<Program>, IAsyncL
     public const long TestOwnerTelegramId = 123456789;
 
     private readonly DatabaseFixture _dbFixture = new();
+    private readonly string _dataProtectionKeysPath = Path.Combine(Path.GetTempPath(), $"bonds-test-dp-keys-{Guid.NewGuid():N}");
 
     public DatabaseFixture Database => _dbFixture;
 
@@ -30,6 +34,11 @@ public class TestWebApplicationFactory : WebApplicationFactory<Program>, IAsyncL
     {
         await _dbFixture.DisposeAsync();
         await base.DisposeAsync();
+
+        if (Directory.Exists(_dataProtectionKeysPath))
+        {
+            Directory.Delete(_dataProtectionKeysPath, recursive: true);
+        }
     }
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
@@ -49,6 +58,10 @@ public class TestWebApplicationFactory : WebApplicationFactory<Program>, IAsyncL
                 ["Telegram:BotToken"] = "test-bot-token-not-real",
                 ["Telegram:BotUsername"] = "test_bot",
                 ["Telegram:OwnerId"] = TestOwnerTelegramId.ToString(),
+                // Дефолт /app/dataprotection-keys (plan/13 часть A) не существует/не доступен на
+                // тестовом хосте — свой temp dir на процесс теста, чтобы PUT /api/settings/tinvest-token
+                // (шифрует токен через IDataProtectionProvider) не падал 500 в тестах.
+                ["DataProtection:KeysPath"] = _dataProtectionKeysPath,
             });
         });
 
@@ -61,6 +74,17 @@ public class TestWebApplicationFactory : WebApplicationFactory<Program>, IAsyncL
 
             foreach (var descriptor in hostedServiceDescriptors)
                 services.Remove(descriptor);
+
+            // ITInvestTokenValidator реально ходит в T-Invest по gRPC (plan/13 часть C) — в тестах
+            // нет сети/токена, поэтому дефолт — мок, всегда считающий токен валидным (happy path
+            // большинства тестов PUT /api/settings/tinvest-token). Тесты на конкретно невалидный
+            // токен переопределяют этот мок через factory.WithWebHostBuilder(...).
+            services.RemoveAll<ITInvestTokenValidator>();
+            var defaultValidator = new Mock<ITInvestTokenValidator>();
+            defaultValidator
+                .Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(TInvestTokenValidationResult.Valid("TEST-BROKER-ACCOUNT-1234"));
+            services.AddScoped(_ => defaultValidator.Object);
         });
     }
 }
