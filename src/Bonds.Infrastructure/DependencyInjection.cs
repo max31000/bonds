@@ -5,6 +5,7 @@ using Bonds.Infrastructure.Analytics;
 using Bonds.Infrastructure.CashFlow;
 using Bonds.Infrastructure.Connectors.Moex;
 using Bonds.Infrastructure.Connectors.TInvest;
+using Bonds.Infrastructure.Quotes;
 using Bonds.Infrastructure.Repositories;
 using Bonds.Infrastructure.Scheduling;
 using Bonds.Infrastructure.Services;
@@ -58,6 +59,9 @@ public static class DependencyInjection
         services.AddScoped<IPortfolioValueSnapshotRepository>(sp => new PortfolioValueSnapshotRepository(GetConnStr(sp)));
         services.AddScoped<ISignalRepository>(sp => new SignalRepository(GetConnStr(sp)));
         services.AddScoped<ITargetAllocationRepository>(sp => new TargetAllocationRepository(GetConnStr(sp)));
+
+        // Plan/16 часть A: тики лёгкого контура котировок (intraday_quotes).
+        services.AddScoped<IIntradayQuoteRepository>(sp => new IntradayQuoteRepository(GetConnStr(sp)));
 
         // Этап 08: настройки пользователя (пороги Signals Engine + токен T-Invest зашифрованный).
         services.AddScoped<IUserSettingsRepository>(sp => new UserSettingsRepository(GetConnStr(sp)));
@@ -152,6 +156,11 @@ public static class DependencyInjection
         // (см. doc-comment SyncCycleService).
         services.AddSingleton<ISyncCycleRunner, SyncCycleService>();
         services.AddHostedService<SyncSchedulerHostedService>();
+
+        // Plan/16 часть A: лёгкий контур котировок — поллинг, НЕ gRPC-стриминг/SignalR (осознанное
+        // ограничение плана). Options вынесены в конфиг с дефолтами самого класса опций.
+        services.Configure<LiveQuotesOptions>(configuration.GetSection("LiveQuotes"));
+        services.AddHostedService<LiveQuotesPollingService>();
 
         return services;
     }
