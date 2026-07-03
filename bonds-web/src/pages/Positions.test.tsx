@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, act } from '@testing-library/react';
 import { describe, it, expect, beforeEach } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
 import { MantineProvider } from '@mantine/core';
@@ -7,6 +7,7 @@ import { server } from '../test/msw-handlers';
 import { Positions } from './Positions';
 import { usePositionsStore } from '../store/usePositionsStore';
 import { useAuthStore } from '../store/useAuthStore';
+import { useLiveStore } from '../store/useLiveStore';
 import type { PositionRow } from '../api/types';
 
 function renderPositions() {
@@ -55,6 +56,7 @@ describe('Positions', () => {
   beforeEach(() => {
     usePositionsStore.setState({ positions: [], disclaimer: '', isLoading: false, error: null });
     useAuthStore.setState({ token: 'test-token', user: { id: 1, telegramId: 1 } });
+    useLiveStore.setState({ positionsById: {}, totalMarketValueRub: null, asOfUtc: null });
   });
 
   it('renders a regular bond using ytmEffective as the yield', async () => {
@@ -318,5 +320,77 @@ describe('Positions', () => {
     expect(window.location.href).toContain('/login');
 
     Object.defineProperty(window, 'location', { value: originalLocation, writable: true });
+  });
+
+  // ─── T-16/B: live-merge рыночной стоимости поверх статичных данных GET /api/positions ────
+
+  it('shows the static market value when no live price has arrived yet', async () => {
+    server.use(
+      http.get('*/api/positions', () => HttpResponse.json({ positions: [basePosition], disclaimer: '' })),
+    );
+
+    renderPositions();
+
+    await waitFor(() => expect(screen.getByTestId('live-market-value-1')).toBeInTheDocument());
+    expect(screen.getByTestId('live-market-value-1')).toHaveTextContent('105 000');
+  });
+
+  it('overrides the market value with the live price and shows the day change once useLiveStore has data', async () => {
+    server.use(
+      http.get('*/api/positions', () => HttpResponse.json({ positions: [basePosition], disclaimer: '' })),
+    );
+
+    renderPositions();
+    await waitFor(() => expect(screen.getByTestId('live-market-value-1')).toBeInTheDocument());
+
+    act(() => {
+      useLiveStore.getState().setLivePositions(
+        [
+          {
+            positionId: 1,
+            instrumentId: 10,
+            lastPriceRub: 1060,
+            marketValueRub: 106000,
+            changeDayPercent: 0.0095,
+            isStale: false,
+            asOfUtc: '2026-07-03T10:00:00Z',
+          },
+        ],
+        106000,
+        '2026-07-03T10:00:00Z',
+      );
+    });
+
+    await waitFor(() => expect(screen.getByTestId('live-market-value-1')).toHaveTextContent('106 000'));
+    expect(screen.getByText('+0.95%')).toBeInTheDocument();
+  });
+
+  it('marks a stale live fallback with the last full-sync time', async () => {
+    server.use(
+      http.get('*/api/positions', () => HttpResponse.json({ positions: [basePosition], disclaimer: '' })),
+    );
+
+    renderPositions();
+    await waitFor(() => expect(screen.getByTestId('live-market-value-1')).toBeInTheDocument());
+
+    act(() => {
+      useLiveStore.getState().setLivePositions(
+        [
+          {
+            positionId: 1,
+            instrumentId: 10,
+            lastPriceRub: 1050,
+            marketValueRub: 105000,
+            changeDayPercent: null,
+            isStale: true,
+            asOfUtc: '2026-07-03T09:00:00Z',
+          },
+        ],
+        105000,
+        '2026-07-03T09:00:00Z',
+      );
+    });
+
+    await waitFor(() => expect(screen.getByTestId('live-stale-1')).toBeInTheDocument());
   });
 });

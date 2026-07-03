@@ -405,3 +405,38 @@ export interface TInvestTokenResponse {
   /** T-13/C: маска (последние 4 символа) Id счёта, к которому привязан провалидированный токен. */
   validatedAccountIdMasked: string | null;
 }
+
+// ---- GET /api/live/positions, GET /api/live/portfolio-intraday (plan/16 часть A) ----
+
+/** Строка живых котировок одной позиции — GET /api/live/positions. */
+export interface LivePositionRow {
+  positionId: number;
+  instrumentId: number;
+  lastPriceRub: number | null;
+  marketValueRub: number;
+  changeDayPercent: number | null;
+  /** True — тиков ещё нет, цена взята из последнего полного синка (не "живая"). */
+  isStale: boolean;
+  asOfUtc: string;
+}
+
+/** Ответ GET /api/live/positions. */
+export interface LivePositionsResponse {
+  positions: LivePositionRow[];
+  totalMarketValueRub: number;
+  asOfUtc: string;
+}
+
+/** Диапазон интрадей-графика стоимости портфеля. */
+export type IntradayRange = '1d' | '5d';
+
+/** Точка интрадей-ряда суммарной стоимости портфеля. */
+export interface IntradaySeriesPoint {
+  tsUtc: string;
+  totalMarketValueRub: number;
+}
+
+/** Ответ GET /api/live/portfolio-intraday. */
+export interface PortfolioIntradayResponse {
+  points: IntradaySeriesPoint[];
+}

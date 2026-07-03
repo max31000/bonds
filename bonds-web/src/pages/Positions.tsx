@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Title,
   Stack,
@@ -17,9 +17,72 @@ import {
 import { useNavigate } from 'react-router-dom';
 import { usePositionsStore } from '../store/usePositionsStore';
 import { useSettingsStore } from '../store/useSettingsStore';
+import { useLiveStore } from '../store/useLiveStore';
+import { useLiveQuotes } from '../hooks/useLiveQuotes';
 import { Disclaimer } from '../components/Disclaimer';
+import { PortfolioIntradayChart } from '../components/PortfolioIntradayChart';
 import type { PositionRow } from '../api/types';
-import { formatRub, formatDaysUntil, formatPercent, formatNumber, formatBp } from '../utils/format';
+import { formatRub, formatDaysUntil, formatPercent, formatNumber, formatBp, formatDateTime } from '../utils/format';
+
+/**
+ * Ячейка «Рыночная стоимость» с live-merge поверх статичного значения из GET /api/positions
+ * (plan/16 часть B): пока не пришёл ни один тик — обычное значение из positions-стора; как
+ * только приходит live-цена — подменяется на неё, с мягкой CSS-подсветкой при изменении и
+ * пометкой «цены на HH:MM» для устаревшего (isStale) фолбэка на дневной снимок последнего синка.
+ */
+function LiveMarketValueCell({ staticValueRub, positionId }: { staticValueRub: number; positionId: number }) {
+  const live = useLiveStore((s) => s.positionsById[positionId]);
+  const [isHighlighted, setIsHighlighted] = useState(false);
+  const prevValueRef = useRef<number | null>(null);
+
+  const displayValue = live?.marketValueRub ?? staticValueRub;
+
+  useEffect(() => {
+    if (prevValueRef.current !== null && prevValueRef.current !== displayValue) {
+      setIsHighlighted(true);
+      const timeout = setTimeout(() => setIsHighlighted(false), 1000);
+      return () => clearTimeout(timeout);
+    }
+    prevValueRef.current = displayValue;
+    return undefined;
+  }, [displayValue]);
+
+  useEffect(() => {
+    prevValueRef.current = displayValue;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return (
+    <Stack gap={0} data-testid={`live-market-value-${positionId}`}>
+      <Text
+        fw={live ? 600 : 400}
+        style={{
+          transition: 'color 300ms ease, background-color 300ms ease',
+          backgroundColor: isHighlighted ? 'var(--mantine-color-yellow-1)' : 'transparent',
+        }}
+      >
+        {formatRub(displayValue)}
+      </Text>
+      {live && (
+        <Group gap={4} wrap="nowrap">
+          {live.changeDayPercent !== null && (
+            <Text size="xs" c={live.changeDayPercent >= 0 ? 'green' : 'red'}>
+              {live.changeDayPercent >= 0 ? '+' : ''}
+              {formatPercent(live.changeDayPercent)}
+            </Text>
+          )}
+          {live.isStale && (
+            <Tooltip label={`Цены на ${formatDateTime(live.asOfUtc)} — новых тиков ещё не было`} withArrow>
+              <Text size="xs" c="dimmed" data-testid={`live-stale-${positionId}`}>
+                (цены на {formatDateTime(live.asOfUtc)})
+              </Text>
+            </Tooltip>
+          )}
+        </Group>
+      )}
+    </Stack>
+  );
+}
 
 type SortKey = 'yield' | 'pnl';
 type SortState = { key: SortKey; direction: 'asc' | 'desc' };
@@ -50,6 +113,10 @@ export function Positions() {
   const { settings, load: loadSettings } = useSettingsStore();
   const navigate = useNavigate();
   const [sort, setSort] = useState<SortState>({ key: 'yield', direction: 'desc' });
+
+  // Plan/16 часть B: поллинг живых цен (только видимая вкладка + грубо торговые часы на клиенте) —
+  // пишет в useLiveStore, откуда его читают LiveMarketValueCell ниже и PortfolioIntradayChart.
+  useLiveQuotes();
 
   useEffect(() => {
     load();
@@ -117,6 +184,8 @@ export function Positions() {
 
       {!isLoading && !error && positions.length > 0 && (
         <>
+          <PortfolioIntradayChart />
+
           <Text size="xs" c="dimmed">
             Более низкая доходность не означает «хуже» без учёта срока до погашения и риска
             эмитента — сравнивайте бумаги с одинаковым горизонтом и качеством.
@@ -197,7 +266,9 @@ export function Positions() {
                       <Table.Td>{row.name ?? row.issuer ?? row.isin ?? '—'}</Table.Td>
                       <Table.Td>{row.issuer ?? '—'}</Table.Td>
                       <Table.Td>{row.quantity}</Table.Td>
-                      <Table.Td>{formatRub(row.marketValueRub)}</Table.Td>
+                      <Table.Td>
+                        <LiveMarketValueCell staticValueRub={row.marketValueRub} positionId={row.positionId} />
+                      </Table.Td>
                       <Table.Td>{formatRub(row.averageCostRub)}</Table.Td>
                       <Table.Td>
                         <Tooltip label={totalReturnLabel} withArrow>

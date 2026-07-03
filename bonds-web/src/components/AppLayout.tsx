@@ -103,6 +103,9 @@ function SyncHealthIndicator() {
  * пользователь не смог бы дойти до «Настройки» или нажать «Обновить данные».
  * Паттерн соответствует cashpulse-web/AppLayout.tsx (тоже без insideShell-ветки).
  */
+/** Plan/16 часть B: порог "долгого перерыва" — старше этого с последнего успешного синка триггерит тихий фоновый синк при открытии. */
+const STALE_SYNC_THRESHOLD_MS = 12 * 60 * 60 * 1000;
+
 export function AppLayout() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -115,7 +118,35 @@ export function AppLayout() {
 
   useEffect(() => {
     loadSignals();
-    refreshStatus();
+
+    // Plan/16 часть B: автосинк при открытии приложения после долгого перерыва — если последний
+    // успешный синк старше 12 часов и прямо сейчас ничего не бежит, тихо дёргаем force-sync (без
+    // модалок; уведомление придёт по завершении через существующий тост triggerSync/handleSync).
+    void (async () => {
+      await refreshStatus();
+      const status = useSyncStore.getState();
+      if (status.isRunning) return;
+
+      const lastSuccessAtUtc = status.status?.lastSuccessAtUtc;
+      const isStale =
+        lastSuccessAtUtc === null ||
+        lastSuccessAtUtc === undefined ||
+        Date.now() - new Date(lastSuccessAtUtc).getTime() > STALE_SYNC_THRESHOLD_MS;
+
+      if (!isStale) return;
+
+      const result = await triggerSync();
+      if (!result) return;
+
+      notifications.show({
+        color: result.hasErrors ? 'red' : 'green',
+        title: 'Фоновое обновление данных',
+        message: result.hasErrors
+          ? (result.errors[0] ?? 'Автоматическое обновление завершилось с ошибками.')
+          : `Данные обновлены после долгого перерыва (инструментов: ${result.instrumentsSynced}, операций: ${result.operationsUpserted}).`,
+      });
+      loadSignals();
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

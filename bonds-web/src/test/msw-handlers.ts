@@ -117,6 +117,11 @@ export const handlers = [
   http.put('*/api/settings/tinvest-token', () =>
     HttpResponse.json({ tInvestTokenConfigured: true, tInvestTokenMasked: '...1234' }),
   ),
+  // Дефолтные кейсы для plan/16 — пустые данные; конкретные сценарии переопределяются в тестах.
+  http.get('*/api/live/positions', () =>
+    HttpResponse.json({ positions: [], totalMarketValueRub: 0, asOfUtc: new Date().toISOString() }),
+  ),
+  http.get('*/api/live/portfolio-intraday', () => HttpResponse.json({ points: [] })),
 ];
 
 export const server = setupServer(...handlers);
