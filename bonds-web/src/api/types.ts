@@ -197,6 +197,11 @@ export interface XirrResponse {
   disclaimer: string;
 }
 
+/** Ответ POST /api/analytics/xirr/backfill (plan/15 §B.4) — сколько новых точек истории записано. */
+export interface XirrBackfillResponse {
+  pointsWritten: number;
+}
+
 // ---- GET /api/signals, POST /api/signals/{id}/read (см. plan/09c §B.6) ----
 
 /** Уровень важности сигнала. */

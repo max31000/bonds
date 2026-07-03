@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
-import { Title, Stack, Paper, Text, Alert, Loader, Center, Group, SegmentedControl } from '@mantine/core';
+import { Title, Stack, Paper, Text, Alert, Loader, Center, Group, SegmentedControl, Button } from '@mantine/core';
 import {
+  Area,
   Bar,
   BarChart,
   CartesianGrid,
   Cell,
+  ComposedChart,
   Legend,
   Line,
   LineChart,
@@ -20,8 +22,8 @@ import {
 } from 'recharts';
 import { useAnalyticsStore } from '../store/useAnalyticsStore';
 import { Disclaimer } from '../components/Disclaimer';
-import { formatPercent, formatRub, formatSharePercent, formatDate, formatMonthLabel } from '../utils/format';
-import type { CompositionSlice, RateScenarioPoint, RateScenarioResponse, ScatterPoint, TrajectoryResponse } from '../api/types';
+import { formatPercent, formatRub, formatRubCompact, formatSharePercent, formatDate, formatMonthLabel } from '../utils/format';
+import type { CompositionSlice, RateScenarioPoint, RateScenarioResponse, ScatterPoint, TrajectoryResponse, XirrHistoryPoint } from '../api/types';
 import { buildScatterChartData } from '../utils/scatterChartData';
 
 const PIE_COLORS = [
@@ -209,7 +211,12 @@ function CompositionWidget({
   );
 }
 
-function XirrWidget({ xirr }: { xirr: { currentXirr: number | null; history: { date: string; marketValueRub: number; xirr: number }[] } }) {
+function XirrWidget({ xirr }: { xirr: { currentXirr: number | null; history: XirrHistoryPoint[]; disclaimer?: string } }) {
+  const { isBackfilling, runXirrBackfill } = useAnalyticsStore();
+  const firstLiveDate = xirr.history[0]?.date;
+
+  const chartData = xirr.history.map((h) => ({ ...h, dateLabel: formatDate(h.date) }));
+
   return (
     <Paper withBorder p="md" radius="md" data-testid="xirr-widget">
       <Text fw={600} mb="xs">
@@ -220,21 +227,68 @@ function XirrWidget({ xirr }: { xirr: { currentXirr: number | null; history: { d
       </Text>
 
       {xirr.history.length === 0 ? (
-        <Text size="sm" c="dimmed" mt="sm" data-testid="xirr-empty">
-          Недостаточно данных для графика — история копится с первого синка (см. планировщик, этап
-          07). Зайдите позже.
-        </Text>
+        <Stack gap="xs" mt="sm">
+          <Text size="sm" c="dimmed" data-testid="xirr-empty">
+            Недостаточно данных для графика — история копится с первого синка (см. планировщик, этап
+            07). Можно восстановить историю ретроспективно по журналу операций и дневным ценам MOEX.
+          </Text>
+          <Button
+            size="xs"
+            variant="light"
+            w="fit-content"
+            loading={isBackfilling}
+            onClick={() => void runXirrBackfill()}
+            data-testid="xirr-backfill-button"
+          >
+            Восстановить историю
+          </Button>
+        </Stack>
       ) : (
-        <ResponsiveContainer width="100%" height={300}>
-          <LineChart data={xirr.history.map((h) => ({ ...h, dateLabel: formatDate(h.date) }))}>
-            <CartesianGrid strokeDasharray="3 3" />
-            <XAxis dataKey="dateLabel" />
-            <YAxis yAxisId="xirr" tickFormatter={(v: number) => formatPercent(v)} />
-            <Tooltip formatter={(value) => formatPercent(Number(value))} />
-            <Legend />
-            <Line yAxisId="xirr" type="monotone" dataKey="xirr" name="XIRR" stroke="var(--mantine-color-violet-6)" />
-          </LineChart>
-        </ResponsiveContainer>
+        <>
+          <ResponsiveContainer width="100%" height={300}>
+            <ComposedChart data={chartData}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="dateLabel" />
+              <YAxis yAxisId="xirr" tickFormatter={(v: number) => formatPercent(v)} />
+              <YAxis
+                yAxisId="value"
+                orientation="right"
+                tickFormatter={(v: number) => formatRubCompact(v)}
+              />
+              <Tooltip
+                content={({ active, payload }) => {
+                  if (!active || !payload?.length) return null;
+                  const point = payload[0].payload as (typeof chartData)[number];
+                  return (
+                    <Paper withBorder p="xs" radius="sm" shadow="sm">
+                      <Text size="xs" fw={600}>{formatDate(point.date)}</Text>
+                      <Text size="xs">XIRR: {formatPercent(point.xirr)}</Text>
+                      <Text size="xs">Стоимость: {formatRub(point.marketValueRub)}</Text>
+                    </Paper>
+                  );
+                }}
+              />
+              <Legend />
+              <Area
+                yAxisId="value"
+                type="monotone"
+                dataKey="marketValueRub"
+                name="Стоимость портфеля"
+                fill="var(--mantine-color-teal-2)"
+                stroke="var(--mantine-color-teal-6)"
+                fillOpacity={0.4}
+              />
+              <Line yAxisId="xirr" type="monotone" dataKey="xirr" name="XIRR" stroke="var(--mantine-color-violet-6)" dot={false} />
+            </ComposedChart>
+          </ResponsiveContainer>
+
+          <Text size="xs" c="dimmed" mt="sm">
+            XIRR — внутренняя норма доходности по фактическим операциям счёта + текущая стоимость.
+            {firstLiveDate && (
+              <> История до {formatDate(firstLiveDate)} восстановлена по дневным ценам MOEX (приближение).</>
+            )}
+          </Text>
+        </>
       )}
     </Paper>
   );

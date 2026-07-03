@@ -1,5 +1,5 @@
 import { apiClient } from './client';
-import type { CompositionResponse, RateScenarioResponse, ScatterResponse, TrajectoryResponse, XirrResponse } from './types';
+import type { CompositionResponse, RateScenarioResponse, ScatterResponse, TrajectoryResponse, XirrBackfillResponse, XirrResponse } from './types';
 
 /** GET /api/analytics/scatter — точки «дюрация × доходность» + безрисковая кривая (plan/09b §B.3). */
 export function fetchScatter(): Promise<ScatterResponse> {
@@ -18,6 +18,11 @@ export function fetchXirr(params?: { from?: string; to?: string }): Promise<Xirr
   if (params?.to) query.set('to', params.to);
   const qs = query.toString();
   return apiClient.get<XirrResponse>(`/analytics/xirr${qs ? `?${qs}` : ''}`);
+}
+
+/** POST /api/analytics/xirr/backfill — ретроспективный бэкфилл истории XIRR из MOEX ISS (plan/15 §B.4). */
+export function postXirrBackfill(): Promise<XirrBackfillResponse> {
+  return apiClient.post<XirrBackfillResponse>('/analytics/xirr/backfill');
 }
 
 /** GET /api/analytics/rate-scenario — портфель при параллельном сдвиге ставок. */

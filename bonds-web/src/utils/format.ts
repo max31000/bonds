@@ -14,6 +14,26 @@ export function formatRub(value: number | null | undefined): string {
 }
 
 /**
+ * Компактный формат рублёвой суммы для тесных мест (ось графика, plan/15 §C.1) — "1,2 млн ₽",
+ * "850 тыс. ₽", "999 ₽". Округляет до 1 знака после запятой у млн/тыс. (без хвоста ",0").
+ */
+export function formatRubCompact(value: number | null | undefined): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return '—';
+  const sign = value < 0 ? '-' : '';
+  const abs = Math.abs(value);
+
+  const round1 = (n: number) => Math.round(n * 10) / 10;
+
+  if (abs >= 1_000_000) {
+    return `${sign}${round1(abs / 1_000_000).toLocaleString('ru-RU')} млн ₽`;
+  }
+  if (abs >= 1_000) {
+    return `${sign}${round1(abs / 1_000).toLocaleString('ru-RU')} тыс. ₽`;
+  }
+  return `${sign}${Math.round(abs).toLocaleString('ru-RU')} ₽`;
+}
+
+/**
  * Считает целое число календарных дней от сегодня (UTC-полночь) до `dateIso` (включительно).
  * Возвращает null, если дата не распознана.
  * Отрицательное значение — дата уже прошла (используется для дат в прошлом, теоретически

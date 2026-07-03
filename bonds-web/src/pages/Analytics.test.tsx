@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { describe, it, expect, beforeEach } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
 import { MantineProvider } from '@mantine/core';
@@ -116,6 +116,7 @@ describe('Analytics', () => {
       trajectory: null,
       isLoading: false,
       error: null,
+      isBackfilling: false,
     });
     useAuthStore.setState({ token: 'test-token', user: { id: 1, telegramId: 1 } });
   });
@@ -162,6 +163,50 @@ describe('Analytics', () => {
     renderAnalytics();
 
     await waitFor(() => expect(screen.getByTestId('xirr-empty')).toBeInTheDocument());
+  });
+
+  it('renders XIRR history as a two-axis chart with value + xirr when history is present', async () => {
+    server.use(
+      http.get('*/api/analytics/scatter', () => HttpResponse.json(baseScatter)),
+      http.get('*/api/analytics/composition', () => HttpResponse.json(baseComposition)),
+      http.get('*/api/analytics/xirr', () => HttpResponse.json(baseXirr)),
+    );
+
+    renderAnalytics();
+
+    await waitFor(() => expect(screen.getByTestId('xirr-widget')).toBeInTheDocument());
+    expect(screen.queryByTestId('xirr-empty')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('xirr-backfill-button')).not.toBeInTheDocument();
+    expect(screen.getByText(/восстановлена по дневным ценам MOEX/i)).toBeInTheDocument();
+  });
+
+  it('runs backfill and reloads XIRR history when the empty-state button is clicked', async () => {
+    let backfillCalled = false;
+    let xirrCallCount = 0;
+
+    server.use(
+      http.get('*/api/analytics/scatter', () => HttpResponse.json(baseScatter)),
+      http.get('*/api/analytics/composition', () => HttpResponse.json(baseComposition)),
+      http.get('*/api/analytics/xirr', () => {
+        xirrCallCount += 1;
+        return xirrCallCount === 1
+          ? HttpResponse.json({ currentXirr: null, history: [], disclaimer: '' })
+          : HttpResponse.json(baseXirr);
+      }),
+      http.post('*/api/analytics/xirr/backfill', () => {
+        backfillCalled = true;
+        return HttpResponse.json({ pointsWritten: 2 });
+      }),
+    );
+
+    renderAnalytics();
+
+    await waitFor(() => expect(screen.getByTestId('xirr-backfill-button')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('xirr-backfill-button'));
+
+    await waitFor(() => expect(screen.getByTestId('xirr-current')).toHaveTextContent('13.20%'));
+    expect(backfillCalled).toBe(true);
+    expect(xirrCallCount).toBe(2);
   });
 
   it('shows an empty state for the scatter widget when there are no points', async () => {
