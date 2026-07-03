@@ -18,6 +18,7 @@ function renderLayout() {
         <Routes>
           <Route element={<AppLayout />}>
             <Route index element={<div>Контент</div>} />
+            <Route path="/settings" element={<div>Экран настроек</div>} />
           </Route>
         </Routes>
       </MemoryRouter>
@@ -83,6 +84,7 @@ describe('AppLayout', () => {
         HttpResponse.json({
           alreadyRunning: false,
           noAccountConfigured: false,
+          tokenMissingOrInvalid: false,
           instrumentsSynced: 0,
           operationsUpserted: 0,
           yieldCurveUpdated: false,
@@ -104,5 +106,72 @@ describe('AppLayout', () => {
     await userEvent.click(screen.getByTestId('force-sync-button'));
 
     await waitFor(() => expect(screen.getByText('Обновление завершилось с ошибками')).toBeInTheDocument());
+  });
+
+  // ─── T-13/B: индикатор здоровья синка в шапке (три состояния) ─────────────────────────────
+
+  it('shows a green dot with relative time when the last sync succeeded', async () => {
+    server.use(
+      http.get('*/api/sync/status', () =>
+        HttpResponse.json({
+          isRunning: false,
+          lastRunStartedAtUtc: '2026-07-03T10:00:00Z',
+          lastSuccessAtUtc: '2026-07-03T10:00:00Z',
+          lastFailureAtUtc: null,
+          lastRunErrors: [],
+          tokenMissingOrInvalid: false,
+        }),
+      ),
+    );
+
+    renderLayout();
+
+    await waitFor(() => expect(screen.getByTestId('sync-health-ok')).toBeInTheDocument());
+    expect(screen.getByText(/синк/)).toBeInTheDocument();
+  });
+
+  it('shows a red "sync error" badge with the first error in a tooltip when the last run failed after the last success', async () => {
+    server.use(
+      http.get('*/api/sync/status', () =>
+        HttpResponse.json({
+          isRunning: false,
+          lastRunStartedAtUtc: '2026-07-03T10:05:00Z',
+          lastSuccessAtUtc: '2026-07-03T09:00:00Z',
+          lastFailureAtUtc: '2026-07-03T10:05:00Z',
+          lastRunErrors: ['MOEX недоступен'],
+          tokenMissingOrInvalid: false,
+        }),
+      ),
+    );
+
+    renderLayout();
+
+    await waitFor(() => expect(screen.getByTestId('sync-health-error-badge')).toBeInTheDocument());
+    expect(screen.getByText('Ошибка синка')).toBeInTheDocument();
+  });
+
+  it('shows an orange "token missing/invalid" badge linking to settings when the token is not configured or undecryptable', async () => {
+    server.use(
+      http.get('*/api/sync/status', () =>
+        HttpResponse.json({
+          isRunning: false,
+          lastRunStartedAtUtc: '2026-07-03T10:05:00Z',
+          lastSuccessAtUtc: null,
+          lastFailureAtUtc: '2026-07-03T10:05:00Z',
+          lastRunErrors: ['T-Invest token is not configured.'],
+          tokenMissingOrInvalid: true,
+        }),
+      ),
+    );
+
+    renderLayout();
+
+    await waitFor(() => expect(screen.getByTestId('sync-health-token-badge')).toBeInTheDocument());
+    expect(screen.getByText('Токен не подключён / недействителен')).toBeInTheDocument();
+
+    const { default: userEvent } = await import('@testing-library/user-event');
+    await userEvent.click(screen.getByTestId('sync-health-token-badge'));
+
+    await waitFor(() => expect(screen.getByText('Экран настроек')).toBeInTheDocument());
   });
 });

@@ -1,11 +1,13 @@
 import { create } from 'zustand';
 import { fetchSyncStatus, runSync } from '../api/sync';
-import type { SyncRunResult } from '../api/types';
+import type { SyncRunResult, SyncStatus } from '../api/types';
 
 interface SyncStore {
   isRunning: boolean;
   lastResult: SyncRunResult | null;
   error: string | null;
+  /** T-13/B: полный статус последнего/текущего синка (для шапки — зелёная точка/красный/оранжевый бейдж). */
+  status: SyncStatus | null;
   /** Запускает форс-синхронизацию и опрашивает /sync/status, пока она не завершится. */
   triggerSync: () => Promise<SyncRunResult | null>;
   refreshStatus: () => Promise<void>;
@@ -26,10 +28,11 @@ export const useSyncStore = create<SyncStore>()((set, get) => ({
   isRunning: false,
   lastResult: null,
   error: null,
+  status: null,
   refreshStatus: async () => {
     try {
       const status = await fetchSyncStatus();
-      set({ isRunning: status.isRunning });
+      set({ isRunning: status.isRunning, status });
     } catch {
       // Статус не критичен — следующий опрос/клик попробует снова.
     }
@@ -43,13 +46,16 @@ export const useSyncStore = create<SyncStore>()((set, get) => ({
 
       // alreadyRunning=true означает, что синк уже шёл (запущен планировщиком/другой вкладкой) —
       // опрашиваем /sync/status, пока он не завершится, чтобы кнопка корректно разблокировалась.
+      let latestStatus: SyncStatus | null = null;
       while (get().isRunning) {
-        const status = await fetchSyncStatus();
-        if (!status.isRunning) break;
+        latestStatus = await fetchSyncStatus();
+        if (!latestStatus.isRunning) break;
         await sleep(POLL_INTERVAL_MS);
       }
 
-      set({ isRunning: false });
+      // Статус после ручного синка (plan/13 часть B) — тот же снимок, что и refreshStatus,
+      // чтобы бейдж «Ошибка синка/Токен не подключён» в шапке обновился без отдельного вызова.
+      set({ isRunning: false, status: latestStatus ?? get().status });
       return result;
     } catch (err) {
       set({
