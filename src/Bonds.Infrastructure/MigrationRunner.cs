@@ -92,12 +92,33 @@ public class MigrationRunner
         }
     }
 
-    private static List<string> SplitSqlStatements(string sql)
+    /// <summary>
+    /// Разбивает файл миграции на отдельные SQL-statements по «;». <c>internal</c> вместо
+    /// <c>private</c> ради юнит-тестируемости (см. <c>InternalsVisibleTo</c> в csproj) — чистая
+    /// функция без I/O, которую не нужно гонять через реальный MySQL-контейнер, чтобы проверить.
+    /// </summary>
+    internal static List<string> SplitSqlStatements(string sql)
     {
-        // Простой сплиттер по «;» — для DDL-миграций этого достаточно (как в cashpulse)
-        return sql.Split(';', StringSplitOptions.RemoveEmptyEntries)
+        // Сначала вырезаем "--"-комментарии до конца строки — иначе ';' внутри текста комментария
+        // (например, поясняющая заметка автора миграции) ломает разбиение на statements: см.
+        // 010_purge_intraday_quotes.sql, где именно такой комментарий про этот самый баг был
+        // оставлен как предупреждение. Строковые литералы с "--" внутри в наших миграциях не
+        // встречаются (только DDL/простые DML) — построчная обработка достаточна и не требует
+        // полноценного SQL-токенайзера.
+        var withoutComments = string.Join('\n', sql
+            .Split('\n')
+            .Select(StripLineComment));
+
+        return withoutComments.Split(';', StringSplitOptions.RemoveEmptyEntries)
             .Select(s => s.Trim())
             .Where(s => !string.IsNullOrWhiteSpace(s))
             .ToList();
+    }
+
+    /// <summary>Обрезает строку на первом вхождении «--» (SQL line comment), если оно есть.</summary>
+    private static string StripLineComment(string line)
+    {
+        var idx = line.IndexOf("--", StringComparison.Ordinal);
+        return idx < 0 ? line : line[..idx];
     }
 }
