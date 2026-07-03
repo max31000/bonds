@@ -6,6 +6,7 @@ import { theme } from './theme';
 import { ComingSoon } from './pages/ComingSoon';
 import { Dashboard } from './pages/Dashboard';
 import { Positions } from './pages/Positions';
+import { PositionDetail } from './pages/PositionDetail';
 import { Cashflow } from './pages/Cashflow';
 import { Analytics } from './pages/Analytics';
 import { Recommendations } from './pages/Recommendations';
@@ -42,6 +43,7 @@ function AppRoutes() {
         <Route element={<AppLayout />}>
           <Route index element={<Dashboard />} />
           <Route path="positions" element={<Positions />} />
+          <Route path="positions/:id" element={<PositionDetail />} />
           <Route path="cashflow" element={<Cashflow />} />
           <Route path="analytics" element={<Analytics />} />
           <Route path="recommendations" element={<Recommendations />} />

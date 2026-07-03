@@ -55,6 +55,126 @@ export interface PositionsResponse {
   disclaimer: string;
 }
 
+// ---- GET /api/positions/{id} (см. plan/19 §A) — карточка позиции/drill-down ----
+
+/** Диапазон графика цены карточки позиции. */
+export type PriceHistoryRange = '1m' | '6m' | '1y' | 'all';
+
+/** Одна дневная точка графика цены. */
+export interface PriceHistoryPoint {
+  date: string;
+  /** Цена закрытия, % от номинала. Null — торгов в этот день не было. */
+  closePricePercent: number | null;
+  accruedInterestRub: number | null;
+}
+
+/** Один купон в календаре бумаги. */
+export interface CouponScheduleItem {
+  couponDate: string;
+  /** Размер купона на один номинал. Null — неизвестен (флоатер, далёкий горизонт). */
+  valueRub: number | null;
+  /** valueRub × количество бумаг в позиции. */
+  valueForPositionRub: number | null;
+  isKnown: boolean;
+  isPast: boolean;
+}
+
+/** Одна амортизация в календаре бумаги. */
+export interface AmortizationScheduleItem {
+  date: string;
+  amountRub: number;
+  amountForPositionRub: number;
+  isPast: boolean;
+}
+
+/** Одна оферта в календаре бумаги. */
+export interface OfferScheduleItem {
+  date: string;
+  offerType: 'Put' | 'Call';
+  isExecuted: boolean;
+  isPast: boolean;
+}
+
+/** Одна операция журнала пользователя по инструменту. */
+export interface OperationItem {
+  id: number;
+  type: 'Buy' | 'Sell' | 'Coupon' | 'Amortization' | 'Redemption' | 'Tax' | 'Fee';
+  date: string;
+  amountRub: number;
+  quantity: number | null;
+}
+
+/** «Если продать сейчас» — GET /api/positions/{id} → ifSoldNow. */
+export interface IfSoldNow {
+  marketValueRub: number;
+  commissionRub: number;
+  commissionRate: number;
+  netProceedsRub: number;
+  realizedPnlRub: number | null;
+  realizedPnlPercent: number | null;
+  couponsReceivedRub: number | null;
+  totalReturnWithCouponsRub: number | null;
+  pnlAvailable: boolean;
+  disclaimer: string;
+}
+
+/** Ответ GET /api/positions/{id} — детальная карточка позиции/инструмента. */
+export interface PositionDetail {
+  positionId: number;
+  instrumentId: number;
+  isin: string;
+  name: string | null;
+  issuer: string | null;
+  sector: string | null;
+  quantity: number;
+  faceValue: number;
+  currency: string;
+  couponType: CouponType;
+  maturityDate: string;
+  horizonDate: string;
+  calculatedToOffer: boolean;
+  hasAmortization: boolean;
+  hasOffers: boolean;
+
+  cleanPrice: number;
+  accruedInterest: number;
+  dirtyPrice: number;
+  marketValueRub: number;
+
+  ytmEffective: number | null;
+  ytmSimple: number | null;
+  currentYield: number | null;
+  macaulayDuration: number | null;
+  modifiedDuration: number | null;
+  convexity: number | null;
+  pvbp: number | null;
+  gSpread: number | null;
+
+  isFloater: boolean;
+  isIndexed: boolean;
+  isEstimated: boolean;
+  dataIncomplete: boolean;
+  isOutOfScopeCurrency: boolean;
+  notes: string[];
+
+  averageCostRub: number | null;
+  investedRub: number | null;
+  unrealizedPnlRub: number | null;
+  unrealizedPnlPercent: number | null;
+  couponsReceivedRub: number | null;
+  totalReturnPercent: number | null;
+  costBasisIncomplete: boolean;
+
+  priceHistory: PriceHistoryPoint[];
+  couponSchedule: CouponScheduleItem[];
+  amortizationSchedule: AmortizationScheduleItem[];
+  offerSchedule: OfferScheduleItem[];
+  operations: OperationItem[];
+  ifSoldNow: IfSoldNow;
+
+  disclaimer: string;
+}
+
 // ---- GET /api/cashflow (см. plan/09b §B.2) ----
 
 /** Тип денежного потока, освобождающего тело долга. */

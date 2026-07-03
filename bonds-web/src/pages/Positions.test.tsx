@@ -1,6 +1,6 @@
 import { render, screen, waitFor, act } from '@testing-library/react';
 import { describe, it, expect, beforeEach } from 'vitest';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { MantineProvider } from '@mantine/core';
 import { http, HttpResponse } from 'msw';
 import { server } from '../test/msw-handlers';
@@ -363,6 +363,32 @@ describe('Positions', () => {
 
     await waitFor(() => expect(screen.getByTestId('live-market-value-1')).toHaveTextContent('106 000'));
     expect(screen.getByText('+0.95%')).toBeInTheDocument();
+  });
+
+  // ─── T-19: клик по строке ведёт на карточку позиции ───────────────────────────────────────
+
+  it('navigates to the position detail page when a row is clicked', async () => {
+    server.use(
+      http.get('*/api/positions', () => HttpResponse.json({ positions: [basePosition], disclaimer: '' })),
+    );
+
+    render(
+      <MantineProvider>
+        <MemoryRouter initialEntries={['/positions']}>
+          <Routes>
+            <Route path="/positions" element={<Positions />} />
+            <Route path="/positions/:id" element={<div data-testid="position-detail-stub">detail page</div>} />
+          </Routes>
+        </MemoryRouter>
+      </MantineProvider>,
+    );
+
+    await waitFor(() => expect(screen.getByTestId('position-row-1')).toBeInTheDocument());
+
+    const { default: userEvent } = await import('@testing-library/user-event');
+    await userEvent.click(screen.getByTestId('position-row-1'));
+
+    await waitFor(() => expect(screen.getByTestId('position-detail-stub')).toBeInTheDocument());
   });
 
   it('marks a stale live fallback with the last full-sync time', async () => {

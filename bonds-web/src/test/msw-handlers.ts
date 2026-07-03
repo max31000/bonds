@@ -16,6 +16,10 @@ export const handlers = [
   http.get('*/api/positions', () =>
     HttpResponse.json({ positions: [], disclaimer: '' }),
   ),
+  // Дефолтный кейс для 19 — конкретные сценарии переопределяются в тестах карточки позиции.
+  http.get('*/api/positions/:id', () =>
+    HttpResponse.json({ error: 'not found' }, { status: 404 }),
+  ),
   // Дефолтные кейсы для 09b — пустые данные; конкретные сценарии переопределяются в тестах экранов.
   http.get('*/api/cashflow', () =>
     HttpResponse.json({ byMonth: [], byPosition: [], principalReleases: [], disclaimer: '' }),

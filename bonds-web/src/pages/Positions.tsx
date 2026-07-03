@@ -262,7 +262,12 @@ export function Positions() {
                       ? 'Полная доходность (P&L + купоны) недоступна — журнал операций неполон.'
                       : `Полная доходность (P&L + купоны): ${formatPercent(row.totalReturnPercent)}`;
                   return (
-                    <Table.Tr key={row.positionId} data-testid={`position-row-${row.positionId}`}>
+                    <Table.Tr
+                      key={row.positionId}
+                      data-testid={`position-row-${row.positionId}`}
+                      onClick={() => navigate(`/positions/${row.positionId}`)}
+                      style={{ cursor: 'pointer' }}
+                    >
                       <Table.Td>{row.name ?? row.issuer ?? row.isin ?? '—'}</Table.Td>
                       <Table.Td>{row.issuer ?? '—'}</Table.Td>
                       <Table.Td>{row.quantity}</Table.Td>
