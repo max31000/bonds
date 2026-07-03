@@ -224,6 +224,72 @@ public sealed class MoexIssClient : IMoexIssClient
         catch (Exception ex) { _logger.LogWarning(ex, "Failed to parse MOEX search for {Isin}", isin); return null; }
     }
 
+    /// <summary>Размер страницы ISS для блока history (дневные свечи) — 100 строк на страницу (plan/15 §A.1).</summary>
+    private const int IssHistoryPageSize = 100;
+
+    /// <summary>Предохранитель от бесконечного цикла: 200 страниц × 100 = 20000 дневных строк —
+    /// с огромным запасом перекрывает любой реальный диапазон дат для одной бумаги.</summary>
+    private const int IssHistoryMaxPages = 200;
+
+    public async Task<IReadOnlyList<MoexHistoryPricePoint>> GetHistoryPricesAsync(
+        string secid, DateOnly from, DateOnly to, CancellationToken ct = default)
+    {
+        var points = new List<MoexHistoryPricePoint>();
+
+        for (var page = 0; page < IssHistoryMaxPages; page++)
+        {
+            var start = page * IssHistoryPageSize;
+            var url = $"/iss/history/engines/stock/markets/bonds/securities/{Uri.EscapeDataString(secid)}.json"
+                      + $"?from={from:yyyy-MM-dd}&till={to:yyyy-MM-dd}&start={start}&iss.meta=off";
+            var json = await GetStringSafeAsync(url, ct);
+            if (json is null)
+            {
+                // Сбой на середине дочитывания — отдаём то, что успели собрать (§4.4 деградация,
+                // не падение); первая страница недоступна — вернётся пустой список.
+                break;
+            }
+
+            JsonElement root;
+            try
+            {
+                using var doc = JsonDocument.Parse(json);
+                root = doc.RootElement.Clone();
+            }
+            catch (JsonException ex)
+            {
+                _logger.LogWarning(ex, "Failed to parse MOEX history page for {Secid} start {Start}", secid, start);
+                break;
+            }
+
+            var table = IssTable.Parse(root, "history");
+            if (table is null || table.RowCount == 0)
+            {
+                break;
+            }
+
+            foreach (var row in table.Rows())
+            {
+                var date = row.GetDateOnly("TRADEDATE");
+                if (date is null) continue;
+
+                points.Add(new MoexHistoryPricePoint(date.Value, row.GetDecimal("CLOSE"), row.GetDecimal("ACCINT")));
+            }
+
+            if (table.RowCount < IssHistoryPageSize)
+            {
+                // Короткая страница — последняя.
+                break;
+            }
+
+            if (page == IssHistoryMaxPages - 1)
+            {
+                _logger.LogWarning("MOEX history paging hit page limit for {Secid}", secid);
+            }
+        }
+
+        return points;
+    }
+
     private async Task<string?> GetStringSafeAsync(string url, CancellationToken ct)
     {
         try
