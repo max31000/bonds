@@ -105,4 +105,24 @@ public class RateScenarioServiceTests
         RateScenarioService.RateSensitiveValue(holdings).Should().Be(1000m,
             "процентно-чувствительная часть — только бумаги с дюрацией");
     }
+
+    // Audit(portfolio): единицы на границе. RateScenarioPoint.DeltaPercent — ЕДИНСТВЕННОЕ
+    // "Percent"-поле аналитического бэкенда, которое намеренно нарушает общую конвенцию репо
+    // (доходности на бэкенде — доли 0-1, *100 делает фронт, см. CLAUDE.md/PositionCostBasis).
+    // Здесь бэкенд сам умножает на 100 (см. RateScenarioService.Compute: "deltaRub / currentValue
+    // * 100m"), а фронт (Analytics.tsx) рендерит его через `.toFixed(2)` БЕЗ formatPercent — если
+    // это когда-нибудь "исправят" на доли для консистентности, экран тихо покажет число в 100 раз
+    // меньше нужного (0.06% вместо 6%) без единого упавшего теста, кроме этого. Тест закрепляет
+    // контракт явно, а не через побочный эффект чисел в других тестах.
+    [Fact]
+    public void DeltaPercent_IsAlreadyInPercentUnits_NotFraction()
+    {
+        var holdings = new[] { Holding(1, 100_000m, modifiedDuration: 5m, convexity: null) };
+
+        // Δduration = -5 * 0.01 = -0.05 (доля) → DeltaRub = -5000 на базе 100000.
+        // Если бы DeltaPercent была долей, здесь было бы -0.05; конвенция поля — уже "×100".
+        var point = RateScenarioService.Compute(holdings, [100]).Single();
+
+        point.DeltaPercent.Should().Be(-5m, "поле в процентных ПУНКТАХ (-5m), а не в долях (-0.05m)");
+    }
 }
