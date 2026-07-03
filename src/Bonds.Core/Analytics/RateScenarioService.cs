@@ -63,5 +63,13 @@ public sealed record RateScenarioPoint
     public required int ShiftBp { get; init; }
     public required decimal NewValueRub { get; init; }
     public required decimal DeltaRub { get; init; }
+
+    /// <summary>
+    /// Audit(portfolio) P-1: В ПРОЦЕНТАХ (0-100), НЕ в долях — осознанное исключение из
+    /// конвенции репо «бэкенд отдаёт доли, ×100 делает фронт». Фронт (Analytics.tsx) читает это
+    /// поле напрямую через <c>.toFixed(2)</c>, БЕЗ <c>formatPercent</c> (который бы ×100'ил
+    /// повторно). Регрессия закреплена тестом <c>DeltaPercent_IsAlreadyInPercentUnits_NotFraction</c>.
+    /// Если когда-нибудь меняете один конец этой пары (бэк или фронт) — обязательно меняйте оба.
+    /// </summary>
     public required decimal DeltaPercent { get; init; }
 }

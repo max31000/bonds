@@ -123,5 +123,15 @@ public sealed record CompositionShare
 {
     public required string Key { get; init; }
     public required decimal MarketValueRub { get; init; }
+
+    /// <summary>
+    /// Audit(portfolio) P-1: В ПРОЦЕНТАХ (0-100), НЕ в долях — осознанное исключение из
+    /// конвенции репо «бэкенд отдаёт доли, ×100 делает фронт». Фронт (Dashboard pie,
+    /// Analytics composition, useRecommendationsStore) читает это поле через выделенный
+    /// <c>formatSharePercent</c> (БЕЗ дополнительного ×100), а не общий <c>formatPercent</c>.
+    /// Сумма долей внутри одного разреза (ByIssuer/BySector/...) равна ровно 100m
+    /// (см. <c>NormalizeShares</c>). Если меняете один конец этой пары (бэк или фронт) —
+    /// обязательно меняйте оба.
+    /// </summary>
     public required decimal SharePercent { get; init; }
 }
