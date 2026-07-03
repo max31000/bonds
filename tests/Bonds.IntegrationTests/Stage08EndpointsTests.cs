@@ -80,6 +80,7 @@ public class Stage08EndpointsTests
     [InlineData("GET", "/api/analytics/scatter")]
     [InlineData("GET", "/api/analytics/comparison")]
     [InlineData("POST", "/api/analytics/replacement")]
+    [InlineData("GET", "/api/analytics/allocation?amountRub=1000")]
     [InlineData("GET", "/api/signals")]
     [InlineData("POST", "/api/signals/1/read")]
     [InlineData("POST", "/api/sync")]
@@ -381,6 +382,51 @@ public class Stage08EndpointsTests
         // Обе позиции без котировок -> доходность не определена -> YieldDataIncomplete = true,
         // но ответ всё равно 200 (spec §4.4).
         body.GetProperty("yieldDataIncomplete").GetBoolean().Should().BeTrue();
+    }
+
+    // ─── GET /api/analytics/allocation (plan/17 §B) ────────────────────────────────────────
+
+    [Fact]
+    public async Task GetAllocation_NonPositiveAmount_Returns422()
+    {
+        var (client, _, _) = await CreateAuthorizedClientAsync();
+
+        var response = await client.GetAsync("/api/analytics/allocation?amountRub=0");
+
+        response.StatusCode.Should().Be((HttpStatusCode)422);
+    }
+
+    [Fact]
+    public async Task GetAllocation_EmptyPortfolio_Returns200_WithFullLeftover()
+    {
+        var (client, _, _) = await CreateAuthorizedClientAsync();
+
+        var response = await client.GetAsync("/api/analytics/allocation?amountRub=15000");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        body.GetProperty("allocations").GetArrayLength().Should().Be(0);
+        body.GetProperty("leftoverRub").GetDecimal().Should().Be(15000m);
+        body.GetProperty("disclaimer").GetString().Should().NotBeNullOrEmpty();
+    }
+
+    [Fact]
+    public async Task GetAllocation_SeededPositionWithoutYield_Returns200_WithSkippedReason()
+    {
+        // Позиция засеяна без графика купонов -> YTM не сходится, и это не флоатер/индексируемая ->
+        // EffectiveYield = null -> кандидат уходит в Skipped с причиной NoYield, а не 500 (spec §4.4).
+        var (client, _, accountId) = await CreateAuthorizedClientAsync();
+        await SeedPositionAsync(accountId);
+
+        var response = await client.GetAsync("/api/analytics/allocation?amountRub=15000");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        body.GetProperty("allocations").GetArrayLength().Should().Be(0);
+        var skipped = body.GetProperty("skipped");
+        skipped.GetArrayLength().Should().Be(1);
+        skipped[0].GetProperty("reason").GetString().Should().Be("NoYield");
+        body.GetProperty("leftoverRub").GetDecimal().Should().Be(15000m);
     }
 
     // ─── /api/signals ───────────────────────────────────────────────────────────────────────

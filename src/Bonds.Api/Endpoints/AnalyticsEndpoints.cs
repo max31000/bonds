@@ -26,6 +26,7 @@ public static class AnalyticsEndpoints
         app.MapPost("/api/analytics/replacement", PostReplacement);
         app.MapGet("/api/analytics/rate-scenario", GetRateScenario);
         app.MapGet("/api/analytics/trajectory", GetTrajectory);
+        app.MapGet("/api/analytics/allocation", GetAllocation);
     }
 
     // ─── GET /api/analytics/xirr ────────────────────────────────────────────────────────────
@@ -374,6 +375,105 @@ public static class AnalyticsEndpoints
             Disclaimer = Disclaimers.Metrics,
         });
     }
+
+    // ─── GET /api/analytics/allocation ──────────────────────────────────────────────────────
+
+    /// <summary>
+    /// «Куда вложить сумму» (plan/17 §B): жадное распределение <paramref name="amountRub"/> между
+    /// текущими позициями портфеля через <see cref="CashAllocationService"/>. Кандидаты и их
+    /// грязная цена лота строятся из <see cref="PortfolioHoldingsBuilder"/> holdings — тот же вход,
+    /// что у comparison/replacement. Лот берётся равным 1 (в модели <c>Instrument</c> нет поля
+    /// размера лота — см. doc-comment плана: при отсутствии источника лота считаем 1 и помечаем
+    /// <c>lotSizeAssumed</c>, а не падаем/выдумываем данные).
+    /// </summary>
+    private static async Task<IResult> GetAllocation(
+        ClaimsPrincipal principal,
+        IAccountRepository accountRepo,
+        PortfolioHoldingsBuilder holdingsBuilder,
+        decimal amountRub)
+    {
+        if (amountRub <= 0m)
+        {
+            return Results.Json(
+                new { error = "amountRub должен быть положительным", type = "ValidationException" },
+                statusCode: StatusCodes.Status422UnprocessableEntity);
+        }
+
+        var accountId = await PositionsEndpoints.ResolveAccountIdAsync(principal, accountRepo);
+        if (accountId is null)
+        {
+            return Results.Ok(new AllocationResponseDto
+            {
+                AmountRub = amountRub,
+                Allocations = [],
+                Skipped = [],
+                LeftoverRub = amountRub,
+                Disclaimer = CashAllocationService.Disclaimer,
+            });
+        }
+
+        var asOf = BusinessClock.MoscowToday();
+        var holdings = (await holdingsBuilder.BuildForAccountAsync(accountId.Value, asOf)).ToList();
+
+        var currentPortfolioValueRub = holdings.Sum(h => h.MarketValueRub);
+        var issuerMarketValue = holdings
+            .GroupBy(h => h.Issuer ?? $"__instrument_{h.InstrumentId}")
+            .ToDictionary(g => g.Key, g => g.Sum(h => h.MarketValueRub));
+
+        var candidates = holdings
+            .Where(h => !h.IsOutOfScopeCurrency && h.Quantity > 0m)
+            .Select(h =>
+            {
+                var pricePerUnitRub = h.MarketValueRub / h.Quantity;
+                var pricePerLotWithCommission = pricePerUnitRub * (1m + SwitchAnalysisService.DefaultCommissionRate);
+                var effectiveYield = (h.IsFloater || h.IsIndexed) ? h.CurrentYield : h.YtmEffective;
+                var issuerKey = h.Issuer ?? $"__instrument_{h.InstrumentId}";
+
+                return new CashAllocationCandidate
+                {
+                    InstrumentId = h.InstrumentId,
+                    Name = h.Name,
+                    Issuer = h.Issuer,
+                    EffectiveYield = effectiveYield,
+                    PricePerLotRub = pricePerLotWithCommission,
+                    LotSize = 1m,
+                    LotSizeIsAssumed = true,
+                    CurrentIssuerMarketValueRub = issuerMarketValue.TryGetValue(issuerKey, out var v) ? v : 0m,
+                };
+            })
+            // Одна позиция на инструмент — если счёт по ошибке содержит несколько записей на один
+            // InstrumentId, берём первую (защита от дублей, не ожидается в норме).
+            .DistinctBy(c => c.InstrumentId)
+            .ToList();
+
+        var result = CashAllocationService.Allocate(amountRub, candidates, currentPortfolioValueRub);
+
+        var dto = new AllocationResponseDto
+        {
+            AmountRub = result.AmountRub,
+            Allocations = result.Allocations.Select(a => new AllocationLineDto
+            {
+                InstrumentId = a.InstrumentId,
+                Name = a.Name,
+                Issuer = a.Issuer,
+                Quantity = a.Quantity,
+                EstimatedCostRub = a.EstimatedCostRub,
+                EffectiveYield = a.EffectiveYield,
+                LotSizeAssumed = a.LotSizeAssumed,
+            }).ToList(),
+            Skipped = result.Skipped.Select(s => new AllocationSkipDto
+            {
+                InstrumentId = s.InstrumentId,
+                Name = s.Name,
+                Issuer = s.Issuer,
+                Reason = s.Reason.ToString(),
+            }).ToList(),
+            LeftoverRub = result.LeftoverRub,
+            Disclaimer = result.Disclaimer,
+        };
+
+        return Results.Ok(dto);
+    }
 }
 
 public sealed record XirrResponseDto
@@ -522,4 +622,32 @@ public sealed record TrajectoryPointDto
     public required string Month { get; init; }
     public required decimal PortfolioValueRub { get; init; }
     public required decimal CumulativeIncomeRub { get; init; }
+}
+
+public sealed record AllocationResponseDto
+{
+    public required decimal AmountRub { get; init; }
+    public required IReadOnlyList<AllocationLineDto> Allocations { get; init; }
+    public required IReadOnlyList<AllocationSkipDto> Skipped { get; init; }
+    public required decimal LeftoverRub { get; init; }
+    public required string Disclaimer { get; init; }
+}
+
+public sealed record AllocationLineDto
+{
+    public required ulong InstrumentId { get; init; }
+    public string? Name { get; init; }
+    public string? Issuer { get; init; }
+    public required decimal Quantity { get; init; }
+    public required decimal EstimatedCostRub { get; init; }
+    public required decimal EffectiveYield { get; init; }
+    public required bool LotSizeAssumed { get; init; }
+}
+
+public sealed record AllocationSkipDto
+{
+    public required ulong InstrumentId { get; init; }
+    public string? Name { get; init; }
+    public string? Issuer { get; init; }
+    public required string Reason { get; init; }
 }
