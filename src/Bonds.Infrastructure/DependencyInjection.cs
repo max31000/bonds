@@ -110,6 +110,9 @@ public static class DependencyInjection
         services.AddScoped<CashFlowProjectionOrchestrator>();
         services.AddScoped<PortfolioSnapshotService>();
 
+        // Plan/15: ретроспективный бэкфилл истории XIRR из журнала операций + дневных цен MOEX ISS.
+        services.AddScoped<PortfolioHistoryBackfillService>();
+
         // Этап 08: сборщик holdings (между репозиториями и аналитическими сервисами) — общий
         // вход для positions/composition/scatter/comparison/replacement эндпоинтов.
         services.AddScoped<PortfolioHoldingsBuilder>();

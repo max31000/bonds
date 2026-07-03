@@ -76,6 +76,7 @@ public class Stage08EndpointsTests
     [InlineData("GET", "/api/positions/1")]
     [InlineData("GET", "/api/cashflow")]
     [InlineData("GET", "/api/analytics/xirr")]
+    [InlineData("POST", "/api/analytics/xirr/backfill")]
     [InlineData("GET", "/api/analytics/composition")]
     [InlineData("GET", "/api/analytics/scatter")]
     [InlineData("GET", "/api/analytics/comparison")]
@@ -293,6 +294,20 @@ public class Stage08EndpointsTests
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         var body = await response.Content.ReadFromJsonAsync<JsonElement>();
         body.GetProperty("history").GetArrayLength().Should().Be(0);
+    }
+
+    [Fact]
+    public async Task PostXirrBackfill_NoOperations_Returns200_WithZeroPointsWritten()
+    {
+        // Plan/15 §B.4: журнал операций пуст (счёт только что заведён, ни разу не синкан) —
+        // бэкфилл не должен падать/ходить в MOEX, просто возвращает 0.
+        var (client, _, _) = await CreateAuthorizedClientAsync();
+
+        var response = await client.PostAsync("/api/analytics/xirr/backfill", JsonContent.Create(new { }));
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        body.GetProperty("pointsWritten").GetInt32().Should().Be(0);
     }
 
     [Fact]

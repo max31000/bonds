@@ -20,6 +20,7 @@ public static class AnalyticsEndpoints
     public static void MapAnalyticsEndpoints(this WebApplication app)
     {
         app.MapGet("/api/analytics/xirr", GetXirr);
+        app.MapPost("/api/analytics/xirr/backfill", PostXirrBackfill);
         app.MapGet("/api/analytics/composition", GetComposition);
         app.MapGet("/api/analytics/scatter", GetScatter);
         app.MapGet("/api/analytics/comparison", GetComparison);
@@ -63,6 +64,33 @@ public static class AnalyticsEndpoints
         };
 
         return Results.Ok(dto);
+    }
+
+    // ─── POST /api/analytics/xirr/backfill ──────────────────────────────────────────────────
+
+    /// <summary>
+    /// Ретроспективный бэкфилл истории XIRR (plan/15 §B.4): восстанавливает недельный ряд
+    /// стоимости/XIRR из журнала операций + дневных исторических цен MOEX ISS и дозаполняет
+    /// <c>portfolio_value_snapshots</c> (идемпотентно — не трогает уже существующие даты, живые
+    /// или от предыдущего запуска, см. doc-comment <see cref="PortfolioHistoryBackfillService"/>).
+    /// Single-user, длительная операция — выполняется синхронно (портфель маленький, plan/15 §B.4);
+    /// вызывающий (фронт) ждёт ответа и сам решает, показывать ли индикатор загрузки.
+    /// </summary>
+    private static async Task<IResult> PostXirrBackfill(
+        ClaimsPrincipal principal,
+        IAccountRepository accountRepo,
+        PortfolioHistoryBackfillService backfillService)
+    {
+        var accountId = await PositionsEndpoints.ResolveAccountIdAsync(principal, accountRepo);
+        if (accountId is null)
+        {
+            return Results.Ok(new XirrBackfillResponseDto { PointsWritten = 0 });
+        }
+
+        var asOf = BusinessClock.MoscowToday();
+        var written = await backfillService.BackfillAsync(accountId.Value, asOf);
+
+        return Results.Ok(new XirrBackfillResponseDto { PointsWritten = written });
     }
 
     // ─── GET /api/analytics/composition ─────────────────────────────────────────────────────
@@ -489,6 +517,12 @@ public sealed record PortfolioValuePointDto
     public required decimal MarketValueRub { get; init; }
     public required decimal InvestedRub { get; init; }
     public decimal? Xirr { get; init; }
+}
+
+/// <summary>Ответ POST /api/analytics/xirr/backfill — сколько новых точек истории записано.</summary>
+public sealed record XirrBackfillResponseDto
+{
+    public required int PointsWritten { get; init; }
 }
 
 public sealed record CompositionResponseDto
