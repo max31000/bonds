@@ -12,7 +12,7 @@ import {
 import { fetchPortfolioIntraday } from '../api/live';
 import { useLiveStore } from '../store/useLiveStore';
 import type { IntradayRange, IntradaySeriesPoint } from '../api/types';
-import { formatRub, formatRubCompact, formatDateTime } from '../utils/format';
+import { formatRub, formatRubCompactRange, formatDateTime } from '../utils/format';
 
 /**
  * Интрадей-виджет «Стоимость портфеля сегодня» (plan/16 часть B) — area-график ряда
@@ -75,11 +75,19 @@ export function PortfolioIntradayChart() {
     [points],
   );
 
-  const yDomain = useMemo((): [number, number] | undefined => {
+  // min/max сырых значений ряда (без отступа) — нужны и для домена оси (с паддингом ниже), и для
+  // range-aware форматтера подписей (formatRubCompactRange, plan/16 §5): на узком диапазоне
+  // обычный formatRubCompact схлопывает все деления оси в одну и ту же подпись ("15,5 тыс ₽"
+  // четыре раза подряд), formatRubCompactRange переключается на точные рубли в этом случае.
+  const valueRange = useMemo((): [number, number] | undefined => {
     if (chartData.length === 0) return undefined;
     const values = chartData.map((d) => d.totalMarketValueRub);
-    const min = Math.min(...values);
-    const max = Math.max(...values);
+    return [Math.min(...values), Math.max(...values)];
+  }, [chartData]);
+
+  const yDomain = useMemo((): [number, number] | undefined => {
+    if (!valueRange) return undefined;
+    const [min, max] = valueRange;
     if (min === max) {
       // Плоский ряд (один тик/одинаковые значения) — небольшой искусственный отступ, чтобы
       // область графика не схлопывалась в линию без видимой высоты.
@@ -88,7 +96,7 @@ export function PortfolioIntradayChart() {
     }
     const padding = (max - min) * 0.1;
     return [min - padding, max + padding];
-  }, [chartData]);
+  }, [valueRange]);
 
   return (
     <Paper withBorder p="md" radius="md" data-testid="portfolio-intraday-chart">
@@ -132,7 +140,13 @@ export function PortfolioIntradayChart() {
           <AreaChart data={chartData}>
             <CartesianGrid strokeDasharray="3 3" />
             <XAxis dataKey="label" tick={false} />
-            <YAxis domain={yDomain} tickFormatter={(v: number) => formatRubCompact(v)} width={80} />
+            <YAxis
+              domain={yDomain}
+              tickFormatter={(v: number) =>
+                valueRange ? formatRubCompactRange(v, valueRange[0], valueRange[1]) : formatRub(v)
+              }
+              width={80}
+            />
             <Tooltip
               content={({ active, payload }) => {
                 if (!active || !payload?.length) return null;

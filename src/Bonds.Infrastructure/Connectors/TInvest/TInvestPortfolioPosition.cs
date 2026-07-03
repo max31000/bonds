@@ -46,6 +46,17 @@ public sealed class TInvestOperation
 public sealed class TInvestQuote
 {
     public required string Figi { get; init; }
+
+    /// <summary>
+    /// <b>ЕДИНИЦЫ: пункты (% от номинала), НЕ рубли.</b> Официальная семантика T-Invest marketdata
+    /// (<c>GetLastPrices</c>) для облигаций — цена в пунктах; рубли = пункты / 100 × номинал
+    /// инструмента. Это ОТЛИЧАЕТСЯ от <see cref="TInvestPortfolioPosition.CurrentPrice"/>
+    /// (<c>GetPortfolio</c>), который брокер уже конвертирует в рубли за бумагу. Конвертация —
+    /// на стороне потребителя (см. <c>Bonds.Infrastructure.Quotes.LiveQuoteConverter</c>),
+    /// не здесь: не путать эти два поля при добавлении новых потребителей этого класса —
+    /// именно эта путаница была причиной продакшн-бага занижения стоимости портфеля в разы
+    /// (LiveQuotesPollingService/BondSyncService часть 3 писали пункты как рубли напрямую).
+    /// </summary>
     public decimal? LastPrice { get; init; }
 
     /// <summary>Лучшая цена спроса/предложения — индикатор ликвидности (упрощённый "стакан").</summary>

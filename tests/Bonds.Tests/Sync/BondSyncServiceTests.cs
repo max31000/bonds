@@ -282,6 +282,54 @@ public class BondSyncServiceTests
     }
 
     [Fact]
+    public async Task SyncAsync_PortfolioHasNoCurrentPrice_FallbackConvertsLastPricePointsToRubles()
+    {
+        // Регрессия на баг единиц (задание): часть 3 (fallback) писала q.LastPrice напрямую как
+        // CleanPrice, но T-Invest marketdata (GetQuotesAsync/LastPrice) отдаёт цену в ПУНКТАХ
+        // (% от номинала), не в рублях. LastPrice=96.4, FaceValue=1000 → CleanPrice должно быть 964.
+        SetupHappyPathAccountAndPositions(currentPrice: null);
+        _tInvest.Setup(c => c.GetQuotesAsync(It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<string, TInvestQuote>
+            {
+                [Figi] = new TInvestQuote { Figi = Figi, LastPrice = 96.4m },
+            });
+
+        var service = CreateService();
+        await service.SyncAsync(AccountId);
+
+        _quotes.Verify(q => q.UpsertAsync(It.Is<MarketQuote>(mq =>
+            mq.InstrumentId == InstrumentId && mq.CleanPrice == 964m)), Times.Once);
+    }
+
+    [Fact]
+    public async Task SyncAsync_PortfolioHasNoCurrentPrice_OutOfScopeCurrencyInstrument_SkipsFallbackQuote()
+    {
+        // Валютный номинал (IsOutOfScopeCurrency) — конвертация пунктов в рубли без курса
+        // невозможна, fallback не должен писать неверную котировку (задание п.2).
+        SetupHappyPathAccountAndPositions(currentPrice: null);
+        _instruments.Setup(r => r.GetByIdAsync(InstrumentId)).ReturnsAsync(new Instrument
+        {
+            Id = InstrumentId,
+            Isin = Isin,
+            Figi = Figi,
+            Secid = "SU26238RMFS4",
+            FaceValue = 1000m,
+            MaturityDate = new DateOnly(2041, 5, 15),
+            IsOutOfScopeCurrency = true,
+        });
+        _tInvest.Setup(c => c.GetQuotesAsync(It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<string, TInvestQuote>
+            {
+                [Figi] = new TInvestQuote { Figi = Figi, LastPrice = 96.4m },
+            });
+
+        var service = CreateService();
+        await service.SyncAsync(AccountId);
+
+        _quotes.Verify(q => q.UpsertAsync(It.Is<MarketQuote>(mq => mq.InstrumentId == InstrumentId)), Times.Never);
+    }
+
+    [Fact]
     public async Task SyncAsync_YieldCurveAvailable_UpsertsSnapshot()
     {
         SetupHappyPathAccountAndPositions();
