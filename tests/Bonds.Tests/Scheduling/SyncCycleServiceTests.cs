@@ -6,6 +6,7 @@ using Bonds.Infrastructure.CashFlow;
 using Bonds.Infrastructure.Connectors.Moex;
 using Bonds.Infrastructure.Connectors.TInvest;
 using Bonds.Infrastructure.Scheduling;
+using Bonds.Infrastructure.Services;
 using Bonds.Infrastructure.Sync;
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
@@ -45,10 +46,14 @@ public class SyncCycleServiceTests
     private readonly Mock<IPortfolioValueSnapshotRepository> _snapshots = new();
     private readonly Mock<ISignalRepository> _signals = new();
     private readonly Mock<ITargetAllocationRepository> _targetAllocations = new();
+    private readonly Mock<ITInvestTokenProvider> _tokenProvider = new();
 
     private void SetupNoPositionsHappyPath()
     {
         _accounts.Setup(a => a.GetPrimaryAccountIdAsync()).ReturnsAsync(AccountId);
+
+        _tokenProvider.Setup(t => t.GetTokenStatusAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(TInvestTokenStatus.Valid);
 
         _tInvest.Setup(c => c.GetPrimaryAccountIdAsync(It.IsAny<CancellationToken>())).ReturnsAsync(BrokerAccountId);
         _tInvest.Setup(c => c.GetBondPositionsAsync(BrokerAccountId, It.IsAny<CancellationToken>()))
@@ -74,6 +79,7 @@ public class SyncCycleServiceTests
 
         services.AddSingleton(_accounts.Object);
         services.AddSingleton(_tInvest.Object);
+        services.AddSingleton(_tokenProvider.Object);
         services.AddSingleton(_moex.Object);
         services.AddSingleton(_instruments.Object);
         services.AddSingleton(_coupons.Object);
@@ -154,6 +160,37 @@ public class SyncCycleServiceTests
         var status = runner.GetStatus();
         status.LastFailureAtUtc.Should().NotBeNull();
         status.LastRunErrors.Should().NotBeEmpty();
+    }
+
+    [Theory]
+    [InlineData(TInvestTokenStatus.NotConfigured)]
+    [InlineData(TInvestTokenStatus.DecryptionFailed)]
+    public async Task RunCycleAsync_TokenNotConfiguredOrUndecryptable_StatusReflectsTokenMissingOrInvalid(TInvestTokenStatus tokenStatus)
+    {
+        SetupNoPositionsHappyPath();
+        _tokenProvider.Setup(t => t.GetTokenStatusAsync(It.IsAny<CancellationToken>())).ReturnsAsync(tokenStatus);
+
+        var sp = BuildServiceProvider();
+        var runner = sp.GetRequiredService<ISyncCycleRunner>();
+
+        var result = await runner.RunCycleAsync();
+
+        result.TokenMissingOrInvalid.Should().BeTrue();
+        runner.GetStatus().TokenMissingOrInvalid.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task RunCycleAsync_TokenValid_StatusDoesNotFlagTokenMissingOrInvalid()
+    {
+        SetupNoPositionsHappyPath();
+
+        var sp = BuildServiceProvider();
+        var runner = sp.GetRequiredService<ISyncCycleRunner>();
+
+        var result = await runner.RunCycleAsync();
+
+        result.TokenMissingOrInvalid.Should().BeFalse();
+        runner.GetStatus().TokenMissingOrInvalid.Should().BeFalse();
     }
 
     [Fact]
