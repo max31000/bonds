@@ -21,7 +21,8 @@ interface NavItem {
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { label: 'Позиции', path: '/' },
+  { label: 'Обзор', path: '/' },
+  { label: 'Позиции', path: '/positions' },
   { label: 'Денежный поток', path: '/cashflow' },
   { label: 'Аналитика', path: '/analytics' },
   { label: 'Рекомендации', path: '/recommendations' },
