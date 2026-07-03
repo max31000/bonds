@@ -252,6 +252,88 @@ describe('AppLayout', () => {
     expect(syncCalled).toBe(false);
   });
 
+  // ─── T-21/A: переключатель светлая/тёмная/системная тема ──────────────────────────────────
+
+  it('switches the Mantine color scheme when a different option is selected in the header switcher', async () => {
+    server.use(
+      http.get('*/api/sync/status', () =>
+        HttpResponse.json({
+          isRunning: false,
+          lastRunStartedAtUtc: '2026-07-03T10:00:00Z',
+          lastSuccessAtUtc: '2026-07-03T10:00:00Z',
+          lastFailureAtUtc: null,
+          lastRunErrors: [],
+          tokenMissingOrInvalid: false,
+        }),
+      ),
+    );
+
+    renderLayout();
+
+    await waitFor(() => expect(screen.getByTestId('color-scheme-switcher')).toBeInTheDocument());
+
+    const { default: userEvent } = await import('@testing-library/user-event');
+    const darkOption = screen.getByText('Тёмная');
+    await userEvent.click(darkOption);
+
+    await waitFor(() => {
+      const input = document.querySelector('input[value="dark"]') as HTMLInputElement | null;
+      expect(input?.checked).toBe(true);
+    });
+  });
+
+  // ─── T-21/C.1: burger-навигация на мобиле ──────────────────────────────────────────────────
+
+  it('renders a burger button that toggles the mobile navbar', async () => {
+    server.use(
+      http.get('*/api/sync/status', () =>
+        HttpResponse.json({
+          isRunning: false,
+          lastRunStartedAtUtc: '2026-07-03T10:00:00Z',
+          lastSuccessAtUtc: '2026-07-03T10:00:00Z',
+          lastFailureAtUtc: null,
+          lastRunErrors: [],
+          tokenMissingOrInvalid: false,
+        }),
+      ),
+    );
+
+    renderLayout();
+
+    await waitFor(() => expect(screen.getByTestId('mobile-nav-burger')).toBeInTheDocument());
+
+    const { default: userEvent } = await import('@testing-library/user-event');
+    const burger = screen.getByTestId('mobile-nav-burger');
+    // Открытие/закрытие не должно бросать — навигация переключается через AppShell.Navbar collapsed.mobile.
+    await userEvent.click(burger);
+    await userEvent.click(burger);
+  });
+
+  it('closes the mobile navbar after clicking a nav link', async () => {
+    server.use(
+      http.get('*/api/sync/status', () =>
+        HttpResponse.json({
+          isRunning: false,
+          lastRunStartedAtUtc: '2026-07-03T10:00:00Z',
+          lastSuccessAtUtc: '2026-07-03T10:00:00Z',
+          lastFailureAtUtc: null,
+          lastRunErrors: [],
+          tokenMissingOrInvalid: false,
+        }),
+      ),
+    );
+
+    renderLayout();
+
+    await waitFor(() => expect(screen.getByTestId('mobile-nav-burger')).toBeInTheDocument());
+
+    const { default: userEvent } = await import('@testing-library/user-event');
+    await userEvent.click(screen.getByTestId('mobile-nav-burger'));
+    await userEvent.click(screen.getByText('Настройки'));
+
+    await waitFor(() => expect(screen.getByText('Экран настроек')).toBeInTheDocument());
+  });
+
   it('does not trigger a background sync when a sync is already running', async () => {
     let syncCalled = false;
     server.use(

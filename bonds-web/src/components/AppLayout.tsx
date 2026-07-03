@@ -1,6 +1,19 @@
-import { AppShell, Group, Title, NavLink, Button, Badge, Tooltip, Text } from '@mantine/core';
+import {
+  AppShell,
+  Group,
+  Title,
+  NavLink,
+  Button,
+  Badge,
+  Tooltip,
+  Text,
+  Burger,
+  SegmentedControl,
+  useMantineColorScheme,
+} from '@mantine/core';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useEffect } from 'react';
+import { useDisclosure } from '@mantine/hooks';
 import { notifications } from '@mantine/notifications';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
@@ -97,6 +110,31 @@ function SyncHealthIndicator() {
 }
 
 /**
+ * Переключатель светлая/тёмная/системная тема (plan/21 часть A) — обёртка над
+ * `useMantineColorScheme` из Mantine 9: состояние (включая "auto") персистит само в localStorage,
+ * здесь только UI. `SegmentedControl` вместо иконки-кнопки — сразу видно все три состояния и
+ * не нужно всплывающее меню.
+ */
+function ColorSchemeSwitcher() {
+  const { colorScheme, setColorScheme } = useMantineColorScheme({ keepTransitions: true });
+
+  return (
+    <SegmentedControl
+      size="xs"
+      value={colorScheme}
+      onChange={(value) => setColorScheme(value as 'light' | 'dark' | 'auto')}
+      data={[
+        { label: 'Светлая', value: 'light' },
+        { label: 'Тёмная', value: 'dark' },
+        { label: 'Авто', value: 'auto' },
+      ]}
+      data-testid="color-scheme-switcher"
+      aria-label="Переключить тему оформления"
+    />
+  );
+}
+
+/**
  * Каркас приложения: шапка + боковая навигация (Mantine AppShell).
  * Рендерится всегда, в том числе внутри iframe portal-shell: ServiceFrame шелла —
  * это просто <iframe>, без собственной под-навигации сервиса и без управления его
@@ -114,6 +152,9 @@ export function AppLayout() {
   const signals = useSignalsStore((s) => s.signals);
   const loadSignals = useSignalsStore((s) => s.load);
   const { isRunning, triggerSync, refreshStatus } = useSyncStore();
+  // Plan/21 часть C.1: burger-навигация на мобиле — navbar уже collapse'ится по breakpoint 'sm',
+  // но без кнопки открыть его было нечем.
+  const [mobileNavOpened, { toggle: toggleMobileNav, close: closeMobileNav }] = useDisclosure(false);
 
   const unreadCount = signals.filter((s) => !s.isRead).length;
 
@@ -171,14 +212,36 @@ export function AppLayout() {
   };
 
   return (
-    <AppShell header={{ height: 60 }} navbar={{ width: 240, breakpoint: 'sm' }} padding="md">
+    <AppShell
+      header={{ height: 60 }}
+      navbar={{ width: 240, breakpoint: 'sm', collapsed: { mobile: !mobileNavOpened } }}
+      padding="md"
+    >
       <AppShell.Header>
-        <Group h="100%" px="md" justify="space-between">
-          <Title order={3} c="violet">
-            Bond Portfolio Analytics
-          </Title>
-          <Group>
+        <Group h="100%" px="md" justify="space-between" wrap="nowrap" style={{ overflowX: 'auto' }}>
+          <Group gap="sm" wrap="nowrap" style={{ flexShrink: 0 }}>
+            <Burger
+              opened={mobileNavOpened}
+              onClick={toggleMobileNav}
+              hiddenFrom="sm"
+              size="sm"
+              aria-label="Открыть навигацию"
+              data-testid="mobile-nav-burger"
+            />
+            {/* Полное название — от sm и шире; на мобиле короткая версия, чтобы не выталкивать
+                бургер/кнопки за пределы 60px шапки на 375px (plan/21 часть C.5 — без горизонтального
+                скролла страницы; сама шапка при этом может проскроллиться, это осознанный компромисс
+                для узкого набора элементов, а не таблицы). */}
+            <Title order={3} c="violet" visibleFrom="sm">
+              Bond Portfolio Analytics
+            </Title>
+            <Title order={4} c="violet" hiddenFrom="sm">
+              Bonds
+            </Title>
+          </Group>
+          <Group wrap="nowrap" justify="flex-end" style={{ flexShrink: 0 }}>
             <SyncHealthIndicator />
+            <ColorSchemeSwitcher />
             <Button
               variant="light"
               loading={isRunning}
@@ -200,7 +263,10 @@ export function AppLayout() {
             key={item.path}
             label={item.label}
             active={location.pathname === item.path}
-            onClick={() => navigate(item.path)}
+            onClick={() => {
+              navigate(item.path);
+              closeMobileNav();
+            }}
             rightSection={
               item.comingSoon ? (
                 <Badge size="xs" color="gray" variant="light">
