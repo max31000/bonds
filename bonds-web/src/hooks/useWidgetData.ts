@@ -17,8 +17,9 @@ export function useWidgetData<T>(fetcher: () => Promise<T>, deps: unknown[] = []
 
   useEffect(() => {
     let cancelled = false;
-    setState((prev) => ({ ...prev, isLoading: true, error: null }));
 
+    // Повторный запуск эффекта (deps изменились) — не обнуляем `data` сразу, чтобы карточка не
+    // мигала пустым состоянием; `isLoading` выставляется только если ре-фетч ещё не завершился.
     fetcher()
       .then((data) => {
         if (!cancelled) setState({ data, isLoading: false, error: null });
