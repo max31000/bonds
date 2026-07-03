@@ -26,7 +26,7 @@ import { Disclaimer } from '../components/Disclaimer';
 import { ChartCard, ChartTooltip, CHART_COLORS, CHART_GRID_PROPS, CHART_HEIGHT, CHART_LEGEND_PROPS, CHART_EXPLANATIONS } from '../components/charts';
 import { formatPercent, formatRub, formatRubCompact, formatSharePercent, formatDate, formatMonthLabel } from '../utils/format';
 import type { CompositionSlice, RateScenarioPoint, RateScenarioResponse, ScatterPoint, TrajectoryResponse, XirrHistoryPoint } from '../api/types';
-import { buildScatterChartData } from '../utils/scatterChartData';
+import { buildScatterChartData, pointCategory, CATEGORY_COLOR } from '../utils/scatterChartData';
 
 type CompositionView = 'byIssuer' | 'bySector' | 'byCouponType' | 'byDurationBucket';
 
@@ -37,20 +37,12 @@ const COMPOSITION_LABEL: Record<CompositionView, string> = {
   byDurationBucket: 'По дюрации',
 };
 
-/** Категория точки на scatter-графике — используется и для цвета/маркера, и для легенды. */
-function pointCategory(p: ScatterPoint): string {
-  if (p.dataIncomplete) return 'Неполные данные';
-  if (p.isFloater) return 'Флоатер';
-  if (p.isIndexed) return 'Индексируемая';
-  return 'Обычная';
+/** Полый маркер (только контур) для watchlist-точек (plan/20 §B.2) — визуально отличает "чужую" бумагу от своих позиций (сплошная заливка). */
+function HollowDot(props: { cx?: number; cy?: number; fill?: string }) {
+  const { cx, cy, fill } = props;
+  if (cx == null || cy == null) return null;
+  return <circle cx={cx} cy={cy} r={5} fill="var(--mantine-color-body)" stroke={fill} strokeWidth={2} />;
 }
-
-const CATEGORY_COLOR: Record<string, string> = {
-  'Обычная': 'var(--mantine-color-violet-6)',
-  'Флоатер': 'var(--mantine-color-blue-6)',
-  'Индексируемая': 'var(--mantine-color-teal-6)',
-  'Неполные данные': 'var(--mantine-color-red-5)',
-};
 
 /** Обрезает имя бумаги для подписи точки на графике (plan/18 часть C) — полное имя видно в тултипе. */
 function shortLabel(name: string | null | undefined): string {
@@ -125,6 +117,7 @@ function ScatterWidget({ scatter }: { scatter: { points: ScatterPoint[]; curve: 
                 name={category}
                 data={chartPoints.filter((p) => pointCategory(p) === category)}
                 fill={CATEGORY_COLOR[category]}
+                shape={category === 'Watchlist' ? HollowDot : undefined}
               >
                 <LabelList
                   dataKey="name"

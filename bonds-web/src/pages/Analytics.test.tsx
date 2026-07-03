@@ -35,6 +35,7 @@ const baseScatter: ScatterResponse = {
       isIndexed: false,
       isEstimated: false,
       dataIncomplete: false,
+      isWatchlist: false,
     },
     {
       positionId: 2,
@@ -49,6 +50,7 @@ const baseScatter: ScatterResponse = {
       isIndexed: false,
       isEstimated: true,
       dataIncomplete: false,
+      isWatchlist: false,
     },
   ],
   curve: [
@@ -134,6 +136,40 @@ describe('Analytics', () => {
     expect(screen.getByTestId('composition-widget')).toBeInTheDocument();
     expect(screen.getByTestId('xirr-widget')).toBeInTheDocument();
     expect(screen.getByTestId('xirr-current')).toHaveTextContent('13.20%');
+  });
+
+  it('renders the scatter widget without crashing when a watchlist point is present (plan/20 §B.2)', async () => {
+    server.use(
+      http.get('*/api/analytics/scatter', () =>
+        HttpResponse.json({
+          ...baseScatter,
+          points: [
+            ...baseScatter.points,
+            {
+              positionId: 0,
+              instrumentId: 999,
+              name: 'Чужая бумага',
+              issuer: 'Другой эмитент',
+              modifiedDuration: 4.0,
+              macaulayDuration: 4.2,
+              effectiveYield: 0.16,
+              yieldKind: 'Ytm',
+              isFloater: false,
+              isIndexed: false,
+              isEstimated: false,
+              dataIncomplete: false,
+              isWatchlist: true,
+            },
+          ],
+        }),
+      ),
+      http.get('*/api/analytics/composition', () => HttpResponse.json(baseComposition)),
+      http.get('*/api/analytics/xirr', () => HttpResponse.json(baseXirr)),
+    );
+
+    renderAnalytics();
+
+    await waitFor(() => expect(screen.getByTestId('scatter-widget')).toBeInTheDocument());
   });
 
   it('opens the explanation popover for the scatter widget (plan/18 part C)', async () => {

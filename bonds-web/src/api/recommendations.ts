@@ -11,7 +11,12 @@ export function postReplacement(request: ReplacementRequest): Promise<Replacemen
   return apiClient.post<ReplacementResponse>('/analytics/replacement', request);
 }
 
-/** GET /api/analytics/allocation?amountRub= — «куда вложить сумму» (plan/17 §A/§B). */
-export function fetchAllocation(amountRub: number): Promise<AllocationResponse> {
-  return apiClient.get<AllocationResponse>(`/analytics/allocation?amountRub=${amountRub}`);
+/**
+ * GET /api/analytics/allocation?amountRub=&includeWatchlist= — «куда вложить сумму» (plan/17 §A/§B).
+ * Задача 20: includeWatchlist=true (дефолт здесь на фронте) добавляет watchlist-бумаги как кандидатов.
+ */
+export function fetchAllocation(amountRub: number, includeWatchlist = true): Promise<AllocationResponse> {
+  return apiClient.get<AllocationResponse>(
+    `/analytics/allocation?amountRub=${amountRub}&includeWatchlist=${includeWatchlist}`,
+  );
 }

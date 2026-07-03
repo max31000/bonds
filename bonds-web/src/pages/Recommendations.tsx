@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Title,
   Stack,
@@ -12,10 +12,14 @@ import {
   Button,
   NumberInput,
   SimpleGrid,
+  Table,
+  TextInput,
+  ActionIcon,
 } from '@mantine/core';
 import { useRecommendationsStore } from '../store/useRecommendationsStore';
+import { useWatchlistStore } from '../store/useWatchlistStore';
 import { Disclaimer } from '../components/Disclaimer';
-import { formatRub, formatPercent, formatNumber } from '../utils/format';
+import { formatRub, formatPercent, formatNumber, formatDate } from '../utils/format';
 import type { ComparisonRow } from '../api/types';
 
 /** Карточка одного sell-кандидата с бейджами-причинами (plan/17 §A.1). Формулировки — оценочные («кандидат»), не «продайте». */
@@ -261,10 +265,143 @@ function AllocationSection() {
   );
 }
 
+/** Секция «Watchlist» (plan/20 §B.1) — ручной список бумаг вне текущих позиций: ввод ISIN + заметка, таблица метрик, удаление. */
+function WatchlistSection() {
+  const { items, disclaimer, isLoading, error, isAdding, addError, load, add, remove, clearAddError } =
+    useWatchlistStore();
+  const [isin, setIsin] = useState('');
+  const [note, setNote] = useState('');
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleAdd = async () => {
+    if (!isin.trim()) return;
+    const ok = await add(isin.trim(), note.trim() || undefined);
+    if (ok) {
+      setIsin('');
+      setNote('');
+    }
+  };
+
+  return (
+    <Paper withBorder p="md" radius="md" data-testid="watchlist-section">
+      <Title order={4} mb="sm">
+        Watchlist — бумаги вне портфеля
+      </Title>
+      <Text size="xs" c="dimmed" mb="sm">
+        Ручной список ISIN для сравнения с портфелем в тех же координатах (YTM, дюрация, G-спред) —
+        не скринер по всей бирже.
+      </Text>
+
+      <Group align="flex-end" mb="sm" wrap="wrap">
+        <TextInput
+          label="ISIN"
+          placeholder="RU000A1038V6"
+          value={isin}
+          onChange={(e) => {
+            setIsin(e.currentTarget.value);
+            if (addError) clearAddError();
+          }}
+          data-testid="watchlist-isin-input"
+          w={220}
+        />
+        <TextInput
+          label="Заметка (необязательно)"
+          value={note}
+          onChange={(e) => setNote(e.currentTarget.value)}
+          data-testid="watchlist-note-input"
+          w={260}
+        />
+        <Button onClick={handleAdd} loading={isAdding} data-testid="watchlist-add-button">
+          Добавить
+        </Button>
+      </Group>
+
+      {addError && (
+        <Alert color="red" mb="sm" data-testid="watchlist-add-error">
+          {addError}
+        </Alert>
+      )}
+
+      {isLoading && (
+        <Center py="md">
+          <Loader size="sm" />
+        </Center>
+      )}
+
+      {!isLoading && error && (
+        <Alert color="red" data-testid="watchlist-error">
+          {error}
+        </Alert>
+      )}
+
+      {!isLoading && !error && items.length === 0 && (
+        <Text size="sm" c="dimmed" data-testid="watchlist-empty">
+          Пока пусто — добавьте ISIN бумаги, за которой хотите наблюдать.
+        </Text>
+      )}
+
+      {!isLoading && !error && items.length > 0 && (
+        <Table.ScrollContainer minWidth={700}>
+          <Table striped highlightOnHover data-testid="watchlist-table">
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>Бумага</Table.Th>
+                <Table.Th>Доходность</Table.Th>
+                <Table.Th>Дюрация, лет</Table.Th>
+                <Table.Th>G-спред, б.п.</Table.Th>
+                <Table.Th>Добавлена</Table.Th>
+                <Table.Th>Заметка</Table.Th>
+                <Table.Th />
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {items.map((item) => (
+                <Table.Tr key={item.id} data-testid={`watchlist-row-${item.id}`}>
+                  <Table.Td>
+                    {item.name ?? item.issuer ?? item.isin}
+                    {item.dataIncomplete && (
+                      <Badge ml={6} size="xs" color="gray" variant="outline">
+                        неполные данные
+                      </Badge>
+                    )}
+                  </Table.Td>
+                  <Table.Td>{formatPercent(item.effectiveYield)}</Table.Td>
+                  <Table.Td>{item.modifiedDuration != null ? formatNumber(item.modifiedDuration, 2) : '—'}</Table.Td>
+                  <Table.Td>{item.gSpread != null ? formatNumber(item.gSpread, 0) : '—'}</Table.Td>
+                  <Table.Td>{formatDate(item.addedAtUtc)}</Table.Td>
+                  <Table.Td>{item.note ?? '—'}</Table.Td>
+                  <Table.Td>
+                    <ActionIcon
+                      color="red"
+                      variant="subtle"
+                      onClick={() => remove(item.id)}
+                      data-testid={`watchlist-remove-${item.id}`}
+                      aria-label="Удалить из watchlist"
+                    >
+                      ×
+                    </ActionIcon>
+                  </Table.Td>
+                </Table.Tr>
+              ))}
+            </Table.Tbody>
+          </Table>
+        </Table.ScrollContainer>
+      )}
+
+      {!isLoading && !error && items.length > 0 && <Disclaimer text={disclaimer} />}
+    </Paper>
+  );
+}
+
 /**
  * Страница «Рекомендации» (plan/17): три секции — слабые звенья (comparison), замены
  * (replacement) и куда вложить сумму (allocation). Все формулировки — оценочные, не
- * индивидуальные инвестрекомендации (см. Disclaimer/юридическая рамка плана).
+ * индивидуальные инвестрекомендации (см. Disclaimer/юридическая рамка плана). Задача 20
+ * добавляет секцию watchlist (бумаги вне портфеля).
  */
 export function Recommendations() {
   const load = useRecommendationsStore((s) => s.load);
@@ -287,6 +424,7 @@ export function Recommendations() {
       <WeakLinksSection />
       <ReplacementsSection />
       <AllocationSection />
+      <WatchlistSection />
     </Stack>
   );
 }

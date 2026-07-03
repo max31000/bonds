@@ -265,6 +265,8 @@ export interface ScatterPoint {
   isIndexed: boolean;
   isEstimated: boolean;
   dataIncomplete: boolean;
+  /** Задача 20: true — точка watchlist-бумаги без позиции (полый маркер на графике). */
+  isWatchlist: boolean;
 }
 
 /** Точка реконструированной безрисковой кривой. */
@@ -442,7 +444,10 @@ export interface ComparisonResponse {
 /** Тело POST /api/analytics/replacement. */
 export interface ReplacementRequest {
   holdPositionId: number;
-  targetPositionId: number;
+  /** Target — позиция портфеля. Игнорируется на бэке, если задан targetInstrumentId (задача 20). */
+  targetPositionId?: number;
+  /** Задача 20: target — watchlist-бумага без позиции, по InstrumentId. */
+  targetInstrumentId?: number;
   horizonYears: number;
   sellCommissionRate?: number;
   buyCommissionRate?: number;
@@ -452,6 +457,8 @@ export interface ReplacementRequest {
 export interface ReplacementResponse {
   holdPositionId: number;
   targetPositionId: number;
+  /** Задача 20: эхо запроса — задан, только если target был watchlist-бумагой без позиции. */
+  targetInstrumentId?: number | null;
   horizonYears: number;
   sellCommissionRub: number;
   buyCommissionRub: number;
@@ -494,6 +501,57 @@ export interface AllocationResponse {
   skipped: AllocationSkip[];
   leftoverRub: number;
   disclaimer: string;
+}
+
+// ---- GET/POST /api/watchlist, DELETE /api/watchlist/{id} (plan/20 §A) ----
+
+/** Строка watchlist — бумага вне текущих позиций, отслеживаемая по ISIN. Метрики — тот же расчётный путь, что у позиций. */
+export interface WatchlistItem {
+  id: number;
+  isin: string;
+  note: string | null;
+  addedAtUtc: string;
+
+  /** Null — инструмент ещё не подтянут справочником (запись только что создана). */
+  instrumentId: number | null;
+  name: string | null;
+  issuer: string | null;
+  sector: string | null;
+  couponType: CouponType | null;
+  maturityDate: string | null;
+  horizonDate: string | null;
+  calculatedToOffer: boolean | null;
+  modifiedDuration: number | null;
+  macaulayDuration: number | null;
+  ytmEffective: number | null;
+  currentYield: number | null;
+  /** YTM либо CurrentYield для флоатера/индексируемой — то же правило, что у позиций. */
+  effectiveYield: number | null;
+  gSpread: number | null;
+  isFloater: boolean | null;
+  isIndexed: boolean | null;
+  isEstimated: boolean | null;
+  dataIncomplete: boolean;
+}
+
+/** Ответ GET /api/watchlist. */
+export interface WatchlistResponse {
+  items: WatchlistItem[];
+  disclaimer: string;
+}
+
+/** Тело POST /api/watchlist. */
+export interface WatchlistCreateRequest {
+  isin: string;
+  note?: string;
+}
+
+/** Ответ POST /api/watchlist. */
+export interface WatchlistCreateResponse {
+  id: number;
+  isin: string;
+  note: string | null;
+  addedAtUtc: string;
 }
 
 // ---- GET/PUT /api/settings, PUT /api/settings/tinvest-token (см. plan/09c §B.8) ----
