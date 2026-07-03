@@ -79,8 +79,18 @@ public static class MoexBondizationParser
         foreach (var row in table.Rows())
         {
             var date = row.GetDateOnly("amortdate");
+            if (date is null) continue; // строка без даты бесполезна — пропускаем, не падаем (симметрично ParseCoupons)
+
+            // value_rub — сумма амортизации в рублях на номинал. Может отсутствовать (null) для
+            // будущих строк ипотечных агентов/MBS-подобных бумаг (ДОМ.РФ и т.п.) — там график
+            // отдаётся на весь срок жизни бумаги, но сумма зависит от непредсказуемых досрочных
+            // погашений ипотечных пулов. Раньше такая строка молча выбрасывалась (см. Audit(engine)
+            // E-1) — BondCashFlowBuilder воспринимал отсутствие строки как "амортизации не было" и
+            // схлопывал весь остаток номинала в один платёж на дату юридического погашения.
+            // Теперь — сохраняем строку с IsKnown=false, AmountRub=0m-заглушкой (не подставляем
+            // молча ни ноль, ни выдуманную сумму как реальную; см. CouponSchedule.IsKnown, spec §4.4).
             var amount = row.GetDecimal("value_rub") ?? row.GetDecimal("value");
-            if (date is null || amount is null) continue;
+            var isKnown = amount is not null;
 
             // ISS включает в "amortizations" финальное погашение тела (data_source="maturity")
             // как отдельную строку с amount=100% номинала — это ожидаемо и не является амортизацией
@@ -90,7 +100,8 @@ public static class MoexBondizationParser
             result.Add(new AmortizationSchedule
             {
                 Date = date.Value,
-                AmountRub = amount.Value,
+                AmountRub = amount ?? 0m,
+                IsKnown = isKnown,
             });
         }
 

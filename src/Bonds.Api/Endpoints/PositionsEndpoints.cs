@@ -154,8 +154,12 @@ public static class PositionsEndpoints
             AmortizationSchedule = amortizations.Select(a => new AmortizationScheduleItemDto
             {
                 Date = a.Date,
-                AmountRub = a.AmountRub,
-                AmountForPositionRub = a.AmountRub * position.Quantity,
+                // Audit(engine) E-1: AmountRub — 0m-заглушка, когда IsKnown=false (MBS/ипотечный
+                // агент, сумма не пришла от MOEX) — фронт должен показывать "неизвестно", не "0 ₽"
+                // (тот же контракт, что у CouponScheduleItemDto.IsKnown выше).
+                AmountRub = a.IsKnown ? a.AmountRub : null,
+                AmountForPositionRub = a.IsKnown ? a.AmountRub * position.Quantity : null,
+                IsKnown = a.IsKnown,
                 IsPast = a.Date <= asOf,
             }).ToList(),
             OfferSchedule = offers.Select(o => new OfferScheduleItemDto
@@ -441,8 +445,16 @@ public sealed record CouponScheduleItemDto
 public sealed record AmortizationScheduleItemDto
 {
     public required DateOnly Date { get; init; }
-    public required decimal AmountRub { get; init; }
-    public required decimal AmountForPositionRub { get; init; }
+
+    /// <summary>Null, если сумма неизвестна (<see cref="IsKnown"/> = false) — не 0 (spec §4.4).</summary>
+    public decimal? AmountRub { get; init; }
+
+    /// <summary>Null, если сумма неизвестна (<see cref="IsKnown"/> = false) — не 0 (spec §4.4).</summary>
+    public decimal? AmountForPositionRub { get; init; }
+
+    /// <summary>Известна ли точная сумма амортизации (Audit(engine) E-1). False — MBS/ипотечный агент, MOEX не отдал сумму.</summary>
+    public required bool IsKnown { get; init; }
+
     public required bool IsPast { get; init; }
 }
 

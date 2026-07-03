@@ -18,11 +18,12 @@ internal static class TestModelFactory
         IsKnown = isKnown,
     };
 
-    public static AmortizationSchedule Amortization(ulong instrumentId, DateOnly date, decimal amount) => new()
+    public static AmortizationSchedule Amortization(ulong instrumentId, DateOnly date, decimal amount, bool isKnown = true) => new()
     {
         InstrumentId = instrumentId,
         Date = date,
         AmountRub = amount,
+        IsKnown = isKnown,
     };
 
     public static OfferSchedule Offer(ulong instrumentId, DateOnly date, OfferType type, bool isExecuted = false) => new()

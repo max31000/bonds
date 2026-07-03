@@ -87,7 +87,12 @@ public static class SignalsEngine
                     PositionId = position.PositionId,
                     InstrumentId = position.InstrumentId,
                     Date = amortization.Date,
-                    SuggestedAction = $"Частичное погашение номинала {amortization.AmountRub:F2} руб. по позиции {position.Name ?? position.Issuer ?? position.InstrumentId.ToString()} ожидается {amortization.Date:yyyy-MM-dd}",
+                    // Audit(engine) E-1: сумма может быть неизвестна (MBS/ипотечный агент, MOEX
+                    // value_rub=null) — та же деградация текста, что и для купона флоатера выше,
+                    // не показываем 0.00 руб. как будто это реальная (нулевая) сумма (spec §4.4).
+                    SuggestedAction = amortization.IsKnown
+                        ? $"Частичное погашение номинала {amortization.AmountRub:F2} руб. по позиции {position.Name ?? position.Issuer ?? position.InstrumentId.ToString()} ожидается {amortization.Date:yyyy-MM-dd}"
+                        : $"Частичное погашение номинала по позиции {position.Name ?? position.Issuer ?? position.InstrumentId.ToString()} ожидается {amortization.Date:yyyy-MM-dd} (точная сумма не известна)",
                 };
             }
         }

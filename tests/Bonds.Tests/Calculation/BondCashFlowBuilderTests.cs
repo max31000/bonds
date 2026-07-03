@@ -98,4 +98,44 @@ public class BondCashFlowBuilderTests
 
         flow.Should().BeEmpty();
     }
+
+    /// <summary>
+    /// Audit(engine) E-1 (репродьюсер, было красным до фикса): амортизация с известной датой,
+    /// но неизвестной суммой (MBS/ипотечный агент, MOEX отдаёт value_rub=null на десятки лет
+    /// вперёд) не должна молча схлопывать весь остаток номинала в один платёж на дату
+    /// юридического погашения. Такая точка должна попасть в поток с IsKnown=false и БЕЗ
+    /// фиктивной суммы (не 0, не пропуск), а финальное "остаток номинала на горизонт" не должно
+    /// подставлять номинал целиком, как будто амортизации не было вовсе.
+    /// </summary>
+    [Fact]
+    public void Build_AmortizationWithUnknownAmount_DoesNotCollapseIntoFullPrincipalAtMaturity()
+    {
+        var maturity = AsOf.AddDays(365 * 17); // "юридическое" погашение, далеко за горизонтом реальных выплат
+        var unknownAmortDate1 = AsOf.AddDays(60);
+        var unknownAmortDate2 = AsOf.AddDays(150);
+
+        var coupons = new[] { TestModelFactory.Coupon(InstrumentId, maturity, 5m) };
+        var amortizations = new[]
+        {
+            TestModelFactory.Amortization(InstrumentId, unknownAmortDate1, 0m, isKnown: false),
+            TestModelFactory.Amortization(InstrumentId, unknownAmortDate2, 0m, isKnown: false),
+        };
+
+        var flow = BondCashFlowBuilder.Build(88.84m, AsOf, maturity, coupons, amortizations);
+
+        // Обе амортизационные точки присутствуют в потоке (дата известна) и явно помечены как
+        // неизвестные — раньше такие строки просто выбрасывались парсером и здесь не появлялись.
+        flow.Should().Contain(f => f.Date == unknownAmortDate1 && !f.IsKnown);
+        flow.Should().Contain(f => f.Date == unknownAmortDate2 && !f.IsKnown);
+
+        // Главное следствие бага: весь номинал (88.84) НЕ должен быть возвращён одним платежом
+        // на дату юридического погашения — это была бы "bullet"-подмена реального MBS-потока.
+        var maturityPoint = flow.Single(f => f.Date == maturity);
+        maturityPoint.PrincipalAmount.Should().NotBe(88.84m,
+            "остаток номинала неизвестен из-за неизвестных амортизаций — нельзя молча гасить его целиком на юридическую дату погашения");
+
+        // Весь поток целиком помечен неизвестным — потребитель (BondMetricsCalculator) не должен
+        // считать YTM/дюрацию на этой исковерканной форме.
+        flow.Should().Contain(f => !f.IsKnown);
+    }
 }

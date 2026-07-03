@@ -19,7 +19,7 @@ public class AmortizationScheduleRepository : IAmortizationScheduleRepository
         using var conn = CreateConnection();
         return await conn.QueryAsync<AmortizationSchedule>(
             @"SELECT id AS Id, instrument_id AS InstrumentId, date AS Date,
-                     amount_rub AS AmountRub, created_at AS CreatedAt
+                     amount_rub AS AmountRub, is_known AS IsKnown, created_at AS CreatedAt
               FROM amortization_schedules WHERE instrument_id = @InstrumentId ORDER BY date",
             new { InstrumentId = instrumentId });
     }
@@ -35,8 +35,8 @@ public class AmortizationScheduleRepository : IAmortizationScheduleRepository
             new { InstrumentId = instrumentId }, tx);
 
         const string insertSql = @"
-            INSERT INTO amortization_schedules (instrument_id, date, amount_rub)
-            VALUES (@InstrumentId, @Date, @AmountRub)";
+            INSERT INTO amortization_schedules (instrument_id, date, amount_rub, is_known)
+            VALUES (@InstrumentId, @Date, @AmountRub, @IsKnown)";
 
         foreach (var item in schedule)
         {
@@ -45,6 +45,7 @@ public class AmortizationScheduleRepository : IAmortizationScheduleRepository
                 InstrumentId = instrumentId,
                 item.Date,
                 item.AmountRub,
+                item.IsKnown,
             }, tx);
         }
 
