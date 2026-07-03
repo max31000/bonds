@@ -297,4 +297,6 @@ export type SettingsUpdateRequest = Omit<
 export interface TInvestTokenResponse {
   tInvestTokenConfigured: boolean;
   tInvestTokenMasked: string | null;
+  /** T-13/C: маска (последние 4 символа) Id счёта, к которому привязан провалидированный токен. */
+  validatedAccountIdMasked: string | null;
 }
