@@ -24,6 +24,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: 'Позиции', path: '/' },
   { label: 'Денежный поток', path: '/cashflow' },
   { label: 'Аналитика', path: '/analytics' },
+  { label: 'Рекомендации', path: '/recommendations' },
   { label: 'Сигналы', path: '/signals', showUnreadBadge: true },
   { label: 'Настройки', path: '/settings' },
 ];

@@ -42,6 +42,26 @@ export const handlers = [
   http.get('*/api/analytics/trajectory', () =>
     HttpResponse.json({ initialValueRub: 0, withReinvest: [], withoutReinvest: [], reinvestRateUsed: 0, disclaimer: '' }),
   ),
+  // Дефолтные кейсы для 17 — пустые данные; конкретные сценарии переопределяются в тестах экрана рекомендаций.
+  http.get('*/api/analytics/comparison', () => HttpResponse.json({ rows: [], disclaimer: '' })),
+  http.post('*/api/analytics/replacement', () =>
+    HttpResponse.json({
+      holdPositionId: 0,
+      targetPositionId: 0,
+      horizonYears: 2,
+      sellCommissionRub: 0,
+      buyCommissionRub: 0,
+      totalSwitchCostRub: 0,
+      netBenefitRub: 0,
+      isSwitchFavorable: false,
+      breakEvenYears: null,
+      yieldDataIncomplete: true,
+      disclaimer: '',
+    }),
+  ),
+  http.get('*/api/analytics/allocation', () =>
+    HttpResponse.json({ amountRub: 15000, allocations: [], skipped: [], leftoverRub: 15000, disclaimer: '' }),
+  ),
   // Дефолтные кейсы для 09c — пустые/неактивные данные; переопределяются в тестах экранов.
   http.get('*/api/signals', () => HttpResponse.json({ signals: [] })),
   http.post('*/api/signals/:id/read', ({ params }) =>

@@ -288,6 +288,89 @@ export interface TrajectoryResponse {
   disclaimer: string;
 }
 
+// ---- GET /api/analytics/comparison, POST /api/analytics/replacement (plan/17 §A) ----
+
+/** Строка таблицы сравнения позиций — GET /api/analytics/comparison. */
+export interface ComparisonRow {
+  positionId: number;
+  instrumentId: number;
+  name: string | null;
+  issuer: string | null;
+  effectiveYield: number | null;
+  yieldKind: YieldKind;
+  modifiedDuration: number | null;
+  gSpread: number | null;
+  daysToHorizon: number;
+  horizonDate: string;
+  calculatedToOffer: boolean;
+  couponType: CouponType;
+  isEstimated: boolean;
+  dataIncomplete: boolean;
+}
+
+/** Ответ GET /api/analytics/comparison. */
+export interface ComparisonResponse {
+  rows: ComparisonRow[];
+  disclaimer: string;
+}
+
+/** Тело POST /api/analytics/replacement. */
+export interface ReplacementRequest {
+  holdPositionId: number;
+  targetPositionId: number;
+  horizonYears: number;
+  sellCommissionRate?: number;
+  buyCommissionRate?: number;
+}
+
+/** Ответ POST /api/analytics/replacement — «держать A vs переложиться в B» (SwitchAnalysisService). */
+export interface ReplacementResponse {
+  holdPositionId: number;
+  targetPositionId: number;
+  horizonYears: number;
+  sellCommissionRub: number;
+  buyCommissionRub: number;
+  totalSwitchCostRub: number;
+  netBenefitRub: number;
+  isSwitchFavorable: boolean;
+  breakEvenYears: number | null;
+  yieldDataIncomplete: boolean;
+  disclaimer: string;
+}
+
+// ---- GET /api/analytics/allocation (plan/17 §B) ----
+
+/** Причина, по которой кандидат не получил докупку. */
+export type AllocationSkipReason = 'NoYield' | 'ConcentrationLimit' | 'NoPrice';
+
+/** Одна строка распределения — сколько купить конкретной бумаги. */
+export interface AllocationLine {
+  instrumentId: number;
+  name: string | null;
+  issuer: string | null;
+  quantity: number;
+  estimatedCostRub: number;
+  effectiveYield: number;
+  lotSizeAssumed: boolean;
+}
+
+/** Кандидат, не получивший докупку, и причина. */
+export interface AllocationSkip {
+  instrumentId: number;
+  name: string | null;
+  issuer: string | null;
+  reason: AllocationSkipReason;
+}
+
+/** Ответ GET /api/analytics/allocation. */
+export interface AllocationResponse {
+  amountRub: number;
+  allocations: AllocationLine[];
+  skipped: AllocationSkip[];
+  leftoverRub: number;
+  disclaimer: string;
+}
+
 // ---- GET/PUT /api/settings, PUT /api/settings/tinvest-token (см. plan/09c §B.8) ----
 
 /** Настройки пользователя — пороги триггеров сигналов и базовая валюта. */
