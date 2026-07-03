@@ -1,6 +1,7 @@
 using Bonds.Core.Interfaces.Repositories;
 using Bonds.Core.Models;
 using Bonds.Core.Signals;
+using Bonds.Core.Time;
 using Bonds.Infrastructure.Analytics;
 using Bonds.Infrastructure.CashFlow;
 using Bonds.Infrastructure.Connectors.Moex;
@@ -207,7 +208,12 @@ public class SyncCycleServiceTests
             Isin = "RU000TEST001",
             Issuer = "Тест-Эмитент",
             FaceValue = 1000m,
-            MaturityDate = new DateOnly(2026, 7, 1), // близко к "сейчас" → должен сработать UpcomingRedemption
+            // Относительно BusinessClock.MoscowToday() (та же точка отсчёта, что и SyncCycleService
+            // использует для asOf) — заведомо внутри окна "погашение в ближайшие 14 дней" для
+            // UpcomingRedemption независимо от того, в какой день реально запускается тест
+            // (было: захардкоженная абсолютная дата 2026-07-01 — тест ломался, как только "сегодня"
+            // проезжало мимо этой даты).
+            MaturityDate = BusinessClock.MoscowToday().AddDays(7),
             CouponType = CouponType.Fixed,
         };
         _instruments.Setup(i => i.GetByIdAsync(5)).ReturnsAsync(instrument);
