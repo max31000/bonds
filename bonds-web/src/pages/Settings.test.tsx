@@ -84,6 +84,34 @@ describe('Settings', () => {
     expect(screen.queryByText('secret-token-value')).not.toBeInTheDocument();
   });
 
+  // T-13/C: PUT /api/settings/tinvest-token валидирует токен перед сохранением — 422 не должен
+  // отображаться как "задан", и текст ошибки от бэкенда должен дойти до пользователя.
+  it('shows a validation error notification and does not mark the token as configured on 422', async () => {
+    server.use(
+      http.get('*/api/settings', () => HttpResponse.json(baseSettings)),
+      http.put('*/api/settings/tinvest-token', () =>
+        HttpResponse.json(
+          { error: 'Токен не принят T-Invest (недействителен или отозван).', type: 'TInvestTokenValidationException' },
+          { status: 422 },
+        ),
+      ),
+    );
+
+    renderSettings();
+
+    await waitFor(() => expect(screen.getByTestId('tinvest-token-input')).toBeInTheDocument());
+
+    const { default: userEvent } = await import('@testing-library/user-event');
+    const input = screen.getByTestId('tinvest-token-input') as HTMLInputElement;
+    await userEvent.type(input, 'invalid-token-value');
+    await userEvent.click(screen.getByTestId('tinvest-token-save'));
+
+    await waitFor(() => expect(screen.getByText('Токен не прошёл проверку')).toBeInTheDocument());
+    expect(screen.getAllByText('Токен не принят T-Invest (недействителен или отозван).').length).toBeGreaterThan(0);
+    expect(input.value).toBe('');
+    expect(screen.getByText('не задан')).toBeInTheDocument();
+  });
+
   it('saves the thresholds form', async () => {
     server.use(
       http.get('*/api/settings', () => HttpResponse.json(baseSettings)),

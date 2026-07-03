@@ -214,6 +214,8 @@ export interface SignalReadResponse {
 export interface SyncRunResult {
   alreadyRunning: boolean;
   noAccountConfigured: boolean;
+  /** T-13/B: токен T-Invest не задан или не расшифровался — синк деградировал на этом шаге. */
+  tokenMissingOrInvalid: boolean;
   instrumentsSynced: number;
   operationsUpserted: number;
   yieldCurveUpdated: boolean;
@@ -232,6 +234,8 @@ export interface SyncStatus {
   lastSuccessAtUtc: string | null;
   lastFailureAtUtc: string | null;
   lastRunErrors: string[];
+  /** T-13/B: токен T-Invest не задан или не расшифровался (см. SyncRunResult). */
+  tokenMissingOrInvalid: boolean;
 }
 
 // ---- GET /api/analytics/rate-scenario ----
@@ -293,4 +297,6 @@ export type SettingsUpdateRequest = Omit<
 export interface TInvestTokenResponse {
   tInvestTokenConfigured: boolean;
   tInvestTokenMasked: string | null;
+  /** T-13/C: маска (последние 4 символа) Id счёта, к которому привязан провалидированный токен. */
+  validatedAccountIdMasked: string | null;
 }

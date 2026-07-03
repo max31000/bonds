@@ -14,4 +14,13 @@ public sealed record SyncCycleStatus
     public DateTime? LastSuccessAtUtc { get; init; }
     public DateTime? LastFailureAtUtc { get; init; }
     public IReadOnlyList<string> LastRunErrors { get; init; } = Array.Empty<string>();
+
+    /// <summary>
+    /// Plan/13 часть B: true, если у заведённого пользователя токен T-Invest не задан или не
+    /// расшифровался (см. <see cref="Bonds.Infrastructure.Services.TInvestTokenStatus"/>) —
+    /// выставляется циклом синка (<see cref="SyncCycleService"/>) по результату
+    /// <c>ITInvestTokenProvider.GetTokenStatusAsync</c>, чтобы фронт мог показать явный бейдж
+    /// вместо того, чтобы пользователь узнавал о протухшем токене по пустым данным.
+    /// </summary>
+    public bool TokenMissingOrInvalid { get; init; }
 }

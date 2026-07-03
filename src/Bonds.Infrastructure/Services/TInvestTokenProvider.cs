@@ -38,22 +38,39 @@ public sealed class TInvestTokenProvider : ITInvestTokenProvider
 
     public async Task<string?> GetTokenAsync(CancellationToken ct = default)
     {
+        var (_, token) = await ResolveAsync();
+        return token;
+    }
+
+    public async Task<TInvestTokenStatus> GetTokenStatusAsync(CancellationToken ct = default)
+    {
+        var (status, _) = await ResolveAsync();
+        return status;
+    }
+
+    /// <summary>
+    /// Единая точка резолва — и <see cref="GetTokenAsync"/>, и <see cref="GetTokenStatusAsync"/>
+    /// (plan/13 часть B: "различать эти два случая текстом ошибки") идут через неё, чтобы не
+    /// дублировать логику расшифровки/её try-catch.
+    /// </summary>
+    private async Task<(TInvestTokenStatus Status, string? Token)> ResolveAsync()
+    {
         var userId = await _userRepo.GetPrimaryUserIdAsync();
         if (userId is null)
         {
-            return null;
+            return (TInvestTokenStatus.NotConfigured, null);
         }
 
         var settings = await _settingsRepo.GetByUserIdAsync(userId.Value);
         if (string.IsNullOrEmpty(settings?.TInvestTokenEncrypted))
         {
-            return null;
+            return (TInvestTokenStatus.NotConfigured, null);
         }
 
         var protector = _dataProtection.CreateProtector(ProtectorPurpose);
         try
         {
-            return protector.Unprotect(settings.TInvestTokenEncrypted);
+            return (TInvestTokenStatus.Valid, protector.Unprotect(settings.TInvestTokenEncrypted));
         }
         catch (Exception ex)
         {
@@ -62,7 +79,7 @@ public sealed class TInvestTokenProvider : ITInvestTokenProvider
             // падения всего цикла (spec §4.4). Само исключение/сообщение не содержит токен — безопасно
             // логировать (spec §11).
             _logger.LogWarning(ex, "Failed to decrypt stored T-Invest token");
-            return null;
+            return (TInvestTokenStatus.DecryptionFailed, null);
         }
     }
 }

@@ -32,6 +32,11 @@ services:
       ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Development}
       ASPNETCORE_URLS: http://+:5001
       ConnectionStrings__DefaultConnection: "Server=mysql;Database=bonds;User=root;Password=${MYSQL_ROOT_PASSWORD:-bonds_dev};AllowPublicKeyRetrieval=true;"
+    volumes:
+      # Персист ключей DataProtection на именованный volume — локальный цикл (`docker compose down`
+      # без `-v` + `up`) ведёт себя как прод (plan/13 часть A): пересоздание контейнера api не рвёт
+      # расшифровку токена T-Invest, сохранённого в БД через PUT /api/settings/tinvest-token.
+      - dataprotection_keys:/app/dataprotection-keys
     depends_on:
       mysql:
         condition: service_healthy
@@ -40,6 +45,7 @@ services:
 
 volumes:
   mysql_data:
+  dataprotection_keys:
 
 networks:
   bonds-network:

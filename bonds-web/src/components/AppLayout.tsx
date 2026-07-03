@@ -1,10 +1,16 @@
-import { AppShell, Group, Title, NavLink, Button, Badge } from '@mantine/core';
+import { AppShell, Group, Title, NavLink, Button, Badge, Tooltip, Text } from '@mantine/core';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useEffect } from 'react';
 import { notifications } from '@mantine/notifications';
+import dayjs from 'dayjs';
+import relativeTime from 'dayjs/plugin/relativeTime';
+import 'dayjs/locale/ru';
 import { useAuthStore } from '../store/useAuthStore';
 import { useSignalsStore } from '../store/useSignalsStore';
 import { useSyncStore } from '../store/useSyncStore';
+
+dayjs.extend(relativeTime);
+dayjs.locale('ru');
 
 interface NavItem {
   label: string;
@@ -21,6 +27,72 @@ const NAV_ITEMS: NavItem[] = [
   { label: 'Сигналы', path: '/signals', showUnreadBadge: true },
   { label: 'Настройки', path: '/settings' },
 ];
+
+/**
+ * Компактный индикатор здоровья синка рядом с кнопкой «Обновить данные» (plan/13 часть B) —
+ * иначе упавший/деградировавший автосинк никак не виден в UI, и пользователь узнаёт об этом
+ * только по пустым/устаревшим данным. Три состояния, приоритет сверху вниз:
+ * 1. Оранжевый бейдж «Токен не подключён/недействителен» (TokenMissingOrInvalid) — кликабельный,
+ *    ведёт на /settings, т.к. это единственное действие, которое решает проблему.
+ * 2. Красный бейдж «Ошибка синка» с tooltip первой ошибки — когда последний прогон завершился
+ *    позже последнего успеха (LastFailureAtUtc > LastSuccessAtUtc).
+ * 3. Зелёная точка + «синк N назад» — здоровое состояние.
+ */
+function SyncHealthIndicator() {
+  const navigate = useNavigate();
+  const status = useSyncStore((s) => s.status);
+
+  if (!status) return null;
+
+  if (status.tokenMissingOrInvalid) {
+    return (
+      <Badge
+        color="orange"
+        variant="filled"
+        style={{ cursor: 'pointer' }}
+        onClick={() => navigate('/settings')}
+        data-testid="sync-health-token-badge"
+      >
+        Токен не подключён / недействителен
+      </Badge>
+    );
+  }
+
+  const lastFailure = status.lastFailureAtUtc ? dayjs(status.lastFailureAtUtc) : null;
+  const lastSuccess = status.lastSuccessAtUtc ? dayjs(status.lastSuccessAtUtc) : null;
+  const hasUnresolvedFailure = lastFailure !== null && (lastSuccess === null || lastFailure.isAfter(lastSuccess));
+
+  if (hasUnresolvedFailure) {
+    return (
+      <Tooltip label={status.lastRunErrors[0] ?? 'Подробности — в логах сервера.'}>
+        <Badge color="red" variant="filled" data-testid="sync-health-error-badge">
+          Ошибка синка
+        </Badge>
+      </Tooltip>
+    );
+  }
+
+  if (lastSuccess) {
+    return (
+      <Group gap={6} data-testid="sync-health-ok">
+        <span
+          style={{
+            display: 'inline-block',
+            width: 8,
+            height: 8,
+            borderRadius: '50%',
+            backgroundColor: 'var(--mantine-color-green-6)',
+          }}
+        />
+        <Text size="sm" c="dimmed">
+          синк {lastSuccess.fromNow()}
+        </Text>
+      </Group>
+    );
+  }
+
+  return null;
+}
 
 /**
  * Каркас приложения: шапка + боковая навигация (Mantine AppShell).
@@ -73,6 +145,7 @@ export function AppLayout() {
             Bond Portfolio Analytics
           </Title>
           <Group>
+            <SyncHealthIndicator />
             <Button
               variant="light"
               loading={isRunning}

@@ -10,9 +10,12 @@ using Bonds.Infrastructure.Scheduling;
 using Bonds.Infrastructure.Services;
 using Bonds.Infrastructure.Sync;
 using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.DataProtection.KeyManagement;
+using Microsoft.AspNetCore.DataProtection.Repositories;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace Bonds.Infrastructure;
 
@@ -76,11 +79,26 @@ public static class DependencyInjection
         });
         services.AddScoped<IMoexIssClient, MoexIssClient>();
 
+        // Telegram Bot API — алерт владельцу при падении автосинка (plan/13 часть D). Тот же бот,
+        // что и авторизация/CI-алерты (Telegram:BotToken), base address без секрета в URL самого
+        // клиента (токен подставляется в путь запроса на каждый вызов, см. TelegramAlertSender).
+        services.AddHttpClient(TelegramAlertSender.HttpClientName, client =>
+        {
+            client.BaseAddress = new Uri("https://api.telegram.org");
+            client.Timeout = TimeSpan.FromSeconds(10);
+        });
+        services.AddSingleton<ITelegramAlertSender, TelegramAlertSender>();
+        services.AddSingleton<SyncAlertThrottle>();
+
         // T-Invest: gRPC-клиент НЕ регистрируется здесь готовым (нет статического токена в DI) —
         // TInvestPortfolioClient сам резолвит токен через ITInvestTokenProvider (БД на пользователя,
         // без ENV-фолбэка) и лениво строит InvestApiClient внутри своего scoped-экземпляра
         // (см. doc-comment TInvestPortfolioClient, BACKEND_DECISIONS.md решение 12).
         services.AddScoped<ITInvestPortfolioClient, TInvestPortfolioClient>();
+
+        // Валидация токена перед сохранением (plan/13 часть C) — не завязана на
+        // ITInvestTokenProvider/БД, токен — явный аргумент вызова из PUT /api/settings/tinvest-token.
+        services.AddScoped<ITInvestTokenValidator, TInvestTokenValidator>();
 
         // Оркестрация синка (этап 04 Часть C) — без HTTP-эндпоинта/шедулера на этом этапе,
         // вызывается программно/из тестов (см. plan/04).
@@ -97,9 +115,27 @@ public static class DependencyInjection
         services.AddScoped<PortfolioHoldingsBuilder>();
 
         // DataProtection — шифрование токена T-Invest, вводимого через UI (PUT /api/settings/tinvest-token).
-        // Ключи персистируются на диске контейнера по умолчанию (ASP.NET Core default key ring) —
-        // достаточно для single-instance деплоя этого продукта (plan/00 §5: один контейнер bonds-api).
-        services.AddDataProtection();
+        // Ключи ЯВНО персистируются на volume вне UnionFS-слоёв контейнера (DataProtection:KeysPath,
+        // дефолт /app/dataprotection-keys) — по умолчанию ASP.NET Core пишет ключи в domain-профиль
+        // ("/root/.aspnet/DataProtection-Keys"), который живёт только внутри слоя контейнера и
+        // теряется при каждом "docker stop && rm && run" на деплое (plan/13 корневая причина: токен
+        // из БД молча перестаёт расшифровываться после каждого передеплоя). SetApplicationName
+        // фиксирован явной строкой (а не выводится из имени сборки/пути) — стабильность ключей не
+        // должна зависеть от имени бинарника/пути публикации.
+        //
+        // Путь читается ЛЕНИВО через IConfigureOptions<KeyManagementOptions> (а не сразу из
+        // параметра configuration выше — тот же паттерн, что GetConnStr/Jwt:Secret в Program.cs),
+        // потому что WebApplicationFactory.ConfigureWebHost в тестах подставляет DataProtection:KeysPath
+        // ПОСЛЕ этого вызова AddInfrastructure — eager-чтение здесь всегда попадало бы на дефолт
+        // "/app/dataprotection-keys" (в тестовом контейнере read-only FS) вместо тестового temp dir.
+        services.AddDataProtection().SetApplicationName("bonds-api");
+        services.AddSingleton<IConfigureOptions<KeyManagementOptions>>(sp =>
+            new ConfigureOptions<KeyManagementOptions>(options =>
+            {
+                var keysPath = sp.GetRequiredService<IConfiguration>()["DataProtection:KeysPath"]
+                    ?? "/app/dataprotection-keys";
+                options.XmlRepository = new FileSystemXmlRepository(new DirectoryInfo(keysPath), sp.GetRequiredService<ILoggerFactory>());
+            }));
         services.AddScoped<ITInvestTokenProvider, TInvestTokenProvider>();
 
         // Signals Engine + Scheduler (этап 07, plan/07) — options читаются из конфига с дефолтами
