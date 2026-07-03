@@ -11,7 +11,7 @@ import { useLiveQuotes } from '../hooks/useLiveQuotes';
 import { useWidgetData } from '../hooks/useWidgetData';
 import { Disclaimer } from '../components/Disclaimer';
 import { PortfolioIntradayChart } from '../components/PortfolioIntradayChart';
-import { ChartCard, ChartTooltip, CHART_COLORS, CHART_HEIGHT_COMPACT, CHART_EXPLANATIONS } from '../components/charts';
+import { ChartCard, ChartExplainIcon, ChartTooltip, CHART_COLORS, CHART_HEIGHT_COMPACT, CHART_EXPLANATIONS } from '../components/charts';
 import type { CompositionSlice, XirrResponse, CashflowResponse, PositionsResponse } from '../api/types';
 import { formatRub, formatPercent, formatSharePercent, formatDate } from '../utils/format';
 
@@ -141,9 +141,27 @@ function UnreadSignalsKpi() {
   );
 }
 
-/** График стоимости — интрадей-виджет из plan/16, а не отдельная реализация (переиспользуем как есть). */
+/**
+ * График стоимости — интрадей-виджет из plan/16, переиспускается как есть (план прямо запрещает
+ * переписывать его логику/вёрстку). Объяснение выводится отдельной строкой над виджетом вместо
+ * встраивания иконки в его собственный заголовок — не трогаем разметку PortfolioIntradayChart.
+ */
 function ValueChartWidget() {
-  return <PortfolioIntradayChart />;
+  return (
+    <Stack gap={4} data-testid="dashboard-value-chart">
+      <Group gap={6}>
+        <Text size="xs" c="dimmed">
+          Что показывает этот график
+        </Text>
+        <ChartExplainIcon
+          title="Стоимость портфеля сегодня"
+          explanation={CHART_EXPLANATIONS.dashboardValue}
+          data-testid="dashboard-value-chart-explain-icon"
+        />
+      </Group>
+      <PortfolioIntradayChart />
+    </Stack>
+  );
 }
 
 /** Мини-композиция по эмитентам: топ-5 + «прочие» (plan/18 часть B.3), компактный donut. */
