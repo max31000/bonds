@@ -25,4 +25,14 @@ public interface IMoexIssClient
 
     /// <summary>Поиск бумаги по ISIN — возвращает эмитента и тип для маппинга в сегмент. Null, если ISIN не найден.</summary>
     Task<MoexSecuritySearch?> GetSecuritySearchAsync(string isin, CancellationToken ct = default);
+
+    /// <summary>
+    /// Дневные исторические цены (history.json, plan/15 Часть A) за период [from; to] включительно.
+    /// Пагинация обязательна — ISS отдаёт страницы по 100 строк с блоком <c>history.cursor</c>;
+    /// дочитывается тем же паттерном, что <see cref="GetBondizationAsync"/>. Дни без сделок дают
+    /// строку с <see cref="MoexHistoryPricePoint.ClosePricePercent"/> = null — forward fill остаётся
+    /// на стороне потребителя (см. doc-comment <see cref="MoexHistoryPricePoint"/>). Пустой список,
+    /// если источник недоступен/бумага не найдена (не бросает исключение).
+    /// </summary>
+    Task<IReadOnlyList<MoexHistoryPricePoint>> GetHistoryPricesAsync(string secid, DateOnly from, DateOnly to, CancellationToken ct = default);
 }

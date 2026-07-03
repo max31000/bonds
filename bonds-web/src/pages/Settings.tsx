@@ -87,13 +87,20 @@ export function Settings() {
   const handleSaveToken = async () => {
     if (!tokenInput.trim()) return;
     setSavingToken(true);
-    const ok = await saveToken(tokenInput.trim());
+    const result = await saveToken(tokenInput.trim());
     setSavingToken(false);
     setTokenInput(''); // токен — write-only, очищаем форму независимо от результата
+
+    // T-13/C: невалидный токен отвечает 422 с человекочитаемым сообщением ("токен не прошёл
+    // проверку T-Invest") — показываем его вместо общей заглушки; валидный — подтверждаем счётом.
     notifications.show({
-      color: ok ? 'green' : 'red',
-      title: ok ? 'Токен сохранён' : 'Не удалось сохранить токен',
-      message: ok ? 'Токен T-Invest обновлён.' : 'Попробуйте ещё раз позже.',
+      color: result.ok ? 'green' : 'red',
+      title: result.ok ? 'Токен сохранён' : 'Токен не прошёл проверку',
+      message: result.ok
+        ? result.validatedAccountIdMasked
+          ? `Токен T-Invest обновлён, счёт подтверждён: ${result.validatedAccountIdMasked}.`
+          : 'Токен T-Invest обновлён.'
+        : result.error,
     });
   };
 

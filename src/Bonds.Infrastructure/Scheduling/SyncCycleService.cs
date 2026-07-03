@@ -6,6 +6,7 @@ using Bonds.Core.Signals;
 using Bonds.Core.Time;
 using Bonds.Infrastructure.Analytics;
 using Bonds.Infrastructure.CashFlow;
+using Bonds.Infrastructure.Services;
 using Bonds.Infrastructure.Sync;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -49,6 +50,7 @@ public sealed class SyncCycleService : ISyncCycleRunner
     private DateTime? _lastSuccessAtUtc;
     private DateTime? _lastFailureAtUtc;
     private List<string> _lastRunErrors = [];
+    private bool _tokenMissingOrInvalid;
 
     public SyncCycleService(
         IServiceScopeFactory scopeFactory,
@@ -71,6 +73,7 @@ public sealed class SyncCycleService : ISyncCycleRunner
                 LastSuccessAtUtc = _lastSuccessAtUtc,
                 LastFailureAtUtc = _lastFailureAtUtc,
                 LastRunErrors = _lastRunErrors,
+                TokenMissingOrInvalid = _tokenMissingOrInvalid,
             };
         }
     }
@@ -96,6 +99,7 @@ public sealed class SyncCycleService : ISyncCycleRunner
             lock (_statusLock)
             {
                 _lastRunErrors = result.Errors;
+                _tokenMissingOrInvalid = result.TokenMissingOrInvalid;
                 if (result.HasErrors)
                 {
                     _lastFailureAtUtc = DateTime.UtcNow;
@@ -138,6 +142,13 @@ public sealed class SyncCycleService : ISyncCycleRunner
 
         var asOf = BusinessClock.MoscowToday();
 
+        // Диагностика токена (plan/13 часть B) — вычисляется отдельно от шага синка ниже, чтобы
+        // здоровье синка (GET /api/sync/status) отражало причину сбоя явным флагом, а не требовало
+        // от фронта парсить текст ошибки. Заведённый Account уже найден выше — "пользователь есть".
+        var tokenProvider = sp.GetRequiredService<ITInvestTokenProvider>();
+        var tokenStatus = await tokenProvider.GetTokenStatusAsync(ct);
+        result.TokenMissingOrInvalid = tokenStatus is TInvestTokenStatus.NotConfigured or TInvestTokenStatus.DecryptionFailed;
+
         // --- 1. BondSyncService ---
         try
         {
@@ -160,6 +171,22 @@ public sealed class SyncCycleService : ISyncCycleRunner
         {
             _logger.LogError(ex, "Sync step failed for account {AccountId}", accountId);
             result.Errors.Add($"Sync: непредвиденная ошибка ({ex.GetType().Name})");
+        }
+
+        // --- 1a. Watchlist (задача 20 часть A): справочник/расписания/котировка бумаг без позиции.
+        // Отдельный шаг, независимый от счёта/токена T-Invest — не влияет на позиции/сигналы ниже,
+        // поэтому не должен блокировать остальной цикл при собственной ошибке.
+        try
+        {
+            var watchlistSync = sp.GetRequiredService<WatchlistSyncService>();
+            var watchlistResult = await watchlistSync.SyncAllAsync(ct);
+            result.WatchlistInstrumentsSynced = watchlistResult.InstrumentsSynced;
+            if (watchlistResult.HasErrors) result.Errors.AddRange(watchlistResult.Errors);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Watchlist sync step failed");
+            result.Errors.Add($"Watchlist: непредвиденная ошибка ({ex.GetType().Name})");
         }
 
         // --- 2. Проекция денежного потока ---

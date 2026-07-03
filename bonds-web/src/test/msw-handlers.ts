@@ -16,6 +16,10 @@ export const handlers = [
   http.get('*/api/positions', () =>
     HttpResponse.json({ positions: [], disclaimer: '' }),
   ),
+  // Дефолтный кейс для 19 — конкретные сценарии переопределяются в тестах карточки позиции.
+  http.get('*/api/positions/:id', () =>
+    HttpResponse.json({ error: 'not found' }, { status: 404 }),
+  ),
   // Дефолтные кейсы для 09b — пустые данные; конкретные сценарии переопределяются в тестах экранов.
   http.get('*/api/cashflow', () =>
     HttpResponse.json({ byMonth: [], byPosition: [], principalReleases: [], disclaimer: '' }),
@@ -42,6 +46,32 @@ export const handlers = [
   http.get('*/api/analytics/trajectory', () =>
     HttpResponse.json({ initialValueRub: 0, withReinvest: [], withoutReinvest: [], reinvestRateUsed: 0, disclaimer: '' }),
   ),
+  // Дефолтные кейсы для 17 — пустые данные; конкретные сценарии переопределяются в тестах экрана рекомендаций.
+  http.get('*/api/analytics/comparison', () => HttpResponse.json({ rows: [], disclaimer: '' })),
+  http.post('*/api/analytics/replacement', () =>
+    HttpResponse.json({
+      holdPositionId: 0,
+      targetPositionId: 0,
+      horizonYears: 2,
+      sellCommissionRub: 0,
+      buyCommissionRub: 0,
+      totalSwitchCostRub: 0,
+      netBenefitRub: 0,
+      isSwitchFavorable: false,
+      breakEvenYears: null,
+      yieldDataIncomplete: true,
+      disclaimer: '',
+    }),
+  ),
+  http.get('*/api/analytics/allocation', () =>
+    HttpResponse.json({ amountRub: 15000, allocations: [], skipped: [], leftoverRub: 15000, disclaimer: '' }),
+  ),
+  // Дефолтные кейсы для 20 — пустой watchlist; конкретные сценарии переопределяются в тестах.
+  http.get('*/api/watchlist', () => HttpResponse.json({ items: [], disclaimer: '' })),
+  http.post('*/api/watchlist', () =>
+    HttpResponse.json({ id: 1, isin: 'RU000A1038V6', note: null, addedAtUtc: new Date().toISOString() }, { status: 201 }),
+  ),
+  http.delete('*/api/watchlist/:id', () => new HttpResponse(null, { status: 204 })),
   // Дефолтные кейсы для 09c — пустые/неактивные данные; переопределяются в тестах экранов.
   http.get('*/api/signals', () => HttpResponse.json({ signals: [] })),
   http.post('*/api/signals/:id/read', ({ params }) =>
@@ -97,6 +127,11 @@ export const handlers = [
   http.put('*/api/settings/tinvest-token', () =>
     HttpResponse.json({ tInvestTokenConfigured: true, tInvestTokenMasked: '...1234' }),
   ),
+  // Дефолтные кейсы для plan/16 — пустые данные; конкретные сценарии переопределяются в тестах.
+  http.get('*/api/live/positions', () =>
+    HttpResponse.json({ positions: [], totalMarketValueRub: 0, asOfUtc: new Date().toISOString() }),
+  ),
+  http.get('*/api/live/portfolio-intraday', () => HttpResponse.json({ points: [] })),
 ];
 
 export const server = setupServer(...handlers);

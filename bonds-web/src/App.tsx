@@ -4,9 +4,12 @@ import { Notifications } from '@mantine/notifications';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { theme } from './theme';
 import { ComingSoon } from './pages/ComingSoon';
+import { Dashboard } from './pages/Dashboard';
 import { Positions } from './pages/Positions';
+import { PositionDetail } from './pages/PositionDetail';
 import { Cashflow } from './pages/Cashflow';
 import { Analytics } from './pages/Analytics';
+import { Recommendations } from './pages/Recommendations';
 import { Signals } from './pages/Signals';
 import { Settings } from './pages/Settings';
 import Login from './pages/Login';
@@ -38,9 +41,12 @@ function AppRoutes() {
       <Route path="login" element={<Login />} />
       <Route element={<ProtectedRoute />}>
         <Route element={<AppLayout />}>
-          <Route index element={<Positions />} />
+          <Route index element={<Dashboard />} />
+          <Route path="positions" element={<Positions />} />
+          <Route path="positions/:id" element={<PositionDetail />} />
           <Route path="cashflow" element={<Cashflow />} />
           <Route path="analytics" element={<Analytics />} />
+          <Route path="recommendations" element={<Recommendations />} />
           <Route path="signals" element={<Signals />} />
           <Route path="settings" element={<Settings />} />
           <Route path="*" element={<ComingSoon />} />

@@ -20,12 +20,14 @@ public static class AnalyticsEndpoints
     public static void MapAnalyticsEndpoints(this WebApplication app)
     {
         app.MapGet("/api/analytics/xirr", GetXirr);
+        app.MapPost("/api/analytics/xirr/backfill", PostXirrBackfill);
         app.MapGet("/api/analytics/composition", GetComposition);
         app.MapGet("/api/analytics/scatter", GetScatter);
         app.MapGet("/api/analytics/comparison", GetComparison);
         app.MapPost("/api/analytics/replacement", PostReplacement);
         app.MapGet("/api/analytics/rate-scenario", GetRateScenario);
         app.MapGet("/api/analytics/trajectory", GetTrajectory);
+        app.MapGet("/api/analytics/allocation", GetAllocation);
     }
 
     // ─── GET /api/analytics/xirr ────────────────────────────────────────────────────────────
@@ -62,6 +64,33 @@ public static class AnalyticsEndpoints
         };
 
         return Results.Ok(dto);
+    }
+
+    // ─── POST /api/analytics/xirr/backfill ──────────────────────────────────────────────────
+
+    /// <summary>
+    /// Ретроспективный бэкфилл истории XIRR (plan/15 §B.4): восстанавливает недельный ряд
+    /// стоимости/XIRR из журнала операций + дневных исторических цен MOEX ISS и дозаполняет
+    /// <c>portfolio_value_snapshots</c> (идемпотентно — не трогает уже существующие даты, живые
+    /// или от предыдущего запуска, см. doc-comment <see cref="PortfolioHistoryBackfillService"/>).
+    /// Single-user, длительная операция — выполняется синхронно (портфель маленький, plan/15 §B.4);
+    /// вызывающий (фронт) ждёт ответа и сам решает, показывать ли индикатор загрузки.
+    /// </summary>
+    private static async Task<IResult> PostXirrBackfill(
+        ClaimsPrincipal principal,
+        IAccountRepository accountRepo,
+        PortfolioHistoryBackfillService backfillService)
+    {
+        var accountId = await PositionsEndpoints.ResolveAccountIdAsync(principal, accountRepo);
+        if (accountId is null)
+        {
+            return Results.Ok(new XirrBackfillResponseDto { PointsWritten = 0 });
+        }
+
+        var asOf = BusinessClock.MoscowToday();
+        var written = await backfillService.BackfillAsync(accountId.Value, asOf);
+
+        return Results.Ok(new XirrBackfillResponseDto { PointsWritten = written });
     }
 
     // ─── GET /api/analytics/composition ─────────────────────────────────────────────────────
@@ -116,11 +145,18 @@ public static class AnalyticsEndpoints
     /// Кривая отдаётся как набор точек (срок, доходность), посчитанных <see cref="GSpreadCalculator.CurveValue"/>
     /// на сетке сроков 0.25..30 лет (самостоятельное решение — спека не фиксирует шаг сетки;
     /// фронт рисует line chart по этим точкам, не пересчитывая NSS-формулу на клиенте).
+    /// <para>
+    /// <b>Задача 20:</b> к точкам портфеля добавляются watchlist-бумаги (<c>IsWatchlist=true</c>) —
+    /// тот же расчётный путь (<see cref="PortfolioHoldingsBuilder.BuildForInstrumentsAsync"/>).
+    /// Бумага, которая уже есть в портфеле (совпадает InstrumentId), не дублируется отдельной точкой.
+    /// </para>
     /// </summary>
     private static async Task<IResult> GetScatter(
         ClaimsPrincipal principal,
         IAccountRepository accountRepo,
         IYieldCurveRepository yieldCurveRepo,
+        IWatchlistItemRepository watchlistRepo,
+        IInstrumentRepository instrumentRepo,
         PortfolioHoldingsBuilder holdingsBuilder)
     {
         var accountId = await PositionsEndpoints.ResolveAccountIdAsync(principal, accountRepo);
@@ -149,8 +185,48 @@ public static class AnalyticsEndpoints
                 IsIndexed = h.IsIndexed,
                 IsEstimated = h.IsEstimated,
                 DataIncomplete = h.DataIncomplete,
+                IsWatchlist = false,
             })
             .ToList();
+
+        var userIdClaim = principal.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (ulong.TryParse(userIdClaim, out var userId))
+        {
+            var portfolioInstrumentIds = holdings.Select(h => h.InstrumentId).ToHashSet();
+            var watchlistItems = (await watchlistRepo.GetByUserIdAsync(userId)).ToList();
+
+            var watchlistInstrumentIds = new List<ulong>();
+            foreach (var item in watchlistItems)
+            {
+                var instrument = await instrumentRepo.GetByIsinAsync(item.Isin);
+                if (instrument is not null && !portfolioInstrumentIds.Contains(instrument.Id))
+                {
+                    watchlistInstrumentIds.Add(instrument.Id);
+                }
+            }
+
+            var asOf = BusinessClock.MoscowToday();
+            var watchlistHoldings = await holdingsBuilder.BuildForInstrumentsAsync(watchlistInstrumentIds.Distinct().ToList(), asOf);
+
+            points.AddRange(watchlistHoldings
+                .Where(h => h.ModifiedDuration is not null && h.MacaulayDuration is not null)
+                .Select(h => new ScatterPointDto
+                {
+                    PositionId = h.PositionId,
+                    InstrumentId = h.InstrumentId,
+                    Name = h.Name,
+                    Issuer = h.Issuer,
+                    ModifiedDuration = h.ModifiedDuration!.Value,
+                    MacaulayDuration = h.MacaulayDuration!.Value,
+                    EffectiveYield = (h.IsFloater || h.IsIndexed) ? h.CurrentYield : h.YtmEffective,
+                    YieldKind = (h.IsFloater || h.IsIndexed) ? "CurrentYield" : "Ytm",
+                    IsFloater = h.IsFloater,
+                    IsIndexed = h.IsIndexed,
+                    IsEstimated = h.IsEstimated,
+                    DataIncomplete = h.DataIncomplete,
+                    IsWatchlist = true,
+                }));
+        }
 
         var curvePoints = new List<CurvePointDto>();
         if (curve is not null)
@@ -221,6 +297,19 @@ public static class AnalyticsEndpoints
 
     // ─── POST /api/analytics/replacement ────────────────────────────────────────────────────
 
+    /// <summary>
+    /// «Держать A vs переложиться в B» (plan/17 §A.2). Target по умолчанию — позиция портфеля
+    /// (<see cref="ReplacementRequestDto.TargetPositionId"/>, контракт не изменён — существующие
+    /// вызовы фронта продолжают работать без изменений).
+    /// <para>
+    /// <b>Задача 20:</b> если задан <see cref="ReplacementRequestDto.TargetInstrumentId"/> (взаимно
+    /// исключим с TargetPositionId), target ищется среди watchlist-бумаг без позиции через
+    /// <see cref="PortfolioHoldingsBuilder.BuildForInstrumentsAsync"/> — тот же расчётный путь.
+    /// TargetPositionId в ответе для этого случая = 0 (синтетическое значение watchlist-holding'а,
+    /// см. doc-comment BuildForInstrumentsAsync) — TargetInstrumentId в ответе однозначно определяет
+    /// бумагу.
+    /// </para>
+    /// </summary>
     private static async Task<IResult> PostReplacement(
         ReplacementRequestDto request,
         ClaimsPrincipal principal,
@@ -234,10 +323,24 @@ public static class AnalyticsEndpoints
         var holdings = await holdingsBuilder.BuildForAccountAsync(accountId.Value, asOf);
 
         var holdPosition = holdings.FirstOrDefault(h => h.PositionId == request.HoldPositionId);
-        var targetPosition = holdings.FirstOrDefault(h => h.PositionId == request.TargetPositionId);
-
         if (holdPosition is null) throw new NotFoundException($"Позиция {request.HoldPositionId} не найдена в портфеле");
-        if (targetPosition is null) throw new NotFoundException($"Позиция {request.TargetPositionId} не найдена в портфеле");
+
+        Core.Analytics.PortfolioHolding? targetPosition;
+        if (request.TargetInstrumentId is not null)
+        {
+            var watchlistHoldings = await holdingsBuilder.BuildForInstrumentsAsync([request.TargetInstrumentId.Value], asOf);
+            targetPosition = watchlistHoldings.FirstOrDefault(h => h.InstrumentId == request.TargetInstrumentId.Value)
+                // Инструмент может быть и текущей позицией (watchlist-бумага, которую уже купили) —
+                // тогда берём её из holdings портфеля, чтобы не терять реальный Quantity/MarketValueRub.
+                ?? holdings.FirstOrDefault(h => h.InstrumentId == request.TargetInstrumentId.Value);
+            if (targetPosition is null) throw new NotFoundException($"Инструмент {request.TargetInstrumentId} не найден");
+        }
+        else
+        {
+            targetPosition = holdings.FirstOrDefault(h => h.PositionId == request.TargetPositionId);
+            if (targetPosition is null) throw new NotFoundException($"Позиция {request.TargetPositionId} не найдена в портфеле");
+        }
+
         if (request.HorizonYears <= 0m) throw new ValidationException("HorizonYears должен быть положительным");
 
         var holdCandidate = new SwitchCandidate
@@ -248,6 +351,10 @@ public static class AnalyticsEndpoints
         };
         var targetCandidate = new SwitchCandidate
         {
+            // SwitchAnalysisService.Compare не использует targetPosition.MarketValueRub в расчёте
+            // (капитал перехода — netProceedsAfterSale от holdPosition, см. doc-comment сервиса) —
+            // поле сохраняется как есть для watchlist-target'а (MarketValueRub holding'а без позиции
+            // = грязная цена ОДНОЙ бумаги, см. BuildForInstrumentsAsync), значение не искажает результат.
             PositionId = targetPosition.PositionId,
             MarketValueRub = targetPosition.MarketValueRub,
             EffectiveYield = (targetPosition.IsFloater || targetPosition.IsIndexed) ? targetPosition.CurrentYield : targetPosition.YtmEffective,
@@ -262,6 +369,7 @@ public static class AnalyticsEndpoints
         {
             HoldPositionId = result.HoldPositionId,
             TargetPositionId = result.TargetPositionId,
+            TargetInstrumentId = request.TargetInstrumentId,
             HorizonYears = result.HorizonYears,
             SellCommissionRub = result.SellCommissionRub,
             BuyCommissionRub = result.BuyCommissionRub,
@@ -374,6 +482,162 @@ public static class AnalyticsEndpoints
             Disclaimer = Disclaimers.Metrics,
         });
     }
+
+    // ─── GET /api/analytics/allocation ──────────────────────────────────────────────────────
+
+    /// <summary>
+    /// «Куда вложить сумму» (plan/17 §B): жадное распределение <paramref name="amountRub"/> между
+    /// текущими позициями портфеля через <see cref="CashAllocationService"/>. Кандидаты и их
+    /// грязная цена лота строятся из <see cref="PortfolioHoldingsBuilder"/> holdings — тот же вход,
+    /// что у comparison/replacement. Лот берётся равным 1 (в модели <c>Instrument</c> нет поля
+    /// размера лота — см. doc-comment плана: при отсутствии источника лота считаем 1 и помечаем
+    /// <c>lotSizeAssumed</c>, а не падаем/выдумываем данные).
+    /// <para>
+    /// <b>Задача 20:</b> <paramref name="includeWatchlist"/>=true добавляет к кандидатам watchlist-
+    /// бумаги (<see cref="PortfolioHoldingsBuilder.BuildForInstrumentsAsync"/> — тот же расчётный
+    /// путь, holdings с Quantity=1/MarketValueRub=цена одной бумаги). Их
+    /// <c>CurrentIssuerMarketValueRub</c> берётся из уже существующих позиций того же эмитента (0,
+    /// если эмитента ещё нет в портфеле) — лимит концентрации считается от факта владения, не от
+    /// присутствия в watchlist. Дефолт false — не ломает существующий вызов без параметра.
+    /// </para>
+    /// </summary>
+    private static async Task<IResult> GetAllocation(
+        ClaimsPrincipal principal,
+        IAccountRepository accountRepo,
+        PortfolioHoldingsBuilder holdingsBuilder,
+        IWatchlistItemRepository watchlistRepo,
+        IInstrumentRepository instrumentRepo,
+        decimal amountRub,
+        bool includeWatchlist = false)
+    {
+        if (amountRub <= 0m)
+        {
+            return Results.Json(
+                new { error = "amountRub должен быть положительным", type = "ValidationException" },
+                statusCode: StatusCodes.Status422UnprocessableEntity);
+        }
+
+        var accountId = await PositionsEndpoints.ResolveAccountIdAsync(principal, accountRepo);
+        if (accountId is null)
+        {
+            return Results.Ok(new AllocationResponseDto
+            {
+                AmountRub = amountRub,
+                Allocations = [],
+                Skipped = [],
+                LeftoverRub = amountRub,
+                Disclaimer = CashAllocationService.Disclaimer,
+            });
+        }
+
+        var asOf = BusinessClock.MoscowToday();
+        var holdings = (await holdingsBuilder.BuildForAccountAsync(accountId.Value, asOf)).ToList();
+
+        var currentPortfolioValueRub = holdings.Sum(h => h.MarketValueRub);
+        var issuerMarketValue = holdings
+            .GroupBy(h => h.Issuer ?? $"__instrument_{h.InstrumentId}")
+            .ToDictionary(g => g.Key, g => g.Sum(h => h.MarketValueRub));
+
+        var candidates = holdings
+            .Where(h => !h.IsOutOfScopeCurrency && h.Quantity > 0m)
+            .Select(h =>
+            {
+                var pricePerUnitRub = h.MarketValueRub / h.Quantity;
+                var pricePerLotWithCommission = pricePerUnitRub * (1m + SwitchAnalysisService.DefaultCommissionRate);
+                var effectiveYield = (h.IsFloater || h.IsIndexed) ? h.CurrentYield : h.YtmEffective;
+                var issuerKey = h.Issuer ?? $"__instrument_{h.InstrumentId}";
+
+                return new CashAllocationCandidate
+                {
+                    InstrumentId = h.InstrumentId,
+                    Name = h.Name,
+                    Issuer = h.Issuer,
+                    EffectiveYield = effectiveYield,
+                    PricePerLotRub = pricePerLotWithCommission,
+                    LotSize = 1m,
+                    LotSizeIsAssumed = true,
+                    CurrentIssuerMarketValueRub = issuerMarketValue.TryGetValue(issuerKey, out var v) ? v : 0m,
+                };
+            })
+            // Одна позиция на инструмент — если счёт по ошибке содержит несколько записей на один
+            // InstrumentId, берём первую (защита от дублей, не ожидается в норме).
+            .DistinctBy(c => c.InstrumentId)
+            .ToList();
+
+        if (includeWatchlist)
+        {
+            var portfolioInstrumentIds = candidates.Select(c => c.InstrumentId).ToHashSet();
+            var userId = principal.FindFirstValue(ClaimTypes.NameIdentifier);
+            var watchlistItems = ulong.TryParse(userId, out var uid)
+                ? (await watchlistRepo.GetByUserIdAsync(uid)).ToList()
+                : [];
+
+            var watchlistInstrumentIds = new List<ulong>();
+            foreach (var item in watchlistItems)
+            {
+                var instrument = await instrumentRepo.GetByIsinAsync(item.Isin);
+                // Бумага уже есть в портфеле — не дублируем кандидата (позиция уже покрыта циклом выше).
+                if (instrument is not null && !portfolioInstrumentIds.Contains(instrument.Id))
+                {
+                    watchlistInstrumentIds.Add(instrument.Id);
+                }
+            }
+
+            var watchlistHoldings = await holdingsBuilder.BuildForInstrumentsAsync(watchlistInstrumentIds.Distinct().ToList(), asOf);
+
+            var watchlistCandidates = watchlistHoldings
+                .Where(h => !h.IsOutOfScopeCurrency)
+                .Select(h =>
+                {
+                    var pricePerLotWithCommission = h.MarketValueRub * (1m + SwitchAnalysisService.DefaultCommissionRate);
+                    var effectiveYield = (h.IsFloater || h.IsIndexed) ? h.CurrentYield : h.YtmEffective;
+                    var issuerKey = h.Issuer ?? $"__instrument_{h.InstrumentId}";
+
+                    return new CashAllocationCandidate
+                    {
+                        InstrumentId = h.InstrumentId,
+                        Name = h.Name,
+                        Issuer = h.Issuer,
+                        EffectiveYield = effectiveYield,
+                        PricePerLotRub = pricePerLotWithCommission,
+                        LotSize = 1m,
+                        LotSizeIsAssumed = true,
+                        CurrentIssuerMarketValueRub = issuerMarketValue.TryGetValue(issuerKey, out var v) ? v : 0m,
+                    };
+                })
+                .ToList();
+
+            candidates.AddRange(watchlistCandidates);
+        }
+
+        var result = CashAllocationService.Allocate(amountRub, candidates, currentPortfolioValueRub);
+
+        var dto = new AllocationResponseDto
+        {
+            AmountRub = result.AmountRub,
+            Allocations = result.Allocations.Select(a => new AllocationLineDto
+            {
+                InstrumentId = a.InstrumentId,
+                Name = a.Name,
+                Issuer = a.Issuer,
+                Quantity = a.Quantity,
+                EstimatedCostRub = a.EstimatedCostRub,
+                EffectiveYield = a.EffectiveYield,
+                LotSizeAssumed = a.LotSizeAssumed,
+            }).ToList(),
+            Skipped = result.Skipped.Select(s => new AllocationSkipDto
+            {
+                InstrumentId = s.InstrumentId,
+                Name = s.Name,
+                Issuer = s.Issuer,
+                Reason = s.Reason.ToString(),
+            }).ToList(),
+            LeftoverRub = result.LeftoverRub,
+            Disclaimer = result.Disclaimer,
+        };
+
+        return Results.Ok(dto);
+    }
 }
 
 public sealed record XirrResponseDto
@@ -389,6 +653,12 @@ public sealed record PortfolioValuePointDto
     public required decimal MarketValueRub { get; init; }
     public required decimal InvestedRub { get; init; }
     public decimal? Xirr { get; init; }
+}
+
+/// <summary>Ответ POST /api/analytics/xirr/backfill — сколько новых точек истории записано.</summary>
+public sealed record XirrBackfillResponseDto
+{
+    public required int PointsWritten { get; init; }
 }
 
 public sealed record CompositionResponseDto
@@ -433,6 +703,9 @@ public sealed record ScatterPointDto
     public required bool IsIndexed { get; init; }
     public required bool IsEstimated { get; init; }
     public required bool DataIncomplete { get; init; }
+
+    /// <summary>Задача 20: true — точка watchlist-бумаги без позиции (полый маркер, отдельная категория легенды на фронте).</summary>
+    public required bool IsWatchlist { get; init; }
 }
 
 public sealed record CurvePointDto
@@ -468,7 +741,12 @@ public sealed record ComparisonRowDto
 public sealed record ReplacementRequestDto
 {
     public required ulong HoldPositionId { get; init; }
-    public required ulong TargetPositionId { get; init; }
+
+    /// <summary>Target — позиция портфеля (контракт не менялся). Игнорируется, если задан <see cref="TargetInstrumentId"/> (задача 20).</summary>
+    public ulong TargetPositionId { get; init; }
+
+    /// <summary>Задача 20: target — бумага БЕЗ позиции (watchlist), ищется по InstrumentId. Взаимно исключим с TargetPositionId — если задан, он приоритетнее.</summary>
+    public ulong? TargetInstrumentId { get; init; }
     public required decimal HorizonYears { get; init; }
     public decimal? SellCommissionRate { get; init; }
     public decimal? BuyCommissionRate { get; init; }
@@ -477,7 +755,12 @@ public sealed record ReplacementRequestDto
 public sealed record ReplacementResponseDto
 {
     public required ulong HoldPositionId { get; init; }
+
+    /// <summary>0 — target был найден по TargetInstrumentId (watchlist-holding без позиции, см. doc-comment BuildForInstrumentsAsync), не по позиции портфеля.</summary>
     public required ulong TargetPositionId { get; init; }
+
+    /// <summary>Эхо запроса — задан, только если target был watchlist-бумагой без позиции (задача 20).</summary>
+    public ulong? TargetInstrumentId { get; init; }
     public required decimal HorizonYears { get; init; }
     public required decimal SellCommissionRub { get; init; }
     public required decimal BuyCommissionRub { get; init; }
@@ -522,4 +805,32 @@ public sealed record TrajectoryPointDto
     public required string Month { get; init; }
     public required decimal PortfolioValueRub { get; init; }
     public required decimal CumulativeIncomeRub { get; init; }
+}
+
+public sealed record AllocationResponseDto
+{
+    public required decimal AmountRub { get; init; }
+    public required IReadOnlyList<AllocationLineDto> Allocations { get; init; }
+    public required IReadOnlyList<AllocationSkipDto> Skipped { get; init; }
+    public required decimal LeftoverRub { get; init; }
+    public required string Disclaimer { get; init; }
+}
+
+public sealed record AllocationLineDto
+{
+    public required ulong InstrumentId { get; init; }
+    public string? Name { get; init; }
+    public string? Issuer { get; init; }
+    public required decimal Quantity { get; init; }
+    public required decimal EstimatedCostRub { get; init; }
+    public required decimal EffectiveYield { get; init; }
+    public required bool LotSizeAssumed { get; init; }
+}
+
+public sealed record AllocationSkipDto
+{
+    public required ulong InstrumentId { get; init; }
+    public string? Name { get; init; }
+    public string? Issuer { get; init; }
+    public required string Reason { get; init; }
 }

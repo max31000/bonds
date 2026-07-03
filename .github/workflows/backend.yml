@@ -90,6 +90,7 @@ jobs:
           envs: DB_CONNECTION_STRING,JWT_SECRET,TELEGRAM_BOT_TOKEN,OWNER_TELEGRAM_ID
           script: |
             set -e
+            mkdir -p /var/lib/bonds/dataprotection-keys
             docker pull ghcr.io/${{ github.repository_owner }}/bonds-api:latest
             docker stop bonds-api && docker rm bonds-api || true
             docker run -d \
@@ -97,6 +98,7 @@ jobs:
               --network cashpulse-network \
               --restart unless-stopped \
               -p 127.0.0.1:5001:5001 \
+              -v /var/lib/bonds/dataprotection-keys:/app/dataprotection-keys \
               -e "ConnectionStrings__DefaultConnection=${DB_CONNECTION_STRING}" \
               -e "Jwt__Secret=${JWT_SECRET}" \
               -e "Telegram__BotToken=${TELEGRAM_BOT_TOKEN}" \

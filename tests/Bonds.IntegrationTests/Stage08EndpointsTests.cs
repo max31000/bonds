@@ -76,10 +76,12 @@ public class Stage08EndpointsTests
     [InlineData("GET", "/api/positions/1")]
     [InlineData("GET", "/api/cashflow")]
     [InlineData("GET", "/api/analytics/xirr")]
+    [InlineData("POST", "/api/analytics/xirr/backfill")]
     [InlineData("GET", "/api/analytics/composition")]
     [InlineData("GET", "/api/analytics/scatter")]
     [InlineData("GET", "/api/analytics/comparison")]
     [InlineData("POST", "/api/analytics/replacement")]
+    [InlineData("GET", "/api/analytics/allocation?amountRub=1000")]
     [InlineData("GET", "/api/signals")]
     [InlineData("POST", "/api/signals/1/read")]
     [InlineData("POST", "/api/sync")]
@@ -136,6 +138,71 @@ public class Stage08EndpointsTests
         // Без котировки/купонов метрики недостоверны — флаг неполноты должен быть выставлен,
         // а не молча подставлен 0 (spec §4.4) — эндпоинт всё равно отдаёт 200.
         row.GetProperty("dataIncomplete").GetBoolean().Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task GetPositions_WithOperationsJournal_Returns200_WithCostBasisFields()
+    {
+        // plan/14 §B — GET /api/positions отдаёт цену входа/P&L, посчитанные PositionCostBasisService
+        // поверх журнала операций, без N+1 (один батч-запрос операций на счёт в PortfolioHoldingsBuilder).
+        var (client, _, accountId) = await CreateAuthorizedClientAsync();
+        var (instrumentId, _) = await SeedPositionAsync(accountId); // Quantity = 10
+
+        var operationRepo = new OperationRepository(_factory.Database.ConnectionString);
+        await operationRepo.UpsertManyByExternalIdAsync(new[]
+        {
+            new Operation
+            {
+                AccountId = accountId,
+                InstrumentId = instrumentId,
+                Type = OperationType.Buy,
+                Date = DateTime.UtcNow.AddMonths(-6),
+                AmountRub = -10_000m,
+                Quantity = 10m,
+                ExternalId = $"buy-{Guid.NewGuid()}",
+            },
+            new Operation
+            {
+                AccountId = accountId,
+                InstrumentId = instrumentId,
+                Type = OperationType.Coupon,
+                Date = DateTime.UtcNow.AddMonths(-3),
+                AmountRub = 300m,
+                ExternalId = $"coupon-{Guid.NewGuid()}",
+            },
+        });
+
+        var response = await client.GetAsync("/api/positions");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var row = body.GetProperty("positions")[0];
+
+        row.GetProperty("averageCostRub").GetDecimal().Should().Be(1000m);
+        row.GetProperty("investedRub").GetDecimal().Should().Be(10_000m);
+        row.GetProperty("couponsReceivedRub").GetDecimal().Should().Be(300m);
+        // Без рыночной котировки в тесте UnrealizedPnl считается от MarketValueRub=0 (нет цены источника).
+        row.GetProperty("unrealizedPnlRub").GetDecimal().Should().Be(-10_000m);
+        row.GetProperty("costBasisIncomplete").GetBoolean().Should().BeFalse("журнал полностью покрывает остаток позиции (10 шт куплено = 10 шт в позиции)");
+    }
+
+    [Fact]
+    public async Task GetPositions_NoOperationsJournal_Returns200_WithCostBasisIncompleteFlag()
+    {
+        // Позиция есть (Quantity=10), но журнала операций по ней нет — журнал не покрывает остаток,
+        // costBasisIncomplete = true, а не молчаливый 0 (spec §4.4 "не подставлять нули молча").
+        var (client, _, accountId) = await CreateAuthorizedClientAsync();
+        await SeedPositionAsync(accountId);
+
+        var response = await client.GetAsync("/api/positions");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var row = body.GetProperty("positions")[0];
+
+        row.GetProperty("costBasisIncomplete").GetBoolean().Should().BeTrue();
+        row.GetProperty("averageCostRub").ValueKind.Should().Be(JsonValueKind.Null);
+        row.GetProperty("couponsReceivedRub").GetDecimal().Should().Be(0m);
     }
 
     [Fact]
@@ -230,6 +297,20 @@ public class Stage08EndpointsTests
     }
 
     [Fact]
+    public async Task PostXirrBackfill_NoOperations_Returns200_WithZeroPointsWritten()
+    {
+        // Plan/15 §B.4: журнал операций пуст (счёт только что заведён, ни разу не синкан) —
+        // бэкфилл не должен падать/ходить в MOEX, просто возвращает 0.
+        var (client, _, _) = await CreateAuthorizedClientAsync();
+
+        var response = await client.PostAsync("/api/analytics/xirr/backfill", JsonContent.Create(new { }));
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        body.GetProperty("pointsWritten").GetInt32().Should().Be(0);
+    }
+
+    [Fact]
     public async Task GetComposition_WithSeededPosition_Returns200_WithIssuerShare()
     {
         var (client, _, accountId) = await CreateAuthorizedClientAsync();
@@ -316,6 +397,51 @@ public class Stage08EndpointsTests
         // Обе позиции без котировок -> доходность не определена -> YieldDataIncomplete = true,
         // но ответ всё равно 200 (spec §4.4).
         body.GetProperty("yieldDataIncomplete").GetBoolean().Should().BeTrue();
+    }
+
+    // ─── GET /api/analytics/allocation (plan/17 §B) ────────────────────────────────────────
+
+    [Fact]
+    public async Task GetAllocation_NonPositiveAmount_Returns422()
+    {
+        var (client, _, _) = await CreateAuthorizedClientAsync();
+
+        var response = await client.GetAsync("/api/analytics/allocation?amountRub=0");
+
+        response.StatusCode.Should().Be((HttpStatusCode)422);
+    }
+
+    [Fact]
+    public async Task GetAllocation_EmptyPortfolio_Returns200_WithFullLeftover()
+    {
+        var (client, _, _) = await CreateAuthorizedClientAsync();
+
+        var response = await client.GetAsync("/api/analytics/allocation?amountRub=15000");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        body.GetProperty("allocations").GetArrayLength().Should().Be(0);
+        body.GetProperty("leftoverRub").GetDecimal().Should().Be(15000m);
+        body.GetProperty("disclaimer").GetString().Should().NotBeNullOrEmpty();
+    }
+
+    [Fact]
+    public async Task GetAllocation_SeededPositionWithoutYield_Returns200_WithSkippedReason()
+    {
+        // Позиция засеяна без графика купонов -> YTM не сходится, и это не флоатер/индексируемая ->
+        // EffectiveYield = null -> кандидат уходит в Skipped с причиной NoYield, а не 500 (spec §4.4).
+        var (client, _, accountId) = await CreateAuthorizedClientAsync();
+        await SeedPositionAsync(accountId);
+
+        var response = await client.GetAsync("/api/analytics/allocation?amountRub=15000");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        body.GetProperty("allocations").GetArrayLength().Should().Be(0);
+        var skipped = body.GetProperty("skipped");
+        skipped.GetArrayLength().Should().Be(1);
+        skipped[0].GetProperty("reason").GetString().Should().Be("NoYield");
+        body.GetProperty("leftoverRub").GetDecimal().Should().Be(15000m);
     }
 
     // ─── /api/signals ───────────────────────────────────────────────────────────────────────

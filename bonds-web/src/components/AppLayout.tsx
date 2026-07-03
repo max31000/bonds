@@ -1,10 +1,29 @@
-import { AppShell, Group, Title, NavLink, Button, Badge } from '@mantine/core';
+import {
+  AppShell,
+  Group,
+  Title,
+  NavLink,
+  Button,
+  Badge,
+  Tooltip,
+  Text,
+  Burger,
+  SegmentedControl,
+  useMantineColorScheme,
+} from '@mantine/core';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useEffect } from 'react';
+import { useDisclosure } from '@mantine/hooks';
 import { notifications } from '@mantine/notifications';
+import dayjs from 'dayjs';
+import relativeTime from 'dayjs/plugin/relativeTime';
+import 'dayjs/locale/ru';
 import { useAuthStore } from '../store/useAuthStore';
 import { useSignalsStore } from '../store/useSignalsStore';
 import { useSyncStore } from '../store/useSyncStore';
+
+dayjs.extend(relativeTime);
+dayjs.locale('ru');
 
 interface NavItem {
   label: string;
@@ -15,12 +34,105 @@ interface NavItem {
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { label: 'Позиции', path: '/' },
+  { label: 'Обзор', path: '/' },
+  { label: 'Позиции', path: '/positions' },
   { label: 'Денежный поток', path: '/cashflow' },
   { label: 'Аналитика', path: '/analytics' },
+  { label: 'Рекомендации', path: '/recommendations' },
   { label: 'Сигналы', path: '/signals', showUnreadBadge: true },
   { label: 'Настройки', path: '/settings' },
 ];
+
+/**
+ * Компактный индикатор здоровья синка рядом с кнопкой «Обновить данные» (plan/13 часть B) —
+ * иначе упавший/деградировавший автосинк никак не виден в UI, и пользователь узнаёт об этом
+ * только по пустым/устаревшим данным. Три состояния, приоритет сверху вниз:
+ * 1. Оранжевый бейдж «Токен не подключён/недействителен» (TokenMissingOrInvalid) — кликабельный,
+ *    ведёт на /settings, т.к. это единственное действие, которое решает проблему.
+ * 2. Красный бейдж «Ошибка синка» с tooltip первой ошибки — когда последний прогон завершился
+ *    позже последнего успеха (LastFailureAtUtc > LastSuccessAtUtc).
+ * 3. Зелёная точка + «синк N назад» — здоровое состояние.
+ */
+function SyncHealthIndicator() {
+  const navigate = useNavigate();
+  const status = useSyncStore((s) => s.status);
+
+  if (!status) return null;
+
+  if (status.tokenMissingOrInvalid) {
+    return (
+      <Badge
+        color="orange"
+        variant="filled"
+        style={{ cursor: 'pointer' }}
+        onClick={() => navigate('/settings')}
+        data-testid="sync-health-token-badge"
+      >
+        Токен не подключён / недействителен
+      </Badge>
+    );
+  }
+
+  const lastFailure = status.lastFailureAtUtc ? dayjs(status.lastFailureAtUtc) : null;
+  const lastSuccess = status.lastSuccessAtUtc ? dayjs(status.lastSuccessAtUtc) : null;
+  const hasUnresolvedFailure = lastFailure !== null && (lastSuccess === null || lastFailure.isAfter(lastSuccess));
+
+  if (hasUnresolvedFailure) {
+    return (
+      <Tooltip label={status.lastRunErrors[0] ?? 'Подробности — в логах сервера.'}>
+        <Badge color="red" variant="filled" data-testid="sync-health-error-badge">
+          Ошибка синка
+        </Badge>
+      </Tooltip>
+    );
+  }
+
+  if (lastSuccess) {
+    return (
+      <Group gap={6} data-testid="sync-health-ok">
+        <span
+          style={{
+            display: 'inline-block',
+            width: 8,
+            height: 8,
+            borderRadius: '50%',
+            backgroundColor: 'var(--mantine-color-green-6)',
+          }}
+        />
+        <Text size="sm" c="dimmed">
+          синк {lastSuccess.fromNow()}
+        </Text>
+      </Group>
+    );
+  }
+
+  return null;
+}
+
+/**
+ * Переключатель светлая/тёмная/системная тема (plan/21 часть A) — обёртка над
+ * `useMantineColorScheme` из Mantine 9: состояние (включая "auto") персистит само в localStorage,
+ * здесь только UI. `SegmentedControl` вместо иконки-кнопки — сразу видно все три состояния и
+ * не нужно всплывающее меню.
+ */
+function ColorSchemeSwitcher() {
+  const { colorScheme, setColorScheme } = useMantineColorScheme({ keepTransitions: true });
+
+  return (
+    <SegmentedControl
+      size="xs"
+      value={colorScheme}
+      onChange={(value) => setColorScheme(value as 'light' | 'dark' | 'auto')}
+      data={[
+        { label: 'Светлая', value: 'light' },
+        { label: 'Тёмная', value: 'dark' },
+        { label: 'Авто', value: 'auto' },
+      ]}
+      data-testid="color-scheme-switcher"
+      aria-label="Переключить тему оформления"
+    />
+  );
+}
 
 /**
  * Каркас приложения: шапка + боковая навигация (Mantine AppShell).
@@ -30,6 +142,9 @@ const NAV_ITEMS: NavItem[] = [
  * пользователь не смог бы дойти до «Настройки» или нажать «Обновить данные».
  * Паттерн соответствует cashpulse-web/AppLayout.tsx (тоже без insideShell-ветки).
  */
+/** Plan/16 часть B: порог "долгого перерыва" — старше этого с последнего успешного синка триггерит тихий фоновый синк при открытии. */
+const STALE_SYNC_THRESHOLD_MS = 12 * 60 * 60 * 1000;
+
 export function AppLayout() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -37,12 +152,43 @@ export function AppLayout() {
   const signals = useSignalsStore((s) => s.signals);
   const loadSignals = useSignalsStore((s) => s.load);
   const { isRunning, triggerSync, refreshStatus } = useSyncStore();
+  // Plan/21 часть C.1: burger-навигация на мобиле — navbar уже collapse'ится по breakpoint 'sm',
+  // но без кнопки открыть его было нечем.
+  const [mobileNavOpened, { toggle: toggleMobileNav, close: closeMobileNav }] = useDisclosure(false);
 
   const unreadCount = signals.filter((s) => !s.isRead).length;
 
   useEffect(() => {
     loadSignals();
-    refreshStatus();
+
+    // Plan/16 часть B: автосинк при открытии приложения после долгого перерыва — если последний
+    // успешный синк старше 12 часов и прямо сейчас ничего не бежит, тихо дёргаем force-sync (без
+    // модалок; уведомление придёт по завершении через существующий тост triggerSync/handleSync).
+    void (async () => {
+      await refreshStatus();
+      const status = useSyncStore.getState();
+      if (status.isRunning) return;
+
+      const lastSuccessAtUtc = status.status?.lastSuccessAtUtc;
+      const isStale =
+        lastSuccessAtUtc === null ||
+        lastSuccessAtUtc === undefined ||
+        Date.now() - new Date(lastSuccessAtUtc).getTime() > STALE_SYNC_THRESHOLD_MS;
+
+      if (!isStale) return;
+
+      const result = await triggerSync();
+      if (!result) return;
+
+      notifications.show({
+        color: result.hasErrors ? 'red' : 'green',
+        title: 'Фоновое обновление данных',
+        message: result.hasErrors
+          ? (result.errors[0] ?? 'Автоматическое обновление завершилось с ошибками.')
+          : `Данные обновлены после долгого перерыва (инструментов: ${result.instrumentsSynced}, операций: ${result.operationsUpserted}).`,
+      });
+      loadSignals();
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -66,13 +212,36 @@ export function AppLayout() {
   };
 
   return (
-    <AppShell header={{ height: 60 }} navbar={{ width: 240, breakpoint: 'sm' }} padding="md">
+    <AppShell
+      header={{ height: 60 }}
+      navbar={{ width: 240, breakpoint: 'sm', collapsed: { mobile: !mobileNavOpened } }}
+      padding="md"
+    >
       <AppShell.Header>
-        <Group h="100%" px="md" justify="space-between">
-          <Title order={3} c="violet">
-            Bond Portfolio Analytics
-          </Title>
-          <Group>
+        <Group h="100%" px="md" justify="space-between" wrap="nowrap" style={{ overflowX: 'auto' }}>
+          <Group gap="sm" wrap="nowrap" style={{ flexShrink: 0 }}>
+            <Burger
+              opened={mobileNavOpened}
+              onClick={toggleMobileNav}
+              hiddenFrom="sm"
+              size="sm"
+              aria-label="Открыть навигацию"
+              data-testid="mobile-nav-burger"
+            />
+            {/* Полное название — от sm и шире; на мобиле короткая версия, чтобы не выталкивать
+                бургер/кнопки за пределы 60px шапки на 375px (plan/21 часть C.5 — без горизонтального
+                скролла страницы; сама шапка при этом может проскроллиться, это осознанный компромисс
+                для узкого набора элементов, а не таблицы). */}
+            <Title order={3} c="violet" visibleFrom="sm">
+              Bond Portfolio Analytics
+            </Title>
+            <Title order={4} c="violet" hiddenFrom="sm">
+              Bonds
+            </Title>
+          </Group>
+          <Group wrap="nowrap" justify="flex-end" style={{ flexShrink: 0 }}>
+            <SyncHealthIndicator />
+            <ColorSchemeSwitcher />
             <Button
               variant="light"
               loading={isRunning}
@@ -94,7 +263,10 @@ export function AppLayout() {
             key={item.path}
             label={item.label}
             active={location.pathname === item.path}
-            onClick={() => navigate(item.path)}
+            onClick={() => {
+              navigate(item.path);
+              closeMobileNav();
+            }}
             rightSection={
               item.comingSoon ? (
                 <Badge size="xs" color="gray" variant="light">

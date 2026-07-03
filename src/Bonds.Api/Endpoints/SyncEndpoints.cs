@@ -24,7 +24,9 @@ public static class SyncEndpoints
         {
             AlreadyRunning = result.AlreadyRunning,
             NoAccountConfigured = result.NoAccountConfigured,
+            TokenMissingOrInvalid = result.TokenMissingOrInvalid,
             InstrumentsSynced = result.InstrumentsSynced,
+            WatchlistInstrumentsSynced = result.WatchlistInstrumentsSynced,
             OperationsUpserted = result.OperationsUpserted,
             YieldCurveUpdated = result.YieldCurveUpdated,
             PositionsProjected = result.PositionsProjected,
@@ -51,6 +53,7 @@ public static class SyncEndpoints
             LastSuccessAtUtc = status.LastSuccessAtUtc,
             LastFailureAtUtc = status.LastFailureAtUtc,
             LastRunErrors = status.LastRunErrors,
+            TokenMissingOrInvalid = status.TokenMissingOrInvalid,
         };
 
         return Results.Ok(dto);
@@ -61,7 +64,11 @@ public sealed record SyncRunResultDto
 {
     public required bool AlreadyRunning { get; init; }
     public required bool NoAccountConfigured { get; init; }
+    public required bool TokenMissingOrInvalid { get; init; }
     public required int InstrumentsSynced { get; init; }
+
+    /// <summary>Задача 20 часть A: сколько уникальных watchlist ISIN обновлено за цикл.</summary>
+    public required int WatchlistInstrumentsSynced { get; init; }
     public required int OperationsUpserted { get; init; }
     public required bool YieldCurveUpdated { get; init; }
     public required int PositionsProjected { get; init; }
@@ -79,4 +86,5 @@ public sealed record SyncStatusDto
     public DateTime? LastSuccessAtUtc { get; init; }
     public DateTime? LastFailureAtUtc { get; init; }
     public required IReadOnlyList<string> LastRunErrors { get; init; }
+    public required bool TokenMissingOrInvalid { get; init; }
 }

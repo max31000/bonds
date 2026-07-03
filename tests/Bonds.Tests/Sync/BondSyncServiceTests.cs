@@ -294,4 +294,92 @@ public class BondSyncServiceTests
         result.YieldCurveUpdated.Should().BeTrue();
         _yieldCurve.Verify(y => y.UpsertAsync(snapshot), Times.Once);
     }
+
+    // ─── Задача 20: ResolveOrCreateInstrumentByIsinAsync (watchlist — бумага без позиции/FIGI) ───
+
+    [Fact]
+    public async Task ResolveOrCreateInstrumentByIsinAsync_NewIsin_CreatesPlaceholderAndEnriches()
+    {
+        const string secid = "SU26238RMFS4";
+        _instruments.Setup(r => r.GetByIsinAsync(Isin)).ReturnsAsync((Instrument?)null);
+        _instruments.Setup(r => r.UpsertAsync(It.IsAny<Instrument>())).ReturnsAsync(InstrumentId);
+        _instruments.Setup(r => r.GetByIdAsync(InstrumentId)).ReturnsAsync(new Instrument
+        {
+            Id = InstrumentId,
+            Isin = Isin,
+            Secid = null,
+            FaceValue = 0m,
+            DataIncomplete = true,
+        });
+        _moex.Setup(m => m.ResolveSecidByIsinAsync(Isin, It.IsAny<CancellationToken>())).ReturnsAsync(secid);
+        _moex.Setup(m => m.GetSecurityInfoAsync(secid, It.IsAny<CancellationToken>())).ReturnsAsync(new MoexSecurityInfo
+        {
+            Secid = secid,
+            BoardId = "TQOB",
+            FaceValue = 1000m,
+            MatDate = new DateOnly(2041, 5, 15),
+        });
+        _moex.Setup(m => m.GetBondizationAsync(secid, It.IsAny<CancellationToken>())).ReturnsAsync(new MoexBondizationResult
+        {
+            Secid = secid,
+            Coupons = [new CouponSchedule { CouponDate = new DateOnly(2026, 12, 8), ValueRub = 35.4m, IsKnown = true }],
+        });
+
+        var service = CreateService();
+        var instrumentId = await service.ResolveOrCreateInstrumentByIsinAsync(Isin);
+
+        instrumentId.Should().Be(InstrumentId);
+        _instruments.Verify(r => r.UpsertAsync(It.Is<Instrument>(i => i.Isin == Isin && i.Figi == null)), Times.AtLeastOnce);
+        _coupons.Verify(c => c.ReplaceForInstrumentAsync(InstrumentId, It.IsAny<IReadOnlyList<CouponSchedule>>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ResolveOrCreateInstrumentByIsinAsync_ExistingInstrument_ReEnrichesWithoutDuplicateCreate()
+    {
+        _instruments.Setup(r => r.GetByIsinAsync(Isin)).ReturnsAsync(new Instrument
+        {
+            Id = InstrumentId,
+            Isin = Isin,
+            Secid = "SU26238RMFS4",
+            FaceValue = 1000m,
+        });
+        _instruments.Setup(r => r.GetByIdAsync(InstrumentId)).ReturnsAsync(new Instrument
+        {
+            Id = InstrumentId,
+            Isin = Isin,
+            Secid = "SU26238RMFS4",
+            FaceValue = 1000m,
+        });
+        _instruments.Setup(r => r.UpsertAsync(It.IsAny<Instrument>())).ReturnsAsync(InstrumentId);
+        _moex.Setup(m => m.GetSecurityInfoAsync("SU26238RMFS4", It.IsAny<CancellationToken>())).ReturnsAsync((MoexSecurityInfo?)null);
+        _moex.Setup(m => m.GetBondizationAsync("SU26238RMFS4", It.IsAny<CancellationToken>())).ReturnsAsync(new MoexBondizationResult { Secid = "SU26238RMFS4" });
+
+        var service = CreateService();
+        var instrumentId = await service.ResolveOrCreateInstrumentByIsinAsync(Isin);
+
+        instrumentId.Should().Be(InstrumentId);
+        _moex.Verify(m => m.ResolveSecidByIsinAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never,
+            "SECID уже закэширован в справочнике — повторный поиск по ISIN не нужен");
+    }
+
+    [Fact]
+    public async Task ResolveOrCreateInstrumentByIsinAsync_MoexDoesNotFindIsin_MarksDataIncomplete_DoesNotThrow()
+    {
+        const string unknownIsin = "RU000UNKNOWN0";
+        _instruments.Setup(r => r.GetByIsinAsync(unknownIsin)).ReturnsAsync((Instrument?)null);
+        _instruments.Setup(r => r.UpsertAsync(It.IsAny<Instrument>())).ReturnsAsync(InstrumentId);
+        _instruments.Setup(r => r.GetByIdAsync(InstrumentId)).ReturnsAsync(new Instrument
+        {
+            Id = InstrumentId,
+            Isin = unknownIsin,
+            Secid = null,
+        });
+        _moex.Setup(m => m.ResolveSecidByIsinAsync(unknownIsin, It.IsAny<CancellationToken>())).ReturnsAsync((string?)null);
+
+        var service = CreateService();
+        var instrumentId = await service.ResolveOrCreateInstrumentByIsinAsync(unknownIsin);
+
+        instrumentId.Should().Be(InstrumentId, "инструмент заводится как заготовка, даже если MOEX не нашёл SECID");
+        _instruments.Verify(r => r.UpsertAsync(It.Is<Instrument>(i => i.DataIncomplete == true)), Times.AtLeastOnce);
+    }
 }

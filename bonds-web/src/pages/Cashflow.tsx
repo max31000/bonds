@@ -28,6 +28,16 @@ import {
 } from 'recharts';
 import { useCashflowStore } from '../store/useCashflowStore';
 import { Disclaimer } from '../components/Disclaimer';
+import {
+  ChartCard,
+  ChartTooltip,
+  CHART_GRID_PROPS,
+  CHART_HEIGHT,
+  CHART_LEGEND_PROPS,
+  CHART_EXPLANATIONS,
+  useResponsiveChartSize,
+  pickAxisTicks,
+} from '../components/charts';
 import { formatRub, formatMonthLabel, formatDate } from '../utils/format';
 
 const FLOW_TYPE_LABEL: Record<string, string> = {
@@ -59,6 +69,8 @@ export function Cashflow() {
   const [byPositionOpen, setByPositionOpen] = useState(false);
   const [selectedMonth, setSelectedMonth] = useState<string | null>(null);
   const [horizon, setHorizon] = useState<Horizon>('12m');
+  // Plan/21 часть C.4: на узких экранах — меньше высота и меньше подписей оси X месяцев.
+  const chartSize = useResponsiveChartSize(CHART_HEIGHT);
 
   useEffect(() => {
     load(toDateParam(horizon));
@@ -136,21 +148,24 @@ export function Cashflow() {
               Календарь поступлений пуст — появится после синхронизации с брокерским счётом.
             </Alert>
           ) : (
-            <Paper withBorder p="md" radius="md" data-testid="cashflow-chart">
-              <Group justify="space-between" mb="xs">
-                <Text fw={600}>Поступления по месяцам</Text>
-                {hasEstimatedAny && (
+            <ChartCard
+              title="Поступления по месяцам"
+              data-testid="cashflow-chart"
+              explanation={CHART_EXPLANATIONS.cashflowByMonth}
+              headerExtra={
+                hasEstimatedAny && (
                   <MantineTooltip label="Оценка: будущий купон флоатера неизвестен, посчитан по текущей ставке" withArrow>
                     <Badge size="sm" color="yellow" variant="light" data-testid="estimated-flows-badge">
                       есть оценочные потоки
                     </Badge>
                   </MantineTooltip>
-                )}
-              </Group>
+                )
+              }
+            >
               <Text size="xs" c="dimmed" mb="xs">
                 Нажмите на столбец месяца, чтобы увидеть, какие бумаги формируют поступление.
               </Text>
-              <ResponsiveContainer width="100%" height={320}>
+              <ResponsiveContainer width="100%" height={chartSize.height}>
                 <BarChart
                   data={chartData}
                   style={{ cursor: 'pointer' }}
@@ -159,17 +174,30 @@ export function Cashflow() {
                     if (monthKey) setSelectedMonth((prev) => (prev === monthKey ? null : monthKey));
                   }}
                 >
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="month" />
+                  <CartesianGrid {...CHART_GRID_PROPS} />
+                  <XAxis
+                    dataKey="month"
+                    ticks={pickAxisTicks(chartData.map((d) => d.month), chartSize.maxTicks)}
+                  />
                   <YAxis tickFormatter={(v: number) => formatRub(v)} width={100} />
                   <Tooltip
-                    formatter={(value) => formatRub(Number(value))}
-                    labelFormatter={(label, payload) => {
-                      const item = payload?.[0]?.payload as { raw?: { hasEstimatedFlows?: boolean } };
-                      return item?.raw?.hasEstimatedFlows ? `${label} (есть оценочные потоки)` : label;
+                    content={({ active, payload, label }) => {
+                      if (!active || !payload?.length) return null;
+                      const item = payload[0].payload as { raw?: { hasEstimatedFlows?: boolean } };
+                      const title = item?.raw?.hasEstimatedFlows ? `${label} (есть оценочные потоки)` : String(label);
+                      return (
+                        <ChartTooltip
+                          title={title}
+                          rows={payload.map((entry) => ({
+                            label: String(entry.name),
+                            value: formatRub(Number(entry.value)),
+                            color: entry.color,
+                          }))}
+                        />
+                      );
                     }}
                   />
-                  <Legend />
+                  <Legend {...CHART_LEGEND_PROPS} />
                   <Bar dataKey="Нетто" stackId="flow" fill="var(--mantine-color-teal-6)" />
                   <Bar dataKey="Налог" stackId="flow" fill="var(--mantine-color-red-5)" />
                 </BarChart>
@@ -213,7 +241,7 @@ export function Cashflow() {
                   </Paper>
                 );
               })()}
-            </Paper>
+            </ChartCard>
           )}
 
           <Paper withBorder p="md" radius="md" data-testid="principal-releases">

@@ -31,7 +31,16 @@ public sealed class SyncCycleResult
     /// <summary>true — не найдено ни одного Account (БД без онбординга) — цикл пропущен, это не ошибка.</summary>
     public bool NoAccountConfigured { get; set; }
 
+    /// <summary>
+    /// Plan/13 часть B: true, если у заведённого пользователя токен T-Invest не задан или не
+    /// расшифровался (см. <see cref="Bonds.Infrastructure.Services.TInvestTokenStatus"/>).
+    /// </summary>
+    public bool TokenMissingOrInvalid { get; set; }
+
     public int InstrumentsSynced { get; set; }
+
+    /// <summary>Задача 20 часть A: сколько уникальных watchlist ISIN обновлено (справочник + котировка) за цикл.</summary>
+    public int WatchlistInstrumentsSynced { get; set; }
     public int OperationsUpserted { get; set; }
     public bool YieldCurveUpdated { get; set; }
     public int PositionsProjected { get; set; }

@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { describe, it, expect, beforeEach } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
 import { MantineProvider } from '@mantine/core';
@@ -35,6 +35,7 @@ const baseScatter: ScatterResponse = {
       isIndexed: false,
       isEstimated: false,
       dataIncomplete: false,
+      isWatchlist: false,
     },
     {
       positionId: 2,
@@ -49,6 +50,7 @@ const baseScatter: ScatterResponse = {
       isIndexed: false,
       isEstimated: true,
       dataIncomplete: false,
+      isWatchlist: false,
     },
   ],
   curve: [
@@ -116,6 +118,7 @@ describe('Analytics', () => {
       trajectory: null,
       isLoading: false,
       error: null,
+      isBackfilling: false,
     });
     useAuthStore.setState({ token: 'test-token', user: { id: 1, telegramId: 1 } });
   });
@@ -133,6 +136,57 @@ describe('Analytics', () => {
     expect(screen.getByTestId('composition-widget')).toBeInTheDocument();
     expect(screen.getByTestId('xirr-widget')).toBeInTheDocument();
     expect(screen.getByTestId('xirr-current')).toHaveTextContent('13.20%');
+  });
+
+  it('renders the scatter widget without crashing when a watchlist point is present (plan/20 §B.2)', async () => {
+    server.use(
+      http.get('*/api/analytics/scatter', () =>
+        HttpResponse.json({
+          ...baseScatter,
+          points: [
+            ...baseScatter.points,
+            {
+              positionId: 0,
+              instrumentId: 999,
+              name: 'Чужая бумага',
+              issuer: 'Другой эмитент',
+              modifiedDuration: 4.0,
+              macaulayDuration: 4.2,
+              effectiveYield: 0.16,
+              yieldKind: 'Ytm',
+              isFloater: false,
+              isIndexed: false,
+              isEstimated: false,
+              dataIncomplete: false,
+              isWatchlist: true,
+            },
+          ],
+        }),
+      ),
+      http.get('*/api/analytics/composition', () => HttpResponse.json(baseComposition)),
+      http.get('*/api/analytics/xirr', () => HttpResponse.json(baseXirr)),
+    );
+
+    renderAnalytics();
+
+    await waitFor(() => expect(screen.getByTestId('scatter-widget')).toBeInTheDocument());
+  });
+
+  it('opens the explanation popover for the scatter widget (plan/18 part C)', async () => {
+    server.use(
+      http.get('*/api/analytics/scatter', () => HttpResponse.json(baseScatter)),
+      http.get('*/api/analytics/composition', () => HttpResponse.json(baseComposition)),
+      http.get('*/api/analytics/xirr', () => HttpResponse.json(baseXirr)),
+    );
+
+    renderAnalytics();
+
+    await waitFor(() => expect(screen.getByTestId('scatter-widget-explain-icon')).toBeInTheDocument());
+
+    const { default: userEvent } = await import('@testing-library/user-event');
+    await userEvent.click(screen.getByTestId('scatter-widget-explain-icon'), { pointerEventsCheck: 0 });
+
+    await waitFor(() => expect(screen.getByText(/Серая линия — безрисковая кривая ОФЗ/)).toBeInTheDocument());
   });
 
   it('uses a neutral curve label and never renders the MOEX trademark name', async () => {
@@ -162,6 +216,50 @@ describe('Analytics', () => {
     renderAnalytics();
 
     await waitFor(() => expect(screen.getByTestId('xirr-empty')).toBeInTheDocument());
+  });
+
+  it('renders XIRR history as a two-axis chart with value + xirr when history is present', async () => {
+    server.use(
+      http.get('*/api/analytics/scatter', () => HttpResponse.json(baseScatter)),
+      http.get('*/api/analytics/composition', () => HttpResponse.json(baseComposition)),
+      http.get('*/api/analytics/xirr', () => HttpResponse.json(baseXirr)),
+    );
+
+    renderAnalytics();
+
+    await waitFor(() => expect(screen.getByTestId('xirr-widget')).toBeInTheDocument());
+    expect(screen.queryByTestId('xirr-empty')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('xirr-backfill-button')).not.toBeInTheDocument();
+    expect(screen.getByText(/восстановлена по дневным ценам MOEX/i)).toBeInTheDocument();
+  });
+
+  it('runs backfill and reloads XIRR history when the empty-state button is clicked', async () => {
+    let backfillCalled = false;
+    let xirrCallCount = 0;
+
+    server.use(
+      http.get('*/api/analytics/scatter', () => HttpResponse.json(baseScatter)),
+      http.get('*/api/analytics/composition', () => HttpResponse.json(baseComposition)),
+      http.get('*/api/analytics/xirr', () => {
+        xirrCallCount += 1;
+        return xirrCallCount === 1
+          ? HttpResponse.json({ currentXirr: null, history: [], disclaimer: '' })
+          : HttpResponse.json(baseXirr);
+      }),
+      http.post('*/api/analytics/xirr/backfill', () => {
+        backfillCalled = true;
+        return HttpResponse.json({ pointsWritten: 2 });
+      }),
+    );
+
+    renderAnalytics();
+
+    await waitFor(() => expect(screen.getByTestId('xirr-backfill-button')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('xirr-backfill-button'));
+
+    await waitFor(() => expect(screen.getByTestId('xirr-current')).toHaveTextContent('13.20%'));
+    expect(backfillCalled).toBe(true);
+    expect(xirrCallCount).toBe(2);
   });
 
   it('shows an empty state for the scatter widget when there are no points', async () => {

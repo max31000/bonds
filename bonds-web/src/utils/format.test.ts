@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   formatRub,
+  formatRubCompact,
   daysUntil,
   formatDaysUntil,
   formatPercent,
@@ -28,6 +29,30 @@ describe('formatRub', () => {
     expect(formatRub(null)).toBe('—');
     expect(formatRub(undefined)).toBe('—');
     expect(formatRub(NaN)).toBe('—');
+  });
+});
+
+describe('formatRubCompact', () => {
+  it('formats millions with one decimal place', () => {
+    expect(formatRubCompact(1_234_567)).toBe('1,2 млн ₽');
+  });
+
+  it('formats thousands with one decimal place', () => {
+    expect(formatRubCompact(850_000)).toBe('850 тыс. ₽');
+  });
+
+  it('formats sub-thousand amounts as plain rubles', () => {
+    expect(formatRubCompact(999)).toBe('999 ₽');
+  });
+
+  it('preserves the negative sign', () => {
+    expect(formatRubCompact(-2_000_000)).toBe('-2 млн ₽');
+  });
+
+  it('returns a dash for null/undefined/NaN', () => {
+    expect(formatRubCompact(null)).toBe('—');
+    expect(formatRubCompact(undefined)).toBe('—');
+    expect(formatRubCompact(NaN)).toBe('—');
   });
 });
 

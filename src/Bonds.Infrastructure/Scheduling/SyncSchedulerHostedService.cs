@@ -1,3 +1,7 @@
+using Bonds.Core.Interfaces.Repositories;
+using Bonds.Core.Time;
+using Bonds.Infrastructure.Analytics;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -31,19 +35,33 @@ public sealed class SyncSchedulerHostedService : BackgroundService
 {
     private readonly ISyncCycleRunner _runner;
     private readonly SchedulerOptions _options;
+    private readonly ITelegramAlertSender _alertSender;
+    private readonly SyncAlertThrottle _alertThrottle;
+    private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<SyncSchedulerHostedService> _logger;
     private readonly TimeZoneInfo _moscowTimeZone;
 
     private DateOnly? _lastTriggeredDate;
     private TimeOnly? _lastTriggeredWindow;
 
+    /// <summary>Порог plan/15 §B.4: если снапшотов меньше этого числа при старте приложения (а
+    /// операции в журнале есть), запускаем однократный бэкфилл истории XIRR — виджет иначе пуст
+    /// неделями, пока не накопится история от одного лишь автосинка (2 снапшота/день).</summary>
+    private const int BackfillSnapshotThreshold = 5;
+
     public SyncSchedulerHostedService(
         ISyncCycleRunner runner,
         IOptions<SchedulerOptions> options,
+        ITelegramAlertSender alertSender,
+        SyncAlertThrottle alertThrottle,
+        IServiceScopeFactory scopeFactory,
         ILogger<SyncSchedulerHostedService> logger)
     {
         _runner = runner;
         _options = options.Value;
+        _alertSender = alertSender;
+        _alertThrottle = alertThrottle;
+        _scopeFactory = scopeFactory;
         _logger = logger;
         _moscowTimeZone = ResolveMoscowTimeZone();
     }
@@ -64,6 +82,8 @@ public sealed class SyncSchedulerHostedService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        await RunStartupBackfillIfNeededAsync(stoppingToken);
+
         while (!stoppingToken.IsCancellationRequested)
         {
             try
@@ -115,7 +135,97 @@ public sealed class SyncSchedulerHostedService : BackgroundService
             _lastTriggeredDate = today;
             _lastTriggeredWindow = window;
 
-            await _runner.RunCycleAsync(ct);
+            var result = await _runner.RunCycleAsync(ct);
+            await MaybeAlertOnFailureAsync(result, today, ct);
         }
+    }
+
+    /// <summary>
+    /// Plan/15 §B.4 housekeeping-хук: один раз при старте приложения — если у единственного счёта
+    /// продукта снапшотов истории меньше <see cref="BackfillSnapshotThreshold"/>, а операции в
+    /// журнале уже есть (значит, синк когда-то отработал и накопил историю операций, но график
+    /// XIRR почти пуст — типичный случай "автосинк долго не работал", plan/13), запускаем
+    /// ретроспективный бэкфилл <see cref="PortfolioHistoryBackfillService"/>. Не влияет на обычный
+    /// плановый цикл — выполняется до входа в цикл <see cref="ExecuteAsync"/>, максимум один раз за
+    /// время жизни процесса. Ошибка бэкфилла логируется и не мешает автосинку стартовать (та же
+    /// устойчивость "не падать", что у остального планировщика).
+    /// </summary>
+    private async Task RunStartupBackfillIfNeededAsync(CancellationToken ct)
+    {
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var sp = scope.ServiceProvider;
+
+            var accountRepo = sp.GetRequiredService<IAccountRepository>();
+            var accountId = await accountRepo.GetPrimaryAccountIdAsync();
+            if (accountId is null)
+            {
+                return; // ещё нет онбординга — нечего бэкфиллить (та же логика, что TickAsync).
+            }
+
+            var snapshotRepo = sp.GetRequiredService<IPortfolioValueSnapshotRepository>();
+            var existingSnapshots = (await snapshotRepo.GetByAccountIdAsync(accountId.Value)).ToList();
+            if (existingSnapshots.Count >= BackfillSnapshotThreshold)
+            {
+                return; // истории уже достаточно — бэкфилл не нужен.
+            }
+
+            var operationRepo = sp.GetRequiredService<IOperationRepository>();
+            var hasOperations = (await operationRepo.GetByAccountIdAsync(accountId.Value)).Any();
+            if (!hasOperations)
+            {
+                return; // журнал операций пуст — бэкфиллить нечего (не первый синк ещё не прошёл).
+            }
+
+            _logger.LogInformation(
+                "Startup backfill: account {AccountId} has {SnapshotCount} snapshots (< {Threshold}) but operations exist — running history backfill",
+                accountId, existingSnapshots.Count, BackfillSnapshotThreshold);
+
+            var backfillService = sp.GetRequiredService<PortfolioHistoryBackfillService>();
+            var written = await backfillService.BackfillAsync(accountId.Value, BusinessClock.MoscowToday(), ct);
+
+            _logger.LogInformation("Startup backfill: wrote {Written} history points for account {AccountId}", written, accountId);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            // Устойчивость: сбой одноразового бэкфилла при старте не должен мешать автосинку
+            // подняться и работать дальше (plan/07 "не падать").
+            _logger.LogError(ex, "Startup backfill failed — sync scheduler continues normally");
+        }
+    }
+
+    /// <summary>
+    /// Plan/13 часть D: только для ПЛАНОВОГО (не ручного force-refresh — этот метод вызывается
+    /// исключительно из <see cref="TickAsync"/>) цикла — если он завершился с ошибками или
+    /// протухшим/отсутствующим токеном, шлём Telegram-алерт владельцу, не чаще одного раза в
+    /// сутки на уникальный набор ошибок (<see cref="SyncAlertThrottle"/>). Сбой отправки не
+    /// бросается наружу — <see cref="ITelegramAlertSender.SendAsync"/> сам это гарантирует.
+    /// </summary>
+    private async Task MaybeAlertOnFailureAsync(SyncCycleResult result, DateOnly today, CancellationToken ct)
+    {
+        if (!result.HasErrors && !result.TokenMissingOrInvalid)
+        {
+            return;
+        }
+
+        var errors = result.Errors.Count > 0
+            ? result.Errors
+            : ["Токен T-Invest не подключён или недействителен."];
+
+        if (!_alertThrottle.ShouldAlert(errors, today))
+        {
+            return;
+        }
+
+        // Текст без токена/чувствительных данных (spec §11) — первая ошибка уже была составлена
+        // выше по цепочке (SyncCycleService) как человекочитаемая строка без секретов.
+        var message = $"Bonds: автосинк упал: {errors[0]}";
+        await _alertSender.SendAsync(message, ct);
+        _alertThrottle.MarkAlerted(errors, today);
     }
 }

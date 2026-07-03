@@ -5,14 +5,18 @@ using Bonds.Infrastructure.Analytics;
 using Bonds.Infrastructure.CashFlow;
 using Bonds.Infrastructure.Connectors.Moex;
 using Bonds.Infrastructure.Connectors.TInvest;
+using Bonds.Infrastructure.Quotes;
 using Bonds.Infrastructure.Repositories;
 using Bonds.Infrastructure.Scheduling;
 using Bonds.Infrastructure.Services;
 using Bonds.Infrastructure.Sync;
 using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.DataProtection.KeyManagement;
+using Microsoft.AspNetCore.DataProtection.Repositories;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace Bonds.Infrastructure;
 
@@ -56,8 +60,18 @@ public static class DependencyInjection
         services.AddScoped<ISignalRepository>(sp => new SignalRepository(GetConnStr(sp)));
         services.AddScoped<ITargetAllocationRepository>(sp => new TargetAllocationRepository(GetConnStr(sp)));
 
+        // Plan/16 часть A: тики лёгкого контура котировок (intraday_quotes).
+        services.AddScoped<IIntradayQuoteRepository>(sp => new IntradayQuoteRepository(GetConnStr(sp)));
+
+        // Plan/19 часть A: кэш дневной истории цены инструмента (instrument_price_history) для
+        // графика цены карточки позиции.
+        services.AddScoped<IInstrumentPriceHistoryRepository>(sp => new InstrumentPriceHistoryRepository(GetConnStr(sp)));
+
         // Этап 08: настройки пользователя (пороги Signals Engine + токен T-Invest зашифрованный).
         services.AddScoped<IUserSettingsRepository>(sp => new UserSettingsRepository(GetConnStr(sp)));
+
+        // Задача 20 часть A: ручной watchlist (бумаги вне текущих позиций, отслеживаемые по ISIN).
+        services.AddScoped<IWatchlistItemRepository>(sp => new WatchlistItemRepository(GetConnStr(sp)));
 
         // Migration runner
         services.AddSingleton(sp => new MigrationRunner(
@@ -76,15 +90,34 @@ public static class DependencyInjection
         });
         services.AddScoped<IMoexIssClient, MoexIssClient>();
 
+        // Telegram Bot API — алерт владельцу при падении автосинка (plan/13 часть D). Тот же бот,
+        // что и авторизация/CI-алерты (Telegram:BotToken), base address без секрета в URL самого
+        // клиента (токен подставляется в путь запроса на каждый вызов, см. TelegramAlertSender).
+        services.AddHttpClient(TelegramAlertSender.HttpClientName, client =>
+        {
+            client.BaseAddress = new Uri("https://api.telegram.org");
+            client.Timeout = TimeSpan.FromSeconds(10);
+        });
+        services.AddSingleton<ITelegramAlertSender, TelegramAlertSender>();
+        services.AddSingleton<SyncAlertThrottle>();
+
         // T-Invest: gRPC-клиент НЕ регистрируется здесь готовым (нет статического токена в DI) —
         // TInvestPortfolioClient сам резолвит токен через ITInvestTokenProvider (БД на пользователя,
         // без ENV-фолбэка) и лениво строит InvestApiClient внутри своего scoped-экземпляра
         // (см. doc-comment TInvestPortfolioClient, BACKEND_DECISIONS.md решение 12).
         services.AddScoped<ITInvestPortfolioClient, TInvestPortfolioClient>();
 
+        // Валидация токена перед сохранением (plan/13 часть C) — не завязана на
+        // ITInvestTokenProvider/БД, токен — явный аргумент вызова из PUT /api/settings/tinvest-token.
+        services.AddScoped<ITInvestTokenValidator, TInvestTokenValidator>();
+
         // Оркестрация синка (этап 04 Часть C) — без HTTP-эндпоинта/шедулера на этом этапе,
         // вызывается программно/из тестов (см. plan/04).
         services.AddScoped<BondSyncService>();
+
+        // Задача 20 часть A: синк watchlist-бумаг (ISIN без позиции) — переиспользует BondSyncService,
+        // отдельный шаг в SyncCycleService.
+        services.AddScoped<WatchlistSyncService>();
 
         // Cash-Flow Projection + Portfolio Analytics (этап 06) — координирующие сервисы поверх
         // чистого Bonds.Core.CashFlow/Bonds.Core.Analytics; без HTTP-эндпоинта (этап 08) и без
@@ -92,14 +125,39 @@ public static class DependencyInjection
         services.AddScoped<CashFlowProjectionOrchestrator>();
         services.AddScoped<PortfolioSnapshotService>();
 
+        // Plan/15: ретроспективный бэкфилл истории XIRR из журнала операций + дневных цен MOEX ISS.
+        services.AddScoped<PortfolioHistoryBackfillService>();
+
+        // Plan/19 часть A: график цены карточки позиции — та же дозагрузка хвоста, что и у
+        // бэкфилла XIRR, но per-instrument и с персистентным кэшем (instrument_price_history).
+        services.AddScoped<InstrumentPriceHistoryService>();
+
         // Этап 08: сборщик holdings (между репозиториями и аналитическими сервисами) — общий
         // вход для positions/composition/scatter/comparison/replacement эндпоинтов.
         services.AddScoped<PortfolioHoldingsBuilder>();
 
         // DataProtection — шифрование токена T-Invest, вводимого через UI (PUT /api/settings/tinvest-token).
-        // Ключи персистируются на диске контейнера по умолчанию (ASP.NET Core default key ring) —
-        // достаточно для single-instance деплоя этого продукта (plan/00 §5: один контейнер bonds-api).
-        services.AddDataProtection();
+        // Ключи ЯВНО персистируются на volume вне UnionFS-слоёв контейнера (DataProtection:KeysPath,
+        // дефолт /app/dataprotection-keys) — по умолчанию ASP.NET Core пишет ключи в domain-профиль
+        // ("/root/.aspnet/DataProtection-Keys"), который живёт только внутри слоя контейнера и
+        // теряется при каждом "docker stop && rm && run" на деплое (plan/13 корневая причина: токен
+        // из БД молча перестаёт расшифровываться после каждого передеплоя). SetApplicationName
+        // фиксирован явной строкой (а не выводится из имени сборки/пути) — стабильность ключей не
+        // должна зависеть от имени бинарника/пути публикации.
+        //
+        // Путь читается ЛЕНИВО через IConfigureOptions<KeyManagementOptions> (а не сразу из
+        // параметра configuration выше — тот же паттерн, что GetConnStr/Jwt:Secret в Program.cs),
+        // потому что WebApplicationFactory.ConfigureWebHost в тестах подставляет DataProtection:KeysPath
+        // ПОСЛЕ этого вызова AddInfrastructure — eager-чтение здесь всегда попадало бы на дефолт
+        // "/app/dataprotection-keys" (в тестовом контейнере read-only FS) вместо тестового temp dir.
+        services.AddDataProtection().SetApplicationName("bonds-api");
+        services.AddSingleton<IConfigureOptions<KeyManagementOptions>>(sp =>
+            new ConfigureOptions<KeyManagementOptions>(options =>
+            {
+                var keysPath = sp.GetRequiredService<IConfiguration>()["DataProtection:KeysPath"]
+                    ?? "/app/dataprotection-keys";
+                options.XmlRepository = new FileSystemXmlRepository(new DirectoryInfo(keysPath), sp.GetRequiredService<ILoggerFactory>());
+            }));
         services.AddScoped<ITInvestTokenProvider, TInvestTokenProvider>();
 
         // Signals Engine + Scheduler (этап 07, plan/07) — options читаются из конфига с дефолтами
@@ -113,6 +171,11 @@ public static class DependencyInjection
         // (см. doc-comment SyncCycleService).
         services.AddSingleton<ISyncCycleRunner, SyncCycleService>();
         services.AddHostedService<SyncSchedulerHostedService>();
+
+        // Plan/16 часть A: лёгкий контур котировок — поллинг, НЕ gRPC-стриминг/SignalR (осознанное
+        // ограничение плана). Options вынесены в конфиг с дефолтами самого класса опций.
+        services.Configure<LiveQuotesOptions>(configuration.GetSection("LiveQuotes"));
+        services.AddHostedService<LiveQuotesPollingService>();
 
         return services;
     }

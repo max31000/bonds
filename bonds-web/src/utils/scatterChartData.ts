@@ -1,6 +1,29 @@
 import type { ScatterPoint } from '../api/types';
 
 /**
+ * Категория точки на scatter-графике — используется и для цвета/маркера, и для легенды.
+ * Задача 20: watchlist-бумаги (без позиции) — отдельная категория "Watchlist", проверяется первой,
+ * чтобы не смешиваться с категориями твоего портфеля, даже если бумага одновременно floater/indexed.
+ * Вынесено сюда (не в Analytics.tsx) по тому же правилу react-refresh, что и buildScatterChartData —
+ * страница экспортирует только компонент, а эта функция нужна отдельным юнит-тестом.
+ */
+export function pointCategory(p: ScatterPoint): string {
+  if (p.isWatchlist) return 'Watchlist';
+  if (p.dataIncomplete) return 'Неполные данные';
+  if (p.isFloater) return 'Флоатер';
+  if (p.isIndexed) return 'Индексируемая';
+  return 'Обычная';
+}
+
+export const CATEGORY_COLOR: Record<string, string> = {
+  'Обычная': 'var(--mantine-color-violet-6)',
+  'Флоатер': 'var(--mantine-color-blue-6)',
+  'Индексируемая': 'var(--mantine-color-teal-6)',
+  'Неполные данные': 'var(--mantine-color-red-5)',
+  'Watchlist': 'var(--mantine-color-orange-6)',
+};
+
+/**
  * T-7/L-1: и ось X scatter, и G-спред должны мерить «срок» одним измерителем — дюрацией Маколея.
  * Раньше точки наносились по модифицированной дюрации, а G-спред считался по Маколею, поэтому
  * визуальное «над/под кривой» не совпадало со знаком G-спреда. Здесь точки строятся по
