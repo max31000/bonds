@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Title,
   Stack,
@@ -13,95 +13,29 @@ import {
   Button,
   Tooltip,
   ActionIcon,
+  Select,
+  Paper,
 } from '@mantine/core';
+import { useMediaQuery } from '@mantine/hooks';
 import { useNavigate } from 'react-router-dom';
 import { usePositionsStore } from '../store/usePositionsStore';
 import { useSettingsStore } from '../store/useSettingsStore';
-import { useLiveStore } from '../store/useLiveStore';
 import { useLiveQuotes } from '../hooks/useLiveQuotes';
 import { Disclaimer } from '../components/Disclaimer';
 import { PortfolioIntradayChart } from '../components/PortfolioIntradayChart';
+import { PositionCard } from '../components/PositionCard';
+import { LiveMarketValueCell } from '../components/positionsShared';
+import {
+  effectiveYield,
+  COUPON_TYPE_LABEL,
+  YIELD_TOOLTIP_TEXT,
+  type SortKey,
+  type SortState,
+} from '../utils/positionsDisplay';
 import type { PositionRow } from '../api/types';
-import { formatRub, formatDaysUntil, formatPercent, formatNumber, formatBp, formatDateTime } from '../utils/format';
-
-/**
- * Ячейка «Рыночная стоимость» с live-merge поверх статичного значения из GET /api/positions
- * (plan/16 часть B): пока не пришёл ни один тик — обычное значение из positions-стора; как
- * только приходит live-цена — подменяется на неё, с мягкой CSS-подсветкой при изменении и
- * пометкой «цены на HH:MM» для устаревшего (isStale) фолбэка на дневной снимок последнего синка.
- */
-function LiveMarketValueCell({ staticValueRub, positionId }: { staticValueRub: number; positionId: number }) {
-  const live = useLiveStore((s) => s.positionsById[positionId]);
-  const [isHighlighted, setIsHighlighted] = useState(false);
-  const prevValueRef = useRef<number | null>(null);
-
-  const displayValue = live?.marketValueRub ?? staticValueRub;
-
-  useEffect(() => {
-    if (prevValueRef.current !== null && prevValueRef.current !== displayValue) {
-      setIsHighlighted(true);
-      const timeout = setTimeout(() => setIsHighlighted(false), 1000);
-      return () => clearTimeout(timeout);
-    }
-    prevValueRef.current = displayValue;
-    return undefined;
-  }, [displayValue]);
-
-  useEffect(() => {
-    prevValueRef.current = displayValue;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  return (
-    <Stack gap={0} data-testid={`live-market-value-${positionId}`}>
-      <Text
-        fw={live ? 600 : 400}
-        style={{
-          transition: 'color 300ms ease, background-color 300ms ease',
-          backgroundColor: isHighlighted ? 'var(--mantine-color-yellow-1)' : 'transparent',
-        }}
-      >
-        {formatRub(displayValue)}
-      </Text>
-      {live && (
-        <Group gap={4} wrap="nowrap">
-          {live.changeDayPercent !== null && (
-            <Text size="xs" c={live.changeDayPercent >= 0 ? 'green' : 'red'}>
-              {live.changeDayPercent >= 0 ? '+' : ''}
-              {formatPercent(live.changeDayPercent)}
-            </Text>
-          )}
-          {live.isStale && (
-            <Tooltip label={`Цены на ${formatDateTime(live.asOfUtc)} — новых тиков ещё не было`} withArrow>
-              <Text size="xs" c="dimmed" data-testid={`live-stale-${positionId}`}>
-                (цены на {formatDateTime(live.asOfUtc)})
-              </Text>
-            </Tooltip>
-          )}
-        </Group>
-      )}
-    </Stack>
-  );
-}
-
-type SortKey = 'yield' | 'pnl';
-type SortState = { key: SortKey; direction: 'asc' | 'desc' };
-
-/** Эффективная доходность для отображения/сортировки: currentYield для floater/indexed, иначе ytmEffective. */
-function effectiveYield(row: PositionRow): number | null {
-  if (row.isFloater || row.isIndexed) return row.currentYield;
-  return row.ytmEffective;
-}
-
-const COUPON_TYPE_LABEL: Record<PositionRow['couponType'], string> = {
-  Fixed: 'Фиксированный',
-  Floating: 'Плавающий',
-  Indexed: 'Индексируемый',
-};
-
-const YIELD_TOOLTIP_TEXT =
-  'YTM — эффективная доходность к погашению/оферте от текущей рыночной цены. ' +
-  'Не зависит от вашей цены покупки. Доход от цены входа — колонка P&L.';
+import { formatRub, formatDaysUntil, formatPercent, formatNumber, formatBp } from '../utils/format';
+import { computePositionsTotals } from '../utils/positionsAggregation';
+import { buildYieldHeatmapScale } from '../utils/yieldHeatmap';
 
 /**
  * Главный экран приложения после логина — таблица позиций с расчётными метриками (этап 09a,
@@ -113,6 +47,8 @@ export function Positions() {
   const { settings, load: loadSettings } = useSettingsStore();
   const navigate = useNavigate();
   const [sort, setSort] = useState<SortState>({ key: 'yield', direction: 'desc' });
+  // Plan/21 часть C.2: < 768px — карточки вместо таблицы (10+ колонок нечитаемы на телефоне).
+  const isMobile = useMediaQuery('(max-width: 48em)');
 
   // Plan/16 часть B: поллинг живых цен (только видимая вкладка + грубо торговые часы на клиенте) —
   // пишет в useLiveStore, откуда его читают LiveMarketValueCell ниже и PortfolioIntradayChart.
@@ -139,6 +75,19 @@ export function Positions() {
 
   const toggleSort = (key: SortKey) =>
     setSort((s) => (s.key === key ? { key, direction: s.direction === 'asc' ? 'desc' : 'asc' } : { key, direction: 'desc' }));
+
+  // Plan/21 часть B.3: строка «Итого» — суммарная стоимость и средневзвешенные доходность/дюрация.
+  const totals = useMemo(() => computePositionsTotals(positions), [positions]);
+
+  // Plan/21 часть B.1: heatmap колонки «Доходность» — перцентиль считается только по сравнимым
+  // доходностям (обычные бумаги, effectiveYield !== null для floater/indexed возвращает
+  // currentYield, но красить его heatmap'ом некорректно — несравнимо с YTM обычных бумаг).
+  const yieldHeatmapScale = useMemo(() => {
+    const comparableYields = positions
+      .filter((p) => !p.isFloater && !p.isIndexed && p.ytmEffective !== null)
+      .map((p) => p.ytmEffective as number);
+    return buildYieldHeatmapScale(comparableYields);
+  }, [positions]);
 
   return (
     <Stack gap="md">
@@ -191,6 +140,52 @@ export function Positions() {
             эмитента — сравнивайте бумаги с одинаковым горизонтом и качеством.
           </Text>
 
+          {isMobile ? (
+            <Stack gap="sm" data-testid="positions-cards">
+              <Select
+                label="Сортировка"
+                data={[
+                  { value: 'yield-desc', label: 'Доходность ↓' },
+                  { value: 'yield-asc', label: 'Доходность ↑' },
+                  { value: 'pnl-desc', label: 'P&L ↓' },
+                  { value: 'pnl-asc', label: 'P&L ↑' },
+                ]}
+                value={`${sort.key}-${sort.direction}`}
+                onChange={(value) => {
+                  if (!value) return;
+                  const [key, direction] = value.split('-') as [SortKey, 'asc' | 'desc'];
+                  setSort({ key, direction });
+                }}
+                data-testid="mobile-sort-select"
+                allowDeselect={false}
+              />
+
+              <Paper withBorder p="sm" radius="md" data-testid="positions-totals-mobile">
+                <Text size="xs" c="dimmed">
+                  Итого по портфелю
+                </Text>
+                <Text fw={700}>{formatRub(totals.totalMarketValueRub)}</Text>
+                <Group gap="md" mt={4}>
+                  <Text size="xs" c="dimmed">
+                    Ср.взв. доходность: <Text span fw={600}>{formatPercent(totals.weightedYield)}</Text>
+                    {totals.hasExcludedFloaters && '*'}
+                  </Text>
+                  <Text size="xs" c="dimmed">
+                    Ср.взв. дюрация: <Text span fw={600}>{formatNumber(totals.weightedDuration)}</Text>
+                  </Text>
+                </Group>
+                {totals.hasExcludedFloaters && (
+                  <Text size="xs" c="dimmed" mt={2}>
+                    * без флоатеров/индексируемых — их доходность несравнима с YTM
+                  </Text>
+                )}
+              </Paper>
+
+              {sorted.map((row) => (
+                <PositionCard key={row.positionId} row={row} onClick={() => navigate(`/positions/${row.positionId}`)} />
+              ))}
+            </Stack>
+          ) : (
           <Table.ScrollContainer minWidth={1100}>
             <Table striped highlightOnHover data-testid="positions-table">
               <Table.Thead>
@@ -278,9 +273,16 @@ export function Positions() {
                       <Table.Td>
                         <Tooltip label={totalReturnLabel} withArrow>
                           <Stack gap={0}>
-                            <Text c={pnlColor} fw={500}>
-                              {formatRub(row.unrealizedPnlRub)}
-                            </Text>
+                            <Group gap={4} wrap="nowrap">
+                              {row.unrealizedPnlRub !== null && (
+                                <Text c={pnlColor} size="sm" span aria-hidden="true">
+                                  {row.unrealizedPnlRub >= 0 ? '▲' : '▼'}
+                                </Text>
+                              )}
+                              <Text c={pnlColor} fw={500}>
+                                {formatRub(row.unrealizedPnlRub)}
+                              </Text>
+                            </Group>
                             <Text c={pnlColor} size="xs">
                               {formatPercent(row.unrealizedPnlPercent)}
                             </Text>
@@ -288,7 +290,12 @@ export function Positions() {
                         </Tooltip>
                       </Table.Td>
                       <Table.Td>{formatRub(row.couponsReceivedRub)}</Table.Td>
-                      <Table.Td>
+                      <Table.Td
+                        style={{
+                          backgroundColor: isCurrentYield || yieldValue === null ? undefined : yieldHeatmapScale(yieldValue),
+                        }}
+                        data-testid={`yield-cell-${row.positionId}`}
+                      >
                         <Group gap={4} wrap="nowrap">
                           <Text>{formatPercent(yieldValue)}</Text>
                           {isCurrentYield && (
@@ -346,8 +353,37 @@ export function Positions() {
                   );
                 })}
               </Table.Tbody>
+              <Table.Tfoot>
+                <Table.Tr data-testid="positions-totals-row">
+                  <Table.Th>Итого</Table.Th>
+                  <Table.Th />
+                  <Table.Th />
+                  <Table.Th>{formatRub(totals.totalMarketValueRub)}</Table.Th>
+                  <Table.Th />
+                  <Table.Th />
+                  <Table.Th />
+                  <Table.Th>
+                    {formatPercent(totals.weightedYield)}
+                    {totals.hasExcludedFloaters && '*'}
+                  </Table.Th>
+                  <Table.Th>{formatNumber(totals.weightedDuration)}</Table.Th>
+                  <Table.Th />
+                  <Table.Th />
+                  <Table.Th />
+                </Table.Tr>
+                {totals.hasExcludedFloaters && (
+                  <Table.Tr>
+                    <Table.Th colSpan={11} fw={400}>
+                      <Text size="xs" c="dimmed">
+                        * средневзвешенная доходность без флоатеров/индексируемых — их доходность несравнима с YTM
+                      </Text>
+                    </Table.Th>
+                  </Table.Tr>
+                )}
+              </Table.Tfoot>
             </Table>
           </Table.ScrollContainer>
+          )}
         </>
       )}
 

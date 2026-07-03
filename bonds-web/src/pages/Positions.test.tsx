@@ -20,6 +20,33 @@ function renderPositions() {
   );
 }
 
+/**
+ * T-21/C.2/D: подменяет window.matchMedia так, чтобы медиа-запрос мобильного брейкпоинта
+ * (`(max-width: 48em)`, используется в Positions.tsx через useMediaQuery) возвращал `matches`.
+ * Глобальный мок в test/setup.ts всегда возвращает matches: false — этого достаточно для
+ * десктопных тестов, но мобильную ветку рендера нужно проверять отдельно.
+ */
+function mockMobileViewport() {
+  const original = window.matchMedia;
+  Object.defineProperty(window, 'matchMedia', {
+    writable: true,
+    configurable: true,
+    value: (query: string) => ({
+      matches: query.includes('max-width'),
+      media: query,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    }),
+  });
+  return () => {
+    Object.defineProperty(window, 'matchMedia', { writable: true, configurable: true, value: original });
+  };
+}
+
 const basePosition: PositionRow = {
   positionId: 1,
   instrumentId: 10,
@@ -69,7 +96,11 @@ describe('Positions', () => {
     renderPositions();
 
     await waitFor(() => expect(screen.getByText('Минфин РФ')).toBeInTheDocument());
-    expect(screen.getByText('12.50%')).toBeInTheDocument();
+    // T-21/B: строка «Итого» показывает средневзвешенную доходность, которая для единственной
+    // позиции портфеля численно совпадает со значением её собственной ячейки — поэтому "12.50%"
+    // теперь легитимно встречается дважды (ячейка доходности + строка «Итого»).
+    expect(screen.getByTestId('yield-cell-1')).toHaveTextContent('12.50%');
+    expect(screen.getByTestId('positions-totals-row')).toHaveTextContent('12.50%');
     expect(screen.queryByText('11.80%')).not.toBeInTheDocument();
     expect(screen.getByText('тестовый дисклеймер')).toBeInTheDocument();
   });
@@ -418,5 +449,143 @@ describe('Positions', () => {
     });
 
     await waitFor(() => expect(screen.getByTestId('live-stale-1')).toBeInTheDocument());
+  });
+
+  // ─── T-21/B.3: строка «Итого» ──────────────────────────────────────────────────────────────
+
+  it('renders a totals row with the summed market value and weighted-average yield/duration', async () => {
+    const positionA: PositionRow = { ...basePosition, positionId: 21, marketValueRub: 100_000, ytmEffective: 0.1, modifiedDuration: 2 };
+    const positionB: PositionRow = { ...basePosition, positionId: 22, marketValueRub: 300_000, ytmEffective: 0.2, modifiedDuration: 4 };
+    server.use(
+      http.get('*/api/positions', () => HttpResponse.json({ positions: [positionA, positionB], disclaimer: '' })),
+    );
+
+    renderPositions();
+
+    await waitFor(() => expect(screen.getByTestId('positions-totals-row')).toBeInTheDocument());
+    const totalsRow = screen.getByTestId('positions-totals-row');
+    expect(totalsRow).toHaveTextContent('400 000'); // сумма рыночной стоимости
+    expect(totalsRow).toHaveTextContent('17.50%'); // (100k*0.10 + 300k*0.20)/400k
+    expect(totalsRow).toHaveTextContent('3.50'); // (100k*2 + 300k*4)/400k
+  });
+
+  it('shows a floater-exclusion footnote in the totals row when a floater is present', async () => {
+    const floater: PositionRow = { ...basePosition, positionId: 23, isFloater: true, ytmEffective: null, currentYield: 0.3 };
+    server.use(
+      http.get('*/api/positions', () => HttpResponse.json({ positions: [basePosition, floater], disclaimer: '' })),
+    );
+
+    renderPositions();
+
+    await waitFor(() => expect(screen.getByTestId('positions-totals-row')).toBeInTheDocument());
+    expect(screen.getByText(/без флоатеров/)).toBeInTheDocument();
+  });
+
+  // ─── T-21/B.1: heatmap колонки «Доходность» ────────────────────────────────────────────────
+
+  it('gives the highest-yield regular bond a more saturated heatmap background than the lowest', async () => {
+    const low: PositionRow = { ...basePosition, positionId: 31, issuer: 'Низкая', ytmEffective: 0.05 };
+    const high: PositionRow = { ...basePosition, positionId: 32, issuer: 'Высокая', ytmEffective: 0.25 };
+    server.use(
+      http.get('*/api/positions', () => HttpResponse.json({ positions: [low, high], disclaimer: '' })),
+    );
+
+    renderPositions();
+
+    await waitFor(() => expect(screen.getByTestId('yield-cell-31')).toBeInTheDocument());
+    const lowStyle = screen.getByTestId('yield-cell-31').getAttribute('style') ?? '';
+    const highStyle = screen.getByTestId('yield-cell-32').getAttribute('style') ?? '';
+    const extractPercent = (style: string) => Number(/(\d+)%/.exec(style)?.[1] ?? NaN);
+    expect(extractPercent(highStyle)).toBeGreaterThan(extractPercent(lowStyle));
+  });
+
+  it('does not apply a heatmap background to a floater yield cell', async () => {
+    const floater: PositionRow = { ...basePosition, positionId: 33, isFloater: true, ytmEffective: null, currentYield: 0.09 };
+    server.use(
+      http.get('*/api/positions', () => HttpResponse.json({ positions: [floater], disclaimer: '' })),
+    );
+
+    renderPositions();
+
+    await waitFor(() => expect(screen.getByTestId('yield-cell-33')).toBeInTheDocument());
+    const style = screen.getByTestId('yield-cell-33').getAttribute('style');
+    expect(style ?? '').not.toContain('color-mix');
+  });
+
+  // ─── T-21/C.2: карточки вместо таблицы на мобиле ───────────────────────────────────────────
+
+  describe('mobile layout (< 768px)', () => {
+    it('renders position cards instead of the table when the viewport is narrow', async () => {
+      const restore = mockMobileViewport();
+      server.use(
+        http.get('*/api/positions', () => HttpResponse.json({ positions: [basePosition], disclaimer: '' })),
+      );
+
+      renderPositions();
+
+      await waitFor(() => expect(screen.getByTestId('positions-cards')).toBeInTheDocument());
+      expect(screen.queryByTestId('positions-table')).not.toBeInTheDocument();
+      expect(screen.getByTestId(`position-card-${basePosition.positionId}`)).toBeInTheDocument();
+
+      restore();
+    });
+
+    it('expands additional metrics in a card when "Подробнее" is clicked', async () => {
+      const restore = mockMobileViewport();
+      server.use(
+        http.get('*/api/positions', () => HttpResponse.json({ positions: [basePosition], disclaimer: '' })),
+      );
+
+      renderPositions();
+
+      await waitFor(() => expect(screen.getByTestId(`position-card-${basePosition.positionId}`)).toBeInTheDocument());
+
+      const { default: userEvent } = await import('@testing-library/user-event');
+      await userEvent.click(screen.getByTestId(`position-card-toggle-${basePosition.positionId}`));
+
+      await waitFor(() => expect(screen.getByTestId(`position-card-details-${basePosition.positionId}`)).toBeVisible());
+
+      restore();
+    });
+
+    it('navigates to the position detail page when a card is tapped', async () => {
+      const restore = mockMobileViewport();
+      server.use(
+        http.get('*/api/positions', () => HttpResponse.json({ positions: [basePosition], disclaimer: '' })),
+      );
+
+      render(
+        <MantineProvider>
+          <MemoryRouter initialEntries={['/positions']}>
+            <Routes>
+              <Route path="/positions" element={<Positions />} />
+              <Route path="/positions/:id" element={<div data-testid="position-detail-stub">detail page</div>} />
+            </Routes>
+          </MemoryRouter>
+        </MantineProvider>,
+      );
+
+      await waitFor(() => expect(screen.getByTestId(`position-card-open-${basePosition.positionId}`)).toBeInTheDocument());
+
+      const { default: userEvent } = await import('@testing-library/user-event');
+      await userEvent.click(screen.getByTestId(`position-card-open-${basePosition.positionId}`));
+
+      await waitFor(() => expect(screen.getByTestId('position-detail-stub')).toBeInTheDocument());
+
+      restore();
+    });
+
+    it('shows a sort Select above the card list on mobile', async () => {
+      const restore = mockMobileViewport();
+      server.use(
+        http.get('*/api/positions', () => HttpResponse.json({ positions: [basePosition], disclaimer: '' })),
+      );
+
+      renderPositions();
+
+      await waitFor(() => expect(screen.getByTestId('mobile-sort-select')).toBeInTheDocument());
+
+      restore();
+    });
   });
 });
