@@ -42,6 +42,13 @@ const basePosition: PositionRow = {
   isEstimated: false,
   dataIncomplete: false,
   isOutOfScopeCurrency: false,
+  averageCostRub: 980,
+  investedRub: 98000,
+  unrealizedPnlRub: 7000,
+  unrealizedPnlPercent: 0.0714,
+  couponsReceivedRub: 3500,
+  totalReturnPercent: 0.1071,
+  costBasisIncomplete: false,
 };
 
 describe('Positions', () => {
@@ -194,6 +201,94 @@ describe('Positions', () => {
       const rowsAfter = screen.getAllByText(/Верхняя|Нижняя/).map((el) => el.textContent);
       expect(rowsAfter[0]).toBe('Нижняя');
     });
+  });
+
+  it('sorts by P&L% when the P&L column header is clicked', async () => {
+    const lowPnl: PositionRow = { ...basePosition, positionId: 8, issuer: 'Убыточная', unrealizedPnlPercent: -0.1 };
+    const highPnl: PositionRow = { ...basePosition, positionId: 9, issuer: 'Прибыльная', unrealizedPnlPercent: 0.3 };
+    server.use(
+      http.get('*/api/positions', () => HttpResponse.json({ positions: [lowPnl, highPnl], disclaimer: '' })),
+    );
+
+    renderPositions();
+
+    await waitFor(() => expect(screen.getByText('Убыточная')).toBeInTheDocument());
+
+    const { default: userEvent } = await import('@testing-library/user-event');
+    await userEvent.click(screen.getByTestId('sort-pnl'));
+
+    await waitFor(() => {
+      const rows = screen.getAllByText(/Прибыльная|Убыточная/).map((el) => el.textContent);
+      expect(rows[0]).toBe('Прибыльная'); // desc после первого клика — самый высокий P&L% первым
+    });
+
+    await userEvent.click(screen.getByTestId('sort-pnl'));
+
+    await waitFor(() => {
+      const rows = screen.getAllByText(/Прибыльная|Убыточная/).map((el) => el.textContent);
+      expect(rows[0]).toBe('Убыточная');
+    });
+  });
+
+  it('renders cost-basis columns (average cost, P&L rub/percent, coupons received)', async () => {
+    server.use(
+      http.get('*/api/positions', () => HttpResponse.json({ positions: [basePosition], disclaimer: '' })),
+    );
+
+    renderPositions();
+
+    await waitFor(() => expect(screen.getByText('Минфин РФ')).toBeInTheDocument());
+    expect(screen.getByText('980 ₽')).toBeInTheDocument(); // averageCostRub
+    expect(screen.getByText('7 000 ₽')).toBeInTheDocument(); // unrealizedPnlRub
+    expect(screen.getByText('7.14%')).toBeInTheDocument(); // unrealizedPnlPercent
+    expect(screen.getByText('3 500 ₽')).toBeInTheDocument(); // couponsReceivedRub
+  });
+
+  it('shows P&L in green when positive and red when negative', async () => {
+    const losing: PositionRow = { ...basePosition, positionId: 11, issuer: 'Просевшая', unrealizedPnlRub: -5000, unrealizedPnlPercent: -0.05 };
+    server.use(
+      http.get('*/api/positions', () => HttpResponse.json({ positions: [basePosition, losing], disclaimer: '' })),
+    );
+
+    renderPositions();
+
+    await waitFor(() => expect(screen.getByText('Просевшая')).toBeInTheDocument());
+
+    const gainText = screen.getByText('7 000 ₽');
+    const lossText = screen.getByText('-5 000 ₽');
+    expect(gainText.getAttribute('style')).toContain('--mantine-color-green-text');
+    expect(lossText.getAttribute('style')).toContain('--mantine-color-red-text');
+  });
+
+  it('shows a grey "журнал неполон" badge when costBasisIncomplete is true', async () => {
+    const incompleteJournal: PositionRow = {
+      ...basePosition,
+      positionId: 12,
+      issuer: 'Старая позиция',
+      costBasisIncomplete: true,
+      averageCostRub: null,
+      unrealizedPnlRub: null,
+      unrealizedPnlPercent: null,
+      totalReturnPercent: null,
+    };
+    server.use(
+      http.get('*/api/positions', () => HttpResponse.json({ positions: [incompleteJournal], disclaimer: '' })),
+    );
+
+    renderPositions();
+
+    await waitFor(() => expect(screen.getByText('Старая позиция')).toBeInTheDocument());
+    expect(screen.getByText('журнал неполон')).toBeInTheDocument();
+  });
+
+  it('shows a yield explanation tooltip icon next to the "Доходность" header', async () => {
+    server.use(
+      http.get('*/api/positions', () => HttpResponse.json({ positions: [basePosition], disclaimer: '' })),
+    );
+
+    renderPositions();
+
+    await waitFor(() => expect(screen.getByTestId('yield-info-icon')).toBeInTheDocument());
   });
 
   it('shows an error state without crashing when the request fails (non-401)', async () => {

@@ -11,6 +11,8 @@ import {
   UnstyledButton,
   Group,
   Button,
+  Tooltip,
+  ActionIcon,
 } from '@mantine/core';
 import { useNavigate } from 'react-router-dom';
 import { usePositionsStore } from '../store/usePositionsStore';
@@ -19,7 +21,8 @@ import { Disclaimer } from '../components/Disclaimer';
 import type { PositionRow } from '../api/types';
 import { formatRub, formatDaysUntil, formatPercent, formatNumber, formatBp } from '../utils/format';
 
-type SortDirection = 'asc' | 'desc';
+type SortKey = 'yield' | 'pnl';
+type SortState = { key: SortKey; direction: 'asc' | 'desc' };
 
 /** Эффективная доходность для отображения/сортировки: currentYield для floater/indexed, иначе ytmEffective. */
 function effectiveYield(row: PositionRow): number | null {
@@ -33,15 +36,20 @@ const COUPON_TYPE_LABEL: Record<PositionRow['couponType'], string> = {
   Indexed: 'Индексируемый',
 };
 
+const YIELD_TOOLTIP_TEXT =
+  'YTM — эффективная доходность к погашению/оферте от текущей рыночной цены. ' +
+  'Не зависит от вашей цены покупки. Доход от цены входа — колонка P&L.';
+
 /**
- * Главный экран приложения после логина — таблица позиций с расчётными метриками (этап 09a).
+ * Главный экран приложения после логина — таблица позиций с расчётными метриками (этап 09a,
+ * цена входа/P&L — plan/14).
  * Графика/календарь/сигналы — 09b/09c.
  */
 export function Positions() {
   const { positions, disclaimer, isLoading, error, load } = usePositionsStore();
   const { settings, load: loadSettings } = useSettingsStore();
   const navigate = useNavigate();
-  const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
+  const [sort, setSort] = useState<SortState>({ key: 'yield', direction: 'desc' });
 
   useEffect(() => {
     load();
@@ -50,18 +58,20 @@ export function Positions() {
 
   const sorted = useMemo(() => {
     const copy = [...positions];
+    const selector = sort.key === 'yield' ? effectiveYield : (row: PositionRow) => row.unrealizedPnlPercent;
     copy.sort((a, b) => {
-      const ay = effectiveYield(a);
-      const by = effectiveYield(b);
-      if (ay === null && by === null) return 0;
-      if (ay === null) return 1;
-      if (by === null) return -1;
-      return sortDirection === 'asc' ? ay - by : by - ay;
+      const av = selector(a);
+      const bv = selector(b);
+      if (av === null && bv === null) return 0;
+      if (av === null) return 1;
+      if (bv === null) return -1;
+      return sort.direction === 'asc' ? av - bv : bv - av;
     });
     return copy;
-  }, [positions, sortDirection]);
+  }, [positions, sort]);
 
-  const toggleSort = () => setSortDirection((d) => (d === 'asc' ? 'desc' : 'asc'));
+  const toggleSort = (key: SortKey) =>
+    setSort((s) => (s.key === key ? { key, direction: s.direction === 'asc' ? 'desc' : 'asc' } : { key, direction: 'desc' }));
 
   return (
     <Stack gap="md">
@@ -112,31 +122,63 @@ export function Positions() {
             эмитента — сравнивайте бумаги с одинаковым горизонтом и качеством.
           </Text>
 
-          <Table.ScrollContainer minWidth={900}>
+          <Table.ScrollContainer minWidth={1100}>
             <Table striped highlightOnHover data-testid="positions-table">
               <Table.Thead>
                 <Table.Tr>
                   <Table.Th>Бумага</Table.Th>
                   <Table.Th>Эмитент</Table.Th>
-                  <Table.Th>Сектор</Table.Th>
                   <Table.Th>Кол-во</Table.Th>
                   <Table.Th>Рыночная стоимость</Table.Th>
+                  <Table.Th>Ср. цена входа</Table.Th>
                   <Table.Th>
-                    <UnstyledButton onClick={toggleSort} data-testid="sort-yield">
+                    <UnstyledButton onClick={() => toggleSort('pnl')} data-testid="sort-pnl">
                       <Group gap={4} wrap="nowrap">
                         <Text fw={700} size="sm">
-                          Доходность
+                          P&amp;L
                         </Text>
-                        <Text size="xs" c="dimmed">
-                          {sortDirection === 'asc' ? '↑' : '↓'}
-                        </Text>
+                        {sort.key === 'pnl' && (
+                          <Text size="xs" c="dimmed">
+                            {sort.direction === 'asc' ? '↑' : '↓'}
+                          </Text>
+                        )}
                       </Group>
                     </UnstyledButton>
+                  </Table.Th>
+                  <Table.Th>Купоны получено</Table.Th>
+                  <Table.Th>
+                    <Group gap={4} wrap="nowrap">
+                      <UnstyledButton onClick={() => toggleSort('yield')} data-testid="sort-yield">
+                        <Group gap={4} wrap="nowrap">
+                          <Text fw={700} size="sm">
+                            Доходность
+                          </Text>
+                          {sort.key === 'yield' && (
+                            <Text size="xs" c="dimmed">
+                              {sort.direction === 'asc' ? '↑' : '↓'}
+                            </Text>
+                          )}
+                        </Group>
+                      </UnstyledButton>
+                      <Tooltip label={YIELD_TOOLTIP_TEXT} multiline w={280} withArrow>
+                        <ActionIcon
+                          variant="subtle"
+                          color="gray"
+                          size="xs"
+                          radius="xl"
+                          data-testid="yield-info-icon"
+                          aria-label="Пояснение к доходности"
+                        >
+                          <Text size="xs" fw={700}>
+                            ?
+                          </Text>
+                        </ActionIcon>
+                      </Tooltip>
+                    </Group>
                   </Table.Th>
                   <Table.Th>Дюрация, лет</Table.Th>
                   <Table.Th>G-спред, б.п.</Table.Th>
                   <Table.Th>До погашения/оферты</Table.Th>
-                  <Table.Th>Тип купона</Table.Th>
                   <Table.Th>Пометки</Table.Th>
                 </Table.Tr>
               </Table.Thead>
@@ -144,13 +186,32 @@ export function Positions() {
                 {sorted.map((row) => {
                   const yieldValue = effectiveYield(row);
                   const isCurrentYield = row.isFloater || row.isIndexed;
+                  const pnlColor =
+                    row.unrealizedPnlRub === null ? undefined : row.unrealizedPnlRub >= 0 ? 'green' : 'red';
+                  const totalReturnLabel =
+                    row.totalReturnPercent === null
+                      ? 'Полная доходность (P&L + купоны) недоступна — журнал операций неполон.'
+                      : `Полная доходность (P&L + купоны): ${formatPercent(row.totalReturnPercent)}`;
                   return (
                     <Table.Tr key={row.positionId} data-testid={`position-row-${row.positionId}`}>
                       <Table.Td>{row.name ?? row.issuer ?? row.isin ?? '—'}</Table.Td>
                       <Table.Td>{row.issuer ?? '—'}</Table.Td>
-                      <Table.Td>{row.sector ?? '—'}</Table.Td>
                       <Table.Td>{row.quantity}</Table.Td>
                       <Table.Td>{formatRub(row.marketValueRub)}</Table.Td>
+                      <Table.Td>{formatRub(row.averageCostRub)}</Table.Td>
+                      <Table.Td>
+                        <Tooltip label={totalReturnLabel} withArrow>
+                          <Stack gap={0}>
+                            <Text c={pnlColor} fw={500}>
+                              {formatRub(row.unrealizedPnlRub)}
+                            </Text>
+                            <Text c={pnlColor} size="xs">
+                              {formatPercent(row.unrealizedPnlPercent)}
+                            </Text>
+                          </Stack>
+                        </Tooltip>
+                      </Table.Td>
+                      <Table.Td>{formatRub(row.couponsReceivedRub)}</Table.Td>
                       <Table.Td>
                         <Group gap={4} wrap="nowrap">
                           <Text>{formatPercent(yieldValue)}</Text>
@@ -166,9 +227,13 @@ export function Positions() {
                       <Table.Td>
                         {formatDaysUntil(row.calculatedToOffer ? row.horizonDate : row.maturityDate)}{row.calculatedToOffer ? ' (оферта)' : ''}
                       </Table.Td>
-                      <Table.Td>{COUPON_TYPE_LABEL[row.couponType]}</Table.Td>
                       <Table.Td>
                         <Group gap={4} wrap="wrap">
+                          <Tooltip label={`Сектор: ${row.sector ?? '—'}. Тип купона: ${COUPON_TYPE_LABEL[row.couponType]}.`} withArrow>
+                            <Badge size="sm" color="gray" variant="outline">
+                              {row.sector ?? COUPON_TYPE_LABEL[row.couponType]}
+                            </Badge>
+                          </Tooltip>
                           {row.isFloater && (
                             <Badge size="sm" color="blue" variant="light">
                               плавающая
@@ -187,6 +252,11 @@ export function Positions() {
                           {row.dataIncomplete && (
                             <Badge size="sm" color="red" variant="light">
                               данные неполные
+                            </Badge>
+                          )}
+                          {row.costBasisIncomplete && (
+                            <Badge size="sm" color="gray" variant="light" data-testid={`cost-basis-incomplete-${row.positionId}`}>
+                              журнал неполон
                             </Badge>
                           )}
                           {row.isOutOfScopeCurrency && (
