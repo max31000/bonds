@@ -23,7 +23,17 @@ import {
 } from 'recharts';
 import { useAnalyticsStore } from '../store/useAnalyticsStore';
 import { Disclaimer } from '../components/Disclaimer';
-import { ChartCard, ChartTooltip, CHART_COLORS, CHART_GRID_PROPS, CHART_HEIGHT, CHART_LEGEND_PROPS, CHART_EXPLANATIONS } from '../components/charts';
+import {
+  ChartCard,
+  ChartTooltip,
+  CHART_COLORS,
+  CHART_GRID_PROPS,
+  CHART_HEIGHT,
+  CHART_LEGEND_PROPS,
+  CHART_EXPLANATIONS,
+  useResponsiveChartSize,
+  pickAxisTicks,
+} from '../components/charts';
 import { formatPercent, formatRub, formatRubCompact, formatSharePercent, formatDate, formatMonthLabel } from '../utils/format';
 import type { CompositionSlice, RateScenarioPoint, RateScenarioResponse, ScatterPoint, TrajectoryResponse, XirrHistoryPoint } from '../api/types';
 import { buildScatterChartData, pointCategory, CATEGORY_COLOR } from '../utils/scatterChartData';
@@ -221,6 +231,8 @@ function CompositionWidget({
 function XirrWidget({ xirr }: { xirr: { currentXirr: number | null; history: XirrHistoryPoint[]; disclaimer?: string } }) {
   const { isBackfilling, runXirrBackfill } = useAnalyticsStore();
   const firstLiveDate = xirr.history[0]?.date;
+  // Plan/21 часть C.4: на узких экранах — меньше высота и меньше подписей оси X (дат).
+  const chartSize = useResponsiveChartSize(CHART_HEIGHT - 20);
 
   const chartData = xirr.history.map((h) => ({ ...h, dateLabel: formatDate(h.date) }));
 
@@ -249,10 +261,10 @@ function XirrWidget({ xirr }: { xirr: { currentXirr: number | null; history: Xir
         </Stack>
       ) : (
         <>
-          <ResponsiveContainer width="100%" height={CHART_HEIGHT - 20}>
+          <ResponsiveContainer width="100%" height={chartSize.height}>
             <ComposedChart data={chartData}>
               <CartesianGrid {...CHART_GRID_PROPS} />
-              <XAxis dataKey="dateLabel" />
+              <XAxis dataKey="dateLabel" ticks={pickAxisTicks(chartData.map((d) => d.dateLabel), chartSize.maxTicks)} />
               <YAxis yAxisId="xirr" tickFormatter={(v: number) => formatPercent(v)} />
               <YAxis
                 yAxisId="value"
@@ -371,6 +383,8 @@ function RateScenarioWidget({ rateScenario }: { rateScenario: RateScenarioRespon
 }
 
 function TrajectoryWidget({ trajectory }: { trajectory: TrajectoryResponse }) {
+  // Plan/21 часть C.4: на узких экранах — меньше высота и меньше подписей оси X (месяцев).
+  const chartSize = useResponsiveChartSize(CHART_HEIGHT - 20);
   const chartData = trajectory.withReinvest.map((p, i) => ({
     month: formatMonthLabel(p.month),
     'С реинвестированием': p.portfolioValueRub,
@@ -385,10 +399,14 @@ function TrajectoryWidget({ trajectory }: { trajectory: TrajectoryResponse }) {
         </Text>
       ) : (
         <>
-          <ResponsiveContainer width="100%" height={CHART_HEIGHT - 20}>
+          <ResponsiveContainer width="100%" height={chartSize.height}>
             <LineChart data={chartData} margin={{ top: 8, right: 16, bottom: 24, left: 4 }}>
               <CartesianGrid {...CHART_GRID_PROPS} />
-              <XAxis dataKey="month" label={{ value: 'Месяц', position: 'bottom', offset: 0 }} />
+              <XAxis
+                dataKey="month"
+                label={{ value: 'Месяц', position: 'bottom', offset: 0 }}
+                ticks={pickAxisTicks(chartData.map((d) => d.month), chartSize.maxTicks)}
+              />
               <YAxis
                 tickFormatter={(v: number) => formatRubCompact(v)}
                 label={{ value: 'Стоимость, ₽', angle: -90, position: 'insideLeft' }}

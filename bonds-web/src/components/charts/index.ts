@@ -5,3 +5,5 @@ export type { ChartTooltipRow } from './ChartTooltip';
 export { CHART_COLORS, CHART_GRID_PROPS, CHART_MARGIN, CHART_HEIGHT, CHART_HEIGHT_COMPACT, CHART_LEGEND_PROPS } from './chartTheme';
 export { pickAxisTicks, axisTickAngle } from './axisTicks';
 export { CHART_EXPLANATIONS } from './explanations';
+export { useResponsiveChartSize } from './useResponsiveChartSize';
+export type { ResponsiveChartSize } from './useResponsiveChartSize';

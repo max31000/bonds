@@ -28,7 +28,16 @@ import {
 } from 'recharts';
 import { useCashflowStore } from '../store/useCashflowStore';
 import { Disclaimer } from '../components/Disclaimer';
-import { ChartCard, ChartTooltip, CHART_GRID_PROPS, CHART_HEIGHT, CHART_LEGEND_PROPS, CHART_EXPLANATIONS } from '../components/charts';
+import {
+  ChartCard,
+  ChartTooltip,
+  CHART_GRID_PROPS,
+  CHART_HEIGHT,
+  CHART_LEGEND_PROPS,
+  CHART_EXPLANATIONS,
+  useResponsiveChartSize,
+  pickAxisTicks,
+} from '../components/charts';
 import { formatRub, formatMonthLabel, formatDate } from '../utils/format';
 
 const FLOW_TYPE_LABEL: Record<string, string> = {
@@ -60,6 +69,8 @@ export function Cashflow() {
   const [byPositionOpen, setByPositionOpen] = useState(false);
   const [selectedMonth, setSelectedMonth] = useState<string | null>(null);
   const [horizon, setHorizon] = useState<Horizon>('12m');
+  // Plan/21 часть C.4: на узких экранах — меньше высота и меньше подписей оси X месяцев.
+  const chartSize = useResponsiveChartSize(CHART_HEIGHT);
 
   useEffect(() => {
     load(toDateParam(horizon));
@@ -154,7 +165,7 @@ export function Cashflow() {
               <Text size="xs" c="dimmed" mb="xs">
                 Нажмите на столбец месяца, чтобы увидеть, какие бумаги формируют поступление.
               </Text>
-              <ResponsiveContainer width="100%" height={CHART_HEIGHT}>
+              <ResponsiveContainer width="100%" height={chartSize.height}>
                 <BarChart
                   data={chartData}
                   style={{ cursor: 'pointer' }}
@@ -164,7 +175,10 @@ export function Cashflow() {
                   }}
                 >
                   <CartesianGrid {...CHART_GRID_PROPS} />
-                  <XAxis dataKey="month" />
+                  <XAxis
+                    dataKey="month"
+                    ticks={pickAxisTicks(chartData.map((d) => d.month), chartSize.maxTicks)}
+                  />
                   <YAxis tickFormatter={(v: number) => formatRub(v)} width={100} />
                   <Tooltip
                     content={({ active, payload, label }) => {
