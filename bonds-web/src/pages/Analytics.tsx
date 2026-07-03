@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Title, Stack, Paper, Text, Alert, Loader, Center, Group, SegmentedControl, Button } from '@mantine/core';
+import { Title, Stack, Text, Alert, Loader, Center, SegmentedControl, Button } from '@mantine/core';
 import {
   Area,
   Bar,
@@ -7,6 +7,7 @@ import {
   CartesianGrid,
   Cell,
   ComposedChart,
+  LabelList,
   Legend,
   Line,
   LineChart,
@@ -22,20 +23,10 @@ import {
 } from 'recharts';
 import { useAnalyticsStore } from '../store/useAnalyticsStore';
 import { Disclaimer } from '../components/Disclaimer';
+import { ChartCard, ChartTooltip, CHART_COLORS, CHART_GRID_PROPS, CHART_HEIGHT, CHART_LEGEND_PROPS, CHART_EXPLANATIONS } from '../components/charts';
 import { formatPercent, formatRub, formatRubCompact, formatSharePercent, formatDate, formatMonthLabel } from '../utils/format';
 import type { CompositionSlice, RateScenarioPoint, RateScenarioResponse, ScatterPoint, TrajectoryResponse, XirrHistoryPoint } from '../api/types';
 import { buildScatterChartData } from '../utils/scatterChartData';
-
-const PIE_COLORS = [
-  'var(--mantine-color-violet-6)',
-  'var(--mantine-color-teal-6)',
-  'var(--mantine-color-orange-6)',
-  'var(--mantine-color-blue-6)',
-  'var(--mantine-color-red-5)',
-  'var(--mantine-color-yellow-6)',
-  'var(--mantine-color-grape-6)',
-  'var(--mantine-color-cyan-6)',
-];
 
 type CompositionView = 'byIssuer' | 'bySector' | 'byCouponType' | 'byDurationBucket';
 
@@ -61,37 +52,45 @@ const CATEGORY_COLOR: Record<string, string> = {
   'Неполные данные': 'var(--mantine-color-red-5)',
 };
 
+/** Обрезает имя бумаги для подписи точки на графике (plan/18 часть C) — полное имя видно в тултипе. */
+function shortLabel(name: string | null | undefined): string {
+  if (!name) return '';
+  return name.length > 12 ? `${name.slice(0, 12)}…` : name;
+}
+
 function ScatterWidget({ scatter }: { scatter: { points: ScatterPoint[]; curve: { termYears: number; yield: number }[]; curveAsOf: string | null } }) {
   const { points: chartPoints, curve: chartCurve, xDomainMin, xDomainMax } = buildScatterChartData(scatter);
 
   const categories = Array.from(new Set(chartPoints.map(pointCategory)));
 
   return (
-    <Paper withBorder p="md" radius="md" data-testid="scatter-widget">
-      <Group justify="space-between" mb="xs">
-        <Text fw={600}>Дюрация × доходность</Text>
-        {scatter.curveAsOf && (
+    <ChartCard
+      title="Дюрация × доходность"
+      data-testid="scatter-widget"
+      explanation={CHART_EXPLANATIONS.scatter}
+      headerExtra={
+        scatter.curveAsOf && (
           <Text size="xs" c="dimmed">
             безрисковая кривая на {formatDate(scatter.curveAsOf)}
           </Text>
-        )}
-      </Group>
-
+        )
+      }
+    >
       {chartPoints.length === 0 ? (
         <Text size="sm" c="dimmed" data-testid="scatter-empty">
           Данные появятся после синхронизации с брокерским счётом.
         </Text>
       ) : (
-        <ResponsiveContainer width="100%" height={360}>
-          <ScatterChart>
-            <CartesianGrid strokeDasharray="3 3" />
+        <ResponsiveContainer width="100%" height={CHART_HEIGHT + 40}>
+          <ScatterChart margin={{ top: 8, right: 16, bottom: 24, left: 4 }}>
+            <CartesianGrid {...CHART_GRID_PROPS} />
             <XAxis
               type="number"
               dataKey="durationYears"
               name="Дюрация Маколея"
               unit=" г."
               domain={[xDomainMin, xDomainMax]}
-              label={{ value: 'Дюрация Маколея, лет', position: 'insideBottom', offset: -5 }}
+              label={{ value: 'Дюрация Маколея, лет', position: 'bottom', offset: 0 }}
             />
             <YAxis
               type="number"
@@ -106,28 +105,34 @@ function ScatterWidget({ scatter }: { scatter: { points: ScatterPoint[]; curve: 
               content={({ payload }) => {
                 const point = payload?.[0]?.payload as (typeof chartPoints[0]) | undefined;
                 if (!point) return null;
+                const p = point as ScatterPoint;
                 return (
-                  <Paper withBorder p="xs" radius="sm" shadow="sm">
-                    <Text size="xs" fw={600}>
-                      {(point as ScatterPoint).name ?? (point as ScatterPoint).issuer ?? `Позиция #${(point as ScatterPoint).positionId}`}
-                    </Text>
-                    <Text size="xs">Дюрация Маколея: {(point as ScatterPoint).macaulayDuration.toFixed(2)} г.</Text>
-                    <Text size="xs">Доходность: {formatPercent(point.yieldFraction)}</Text>
-                    <Text size="xs" c="dimmed">
-                      {pointCategory(point as ScatterPoint)}
-                    </Text>
-                  </Paper>
+                  <ChartTooltip
+                    title={p.name ?? p.issuer ?? `Позиция #${p.positionId}`}
+                    rows={[
+                      { label: 'Дюрация Маколея', value: `${p.macaulayDuration.toFixed(2)} г.` },
+                      { label: 'Доходность', value: formatPercent(point.yieldFraction) },
+                      { label: 'Категория', value: pointCategory(p) },
+                    ]}
+                  />
                 );
               }}
             />
-            <Legend />
+            <Legend {...CHART_LEGEND_PROPS} />
             {categories.map((category) => (
               <Scatter
                 key={category}
                 name={category}
                 data={chartPoints.filter((p) => pointCategory(p) === category)}
                 fill={CATEGORY_COLOR[category]}
-              />
+              >
+                <LabelList
+                  dataKey="name"
+                  position="top"
+                  formatter={(value: unknown) => shortLabel(value as string)}
+                  style={{ fontSize: 10, fill: 'var(--mantine-color-dimmed)' }}
+                />
+              </Scatter>
             ))}
             {chartCurve.length > 0 && (
               <Scatter
@@ -142,7 +147,7 @@ function ScatterWidget({ scatter }: { scatter: { points: ScatterPoint[]; curve: 
           </ScatterChart>
         </ResponsiveContainer>
       )}
-    </Paper>
+    </ChartCard>
   );
 }
 
@@ -155,9 +160,11 @@ function CompositionWidget({
   const slices = composition[view];
 
   return (
-    <Paper withBorder p="md" radius="md" data-testid="composition-widget">
-      <Group justify="space-between" mb="xs" wrap="wrap">
-        <Text fw={600}>Композиция портфеля</Text>
+    <ChartCard
+      title="Композиция портфеля"
+      data-testid="composition-widget"
+      explanation={CHART_EXPLANATIONS.composition}
+      controls={
         <SegmentedControl
           size="xs"
           value={view}
@@ -167,7 +174,8 @@ function CompositionWidget({
             label: COMPOSITION_LABEL[key],
           }))}
         />
-      </Group>
+      }
+    >
       <Text size="xs" c="dimmed" mb="sm">
         Всего: {formatRub(composition.totalMarketValueRub)}
       </Text>
@@ -177,7 +185,7 @@ function CompositionWidget({
           Нет данных для этого разреза.
         </Text>
       ) : (
-        <ResponsiveContainer width="100%" height={320}>
+        <ResponsiveContainer width="100%" height={CHART_HEIGHT}>
           <PieChart>
             <Pie
               data={slices}
@@ -192,22 +200,28 @@ function CompositionWidget({
               }}
             >
               {slices.map((s, idx) => (
-                <Cell key={s.key} fill={PIE_COLORS[idx % PIE_COLORS.length]} />
+                <Cell key={s.key} fill={CHART_COLORS[idx % CHART_COLORS.length]} />
               ))}
             </Pie>
             <Tooltip
-              formatter={(value, _name, item) => {
-                const slice = item?.payload as CompositionSlice | undefined;
-                return [
-                  `${formatSharePercent(Number(value))} (${formatRub(slice?.marketValueRub)})`,
-                  slice?.key ?? '',
-                ];
+              content={({ payload }) => {
+                const slice = payload?.[0]?.payload as CompositionSlice | undefined;
+                if (!slice) return null;
+                return (
+                  <ChartTooltip
+                    title={slice.key}
+                    rows={[
+                      { label: 'Доля', value: formatSharePercent(slice.sharePercent) },
+                      { label: 'Стоимость', value: formatRub(slice.marketValueRub) },
+                    ]}
+                  />
+                );
               }}
             />
           </PieChart>
         </ResponsiveContainer>
       )}
-    </Paper>
+    </ChartCard>
   );
 }
 
@@ -218,10 +232,7 @@ function XirrWidget({ xirr }: { xirr: { currentXirr: number | null; history: Xir
   const chartData = xirr.history.map((h) => ({ ...h, dateLabel: formatDate(h.date) }));
 
   return (
-    <Paper withBorder p="md" radius="md" data-testid="xirr-widget">
-      <Text fw={600} mb="xs">
-        Доходность портфеля (XIRR)
-      </Text>
+    <ChartCard title="Доходность портфеля (XIRR)" data-testid="xirr-widget" explanation={CHART_EXPLANATIONS.xirr}>
       <Text size="xl" fw={700} c="violet" data-testid="xirr-current">
         {formatPercent(xirr.currentXirr)}
       </Text>
@@ -245,9 +256,9 @@ function XirrWidget({ xirr }: { xirr: { currentXirr: number | null; history: Xir
         </Stack>
       ) : (
         <>
-          <ResponsiveContainer width="100%" height={300}>
+          <ResponsiveContainer width="100%" height={CHART_HEIGHT - 20}>
             <ComposedChart data={chartData}>
-              <CartesianGrid strokeDasharray="3 3" />
+              <CartesianGrid {...CHART_GRID_PROPS} />
               <XAxis dataKey="dateLabel" />
               <YAxis yAxisId="xirr" tickFormatter={(v: number) => formatPercent(v)} />
               <YAxis
@@ -260,15 +271,17 @@ function XirrWidget({ xirr }: { xirr: { currentXirr: number | null; history: Xir
                   if (!active || !payload?.length) return null;
                   const point = payload[0].payload as (typeof chartData)[number];
                   return (
-                    <Paper withBorder p="xs" radius="sm" shadow="sm">
-                      <Text size="xs" fw={600}>{formatDate(point.date)}</Text>
-                      <Text size="xs">XIRR: {formatPercent(point.xirr)}</Text>
-                      <Text size="xs">Стоимость: {formatRub(point.marketValueRub)}</Text>
-                    </Paper>
+                    <ChartTooltip
+                      title={formatDate(point.date)}
+                      rows={[
+                        { label: 'XIRR', value: formatPercent(point.xirr) },
+                        { label: 'Стоимость', value: formatRub(point.marketValueRub) },
+                      ]}
+                    />
                   );
                 }}
               />
-              <Legend />
+              <Legend {...CHART_LEGEND_PROPS} />
               <Area
                 yAxisId="value"
                 type="monotone"
@@ -292,7 +305,7 @@ function XirrWidget({ xirr }: { xirr: { currentXirr: number | null; history: Xir
           </Text>
         </>
       )}
-    </Paper>
+    </ChartCard>
   );
 }
 
@@ -304,23 +317,19 @@ function RateScenarioWidget({ rateScenario }: { rateScenario: RateScenarioRespon
   const hasInsensitivePart = rateSensitiveValueRub < currentValueRub;
 
   return (
-    <Paper withBorder p="md" radius="md" data-testid="rate-scenario-widget">
-      <Text fw={600} mb="xs">
-        Сценарии ставок
-      </Text>
-
+    <ChartCard title="Сценарии ставок" data-testid="rate-scenario-widget" explanation={CHART_EXPLANATIONS.rateScenario}>
       {rateScenario.scenarios.length === 0 ? (
         <Text size="sm" c="dimmed">
           Данные появятся после синхронизации с брокерским счётом.
         </Text>
       ) : (
         <>
-          <ResponsiveContainer width="100%" height={300}>
-            <BarChart data={rateScenario.scenarios}>
-              <CartesianGrid strokeDasharray="3 3" />
+          <ResponsiveContainer width="100%" height={CHART_HEIGHT - 20}>
+            <BarChart data={rateScenario.scenarios} margin={{ top: 8, right: 16, bottom: 24, left: 4 }}>
+              <CartesianGrid {...CHART_GRID_PROPS} />
               <XAxis
                 dataKey="shiftBp"
-                label={{ value: 'Сдвиг ключевой ставки, б.п.', position: 'insideBottom', offset: -5 }}
+                label={{ value: 'Сдвиг ключевой ставки, б.п.', position: 'bottom', offset: 0 }}
               />
               <YAxis
                 unit="%"
@@ -331,11 +340,13 @@ function RateScenarioWidget({ rateScenario }: { rateScenario: RateScenarioRespon
                   if (!active || !payload?.length) return null;
                   const p = payload[0].payload as RateScenarioPoint;
                   return (
-                    <Paper p="xs" withBorder>
-                      <Text size="xs" fw={500}>{p.shiftBp > 0 ? '+' : ''}{p.shiftBp} б.п.</Text>
-                      <Text size="xs">Δ стоимость: {formatRub(p.deltaRub)}</Text>
-                      <Text size="xs">Δ%: {p.deltaPercent.toFixed(2)}%</Text>
-                    </Paper>
+                    <ChartTooltip
+                      title={`${p.shiftBp > 0 ? '+' : ''}${p.shiftBp} б.п.`}
+                      rows={[
+                        { label: 'Δ стоимость', value: formatRub(p.deltaRub) },
+                        { label: 'Δ%', value: `${p.deltaPercent.toFixed(2)}%` },
+                      ]}
+                    />
                   );
                 }}
               />
@@ -362,7 +373,7 @@ function RateScenarioWidget({ rateScenario }: { rateScenario: RateScenarioRespon
           <Disclaimer text={rateScenario.disclaimer} />
         </>
       )}
-    </Paper>
+    </ChartCard>
   );
 }
 
@@ -374,27 +385,37 @@ function TrajectoryWidget({ trajectory }: { trajectory: TrajectoryResponse }) {
   }));
 
   return (
-    <Paper withBorder p="md" radius="md" data-testid="trajectory-widget">
-      <Text fw={600} mb="xs">
-        Траектория портфеля
-      </Text>
-
+    <ChartCard title="Траектория портфеля" data-testid="trajectory-widget" explanation={CHART_EXPLANATIONS.trajectory}>
       {trajectory.withReinvest.length === 0 ? (
         <Text size="sm" c="dimmed">
           Данные появятся после синхронизации с брокерским счётом.
         </Text>
       ) : (
         <>
-          <ResponsiveContainer width="100%" height={300}>
-            <LineChart data={chartData}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="month" label={{ value: 'Месяц', position: 'insideBottom', offset: -5 }} />
+          <ResponsiveContainer width="100%" height={CHART_HEIGHT - 20}>
+            <LineChart data={chartData} margin={{ top: 8, right: 16, bottom: 24, left: 4 }}>
+              <CartesianGrid {...CHART_GRID_PROPS} />
+              <XAxis dataKey="month" label={{ value: 'Месяц', position: 'bottom', offset: 0 }} />
               <YAxis
-                tickFormatter={(v: number) => formatRub(v)}
+                tickFormatter={(v: number) => formatRubCompact(v)}
                 label={{ value: 'Стоимость, ₽', angle: -90, position: 'insideLeft' }}
               />
-              <Tooltip formatter={(value) => formatRub(Number(value))} />
-              <Legend />
+              <Tooltip
+                content={({ active, payload, label }) => {
+                  if (!active || !payload?.length) return null;
+                  return (
+                    <ChartTooltip
+                      title={String(label)}
+                      rows={payload.map((entry) => ({
+                        label: String(entry.name),
+                        value: formatRub(Number(entry.value)),
+                        color: entry.color,
+                      }))}
+                    />
+                  );
+                }}
+              />
+              <Legend {...CHART_LEGEND_PROPS} />
               <Line type="monotone" dataKey="С реинвестированием" stroke="var(--mantine-color-teal-6)" dot={false} />
               <Line type="monotone" dataKey="Без реинвестирования" stroke="var(--mantine-color-gray-6)" strokeDasharray="5 5" dot={false} />
             </LineChart>
@@ -407,7 +428,7 @@ function TrajectoryWidget({ trajectory }: { trajectory: TrajectoryResponse }) {
           <Disclaimer text={trajectory.disclaimer} />
         </>
       )}
-    </Paper>
+    </ChartCard>
   );
 }
 
