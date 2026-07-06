@@ -81,6 +81,7 @@ public class Stage08EndpointsTests
     [InlineData("GET", "/api/analytics/scatter")]
     [InlineData("GET", "/api/analytics/comparison")]
     [InlineData("POST", "/api/analytics/replacement")]
+    [InlineData("GET", "/api/analytics/replacement-matrix")]
     [InlineData("GET", "/api/analytics/allocation?amountRub=1000")]
     [InlineData("GET", "/api/signals")]
     [InlineData("POST", "/api/signals/1/read")]
