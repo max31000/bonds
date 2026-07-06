@@ -568,7 +568,12 @@ public static class AnalyticsEndpoints
             .Select(h =>
             {
                 var pricePerUnitRub = h.MarketValueRub / h.Quantity;
-                var pricePerLotWithCommission = pricePerUnitRub * (1m + commissionRate);
+                // Задача 24: pricePerUnitRub — грязная цена (чистая + НКД на бумагу, см. doc-comment
+                // PortfolioHoldingsBuilder); раскладываем на компоненты для UI, не для расчёта.
+                var accruedRub = h.AccruedPerBondRub;
+                var cleanPriceRub = pricePerUnitRub - accruedRub;
+                var commissionRub = pricePerUnitRub * commissionRate;
+                var pricePerLotWithCommission = pricePerUnitRub + commissionRub;
                 var effectiveYield = (h.IsFloater || h.IsIndexed) ? h.CurrentYield : h.YtmEffective;
                 var issuerKey = h.Issuer ?? $"__instrument_{h.InstrumentId}";
 
@@ -582,6 +587,9 @@ public static class AnalyticsEndpoints
                     LotSize = 1m,
                     LotSizeIsAssumed = true,
                     CurrentIssuerMarketValueRub = issuerMarketValue.TryGetValue(issuerKey, out var v) ? v : 0m,
+                    CleanPriceRub = cleanPriceRub,
+                    AccruedRub = accruedRub,
+                    CommissionRub = commissionRub,
                 };
             })
             // Одна позиция на инструмент — если счёт по ошибке содержит несколько записей на один
@@ -614,7 +622,12 @@ public static class AnalyticsEndpoints
                 .Where(h => !h.IsOutOfScopeCurrency)
                 .Select(h =>
                 {
-                    var pricePerLotWithCommission = h.MarketValueRub * (1m + commissionRate);
+                    // Задача 24: Quantity=1 у watchlist-holding (см. doc-comment BuildForInstrumentsAsync)
+                    // — MarketValueRub уже цена одной бумаги (грязная).
+                    var accruedRub = h.AccruedPerBondRub;
+                    var cleanPriceRub = h.MarketValueRub - accruedRub;
+                    var commissionRub = h.MarketValueRub * commissionRate;
+                    var pricePerLotWithCommission = h.MarketValueRub + commissionRub;
                     var effectiveYield = (h.IsFloater || h.IsIndexed) ? h.CurrentYield : h.YtmEffective;
                     var issuerKey = h.Issuer ?? $"__instrument_{h.InstrumentId}";
 
@@ -628,6 +641,9 @@ public static class AnalyticsEndpoints
                         LotSize = 1m,
                         LotSizeIsAssumed = true,
                         CurrentIssuerMarketValueRub = issuerMarketValue.TryGetValue(issuerKey, out var v) ? v : 0m,
+                        CleanPriceRub = cleanPriceRub,
+                        AccruedRub = accruedRub,
+                        CommissionRub = commissionRub,
                     };
                 })
                 .ToList();
@@ -649,6 +665,9 @@ public static class AnalyticsEndpoints
                 EstimatedCostRub = a.EstimatedCostRub,
                 EffectiveYield = a.EffectiveYield,
                 LotSizeAssumed = a.LotSizeAssumed,
+                CleanCostRub = a.CleanCostRub,
+                AccruedCostRub = a.AccruedCostRub,
+                CommissionCostRub = a.CommissionCostRub,
             }).ToList(),
             Skipped = result.Skipped.Select(s => new AllocationSkipDto
             {
@@ -880,6 +899,15 @@ public sealed record AllocationLineDto
     public required decimal EstimatedCostRub { get; init; }
     public required decimal EffectiveYield { get; init; }
     public required bool LotSizeAssumed { get; init; }
+
+    /// <summary>Задача 24: разложение EstimatedCostRub — чистая цена всей докупки (без НКД/комиссии). CleanCostRub + AccruedCostRub + CommissionCostRub = EstimatedCostRub.</summary>
+    public decimal CleanCostRub { get; init; }
+
+    /// <summary>Задача 24: НКД в составе EstimatedCostRub.</summary>
+    public decimal AccruedCostRub { get; init; }
+
+    /// <summary>Задача 24: комиссия покупки в составе EstimatedCostRub.</summary>
+    public decimal CommissionCostRub { get; init; }
 }
 
 public sealed record AllocationSkipDto

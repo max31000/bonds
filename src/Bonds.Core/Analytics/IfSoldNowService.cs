@@ -26,11 +26,17 @@ public static class IfSoldNowService
     /// рыночная стоимость всей позиции (Quantity × DirtyPrice, как в <c>PortfolioHolding</c>).
     /// <paramref name="costBasis"/> — null, если по журналу операций цену входа не восстановить
     /// (см. doc-comment <see cref="PositionCostBasis"/>) — тогда P&amp;L-поля результата тоже null.
+    /// <paramref name="accruedTotalRub"/> — задача 24: НКД на всю позицию (уже включён в
+    /// <paramref name="marketValueRub"/>, см. doc-comment <see cref="PortfolioHoldingsBuilder"/>) —
+    /// передаётся только для разложения в UI («выручка = чистая стоимость + НКД − комиссия»), НЕ
+    /// пересчитывает саму выручку. Дефолт 0m — вызывающий код без данных об НКД не ломается,
+    /// просто CleanValueRub совпадёт с MarketValueRub.
     /// </summary>
     public static IfSoldNowResult Calculate(
         decimal marketValueRub,
         PositionCostBasis? costBasis,
-        decimal commissionRate = SwitchAnalysisService.DefaultCommissionRate)
+        decimal commissionRate = SwitchAnalysisService.DefaultCommissionRate,
+        decimal accruedTotalRub = 0m)
     {
         var commissionRub = marketValueRub * commissionRate;
         var netProceedsRub = marketValueRub - commissionRub;
@@ -49,6 +55,8 @@ public static class IfSoldNowService
         return new IfSoldNowResult
         {
             MarketValueRub = marketValueRub,
+            CleanValueRub = marketValueRub - accruedTotalRub,
+            AccruedTotalRub = accruedTotalRub,
             CommissionRub = commissionRub,
             NetProceedsRub = netProceedsRub,
             CommissionRate = commissionRate,
@@ -67,6 +75,12 @@ public sealed record IfSoldNowResult
 {
     /// <summary>Рыночная стоимость всего остатка (грязная цена × количество) на момент расчёта.</summary>
     public required decimal MarketValueRub { get; init; }
+
+    /// <summary>Задача 24: MarketValueRub − AccruedTotalRub — «чистая» (без НКД) стоимость остатка.</summary>
+    public decimal CleanValueRub { get; init; }
+
+    /// <summary>Задача 24: НКД на всю позицию, уже включённый в MarketValueRub (разложение, не добавка).</summary>
+    public decimal AccruedTotalRub { get; init; }
 
     public required decimal CommissionRub { get; init; }
     public required decimal CommissionRate { get; init; }

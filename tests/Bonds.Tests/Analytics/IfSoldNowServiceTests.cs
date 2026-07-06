@@ -92,4 +92,27 @@ public class IfSoldNowServiceTests
         result.CommissionRub.Should().Be(0m);
         result.NetProceedsRub.Should().Be(0m);
     }
+
+    // ─── Задача 24: разложение выручки на чистую стоимость + НКД − комиссию ────────────────────
+
+    [Fact]
+    public void Calculate_WithAccruedTotal_SplitsMarketValueIntoCleanPlusAccrued()
+    {
+        var result = IfSoldNowService.Calculate(
+            marketValueRub: 100_000m, costBasis: null, commissionRate: 0.003m, accruedTotalRub: 1_200m);
+
+        result.AccruedTotalRub.Should().Be(1_200m);
+        result.CleanValueRub.Should().Be(98_800m); // 100000 - 1200
+        // Сумма разложения должна сходиться: clean + accrued - commission = netProceeds.
+        (result.CleanValueRub + result.AccruedTotalRub - result.CommissionRub).Should().Be(result.NetProceedsRub);
+    }
+
+    [Fact]
+    public void Calculate_WithoutAccruedTotal_DefaultsToZero_CleanValueEqualsMarketValue()
+    {
+        var result = IfSoldNowService.Calculate(marketValueRub: 50_000m, costBasis: null, commissionRate: 0.003m);
+
+        result.AccruedTotalRub.Should().Be(0m);
+        result.CleanValueRub.Should().Be(50_000m);
+    }
 }

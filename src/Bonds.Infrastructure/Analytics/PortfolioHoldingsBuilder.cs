@@ -132,6 +132,8 @@ public sealed class PortfolioHoldingsBuilder
                 InstrumentId = instrument.Id,
                 Quantity = 1m,
                 MarketValueRub = pricePerUnitRub,
+                // Задача 24: Quantity=1 здесь, поэтому НКД на бумагу и на "позицию" совпадают.
+                AccruedPerBondRub = quote?.Accrued ?? metrics.AccruedInterest,
                 Name = instrument.Name,
                 Isin = instrument.Isin,
                 Issuer = instrument.Issuer,
@@ -245,6 +247,9 @@ public sealed class PortfolioHoldingsBuilder
             InstrumentId = instrument.Id,
             Quantity = position.Quantity,
             MarketValueRub = marketValue,
+            // Задача 24: НКД на одну бумагу — котировка (Accrued источника) приоритетнее, тот же
+            // фолбэк-порядок, что у DirtyPrice выше (см. doc-comment ToHolding про приоритет квоты).
+            AccruedPerBondRub = quote?.Accrued ?? metrics.AccruedInterest,
             Name = instrument.Name,
             Isin = instrument.Isin,
             Issuer = instrument.Issuer,
