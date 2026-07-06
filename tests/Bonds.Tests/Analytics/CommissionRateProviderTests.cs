@@ -133,4 +133,26 @@ public class CommissionRateProviderTests
 
         result.Source.Should().Be(CommissionRateSource.EstimatedFromTrades);
     }
+
+    [Fact]
+    public async Task GetAsync_OverrideIsZero_TreatedAsUnsetAndFallsBackToEstimate()
+    {
+        // Defense-in-depth: API-валидация не даёт сохранить 0, но если 0m всё же окажется в БД,
+        // резолвер не должен выдать нулевую комиссию во все расчёты — трактует как "не задан".
+        SetupAccount();
+        _settings.Setup(s => s.GetByUserIdAsync(UserId))
+            .ReturnsAsync(new UserSettings { UserId = UserId, CommissionRateOverride = 0m });
+        _operations.Setup(o => o.GetByAccountIdAsync(AccountId, null, null))
+            .ReturnsAsync(new List<Operation>
+            {
+                Op(OperationType.Buy, AsOf.AddDays(-10), -100_000m),
+                Op(OperationType.Fee, AsOf.AddDays(-10), -46m),
+            });
+
+        var provider = CreateProvider();
+        var result = await provider.GetAsync(AccountId);
+
+        result.Source.Should().Be(CommissionRateSource.EstimatedFromTrades);
+        result.Rate.Should().NotBe(0m);
+    }
 }

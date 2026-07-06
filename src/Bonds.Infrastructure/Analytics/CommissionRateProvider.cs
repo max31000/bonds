@@ -60,7 +60,11 @@ public sealed class CommissionRateProvider : ICommissionRateProvider
         }
 
         var settings = await _settings.GetByUserIdAsync(account.UserId);
-        if (settings?.CommissionRateOverride is decimal overrideRate)
+        // Override wins только если это осмысленная положительная ставка. Defense-in-depth: API
+        // (PUT /api/settings) уже отбивает 0/отрицательное 422-ошибкой, но если в БД каким-то
+        // образом окажется 0m/отрицательное — трактуем как "override не задан" и падаем на оценку
+        // из журнала, а не выдаём нулевую/некорректную комиссию во все расчёты.
+        if (settings?.CommissionRateOverride is decimal overrideRate && overrideRate > 0m)
         {
             return new ResolvedCommissionRate(overrideRate, CommissionRateSource.UserOverride, null);
         }
