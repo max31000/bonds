@@ -15,12 +15,14 @@ import {
   Table,
   TextInput,
   ActionIcon,
+  Collapse,
+  UnstyledButton,
 } from '@mantine/core';
 import { useRecommendationsStore } from '../store/useRecommendationsStore';
 import { useWatchlistStore } from '../store/useWatchlistStore';
 import { Disclaimer } from '../components/Disclaimer';
 import { formatRub, formatPercent, formatNumber, formatDate, commissionSourceLabel } from '../utils/format';
-import type { ComparisonRow } from '../api/types';
+import type { ComparisonRow, MatrixPair, RejectedPair } from '../api/types';
 
 /** Карточка одного sell-кандидата с бейджами-причинами (plan/17 §A.1). Формулировки — оценочные («кандидат»), не «продайте». */
 function SellCandidateCard({ row, reasons }: { row: ComparisonRow; reasons: { kind: string; label: string }[] }) {
@@ -117,14 +119,123 @@ function WeakLinksSection() {
   );
 }
 
-/** Горизонт замены теперь не фиксирован (min daysToHorizon пары) — показываем в месяцах до года, иначе в годах. */
+/** Горизонт замены (min daysToHorizon пары, см. ReplacementMatrixService.HorizonYearsFor) — показываем в месяцах до года, иначе в годах. */
 function formatHorizon(years: number): string {
   if (years < 1) return `${Math.max(1, Math.round(years * 12))} мес`;
   return `${years.toFixed(1)} г.`;
 }
 
+/** Русская подпись причины отказа (plan/23 §B.3) — таблица отвергнутых пар. */
+function rejectedReasonLabel(pair: RejectedPair): string {
+  if (pair.reason === 'DurationMismatch') return 'дюрации несопоставимы (>1.5 г.)';
+  return `невыгодна: ${formatRub(pair.netBenefitRub ?? 0)}`;
+}
+
+/**
+ * Карточка одной лучшей пары матрицы (задача 23) — заголовок + крупная выгода (₽ и % годовых),
+ * значок watchlist-цели, раскрывашка с построчной формулой (спред → капитал → горизонт → валовая
+ * выгода → минус обе комиссии → чистая выгода ≈ % годовых), plan/23 §B.2.
+ */
+function ReplacementPairCard({ pair }: { pair: MatrixPair }) {
+  const [expanded, setExpanded] = useState(false);
+  const holdLabel = pair.holdName ?? `Позиция #${pair.holdPositionId}`;
+  const targetLabel = pair.targetName ?? `Инструмент #${pair.targetInstrumentId}`;
+
+  return (
+    <Paper
+      withBorder
+      p="sm"
+      radius="md"
+      data-testid={`replacement-${pair.holdPositionId}-${pair.targetPositionId}`}
+    >
+      <UnstyledButton onClick={() => setExpanded((v) => !v)} w="100%" data-testid={`replacement-toggle-${pair.holdPositionId}-${pair.targetPositionId}`}>
+        <Group justify="space-between" wrap="nowrap" align="flex-start">
+          <Text fw={600} size="sm">
+            {holdLabel} → {targetLabel}
+          </Text>
+          {pair.isWatchlistTarget && (
+            <Badge size="sm" color="grape" variant="light" data-testid={`replacement-watchlist-badge-${pair.holdPositionId}-${pair.targetPositionId}`}>
+              watchlist
+            </Badge>
+          )}
+        </Group>
+        <Text size="sm" c="teal" fw={600}>
+          выгода ≈ {formatRub(pair.netBenefitRub)}
+          {pair.annualizedBenefitFraction !== null && <> (~{formatPercent(pair.annualizedBenefitFraction)} годовых)</>} за{' '}
+          {formatHorizon(pair.horizonYears)}
+        </Text>
+        <Text size="xs" c="dimmed">
+          {expanded ? 'скрыть формулу' : 'показать формулу'}
+        </Text>
+      </UnstyledButton>
+
+      <Collapse expanded={expanded}>
+        <Stack gap={2} mt="xs" data-testid={`replacement-details-${pair.holdPositionId}-${pair.targetPositionId}`}>
+          <Text size="xs">спред доходностей: {formatPercent(pair.spreadFraction)}</Text>
+          <Text size="xs">капитал после продажи: {formatRub(pair.capitalRub)}</Text>
+          <Text size="xs">горизонт: {formatHorizon(pair.horizonYears)}</Text>
+          <Text size="xs">валовая выгода: {formatRub(pair.grossGainRub)}</Text>
+          <Text size="xs">
+            − комиссия продажи {formatRub(pair.sellCommissionRub)} − комиссия покупки {formatRub(pair.buyCommissionRub)} (
+            {formatPercent(pair.commissionRateUsed)}, {commissionSourceLabel(pair.commissionRateSource)})
+          </Text>
+          <Text size="xs" fw={600}>
+            = чистая выгода {formatRub(pair.netBenefitRub)}
+            {pair.annualizedBenefitFraction !== null && <> ≈ {formatPercent(pair.annualizedBenefitFraction)} годовых</>}
+          </Text>
+        </Stack>
+      </Collapse>
+    </Paper>
+  );
+}
+
+/** Свёрнутая таблица «Все рассмотренные пары» (plan/23 §B.3) — пары вне bestPairs с причиной по-русски. */
+function RejectedPairsTable({ pairs }: { pairs: RejectedPair[] }) {
+  const [expanded, setExpanded] = useState(false);
+
+  return (
+    <Stack gap="xs" mt="md">
+      <UnstyledButton onClick={() => setExpanded((v) => !v)} data-testid="rejected-pairs-toggle">
+        <Text size="sm" fw={600}>
+          {expanded ? 'Скрыть' : 'Показать'} все рассмотренные пары ({pairs.length})
+        </Text>
+      </UnstyledButton>
+      <Collapse expanded={expanded}>
+        <Table.ScrollContainer minWidth={500}>
+          <Table striped highlightOnHover data-testid="rejected-pairs-table">
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>Пара</Table.Th>
+                <Table.Th>Причина</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {pairs.map((pair) => (
+                <Table.Tr key={`${pair.holdPositionId}-${pair.targetPositionId}`} data-testid={`rejected-pair-${pair.holdPositionId}-${pair.targetPositionId}`}>
+                  <Table.Td>
+                    {pair.holdName ?? `Позиция #${pair.holdPositionId}`} → {pair.targetName ?? `Инструмент #${pair.targetInstrumentId}`}
+                    {pair.isWatchlistTarget && (
+                      <Badge ml={6} size="xs" color="grape" variant="light">
+                        watchlist
+                      </Badge>
+                    )}
+                  </Table.Td>
+                  <Table.Td c={pair.reason === 'NotProfitable' && (pair.netBenefitRub ?? 0) < 0 ? 'red' : undefined}>
+                    {rejectedReasonLabel(pair)}
+                  </Table.Td>
+                </Table.Tr>
+              ))}
+            </Table.Tbody>
+          </Table>
+        </Table.ScrollContainer>
+      </Collapse>
+    </Stack>
+  );
+}
+
 function ReplacementsSection() {
-  const { replacements, isLoading, error, sellCandidates } = useRecommendationsStore();
+  const { bestPairs, rejectedPairs, totalConsideredPairs, replacementDisclaimer, isLoading, error } =
+    useRecommendationsStore();
 
   return (
     <Paper withBorder p="md" radius="md" data-testid="replacements-section">
@@ -132,7 +243,7 @@ function ReplacementsSection() {
         Замены — оценка «держать vs переложиться»
       </Title>
       <Text size="xs" c="dimmed" mb="sm">
-        Комиссии обеих сделок учтены; показаны только пары с положительной оценкой выгоды.
+        Полный перебор всех пар портфеля и watchlist на сервере; комиссии обеих сделок учтены.
       </Text>
 
       {isLoading && (
@@ -147,46 +258,24 @@ function ReplacementsSection() {
         </Alert>
       )}
 
-      {!isLoading && !error && replacements.length === 0 && (
+      {!isLoading && !error && bestPairs.length === 0 && (
         <Text size="sm" c="dimmed" data-testid="replacements-empty">
-          {sellCandidates.length === 0
-            ? 'Нет данных для оценки замен.'
-            : 'Среди рассмотренных пар нет замены с положительной оценкой выгоды.'}
+          выгодных замен не найдено — рассмотрено {totalConsideredPairs} пар
         </Text>
       )}
 
-      {!isLoading && !error && replacements.length > 0 && (
+      {!isLoading && !error && bestPairs.length > 0 && (
         <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm">
-          {replacements.map((pair) => (
-            <Paper
-              key={`${pair.holdPositionId}-${pair.targetPositionId}`}
-              withBorder
-              p="sm"
-              radius="md"
-              data-testid={`replacement-${pair.holdPositionId}-${pair.targetPositionId}`}
-            >
-              <Text fw={600} size="sm">
-                {pair.holdName} → {pair.targetName}
-              </Text>
-              <Text size="sm" c="teal" fw={600}>
-                выгода ≈ {formatRub(pair.result.netBenefitRub)} за {formatHorizon(pair.result.horizonYears)}
-              </Text>
-              <Text size="xs" c="dimmed">
-                комиссии учтены: {formatRub(pair.result.totalSwitchCostRub)}
-                {pair.result.breakEvenYears !== null && (
-                  <>, окупится за {formatNumber(pair.result.breakEvenYears * 12, 0)} мес</>
-                )}
-              </Text>
-              <Text size="xs" c="dimmed">
-                комиссия {formatPercent(pair.result.sellCommissionRateUsed)} — {commissionSourceLabel(pair.result.commissionRateSource)}
-              </Text>
-            </Paper>
+          {bestPairs.map((pair) => (
+            <ReplacementPairCard key={`${pair.holdPositionId}-${pair.targetPositionId}`} pair={pair} />
           ))}
         </SimpleGrid>
       )}
 
-      {!isLoading && !error && replacements.length > 0 && (
-        <Disclaimer text={replacements[0].result.disclaimer} />
+      {!isLoading && !error && rejectedPairs.length > 0 && <RejectedPairsTable pairs={rejectedPairs} />}
+
+      {!isLoading && !error && (bestPairs.length > 0 || rejectedPairs.length > 0) && (
+        <Disclaimer text={replacementDisclaimer} />
       )}
     </Paper>
   );

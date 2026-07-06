@@ -492,6 +492,65 @@ export interface ReplacementResponse {
   commissionRateSource: CommissionRateSource | 'ExplicitRequest';
 }
 
+// ---- GET /api/analytics/replacement-matrix (plan/23 §A) ----
+
+/** Причина, по которой пара НЕ попала в bestPairs, но осталась видимой. */
+export type RejectedPairReason = 'NotProfitable' | 'DurationMismatch';
+
+/** Одна из лучших пар «держать hold vs переложиться в target» — netBenefitRub > 0. */
+export interface MatrixPair {
+  holdPositionId: number;
+  holdInstrumentId: number;
+  holdName: string | null;
+  targetPositionId: number;
+  targetInstrumentId: number;
+  targetName: string | null;
+  /** true — target это watchlist-бумага без позиции в портфеле. */
+  isWatchlistTarget: boolean;
+
+  /** Спред эффективных доходностей (targetYield - holdYield) — ДОЛЯ. */
+  spreadFraction: number;
+  /** Капитал, реально переходящий в target (MarketValueRub hold минус комиссия продажи), в рублях. */
+  capitalRub: number;
+  horizonYears: number;
+  /** Валовая выгода (спред × капитал × горизонт) ДО вычета комиссий, в рублях. */
+  grossGainRub: number;
+  sellCommissionRub: number;
+  buyCommissionRub: number;
+  /** GrossGainRub - обе комиссии — чистая выгода в рублях, всегда > 0 для bestPairs. */
+  netBenefitRub: number;
+  /** NetBenefitRub / CapitalRub / HorizonYears — ДОЛЯ (не процент); фронт форматирует через formatPercent. */
+  annualizedBenefitFraction: number | null;
+  /** Ставка комиссии, применённая к обеим сделкам пары — ДОЛЯ. */
+  commissionRateUsed: number;
+  commissionRateSource: CommissionRateSource;
+}
+
+/** Пара, не попавшая в bestPairs, но видимая с причиной отказа (plan/23 §A.4). */
+export interface RejectedPair {
+  holdPositionId: number;
+  holdInstrumentId: number;
+  holdName: string | null;
+  targetPositionId: number;
+  targetInstrumentId: number;
+  targetName: string | null;
+  isWatchlistTarget: boolean;
+  reason: RejectedPairReason;
+  /** Заполнено только для reason="NotProfitable" — чистая выгода в рублях (<= 0). */
+  netBenefitRub: number | null;
+}
+
+/** Ответ GET /api/analytics/replacement-matrix — честный перебор всех пар (plan/23). */
+export interface ReplacementMatrixResponse {
+  /** Пары с netBenefit > 0, отсортированы по netBenefit убыв. */
+  bestPairs: MatrixPair[];
+  /** Пары с netBenefit <= 0 либо вне окна дюраций — targetYield <= holdYield пары сюда не попадают вовсе. */
+  rejectedPairs: RejectedPair[];
+  /** bestPairs.length + rejectedPairs.length ДО срабатывания предохранителя — для пустого состояния («рассмотрено N пар»). */
+  totalConsideredPairs: number;
+  disclaimer: string;
+}
+
 // ---- GET /api/analytics/allocation (plan/17 §B) ----
 
 /** Причина, по которой кандидат не получил докупку. */

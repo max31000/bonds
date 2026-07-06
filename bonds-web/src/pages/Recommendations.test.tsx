@@ -8,7 +8,13 @@ import { Recommendations } from './Recommendations';
 import { useRecommendationsStore } from '../store/useRecommendationsStore';
 import { useWatchlistStore } from '../store/useWatchlistStore';
 import { useAuthStore } from '../store/useAuthStore';
-import type { ComparisonResponse, ReplacementResponse, AllocationResponse, CompositionResponse, WatchlistItem } from '../api/types';
+import type {
+  ComparisonResponse,
+  ReplacementMatrixResponse,
+  AllocationResponse,
+  CompositionResponse,
+  WatchlistItem,
+} from '../api/types';
 
 function renderRecommendations() {
   return render(
@@ -88,21 +94,55 @@ const baseComparison: ComparisonResponse = {
   disclaimer: 'Сортировка по доходности не учитывает срок до погашения/оферты и кредитный риск эмитента.',
 };
 
-const favorableReplacement: ReplacementResponse = {
+const favorableMatrixPair = {
   holdPositionId: 1,
+  holdInstrumentId: 10,
+  holdName: 'Слабая бумага',
   targetPositionId: 2,
+  targetInstrumentId: 11,
+  targetName: 'Сильная бумага',
+  isWatchlistTarget: false,
+  spreadFraction: 0.08,
+  capitalRub: 1490,
   horizonYears: 2,
+  grossGainRub: 1560,
   sellCommissionRub: 30,
   buyCommissionRub: 30,
-  totalSwitchCostRub: 60,
   netBenefitRub: 1500,
-  isSwitchFavorable: true,
-  breakEvenYears: 0.2,
-  yieldDataIncomplete: false,
+  annualizedBenefitFraction: 0.21,
+  commissionRateUsed: 0.003,
+  commissionRateSource: 'Default' as const,
+};
+
+const rejectedNotProfitablePair = {
+  holdPositionId: 1,
+  holdInstrumentId: 10,
+  holdName: 'Слабая бумага',
+  targetPositionId: 3,
+  targetInstrumentId: 13,
+  targetName: 'Третья бумага',
+  isWatchlistTarget: false,
+  reason: 'NotProfitable' as const,
+  netBenefitRub: -12,
+};
+
+const rejectedDurationMismatchPair = {
+  holdPositionId: 1,
+  holdInstrumentId: 10,
+  holdName: 'Слабая бумага',
+  targetPositionId: 4,
+  targetInstrumentId: 14,
+  targetName: 'Четвёртая бумага',
+  isWatchlistTarget: true,
+  reason: 'DurationMismatch' as const,
+  netBenefitRub: null,
+};
+
+const favorableMatrix: ReplacementMatrixResponse = {
+  bestPairs: [favorableMatrixPair],
+  rejectedPairs: [rejectedNotProfitablePair, rejectedDurationMismatchPair],
+  totalConsideredPairs: 3,
   disclaimer: 'Анализ замены сравнивает только текущие позиции портфеля.',
-  sellCommissionRateUsed: 0.003,
-  buyCommissionRateUsed: 0.003,
-  commissionRateSource: 'Default',
 };
 
 const allocationResult: AllocationResponse = {
@@ -134,7 +174,10 @@ describe('Recommendations', () => {
       sellCandidates: [],
       outOfComparison: [],
       comparisonDisclaimer: '',
-      replacements: [],
+      bestPairs: [],
+      rejectedPairs: [],
+      totalConsideredPairs: 0,
+      replacementDisclaimer: '',
       isLoading: false,
       error: null,
       allocationAmount: 15000,
@@ -155,7 +198,7 @@ describe('Recommendations', () => {
     server.use(
       http.get('*/api/analytics/composition', () => HttpResponse.json(baseComposition)),
       http.get('*/api/analytics/comparison', () => HttpResponse.json(baseComparison)),
-      http.post('*/api/analytics/replacement', () => HttpResponse.json(favorableReplacement)),
+      http.get('*/api/analytics/replacement-matrix', () => HttpResponse.json(favorableMatrix)),
       http.get('*/api/analytics/allocation', () => HttpResponse.json(allocationResult)),
       http.get('*/api/watchlist', () => HttpResponse.json({ items: [], disclaimer: '' })),
     );
@@ -185,19 +228,90 @@ describe('Recommendations', () => {
     expect(screen.queryByTestId('sell-candidate-3')).not.toBeInTheDocument();
   });
 
-  it('shows a favorable replacement card with benefit and break-even', async () => {
+  it('shows a favorable replacement card with benefit and annualized percent', async () => {
     renderRecommendations();
 
     await waitFor(() => expect(screen.getByTestId('replacement-1-2')).toBeInTheDocument());
-    expect(screen.getByTestId('replacement-1-2').textContent).toMatch(/выгода/);
+    const card = screen.getByTestId('replacement-1-2').textContent!;
+    expect(card).toMatch(/выгода/);
+    expect(card).toMatch(/21\.00%/);
+  });
+
+  // Задача 23 §B.2: карточка раскрывается в построчную формулу (спред → капитал → горизонт →
+  // валовая выгода → минус комиссии → чистая выгода ≈ % годовых).
+  it('expands the replacement card to show the formula breakdown', async () => {
+    renderRecommendations();
+
+    await waitFor(() => expect(screen.getByTestId('replacement-toggle-1-2')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByTestId('replacement-toggle-1-2'));
+
+    await waitFor(() => expect(screen.getByTestId('replacement-details-1-2')).toBeVisible());
+    const details = screen.getByTestId('replacement-details-1-2').textContent!;
+    expect(details).toMatch(/спред доходностей/);
+    expect(details).toMatch(/капитал после продажи/);
+    expect(details).toMatch(/горизонт/);
+    expect(details).toMatch(/валовая выгода/);
+    expect(details).toMatch(/комиссия продажи/);
+    expect(details).toMatch(/комиссия покупки/);
+    expect(details).toMatch(/чистая выгода/);
   });
 
   // Plan/22 часть E: карточка замены показывает применённую ставку комиссии и её источник.
-  it('shows the commission rate source caption on the replacement card', async () => {
+  it('shows the commission rate source caption in the expanded formula', async () => {
     renderRecommendations();
 
-    await waitFor(() => expect(screen.getByTestId('replacement-1-2')).toBeInTheDocument());
-    expect(screen.getByTestId('replacement-1-2').textContent).toMatch(/дефолт 0\.3%/);
+    await waitFor(() => expect(screen.getByTestId('replacement-toggle-1-2')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('replacement-toggle-1-2'));
+
+    await waitFor(() => expect(screen.getByTestId('replacement-details-1-2')).toBeVisible());
+    expect(screen.getByTestId('replacement-details-1-2').textContent).toMatch(/дефолт 0\.3%/);
+  });
+
+  // Задача 23 §B.2: значок watchlist-цели на карточке лучшей пары.
+  it('shows a watchlist badge on a replacement card targeting a watchlist bond', async () => {
+    server.use(
+      http.get('*/api/analytics/replacement-matrix', () =>
+        HttpResponse.json({
+          bestPairs: [{ ...favorableMatrixPair, targetPositionId: 0, targetInstrumentId: 99, targetName: 'Watchlist bond', isWatchlistTarget: true }],
+          rejectedPairs: [],
+          totalConsideredPairs: 1,
+          disclaimer: favorableMatrix.disclaimer,
+        }),
+      ),
+    );
+
+    renderRecommendations();
+
+    await waitFor(() => expect(screen.getByTestId('replacement-watchlist-badge-1-0')).toBeInTheDocument());
+  });
+
+  // Задача 23 §B.3: свёрнутая таблица отвергнутых пар с причинами по-русски.
+  it('shows a collapsed table of rejected pairs with reasons in Russian', async () => {
+    renderRecommendations();
+
+    await waitFor(() => expect(screen.getByTestId('rejected-pairs-toggle')).toBeInTheDocument());
+    expect(screen.getByTestId('rejected-pairs-toggle').textContent).toMatch(/2/);
+
+    fireEvent.click(screen.getByTestId('rejected-pairs-toggle'));
+
+    await waitFor(() => expect(screen.getByTestId('rejected-pairs-table')).toBeVisible());
+    expect(screen.getByTestId('rejected-pair-1-3').textContent).toMatch(/невыгодна.*-?12/);
+    expect(screen.getByTestId('rejected-pair-1-4').textContent).toMatch(/дюрации несопоставимы/);
+  });
+
+  // Задача 23 §B.4: пустое состояние показывает число рассмотренных пар из ответа.
+  it('shows an empty state with the number of considered pairs when there are no favorable replacements', async () => {
+    server.use(
+      http.get('*/api/analytics/replacement-matrix', () =>
+        HttpResponse.json({ bestPairs: [], rejectedPairs: [], totalConsideredPairs: 7, disclaimer: '' }),
+      ),
+    );
+
+    renderRecommendations();
+
+    await waitFor(() => expect(screen.getByTestId('replacements-empty')).toBeInTheDocument());
+    expect(screen.getByTestId('replacements-empty').textContent).toMatch(/7/);
   });
 
   it('allocation form shows the result and leftover after submit', async () => {
