@@ -18,6 +18,13 @@ public sealed record PortfolioHolding
     /// <summary>Рыночная стоимость holding'а в рублях (Quantity × грязная цена) — база для весов композиции.</summary>
     public required decimal MarketValueRub { get; init; }
 
+    /// <summary>
+    /// Задача 24: НКД на ОДНУ бумагу (см. doc-comment <see cref="Bonds.Core.Models.Position.Accrued"/>)
+    /// — источник истины для разложения MarketValueRub на «чистую» стоимость и НКД в UI. НКД на всю
+    /// позицию = AccruedPerBondRub × Quantity.
+    /// </summary>
+    public decimal AccruedPerBondRub { get; init; }
+
     public string? Name { get; init; }
     public string? Isin { get; init; }
     public string? Issuer { get; init; }

@@ -19,7 +19,10 @@ public class CashAllocationServiceTests
         string issuer,
         decimal currentIssuerMarketValueRub = 0m,
         decimal lotSize = 1m,
-        bool lotSizeIsAssumed = true) => new()
+        bool lotSizeIsAssumed = true,
+        decimal cleanPriceRub = 0m,
+        decimal accruedRub = 0m,
+        decimal commissionRub = 0m) => new()
     {
         InstrumentId = instrumentId,
         Name = $"Bond {instrumentId}",
@@ -29,6 +32,9 @@ public class CashAllocationServiceTests
         LotSize = lotSize,
         LotSizeIsAssumed = lotSizeIsAssumed,
         CurrentIssuerMarketValueRub = currentIssuerMarketValueRub,
+        CleanPriceRub = cleanPriceRub,
+        AccruedRub = accruedRub,
+        CommissionRub = commissionRub,
     };
 
     [Fact]
@@ -158,5 +164,47 @@ public class CashAllocationServiceTests
 
         result.Disclaimer.Should().NotBeNullOrWhiteSpace();
         result.Disclaimer.Should().Contain("не является");
+    }
+
+    // ─── Задача 24: разложение цены лота (чистая цена + НКД + комиссия) ────────────────────────
+
+    [Fact]
+    public void Allocate_SplitsEstimatedCostAcrossMultipleLots_SumsReconcile()
+    {
+        // Один лот стоит 1046 = 1012 (чистая) + 34 (НКД) + 0.5*... комиссия — используем ровные числа:
+        // clean 1000 + accrued 40 + commission 6 = 1046 за лот, покупаем 2 лота на 2100 руб.
+        var candidates = new[]
+        {
+            Candidate(1, 0.12m, pricePerLotRub: 1046m, issuer: "A", cleanPriceRub: 1000m, accruedRub: 40m, commissionRub: 6m),
+        };
+
+        var result = CashAllocationService.Allocate(amountRub: 2100m, candidates, currentPortfolioValueRub: 100_000m);
+
+        result.Allocations.Should().ContainSingle();
+        var line = result.Allocations[0];
+        line.Quantity.Should().Be(2m); // 2 лота (LotSize=1)
+        line.EstimatedCostRub.Should().Be(2092m); // 2 * 1046
+
+        // Разложение должно сходиться: clean + accrued + commission = estimatedCost.
+        (line.CleanCostRub + line.AccruedCostRub + line.CommissionCostRub).Should().Be(line.EstimatedCostRub);
+        line.CleanCostRub.Should().Be(2000m); // 2 * 1000
+        line.AccruedCostRub.Should().Be(80m); // 2 * 40
+        line.CommissionCostRub.Should().Be(12m); // 2 * 6
+    }
+
+    [Fact]
+    public void Allocate_WithoutBreakdownProvided_DefaultsToZero_DoesNotThrow()
+    {
+        var candidates = new[]
+        {
+            Candidate(1, 0.12m, pricePerLotRub: 1000m, issuer: "A"), // cleanPriceRub/accruedRub/commissionRub не заданы — 0 по умолчанию
+        };
+
+        var result = CashAllocationService.Allocate(amountRub: 1000m, candidates, currentPortfolioValueRub: 100_000m);
+
+        result.Allocations.Should().ContainSingle();
+        result.Allocations[0].CleanCostRub.Should().Be(0m);
+        result.Allocations[0].AccruedCostRub.Should().Be(0m);
+        result.Allocations[0].CommissionCostRub.Should().Be(0m);
     }
 }

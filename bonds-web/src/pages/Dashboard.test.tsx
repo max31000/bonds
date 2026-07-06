@@ -31,6 +31,8 @@ const basePositions: PositionsResponse = {
       sector: 'ОФЗ',
       quantity: 100,
       marketValueRub: 105000,
+      accruedPerBondRub: 0,
+      accruedTotalRub: 0,
       currencyRub: 'RUB',
       couponType: 'Fixed',
       maturityDate: '2030-01-01',
@@ -214,5 +216,25 @@ describe('Dashboard', () => {
     await userEvent.click(screen.getByTestId('widget-composition-explain-icon'), { pointerEventsCheck: 0 });
 
     await waitFor(() => expect(screen.getByText(/Как стоимость портфеля распределена/)).toBeInTheDocument());
+  });
+
+  // ─── T-24: глобальная подсказка про "грязные" цены на KPI «Стоимость портфеля» ─────────────
+
+  it('opens the dirty-price explanation popover for the portfolio value KPI', async () => {
+    server.use(
+      http.get('*/api/positions', () => HttpResponse.json(basePositions)),
+      http.get('*/api/analytics/xirr', () => HttpResponse.json(baseXirr)),
+      http.get('*/api/cashflow', () => HttpResponse.json(baseCashflow)),
+      http.get('*/api/analytics/composition', () => HttpResponse.json(baseComposition)),
+    );
+
+    renderDashboard();
+
+    await waitFor(() => expect(screen.getByTestId('kpi-portfolio-value-explain-icon')).toBeInTheDocument());
+
+    const { default: userEvent } = await import('@testing-library/user-event');
+    await userEvent.click(screen.getByTestId('kpi-portfolio-value-explain-icon'), { pointerEventsCheck: 0 });
+
+    await waitFor(() => expect(screen.getByText(/накопленный купонный доход/)).toBeInTheDocument());
   });
 });

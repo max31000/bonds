@@ -1,3 +1,4 @@
+using Bonds.Core.Interfaces;
 using Bonds.Core.Interfaces.Repositories;
 using Bonds.Core.Services;
 using Bonds.Core.Signals;
@@ -135,6 +136,10 @@ public static class DependencyInjection
         // Этап 08: сборщик holdings (между репозиториями и аналитическими сервисами) — общий
         // вход для positions/composition/scatter/comparison/replacement эндпоинтов.
         services.AddScoped<PortfolioHoldingsBuilder>();
+
+        // Plan/22 часть C: резолвер эффективной ставки комиссии (override → оценка из журнала →
+        // дефолт) — потребляется replacement/allocation/ifSoldNow эндпоинтами.
+        services.AddScoped<ICommissionRateProvider, CommissionRateProvider>();
 
         // DataProtection — шифрование токена T-Invest, вводимого через UI (PUT /api/settings/tinvest-token).
         // Ключи ЯВНО персистируются на volume вне UnionFS-слоёв контейнера (DataProtection:KeysPath,

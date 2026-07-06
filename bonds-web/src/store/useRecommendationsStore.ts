@@ -1,7 +1,7 @@
 import { create } from 'zustand';
-import { fetchComparison, fetchAllocation, postReplacement } from '../api/recommendations';
+import { fetchComparison, fetchAllocation, fetchReplacementMatrix } from '../api/recommendations';
 import { fetchComposition } from '../api/analytics';
-import type { AllocationResponse, ComparisonRow, ReplacementResponse } from '../api/types';
+import type { AllocationResponse, ComparisonRow, MatrixPair, RejectedPair } from '../api/types';
 
 /** Причина попадания позиции в «слабые звенья» — отображается бейджем на карточке. */
 export interface SellReason {
@@ -15,34 +15,8 @@ export interface SellCandidate {
   reasons: SellReason[];
 }
 
-/** Одна пара «держать A → переложиться в B» с результатом расчёта. */
-export interface ReplacementPair {
-  holdPositionId: number;
-  targetPositionId: number;
-  holdName: string;
-  targetName: string;
-  result: ReplacementResponse;
-}
-
 const TOP_SELL_CANDIDATES = 3;
-const TOP_REPLACEMENTS_PER_CANDIDATE = 2;
-const MAX_REPLACEMENT_REQUESTS = 6;
-const COMPARABLE_DURATION_WINDOW_YEARS = 1.5;
 const UPCOMING_HORIZON_DAYS = 90;
-/** Пол горизонта замены — чтобы SwitchAnalysisService.Compare не упал на нулевом/отрицательном
- *  горизонте у бумаги с сегодняшним погашением/офертой. Реальный горизонт берётся из daysToHorizon. */
-const MIN_HORIZON_DAYS = 1;
-
-/**
- * Горизонт сравнения замены (лет) = ближайший из двух горизонтов (min daysToHorizon hold/target),
- * plan/17 §A.2. Критично для корректности: SwitchAnalysisService считает выгоду ЛИНЕЙНО по горизонту
- * (spreadGainRub = base × yieldSpread × horizonYears), поэтому фиксированный горизонт систематически
- * искажал бы выгоду и фильтр «показывать только выгодные» — особенно для бумаг с близкой офертой.
- */
-function horizonYearsFor(holdRow: ComparisonRow, targetRow: ComparisonRow): number {
-  const minDays = Math.min(holdRow.daysToHorizon, targetRow.daysToHorizon);
-  return Math.max(minDays, MIN_HORIZON_DAYS) / 365;
-}
 
 /** Позиция несравнима по доходности «вне сравнения» (plan/17 §A.1: floater/indexed/dataIncomplete). */
 function isOutOfComparison(row: ComparisonRow): boolean {
@@ -102,45 +76,17 @@ function buildSellCandidates(
   return { candidates, outOfComparison };
 }
 
-/**
- * Для каждого sell-кандидата подбирает до 2 лучших по доходности замен среди остальных сравнимых
- * позиций с сопоставимой дюрацией (±1.5 года — plan/17 §A.2), не более 6 запросов replacement
- * суммарно за загрузку.
- */
-function buildReplacementRequests(
-  sellCandidates: SellCandidate[],
-  allComparable: ComparisonRow[],
-): { holdRow: ComparisonRow; targetRow: ComparisonRow }[] {
-  const requests: { holdRow: ComparisonRow; targetRow: ComparisonRow }[] = [];
-
-  for (const candidate of sellCandidates) {
-    if (requests.length >= MAX_REPLACEMENT_REQUESTS) break;
-    const holdRow = candidate.row;
-
-    const targets = allComparable
-      .filter((r) => r.positionId !== holdRow.positionId)
-      .filter((r) => {
-        if (holdRow.modifiedDuration === null || r.modifiedDuration === null) return true;
-        return Math.abs(r.modifiedDuration - holdRow.modifiedDuration) <= COMPARABLE_DURATION_WINDOW_YEARS;
-      })
-      .filter((r) => (r.effectiveYield ?? -Infinity) > (holdRow.effectiveYield ?? -Infinity))
-      .sort((a, b) => (b.effectiveYield ?? 0) - (a.effectiveYield ?? 0))
-      .slice(0, TOP_REPLACEMENTS_PER_CANDIDATE);
-
-    for (const targetRow of targets) {
-      if (requests.length >= MAX_REPLACEMENT_REQUESTS) break;
-      requests.push({ holdRow, targetRow });
-    }
-  }
-
-  return requests;
-}
-
 interface RecommendationsStore {
   sellCandidates: SellCandidate[];
   outOfComparison: ComparisonRow[];
   comparisonDisclaimer: string;
-  replacements: ReplacementPair[];
+
+  // Задача 23: секция «Замены» — один запрос матрицы вместо цикла до 6 постов.
+  bestPairs: MatrixPair[];
+  rejectedPairs: RejectedPair[];
+  totalConsideredPairs: number;
+  replacementDisclaimer: string;
+
   isLoading: boolean;
   error: string | null;
 
@@ -155,16 +101,22 @@ interface RecommendationsStore {
 }
 
 /**
- * Стор экрана «Рекомендации» (plan/17): три секции — слабые звенья (comparison), замены
- * (replacement, до 6 запросов) и куда вложить сумму (allocation, по требованию через форму).
- * `load()` собирает первые две секции одним заходом; `loadAllocation()` вызывается отдельно
- * (форма суммы) — не блокирует первичную загрузку страницы.
+ * Стор экрана «Рекомендации» (plan/17, замены переработаны в задаче 23): три секции — слабые
+ * звенья (comparison), замены (GET /replacement-matrix — серверный перебор всех пар) и куда
+ * вложить сумму (allocation, по требованию через форму). `load()` собирает первые две секции
+ * одним заходом; `loadAllocation()` вызывается отдельно (форма суммы) — не блокирует первичную
+ * загрузку страницы.
  */
 export const useRecommendationsStore = create<RecommendationsStore>()((set, get) => ({
   sellCandidates: [],
   outOfComparison: [],
   comparisonDisclaimer: '',
-  replacements: [],
+
+  bestPairs: [],
+  rejectedPairs: [],
+  totalConsideredPairs: 0,
+  replacementDisclaimer: '',
+
   isLoading: false,
   error: null,
 
@@ -176,40 +128,23 @@ export const useRecommendationsStore = create<RecommendationsStore>()((set, get)
   load: async () => {
     set({ isLoading: true, error: null });
     try {
-      const [comparison, composition] = await Promise.all([fetchComparison(), fetchComposition()]);
+      const [comparison, composition, matrix] = await Promise.all([
+        fetchComparison(),
+        fetchComposition(),
+        fetchReplacementMatrix(),
+      ]);
 
       const issuerSharePercent = new Map(composition.byIssuer.map((s) => [s.key, s.sharePercent]));
       const { candidates, outOfComparison } = buildSellCandidates(comparison.rows, issuerSharePercent);
-      const allComparable = comparison.rows.filter((r) => !isOutOfComparison(r) && r.effectiveYield !== null);
-
-      const requests = buildReplacementRequests(candidates, allComparable);
-      const results = await Promise.all(
-        requests.map(({ holdRow, targetRow }) =>
-          postReplacement({
-            holdPositionId: holdRow.positionId,
-            targetPositionId: targetRow.positionId,
-            horizonYears: horizonYearsFor(holdRow, targetRow),
-          })
-            .then((result): ReplacementPair | null =>
-              result.netBenefitRub > 0
-                ? {
-                    holdPositionId: holdRow.positionId,
-                    targetPositionId: targetRow.positionId,
-                    holdName: holdRow.name ?? holdRow.issuer ?? `Позиция #${holdRow.positionId}`,
-                    targetName: targetRow.name ?? targetRow.issuer ?? `Позиция #${targetRow.positionId}`,
-                    result,
-                  }
-                : null,
-            )
-            .catch(() => null),
-        ),
-      );
 
       set({
         sellCandidates: candidates,
         outOfComparison,
         comparisonDisclaimer: comparison.disclaimer,
-        replacements: results.filter((r): r is ReplacementPair => r !== null),
+        bestPairs: matrix.bestPairs,
+        rejectedPairs: matrix.rejectedPairs,
+        totalConsideredPairs: matrix.totalConsideredPairs,
+        replacementDisclaimer: matrix.disclaimer,
         isLoading: false,
       });
     } catch (err) {

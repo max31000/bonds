@@ -3,6 +3,7 @@ using Bonds.Api.Middleware;
 using Bonds.Core.Analytics;
 using Bonds.Core.Calculation;
 using Bonds.Core.CashFlow;
+using Bonds.Core.Interfaces;
 using Bonds.Core.Interfaces.Repositories;
 using Bonds.Core.Time;
 using Bonds.Infrastructure.Analytics;
@@ -25,6 +26,7 @@ public static class AnalyticsEndpoints
         app.MapGet("/api/analytics/scatter", GetScatter);
         app.MapGet("/api/analytics/comparison", GetComparison);
         app.MapPost("/api/analytics/replacement", PostReplacement);
+        app.MapGet("/api/analytics/replacement-matrix", GetReplacementMatrix);
         app.MapGet("/api/analytics/rate-scenario", GetRateScenario);
         app.MapGet("/api/analytics/trajectory", GetTrajectory);
         app.MapGet("/api/analytics/allocation", GetAllocation);
@@ -314,7 +316,9 @@ public static class AnalyticsEndpoints
         ReplacementRequestDto request,
         ClaimsPrincipal principal,
         IAccountRepository accountRepo,
-        PortfolioHoldingsBuilder holdingsBuilder)
+        PortfolioHoldingsBuilder holdingsBuilder,
+        ICommissionRateProvider commissionRateProvider,
+        CancellationToken ct)
     {
         var accountId = await PositionsEndpoints.ResolveAccountIdAsync(principal, accountRepo);
         if (accountId is null) throw new NotFoundException("Счёт не найден");
@@ -360,8 +364,16 @@ public static class AnalyticsEndpoints
             EffectiveYield = (targetPosition.IsFloater || targetPosition.IsIndexed) ? targetPosition.CurrentYield : targetPosition.YtmEffective,
         };
 
-        var sellRate = request.SellCommissionRate ?? SwitchAnalysisService.DefaultCommissionRate;
-        var buyRate = request.BuyCommissionRate ?? SwitchAnalysisService.DefaultCommissionRate;
+        // Plan/22 часть E: явные ставки в запросе по-прежнему побеждают резолвер (контракт не
+        // ломается) — резолвер вызывается, только если хотя бы одна из ставок не передана явно.
+        ResolvedCommissionRate? resolved = null;
+        if (request.SellCommissionRate is null || request.BuyCommissionRate is null)
+        {
+            resolved = await commissionRateProvider.GetAsync(accountId.Value, ct);
+        }
+
+        var sellRate = request.SellCommissionRate ?? resolved!.Rate;
+        var buyRate = request.BuyCommissionRate ?? resolved!.Rate;
 
         var result = SwitchAnalysisService.Compare(holdCandidate, targetCandidate, request.HorizonYears, sellRate, buyRate);
 
@@ -379,10 +391,153 @@ public static class AnalyticsEndpoints
             BreakEvenYears = result.BreakEvenYears,
             YieldDataIncomplete = result.YieldDataIncomplete,
             Disclaimer = result.Disclaimer,
+            // Plan/22 часть E: ставка(и) и источник, который реально применился (явный запрос
+            // выигрывает — тогда Source отражается как "явно передана запросом", см. doc-comment DTO).
+            SellCommissionRateUsed = sellRate,
+            BuyCommissionRateUsed = buyRate,
+            CommissionRateSource = resolved?.Source.ToString() ?? "ExplicitRequest",
         };
 
         return Results.Ok(dto);
     }
+
+    // ─── GET /api/analytics/replacement-matrix ──────────────────────────────────────────────
+
+    /// <summary>
+    /// Задача 23 — честная матрица замен: серверный перебор ВСЕХ пар «держать hold vs переложиться
+    /// в target» (заменяет фронтовый цикл до 6 запросов POST /replacement, plan/23 §A). Кандидаты
+    /// hold — все сравнимые (не floater/indexed/dataIncomplete, см.
+    /// <see cref="ReplacementMatrixService.IsComparable"/>) позиции портфеля; кандидаты target —
+    /// те же сравнимые позиции + watchlist-бумаги (тот же путь, что <see cref="PostReplacement"/> с
+    /// TargetInstrumentId — <see cref="PortfolioHoldingsBuilder.BuildForInstrumentsAsync"/>).
+    /// Ставка комиссии — из <see cref="ICommissionRateProvider"/> (задача 22), НЕ константа.
+    /// </summary>
+    private static async Task<IResult> GetReplacementMatrix(
+        ClaimsPrincipal principal,
+        IAccountRepository accountRepo,
+        PortfolioHoldingsBuilder holdingsBuilder,
+        IWatchlistItemRepository watchlistRepo,
+        IInstrumentRepository instrumentRepo,
+        ICommissionRateProvider commissionRateProvider,
+        CancellationToken ct)
+    {
+        var accountId = await PositionsEndpoints.ResolveAccountIdAsync(principal, accountRepo);
+        if (accountId is null)
+        {
+            return Results.Ok(new ReplacementMatrixResponseDto
+            {
+                BestPairs = [],
+                RejectedPairs = [],
+                TotalConsideredPairs = 0,
+                Disclaimer = ReplacementMatrixService.Disclaimer,
+            });
+        }
+
+        var asOf = BusinessClock.MoscowToday();
+        var holdings = (await holdingsBuilder.BuildForAccountAsync(accountId.Value, asOf)).ToList();
+
+        var resolvedRate = await commissionRateProvider.GetAsync(accountId.Value, ct);
+
+        var comparableHoldings = holdings
+            .Where(h => ReplacementMatrixService.IsComparable(h.IsFloater, h.IsIndexed, h.DataIncomplete))
+            .ToList();
+
+        var holdCandidates = comparableHoldings.Select(h => ToMatrixCandidate(h, asOf, isWatchlist: false)).ToList();
+        var targetCandidates = new List<ReplacementMatrixService.MatrixCandidate>(holdCandidates);
+
+        // Plan/23 п.1: watchlist-бумаги — только как target, тот же путь, что PostReplacement
+        // с TargetInstrumentId/GetScatter/GetAllocation (BuildForInstrumentsAsync).
+        var userIdClaim = principal.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (ulong.TryParse(userIdClaim, out var userId))
+        {
+            var portfolioInstrumentIds = holdings.Select(h => h.InstrumentId).ToHashSet();
+            var watchlistItems = (await watchlistRepo.GetByUserIdAsync(userId)).ToList();
+
+            var watchlistInstrumentIds = new List<ulong>();
+            foreach (var item in watchlistItems)
+            {
+                var instrument = await instrumentRepo.GetByIsinAsync(item.Isin);
+                if (instrument is not null && !portfolioInstrumentIds.Contains(instrument.Id))
+                {
+                    watchlistInstrumentIds.Add(instrument.Id);
+                }
+            }
+
+            var watchlistHoldings = await holdingsBuilder.BuildForInstrumentsAsync(watchlistInstrumentIds.Distinct().ToList(), asOf);
+
+            targetCandidates.AddRange(watchlistHoldings
+                .Where(h => ReplacementMatrixService.IsComparable(h.IsFloater, h.IsIndexed, h.DataIncomplete))
+                .Select(h => ToMatrixCandidate(h, asOf, isWatchlist: true)));
+        }
+
+        var result = ReplacementMatrixService.BuildMatrix(
+            holdCandidates, targetCandidates, resolvedRate.Rate, resolvedRate.Rate, resolvedRate.Source);
+
+        var dto = new ReplacementMatrixResponseDto
+        {
+            BestPairs = result.BestPairs.Select(ToMatrixPairDto).ToList(),
+            RejectedPairs = result.RejectedPairs.Select(ToRejectedPairDto).ToList(),
+            TotalConsideredPairs = result.TotalConsideredPairs,
+            Disclaimer = result.Disclaimer,
+        };
+
+        return Results.Ok(dto);
+    }
+
+    private static ReplacementMatrixService.MatrixCandidate ToMatrixCandidate(Core.Analytics.PortfolioHolding h, DateOnly asOf, bool isWatchlist) => new()
+    {
+        PositionId = h.PositionId,
+        InstrumentId = h.InstrumentId,
+        Name = h.Name,
+        Issuer = h.Issuer,
+        MarketValueRub = h.MarketValueRub,
+        EffectiveYield = h.YtmEffective,
+        ModifiedDuration = h.ModifiedDuration,
+        DaysToHorizon = h.HorizonDate.DayNumber - asOf.DayNumber,
+        IsWatchlist = isWatchlist,
+        // Задача 25: cost basis нужен только у HOLD-стороны пары (продаётся именно она) — у
+        // watchlist-holding'ов CostBasis всегда null (см. doc-comment PortfolioHoldingsBuilder.
+        // BuildForInstrumentsAsync), поэтому HoldHasUnknownLots по умолчанию true (см. MatrixCandidate) —
+        // корректная деградация "оценить нельзя".
+        HoldInvestedRub = h.CostBasis?.InvestedRub,
+        HoldHasUnknownLots = h.CostBasis?.HasUnknownLots ?? true,
+    };
+
+    private static MatrixPairDto ToMatrixPairDto(ReplacementMatrixService.MatrixPair p) => new()
+    {
+        HoldPositionId = p.HoldPositionId,
+        HoldInstrumentId = p.HoldInstrumentId,
+        HoldName = p.HoldName,
+        TargetPositionId = p.TargetPositionId,
+        TargetInstrumentId = p.TargetInstrumentId,
+        TargetName = p.TargetName,
+        IsWatchlistTarget = p.IsWatchlistTarget,
+        SpreadFraction = p.SpreadFraction,
+        CapitalRub = p.CapitalRub,
+        HorizonYears = p.HorizonYears,
+        GrossGainRub = p.GrossGainRub,
+        SellCommissionRub = p.SellCommissionRub,
+        BuyCommissionRub = p.BuyCommissionRub,
+        NetBenefitRub = p.NetBenefitRub,
+        AnnualizedBenefitFraction = p.AnnualizedBenefitFraction,
+        CommissionRateUsed = p.CommissionRateUsed,
+        CommissionRateSource = p.CommissionRateSource.ToString(),
+        SellTaxEstimateRub = p.SellTaxEstimateRub,
+        NetBenefitAfterTaxRub = p.NetBenefitAfterTaxRub,
+    };
+
+    private static RejectedPairDto ToRejectedPairDto(ReplacementMatrixService.RejectedPair p) => new()
+    {
+        HoldPositionId = p.HoldPositionId,
+        HoldInstrumentId = p.HoldInstrumentId,
+        HoldName = p.HoldName,
+        TargetPositionId = p.TargetPositionId,
+        TargetInstrumentId = p.TargetInstrumentId,
+        TargetName = p.TargetName,
+        IsWatchlistTarget = p.IsWatchlistTarget,
+        Reason = p.Reason.ToString(),
+        NetBenefitRub = p.NetBenefitRub,
+    };
 
     // ─── GET /api/analytics/rate-scenario ───────────────────────────────────────────────────
 
@@ -507,8 +662,10 @@ public static class AnalyticsEndpoints
         PortfolioHoldingsBuilder holdingsBuilder,
         IWatchlistItemRepository watchlistRepo,
         IInstrumentRepository instrumentRepo,
+        ICommissionRateProvider commissionRateProvider,
         decimal amountRub,
-        bool includeWatchlist = false)
+        bool includeWatchlist = false,
+        CancellationToken ct = default)
     {
         if (amountRub <= 0m)
         {
@@ -527,8 +684,15 @@ public static class AnalyticsEndpoints
                 Skipped = [],
                 LeftoverRub = amountRub,
                 Disclaimer = CashAllocationService.Disclaimer,
+                CommissionRateUsed = SwitchAnalysisService.DefaultCommissionRate,
+                CommissionRateSource = nameof(CommissionRateSource.Default),
             });
         }
+
+        // Plan/22 часть E: ставка покупки для оценки грязной цены лота — через резолвер (override →
+        // оценка из журнала → дефолт), не захардкоженная константа.
+        var resolvedRate = await commissionRateProvider.GetAsync(accountId.Value, ct);
+        var commissionRate = resolvedRate.Rate;
 
         var asOf = BusinessClock.MoscowToday();
         var holdings = (await holdingsBuilder.BuildForAccountAsync(accountId.Value, asOf)).ToList();
@@ -543,7 +707,12 @@ public static class AnalyticsEndpoints
             .Select(h =>
             {
                 var pricePerUnitRub = h.MarketValueRub / h.Quantity;
-                var pricePerLotWithCommission = pricePerUnitRub * (1m + SwitchAnalysisService.DefaultCommissionRate);
+                // Задача 24: pricePerUnitRub — грязная цена (чистая + НКД на бумагу, см. doc-comment
+                // PortfolioHoldingsBuilder); раскладываем на компоненты для UI, не для расчёта.
+                var accruedRub = h.AccruedPerBondRub;
+                var cleanPriceRub = pricePerUnitRub - accruedRub;
+                var commissionRub = pricePerUnitRub * commissionRate;
+                var pricePerLotWithCommission = pricePerUnitRub + commissionRub;
                 var effectiveYield = (h.IsFloater || h.IsIndexed) ? h.CurrentYield : h.YtmEffective;
                 var issuerKey = h.Issuer ?? $"__instrument_{h.InstrumentId}";
 
@@ -557,6 +726,9 @@ public static class AnalyticsEndpoints
                     LotSize = 1m,
                     LotSizeIsAssumed = true,
                     CurrentIssuerMarketValueRub = issuerMarketValue.TryGetValue(issuerKey, out var v) ? v : 0m,
+                    CleanPriceRub = cleanPriceRub,
+                    AccruedRub = accruedRub,
+                    CommissionRub = commissionRub,
                 };
             })
             // Одна позиция на инструмент — если счёт по ошибке содержит несколько записей на один
@@ -589,7 +761,12 @@ public static class AnalyticsEndpoints
                 .Where(h => !h.IsOutOfScopeCurrency)
                 .Select(h =>
                 {
-                    var pricePerLotWithCommission = h.MarketValueRub * (1m + SwitchAnalysisService.DefaultCommissionRate);
+                    // Задача 24: Quantity=1 у watchlist-holding (см. doc-comment BuildForInstrumentsAsync)
+                    // — MarketValueRub уже цена одной бумаги (грязная).
+                    var accruedRub = h.AccruedPerBondRub;
+                    var cleanPriceRub = h.MarketValueRub - accruedRub;
+                    var commissionRub = h.MarketValueRub * commissionRate;
+                    var pricePerLotWithCommission = h.MarketValueRub + commissionRub;
                     var effectiveYield = (h.IsFloater || h.IsIndexed) ? h.CurrentYield : h.YtmEffective;
                     var issuerKey = h.Issuer ?? $"__instrument_{h.InstrumentId}";
 
@@ -603,6 +780,9 @@ public static class AnalyticsEndpoints
                         LotSize = 1m,
                         LotSizeIsAssumed = true,
                         CurrentIssuerMarketValueRub = issuerMarketValue.TryGetValue(issuerKey, out var v) ? v : 0m,
+                        CleanPriceRub = cleanPriceRub,
+                        AccruedRub = accruedRub,
+                        CommissionRub = commissionRub,
                     };
                 })
                 .ToList();
@@ -624,6 +804,9 @@ public static class AnalyticsEndpoints
                 EstimatedCostRub = a.EstimatedCostRub,
                 EffectiveYield = a.EffectiveYield,
                 LotSizeAssumed = a.LotSizeAssumed,
+                CleanCostRub = a.CleanCostRub,
+                AccruedCostRub = a.AccruedCostRub,
+                CommissionCostRub = a.CommissionCostRub,
             }).ToList(),
             Skipped = result.Skipped.Select(s => new AllocationSkipDto
             {
@@ -634,6 +817,8 @@ public static class AnalyticsEndpoints
             }).ToList(),
             LeftoverRub = result.LeftoverRub,
             Disclaimer = result.Disclaimer,
+            CommissionRateUsed = resolvedRate.Rate,
+            CommissionRateSource = resolvedRate.Source.ToString(),
         };
 
         return Results.Ok(dto);
@@ -776,6 +961,91 @@ public sealed record ReplacementResponseDto
     public decimal? BreakEvenYears { get; init; }
     public required bool YieldDataIncomplete { get; init; }
     public required string Disclaimer { get; init; }
+
+    /// <summary>Plan/22 часть E: фактически применённая ставка продажи — ДОЛЯ (явная ставка запроса, если была передана, иначе резолвер части C).</summary>
+    public required decimal SellCommissionRateUsed { get; init; }
+
+    /// <summary>Plan/22 часть E: фактически применённая ставка покупки — ДОЛЯ.</summary>
+    public required decimal BuyCommissionRateUsed { get; init; }
+
+    /// <summary>Plan/22 часть E: источник ставки — строка <see cref="CommissionRateSource"/> либо "ExplicitRequest" (обе ставки заданы явно в запросе — резолвер не вызывался).</summary>
+    public required string CommissionRateSource { get; init; }
+}
+
+/// <summary>Задача 23 — ответ GET /api/analytics/replacement-matrix (см. doc-comment <see cref="ReplacementMatrixService"/>).</summary>
+public sealed record ReplacementMatrixResponseDto
+{
+    /// <summary>Пары с netBenefit &gt; 0, отсортированы по netBenefit убыв.</summary>
+    public required IReadOnlyList<MatrixPairDto> BestPairs { get; init; }
+
+    /// <summary>Пары с netBenefit &lt;= 0 (reason=notProfitable) или вне окна дюраций (reason=durationMismatch). Пары с targetYield &lt;= holdYield сюда не попадают вовсе (см. doc-comment сервиса).</summary>
+    public required IReadOnlyList<RejectedPairDto> RejectedPairs { get; init; }
+
+    /// <summary>BestPairs.Count + RejectedPairs.Count ДО срабатывания предохранителя — честное число рассмотренных пар для пустого состояния фронта.</summary>
+    public required int TotalConsideredPairs { get; init; }
+    public required string Disclaimer { get; init; }
+}
+
+public sealed record MatrixPairDto
+{
+    public required ulong HoldPositionId { get; init; }
+    public required ulong HoldInstrumentId { get; init; }
+    public string? HoldName { get; init; }
+
+    public required ulong TargetPositionId { get; init; }
+    public required ulong TargetInstrumentId { get; init; }
+    public string? TargetName { get; init; }
+
+    /// <summary>true — target это watchlist-бумага без позиции в портфеле.</summary>
+    public required bool IsWatchlistTarget { get; init; }
+
+    /// <summary>Спред эффективных доходностей (targetYield - holdYield) — ДОЛЯ.</summary>
+    public required decimal SpreadFraction { get; init; }
+
+    /// <summary>Капитал, реально переходящий в target (MarketValueRub hold минус комиссия продажи), в рублях.</summary>
+    public required decimal CapitalRub { get; init; }
+    public required decimal HorizonYears { get; init; }
+
+    /// <summary>Валовая выгода (спред × капитал × горизонт), ДО вычета комиссий обеих сделок, в рублях.</summary>
+    public required decimal GrossGainRub { get; init; }
+    public required decimal SellCommissionRub { get; init; }
+    public required decimal BuyCommissionRub { get; init; }
+
+    /// <summary>GrossGainRub - SellCommissionRub - BuyCommissionRub — чистая выгода в рублях, всегда &gt; 0 для bestPairs.</summary>
+    public required decimal NetBenefitRub { get; init; }
+
+    /// <summary>NetBenefitRub / CapitalRub / HorizonYears — ДОЛЯ (не процент, фронт умножает на 100), "выгода в терминах годовой доходности" — см. doc-comment ReplacementMatrixService.</summary>
+    public decimal? AnnualizedBenefitFraction { get; init; }
+
+    /// <summary>Ставка комиссии, применённая к обеим сделкам пары — ДОЛЯ.</summary>
+    public required decimal CommissionRateUsed { get; init; }
+
+    /// <summary>Строка <see cref="CommissionRateSource"/> (задача 22) — источник CommissionRateUsed.</summary>
+    public required string CommissionRateSource { get; init; }
+
+    /// <summary>Задача 25: оценка НДФЛ от продажи hold-позиции (13% с прибыли к средней цене входа) — null, если cost basis hold-позиции недоступен/журнал неполон.</summary>
+    public decimal? SellTaxEstimateRub { get; init; }
+
+    /// <summary>Задача 25: NetBenefitRub − SellTaxEstimateRub — выгода после налога. Null, если SellTaxEstimateRub недоступен (ранжирование/фильтр используют NetBenefitAfterTaxRub ?? NetBenefitRub).</summary>
+    public decimal? NetBenefitAfterTaxRub { get; init; }
+}
+
+public sealed record RejectedPairDto
+{
+    public required ulong HoldPositionId { get; init; }
+    public required ulong HoldInstrumentId { get; init; }
+    public string? HoldName { get; init; }
+
+    public required ulong TargetPositionId { get; init; }
+    public required ulong TargetInstrumentId { get; init; }
+    public string? TargetName { get; init; }
+    public required bool IsWatchlistTarget { get; init; }
+
+    /// <summary>Строка <see cref="ReplacementMatrixService.RejectedPairReason"/>: "NotProfitable" | "DurationMismatch".</summary>
+    public required string Reason { get; init; }
+
+    /// <summary>Заполнено только для Reason="NotProfitable" — чистая выгода в рублях (&lt;= 0).</summary>
+    public decimal? NetBenefitRub { get; init; }
 }
 
 public sealed record RateScenarioResponseDto
@@ -827,6 +1097,12 @@ public sealed record AllocationResponseDto
     public required IReadOnlyList<AllocationSkipDto> Skipped { get; init; }
     public required decimal LeftoverRub { get; init; }
     public required string Disclaimer { get; init; }
+
+    /// <summary>Plan/22 часть E: ставка комиссии покупки, применённая к цене лота — ДОЛЯ (резолвер части C).</summary>
+    public required decimal CommissionRateUsed { get; init; }
+
+    /// <summary>Plan/22 часть E: источник ставки — строка <see cref="CommissionRateSource"/>.</summary>
+    public required string CommissionRateSource { get; init; }
 }
 
 public sealed record AllocationLineDto
@@ -838,6 +1114,15 @@ public sealed record AllocationLineDto
     public required decimal EstimatedCostRub { get; init; }
     public required decimal EffectiveYield { get; init; }
     public required bool LotSizeAssumed { get; init; }
+
+    /// <summary>Задача 24: разложение EstimatedCostRub — чистая цена всей докупки (без НКД/комиссии). CleanCostRub + AccruedCostRub + CommissionCostRub = EstimatedCostRub.</summary>
+    public decimal CleanCostRub { get; init; }
+
+    /// <summary>Задача 24: НКД в составе EstimatedCostRub.</summary>
+    public decimal AccruedCostRub { get; init; }
+
+    /// <summary>Задача 24: комиссия покупки в составе EstimatedCostRub.</summary>
+    public decimal CommissionCostRub { get; init; }
 }
 
 public sealed record AllocationSkipDto

@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using Bonds.Api.Middleware;
 using Bonds.Core.Analytics;
+using Bonds.Core.Interfaces;
 using Bonds.Core.Interfaces.Repositories;
 using Bonds.Core.Models;
 using Bonds.Core.Time;
@@ -54,7 +55,9 @@ public static class PositionsEndpoints
         IOfferScheduleRepository offerRepo,
         IOperationRepository operationRepo,
         PortfolioHoldingsBuilder holdingsBuilder,
-        InstrumentPriceHistoryService priceHistoryService)
+        InstrumentPriceHistoryService priceHistoryService,
+        ICommissionRateProvider commissionRateProvider,
+        CancellationToken ct)
     {
         var accountId = await ResolveAccountIdAsync(principal, accountRepo);
         if (accountId is null) throw new NotFoundException("Позиция не найдена");
@@ -92,8 +95,15 @@ public static class PositionsEndpoints
             .OrderByDescending(op => op.Date)
             .ToList();
 
+        // Plan/22 часть E: ставка комиссии — из резолвера (override → оценка из журнала → дефолт),
+        // не захардкоженная константа SwitchAnalysisService.DefaultCommissionRate.
+        var resolvedRate = await commissionRateProvider.GetAsync(accountId.Value, ct);
+
         // plan/19 §A.4: «если продать сейчас» — выручка минус комиссия (+P&L при известном cost basis).
-        var ifSoldNow = IfSoldNowService.Calculate(holding.MarketValueRub, holding.CostBasis);
+        // Задача 24: accruedTotalRub — НКД на всю позицию (per-bond metrics.AccruedInterest × Quantity),
+        // передаётся только для разложения выручки в UI, само значение выручки не меняется.
+        var accruedTotalRub = metrics.AccruedInterest * position.Quantity;
+        var ifSoldNow = IfSoldNowService.Calculate(holding.MarketValueRub, holding.CostBasis, resolvedRate.Rate, accruedTotalRub);
 
         var dto = new PositionDetailDto
         {
@@ -114,6 +124,9 @@ public static class PositionsEndpoints
             HasOffers = instrument.HasOffers,
             CleanPrice = metrics.CleanPrice,
             AccruedInterest = metrics.AccruedInterest,
+            // Задача 24: НКД на всю позицию = AccruedInterest (на бумагу) × Quantity — переиспользует
+            // уже посчитанное значение, не дублирует источник.
+            AccruedTotalRub = accruedTotalRub,
             DirtyPrice = metrics.DirtyPrice,
             MarketValueRub = holding.MarketValueRub,
             YtmEffective = metrics.YtmEffective,
@@ -180,14 +193,19 @@ public static class PositionsEndpoints
             IfSoldNow = new IfSoldNowDto
             {
                 MarketValueRub = ifSoldNow.MarketValueRub,
+                CleanValueRub = ifSoldNow.CleanValueRub,
+                AccruedTotalRub = ifSoldNow.AccruedTotalRub,
                 CommissionRub = ifSoldNow.CommissionRub,
                 CommissionRate = ifSoldNow.CommissionRate,
+                CommissionRateSource = resolvedRate.Source.ToString(),
                 NetProceedsRub = ifSoldNow.NetProceedsRub,
                 RealizedPnlRub = ifSoldNow.RealizedPnlRub,
                 RealizedPnlPercent = ifSoldNow.RealizedPnlPercent,
                 CouponsReceivedRub = ifSoldNow.CouponsReceivedRub,
                 TotalReturnWithCouponsRub = ifSoldNow.TotalReturnWithCouponsRub,
                 PnlAvailable = ifSoldNow.PnlAvailable,
+                TaxEstimateRub = ifSoldNow.TaxEstimateRub,
+                NetAfterTaxRub = ifSoldNow.NetAfterTaxRub,
                 Disclaimer = ifSoldNow.Disclaimer,
             },
             Disclaimer = Disclaimers.Metrics,
@@ -226,6 +244,8 @@ public static class PositionsEndpoints
         Sector = h.Sector,
         Quantity = h.Quantity,
         MarketValueRub = h.MarketValueRub,
+        AccruedPerBondRub = h.AccruedPerBondRub,
+        AccruedTotalRub = h.AccruedPerBondRub * h.Quantity,
         CouponType = h.CouponType.ToString(),
         MaturityDate = h.MaturityDate,
         HorizonDate = h.HorizonDate,
@@ -288,6 +308,12 @@ public sealed record PositionRowDto
     public string? Sector { get; init; }
     public required decimal Quantity { get; init; }
     public required decimal MarketValueRub { get; init; }
+
+    /// <summary>Задача 24: НКД на одну бумагу (см. doc-comment <see cref="Bonds.Core.Models.Position.Accrued"/>).</summary>
+    public decimal AccruedPerBondRub { get; init; }
+
+    /// <summary>Задача 24: НКД на всю позицию = AccruedPerBondRub × Quantity — уже включён в MarketValueRub, показывается как разложение.</summary>
+    public decimal AccruedTotalRub { get; init; }
     public string CurrencyRub => "RUB";
     public required string CouponType { get; init; }
     public required DateOnly MaturityDate { get; init; }
@@ -349,7 +375,12 @@ public sealed record PositionDetailDto
     public required bool HasOffers { get; init; }
 
     public required decimal CleanPrice { get; init; }
+
+    /// <summary>НКД на одну бумагу (см. doc-comment <see cref="Bonds.Core.Models.Position.Accrued"/>).</summary>
     public required decimal AccruedInterest { get; init; }
+
+    /// <summary>Задача 24: НКД на всю позицию = AccruedInterest × Quantity.</summary>
+    public required decimal AccruedTotalRub { get; init; }
     public required decimal DirtyPrice { get; init; }
     public required decimal MarketValueRub { get; init; }
 
@@ -481,13 +512,29 @@ public sealed record OperationItemDto
 public sealed record IfSoldNowDto
 {
     public required decimal MarketValueRub { get; init; }
+
+    /// <summary>Задача 24: MarketValueRub − AccruedTotalRub — «чистая» стоимость остатка без НКД.</summary>
+    public required decimal CleanValueRub { get; init; }
+
+    /// <summary>Задача 24: НКД на всю позицию, уже включённый в MarketValueRub (разложение).</summary>
+    public required decimal AccruedTotalRub { get; init; }
     public required decimal CommissionRub { get; init; }
     public required decimal CommissionRate { get; init; }
+
+    /// <summary>Plan/22 часть E: источник CommissionRate — строка <see cref="CommissionRateSource"/> (UserOverride/EstimatedFromTrades/Default).</summary>
+    public required string CommissionRateSource { get; init; }
     public required decimal NetProceedsRub { get; init; }
     public decimal? RealizedPnlRub { get; init; }
     public decimal? RealizedPnlPercent { get; init; }
     public decimal? CouponsReceivedRub { get; init; }
     public decimal? TotalReturnWithCouponsRub { get; init; }
     public required bool PnlAvailable { get; init; }
+
+    /// <summary>Задача 25: оценка НДФЛ с продажи (13% с прибыли к средней цене входа, average cost) — null, если журнал операций неполон/cost basis недоступен (см. doc-comment IfSoldNowService).</summary>
+    public decimal? TaxEstimateRub { get; init; }
+
+    /// <summary>Задача 25: TotalReturnWithCouponsRub − TaxEstimateRub — итог после оценки налога. Null, если TaxEstimateRub недоступен.</summary>
+    public decimal? NetAfterTaxRub { get; init; }
+
     public required string Disclaimer { get; init; }
 }

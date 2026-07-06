@@ -191,6 +191,32 @@ public sealed class TInvestPortfolioClient : ITInvestPortfolioClient
         }
     }
 
+    public async Task<TInvestTariffInfo?> GetUserTariffAsync(CancellationToken ct = default)
+    {
+        try
+        {
+            var client = await GetClientAsync(ct);
+            var response = await client.Users.GetInfoAsync(new GetInfoRequest(), cancellationToken: ct);
+            if (string.IsNullOrEmpty(response.Tariff))
+            {
+                return null;
+            }
+
+            return new TInvestTariffInfo
+            {
+                Tariff = response.Tariff,
+                PremStatus = response.PremStatus,
+            };
+        }
+        catch (Exception ex) when (ex is Grpc.Core.RpcException or InvalidOperationException)
+        {
+            // InvalidOperationException — токен не настроен (см. GetClientAsync); RpcException —
+            // сбой gRPC. Тариф — необязательный контекст для UI, не должен ронять GET /api/settings.
+            _logger.LogWarning(ex, "T-Invest: failed to fetch user tariff");
+            return null;
+        }
+    }
+
     public async Task<IReadOnlyDictionary<string, TInvestQuote>> GetQuotesAsync(IReadOnlyCollection<string> figis, CancellationToken ct = default)
     {
         var result = new Dictionary<string, TInvestQuote>();

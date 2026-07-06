@@ -12,6 +12,8 @@ function makePosition(overrides: Partial<PositionRow> = {}): PositionRow {
     sector: 'Корп',
     quantity: 10,
     marketValueRub: 100_000,
+    accruedPerBondRub: 0,
+    accruedTotalRub: 0,
     currencyRub: 'RUB',
     couponType: 'Fixed',
     maturityDate: '2030-01-01',
@@ -101,5 +103,20 @@ describe('computePositionsTotals', () => {
   it('does not flag the footnote when there are no floater/indexed positions', () => {
     const totals = computePositionsTotals([makePosition()]);
     expect(totals.hasExcludedFloaters).toBe(false);
+  });
+
+  // ─── Задача 24: суммарный НКД портфеля ──────────────────────────────────────────────────────
+
+  it('sums accruedTotalRub across positions', () => {
+    const totals = computePositionsTotals([
+      makePosition({ positionId: 1, accruedTotalRub: 1_200 }),
+      makePosition({ positionId: 2, accruedTotalRub: 800 }),
+    ]);
+    expect(totals.totalAccruedRub).toBe(2_000);
+  });
+
+  it('returns zero total accrued for an empty portfolio', () => {
+    const totals = computePositionsTotals([]);
+    expect(totals.totalAccruedRub).toBe(0);
   });
 });

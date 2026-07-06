@@ -28,6 +28,14 @@ public class UserSettings
     public decimal? DefaultMaxConcentrationPercent { get; set; }
     public decimal? DurationDriftToleranceYears { get; set; }
 
+    /// <summary>
+    /// Plan/22 часть D: ручной override ставки комиссии брокера — ДОЛЯ (0.0005 = 0.05%), не процент
+    /// (конвенция бэкенда). Null — override не задан, <see cref="Bonds.Core.Interfaces.ICommissionRateProvider"/>
+    /// переходит к автооценке из журнала/дефолту. Валидация диапазона (0, 0.05) — на границе API
+    /// (SettingsEndpoints), не здесь — модель хранит уже провалидированное значение.
+    /// </summary>
+    public decimal? CommissionRateOverride { get; set; }
+
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
 }

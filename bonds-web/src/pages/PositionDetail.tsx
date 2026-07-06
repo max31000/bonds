@@ -33,7 +33,7 @@ import { Disclaimer } from '../components/Disclaimer';
 import { ChartCard, ChartTooltip, CHART_GRID_PROPS, CHART_HEIGHT, CHART_MARGIN } from '../components/charts';
 import { pickAxisTicks } from '../components/charts/axisTicks';
 import type { PositionDetail as PositionDetailDto, PriceHistoryRange } from '../api/types';
-import { formatRub, formatPercent, formatBp, formatNumber, formatDate, formatDaysUntil } from '../utils/format';
+import { formatRub, formatPercent, formatBp, formatNumber, formatDate, commissionSourceLabel, formatDaysUntil } from '../utils/format';
 
 const COUPON_TYPE_LABEL: Record<PositionDetailDto['couponType'], string> = {
   Fixed: 'Фиксированный',
@@ -451,12 +451,17 @@ export function PositionDetail() {
             <Text fw={600} mb="xs">
               Если продать сейчас
             </Text>
-            <SimpleGrid cols={{ base: 2, sm: 4 }}>
+            <SimpleGrid cols={{ base: 2, sm: 5 }}>
               <div>
                 <Text size="xs" c="dimmed">
                   Рыночная стоимость
                 </Text>
                 <Text fw={600}>{formatRub(detail.ifSoldNow.marketValueRub)}</Text>
+                {detail.ifSoldNow.accruedTotalRub > 0 && (
+                  <Text size="xs" c="dimmed" data-testid="if-sold-now-accrued-caption">
+                    в т.ч. НКД {formatRub(detail.ifSoldNow.accruedTotalRub)}
+                  </Text>
+                )}
               </div>
               <div>
                 <Text size="xs" c="dimmed">
@@ -476,19 +481,59 @@ export function PositionDetail() {
               </div>
               <div>
                 <Text size="xs" c="dimmed">
-                  Итог (P&amp;L + купоны)
+                  − НДФЛ (оценка, 13% с прибыли к средней цене входа)
+                </Text>
+                {detail.ifSoldNow.taxEstimateRub !== null ? (
+                  <Text fw={600} c="red" data-testid="if-sold-now-tax-estimate">
+                    −{formatRub(detail.ifSoldNow.taxEstimateRub)}
+                  </Text>
+                ) : (
+                  <Text size="sm" c="dimmed" data-testid="if-sold-now-tax-unavailable">
+                    налог не оценён: журнал операций неполон
+                  </Text>
+                )}
+              </div>
+              <div>
+                <Text size="xs" c="dimmed">
+                  Итог после налога (P&amp;L + купоны − НДФЛ)
                 </Text>
                 {detail.ifSoldNow.pnlAvailable ? (
-                  <Text fw={700} size="lg" c={(detail.ifSoldNow.totalReturnWithCouponsRub ?? 0) >= 0 ? 'green' : 'red'}>
-                    {formatRub(detail.ifSoldNow.totalReturnWithCouponsRub)}
-                  </Text>
+                  detail.ifSoldNow.netAfterTaxRub !== null ? (
+                    <Text
+                      fw={700}
+                      size="lg"
+                      c={detail.ifSoldNow.netAfterTaxRub >= 0 ? 'green' : 'red'}
+                      data-testid="if-sold-now-net-after-tax"
+                    >
+                      {formatRub(detail.ifSoldNow.netAfterTaxRub)}
+                    </Text>
+                  ) : (
+                    <Text size="sm" c="dimmed" data-testid="if-sold-now-net-after-tax-unavailable">
+                      налог не оценён: журнал операций неполон
+                    </Text>
+                  )
                 ) : (
                   <Text size="sm" c="dimmed">
                     Недоступно — журнал операций не покрывает остаток
                   </Text>
                 )}
+                {detail.ifSoldNow.pnlAvailable && (
+                  <Text size="xs" c="dimmed" data-testid="if-sold-now-pretax-caption">
+                    до налога {formatRub(detail.ifSoldNow.totalReturnWithCouponsRub)}
+                  </Text>
+                )}
               </div>
             </SimpleGrid>
+            {detail.ifSoldNow.accruedTotalRub > 0 && (
+              <Text size="xs" c="dimmed" mt="sm" data-testid="if-sold-now-formula">
+                выручка = чистая стоимость {formatRub(detail.ifSoldNow.cleanValueRub)} + НКД{' '}
+                {formatRub(detail.ifSoldNow.accruedTotalRub)} − комиссия {formatRub(detail.ifSoldNow.commissionRub)} ={' '}
+                {formatRub(detail.ifSoldNow.netProceedsRub)}
+              </Text>
+            )}
+            <Text size="xs" c="dimmed" mt="sm" data-testid="if-sold-now-commission-source">
+              Комиссия {formatPercent(detail.ifSoldNow.commissionRate)} — {commissionSourceLabel(detail.ifSoldNow.commissionRateSource)}
+            </Text>
             <Text size="xs" c="dimmed" mt="sm">
               {detail.ifSoldNow.disclaimer}
             </Text>

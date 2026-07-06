@@ -29,6 +29,7 @@ import {
   effectiveYield,
   COUPON_TYPE_LABEL,
   YIELD_TOOLTIP_TEXT,
+  DIRTY_PRICE_TOOLTIP_TEXT,
   type SortKey,
   type SortState,
 } from '../utils/positionsDisplay';
@@ -165,6 +166,11 @@ export function Positions() {
                   Итого по портфелю
                 </Text>
                 <Text fw={700}>{formatRub(totals.totalMarketValueRub)}</Text>
+                {totals.totalAccruedRub > 0 && (
+                  <Text size="xs" c="dimmed" data-testid="accrued-caption-totals-mobile">
+                    в т.ч. НКД {formatRub(totals.totalAccruedRub)}
+                  </Text>
+                )}
                 <Group gap="md" mt={4}>
                   <Text size="xs" c="dimmed">
                     Ср.взв. доходность: <Text span fw={600}>{formatPercent(totals.weightedYield)}</Text>
@@ -193,7 +199,27 @@ export function Positions() {
                   <Table.Th>Бумага</Table.Th>
                   <Table.Th>Эмитент</Table.Th>
                   <Table.Th>Кол-во</Table.Th>
-                  <Table.Th>Рыночная стоимость</Table.Th>
+                  <Table.Th>
+                    <Group gap={4} wrap="nowrap">
+                      <Text fw={700} size="sm">
+                        Рыночная стоимость
+                      </Text>
+                      <Tooltip label={DIRTY_PRICE_TOOLTIP_TEXT} multiline w={280} withArrow>
+                        <ActionIcon
+                          variant="subtle"
+                          color="gray"
+                          size="xs"
+                          radius="xl"
+                          data-testid="dirty-price-info-icon"
+                          aria-label="Пояснение к грязным ценам"
+                        >
+                          <Text size="xs" fw={700}>
+                            ?
+                          </Text>
+                        </ActionIcon>
+                      </Tooltip>
+                    </Group>
+                  </Table.Th>
                   <Table.Th>Ср. цена входа</Table.Th>
                   <Table.Th>
                     <UnstyledButton onClick={() => toggleSort('pnl')} data-testid="sort-pnl">
@@ -268,6 +294,11 @@ export function Positions() {
                       <Table.Td>{row.quantity}</Table.Td>
                       <Table.Td>
                         <LiveMarketValueCell staticValueRub={row.marketValueRub} positionId={row.positionId} />
+                        {row.accruedTotalRub > 0 && (
+                          <Text size="xs" c="dimmed" data-testid={`accrued-caption-${row.positionId}`}>
+                            в т.ч. НКД {formatRub(row.accruedTotalRub)}
+                          </Text>
+                        )}
                       </Table.Td>
                       <Table.Td>{formatRub(row.averageCostRub)}</Table.Td>
                       <Table.Td>
@@ -358,7 +389,14 @@ export function Positions() {
                   <Table.Th>Итого</Table.Th>
                   <Table.Th />
                   <Table.Th />
-                  <Table.Th>{formatRub(totals.totalMarketValueRub)}</Table.Th>
+                  <Table.Th>
+                    {formatRub(totals.totalMarketValueRub)}
+                    {totals.totalAccruedRub > 0 && (
+                      <Text size="xs" c="dimmed" fw={400} data-testid="accrued-caption-totals">
+                        в т.ч. НКД {formatRub(totals.totalAccruedRub)}
+                      </Text>
+                    )}
+                  </Table.Th>
                   <Table.Th />
                   <Table.Th />
                   <Table.Th />

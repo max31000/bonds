@@ -15,6 +15,10 @@ export interface PositionRow {
   sector: string | null;
   quantity: number;
   marketValueRub: number;
+  /** Задача 24: НКД на одну бумагу — уже включён в marketValueRub, показывается как разложение. */
+  accruedPerBondRub: number;
+  /** Задача 24: НКД на всю позицию = accruedPerBondRub × quantity. */
+  accruedTotalRub: number;
   currencyRub: 'RUB';
   couponType: CouponType;
   maturityDate: string;
@@ -110,14 +114,24 @@ export interface OperationItem {
 /** «Если продать сейчас» — GET /api/positions/{id} → ifSoldNow. */
 export interface IfSoldNow {
   marketValueRub: number;
+  /** Задача 24: marketValueRub − accruedTotalRub — «чистая» стоимость остатка без НКД. */
+  cleanValueRub: number;
+  /** Задача 24: НКД на всю позицию, уже включённый в marketValueRub (разложение). */
+  accruedTotalRub: number;
   commissionRub: number;
   commissionRate: number;
+  /** Plan/22 часть E: источник commissionRate (override/оценка из журнала/дефолт). */
+  commissionRateSource: CommissionRateSource;
   netProceedsRub: number;
   realizedPnlRub: number | null;
   realizedPnlPercent: number | null;
   couponsReceivedRub: number | null;
   totalReturnWithCouponsRub: number | null;
   pnlAvailable: boolean;
+  /** Задача 25: оценка НДФЛ с продажи (13% с прибыли к средней цене входа) — null, если журнал операций неполон/cost basis недоступен. */
+  taxEstimateRub: number | null;
+  /** Задача 25: totalReturnWithCouponsRub − taxEstimateRub — итог после налога. Null, если taxEstimateRub недоступен. */
+  netAfterTaxRub: number | null;
   disclaimer: string;
 }
 
@@ -140,7 +154,10 @@ export interface PositionDetail {
   hasOffers: boolean;
 
   cleanPrice: number;
+  /** НКД на одну бумагу. */
   accruedInterest: number;
+  /** Задача 24: НКД на всю позицию = accruedInterest × quantity. */
+  accruedTotalRub: number;
   dirtyPrice: number;
   marketValueRub: number;
 
@@ -471,6 +488,75 @@ export interface ReplacementResponse {
   breakEvenYears: number | null;
   yieldDataIncomplete: boolean;
   disclaimer: string;
+
+  /** Plan/22 часть E: фактически применённая ставка продажи/покупки — ДОЛЯ. */
+  sellCommissionRateUsed: number;
+  buyCommissionRateUsed: number;
+  /** Plan/22 часть E: источник ставки — CommissionRateSource либо "ExplicitRequest" (обе ставки заданы явно в запросе). */
+  commissionRateSource: CommissionRateSource | 'ExplicitRequest';
+}
+
+// ---- GET /api/analytics/replacement-matrix (plan/23 §A) ----
+
+/** Причина, по которой пара НЕ попала в bestPairs, но осталась видимой. */
+export type RejectedPairReason = 'NotProfitable' | 'DurationMismatch';
+
+/** Одна из лучших пар «держать hold vs переложиться в target» — netBenefitRub > 0. */
+export interface MatrixPair {
+  holdPositionId: number;
+  holdInstrumentId: number;
+  holdName: string | null;
+  targetPositionId: number;
+  targetInstrumentId: number;
+  targetName: string | null;
+  /** true — target это watchlist-бумага без позиции в портфеле. */
+  isWatchlistTarget: boolean;
+
+  /** Спред эффективных доходностей (targetYield - holdYield) — ДОЛЯ. */
+  spreadFraction: number;
+  /** Капитал, реально переходящий в target (MarketValueRub hold минус комиссия продажи), в рублях. */
+  capitalRub: number;
+  horizonYears: number;
+  /** Валовая выгода (спред × капитал × горизонт) ДО вычета комиссий, в рублях. */
+  grossGainRub: number;
+  sellCommissionRub: number;
+  buyCommissionRub: number;
+  /** GrossGainRub - обе комиссии — чистая выгода в рублях, всегда > 0 для bestPairs. */
+  netBenefitRub: number;
+  /** NetBenefitRub / CapitalRub / HorizonYears — ДОЛЯ (не процент); фронт форматирует через formatPercent. */
+  annualizedBenefitFraction: number | null;
+  /** Ставка комиссии, применённая к обеим сделкам пары — ДОЛЯ. */
+  commissionRateUsed: number;
+  commissionRateSource: CommissionRateSource;
+  /** Задача 25: оценка НДФЛ от продажи hold-позиции (13% с прибыли к средней цене входа) — null, если cost basis hold-позиции недоступен/журнал неполон. */
+  sellTaxEstimateRub: number | null;
+  /** Задача 25: netBenefitRub − sellTaxEstimateRub — выгода после налога. Null, если sellTaxEstimateRub недоступен (ранжирование использует netBenefitAfterTaxRub ?? netBenefitRub). */
+  netBenefitAfterTaxRub: number | null;
+}
+
+/** Пара, не попавшая в bestPairs, но видимая с причиной отказа (plan/23 §A.4). */
+export interface RejectedPair {
+  holdPositionId: number;
+  holdInstrumentId: number;
+  holdName: string | null;
+  targetPositionId: number;
+  targetInstrumentId: number;
+  targetName: string | null;
+  isWatchlistTarget: boolean;
+  reason: RejectedPairReason;
+  /** Заполнено только для reason="NotProfitable" — чистая выгода в рублях (<= 0). */
+  netBenefitRub: number | null;
+}
+
+/** Ответ GET /api/analytics/replacement-matrix — честный перебор всех пар (plan/23). */
+export interface ReplacementMatrixResponse {
+  /** Пары с netBenefit > 0, отсортированы по netBenefit убыв. */
+  bestPairs: MatrixPair[];
+  /** Пары с netBenefit <= 0 либо вне окна дюраций — targetYield <= holdYield пары сюда не попадают вовсе. */
+  rejectedPairs: RejectedPair[];
+  /** bestPairs.length + rejectedPairs.length ДО срабатывания предохранителя — для пустого состояния («рассмотрено N пар»). */
+  totalConsideredPairs: number;
+  disclaimer: string;
 }
 
 // ---- GET /api/analytics/allocation (plan/17 §B) ----
@@ -487,6 +573,12 @@ export interface AllocationLine {
   estimatedCostRub: number;
   effectiveYield: number;
   lotSizeAssumed: boolean;
+  /** Задача 24: разложение estimatedCostRub — чистая цена всей докупки (без НКД/комиссии). cleanCostRub + accruedCostRub + commissionCostRub = estimatedCostRub. */
+  cleanCostRub: number;
+  /** Задача 24: НКД в составе estimatedCostRub. */
+  accruedCostRub: number;
+  /** Задача 24: комиссия покупки в составе estimatedCostRub. */
+  commissionCostRub: number;
 }
 
 /** Кандидат, не получивший докупку, и причина. */
@@ -504,6 +596,10 @@ export interface AllocationResponse {
   skipped: AllocationSkip[];
   leftoverRub: number;
   disclaimer: string;
+
+  /** Plan/22 часть E: ставка комиссии покупки, применённая к цене лота — ДОЛЯ. */
+  commissionRateUsed: number;
+  commissionRateSource: CommissionRateSource;
 }
 
 // ---- GET/POST /api/watchlist, DELETE /api/watchlist/{id} (plan/20 §A) ----
@@ -559,6 +655,19 @@ export interface WatchlistCreateResponse {
 
 // ---- GET/PUT /api/settings, PUT /api/settings/tinvest-token (см. plan/09c §B.8) ----
 
+/** Read-only авто-оценка ставки комиссии из журнала операций (plan/22 часть A/D). Null — журнал не позволяет оценить (нет сделок/оборот 0). */
+export interface CommissionAutoEstimate {
+  /** Оценённая ставка — ДОЛЯ (0.00046 = 0.046%), не процент. */
+  rate: number;
+  turnoverRub: number;
+  feeTotalRub: number;
+  tradeCount: number;
+  windowMonths: number;
+}
+
+/** Источник эффективной ставки комиссии (plan/22 часть C). */
+export type CommissionRateSource = 'UserOverride' | 'EstimatedFromTrades' | 'Default';
+
 /** Настройки пользователя — пороги триггеров сигналов и базовая валюта. */
 export interface SettingsResponse {
   baseCurrency: 'RUB';
@@ -571,12 +680,28 @@ export interface SettingsResponse {
   maturityWindowDaysForAlternativeComparison: number;
   defaultMaxConcentrationPercent: number;
   durationDriftToleranceYears: number;
+
+  /** Plan/22 часть D: ручной override ставки комиссии — ДОЛЯ (0.0005 = 0.05%). Null — не задан. UI вводит в %, конвертация на границе API. */
+  commissionRateOverride: number | null;
+  /** Read-only: авто-оценка ставки из журнала операций (часть A). Null — журнал не позволяет оценить. */
+  commissionAutoEstimate: CommissionAutoEstimate | null;
+  /** Read-only: имя тарифа T-Invest (GetInfo) — только контекст, не участвует в расчётах. Null — не удалось получить. */
+  tInvestTariff: string | null;
+  /** Read-only: ставка, которая реально применяется расчётами (резолвер части C) — ДОЛЯ. */
+  commissionEffectiveRate: number;
+  /** Read-only: источник commissionEffectiveRate. */
+  commissionEffectiveSource: CommissionRateSource;
 }
 
-/** Тело PUT /api/settings — все поля кроме токена/статуса токена (read-only производные). */
+/** Тело PUT /api/settings — все поля кроме токена/статуса токена и read-only контекста комиссии. */
 export type SettingsUpdateRequest = Omit<
   SettingsResponse,
-  'tInvestTokenConfigured' | 'tInvestTokenMasked'
+  | 'tInvestTokenConfigured'
+  | 'tInvestTokenMasked'
+  | 'commissionAutoEstimate'
+  | 'tInvestTariff'
+  | 'commissionEffectiveRate'
+  | 'commissionEffectiveSource'
 >;
 
 /** Ответ PUT /api/settings/tinvest-token. */

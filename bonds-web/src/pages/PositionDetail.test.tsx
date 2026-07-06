@@ -38,6 +38,7 @@ const baseDetail: PositionDetailDto = {
   hasOffers: false,
   cleanPrice: 1000,
   accruedInterest: 12.5,
+  accruedTotalRub: 1250,
   dirtyPrice: 1012.5,
   marketValueRub: 101250,
   ytmEffective: 0.125,
@@ -78,15 +79,20 @@ const baseDetail: PositionDetailDto = {
   ],
   ifSoldNow: {
     marketValueRub: 101250,
+    cleanValueRub: 100000,
+    accruedTotalRub: 1250,
     commissionRub: 303.75,
     commissionRate: 0.003,
+    commissionRateSource: 'Default',
     netProceedsRub: 100946.25,
     realizedPnlRub: 2946.25,
     realizedPnlPercent: 0.0301,
     couponsReceivedRub: 3500,
     totalReturnWithCouponsRub: 6446.25,
     pnlAvailable: true,
-    disclaimer: 'Оценочный расчёт, налог не учтён.',
+    taxEstimateRub: 383.01,
+    netAfterTaxRub: 6063.24,
+    disclaimer: 'Оценочный расчёт, налог оценён приблизительно.',
   },
   disclaimer: 'Тестовый дисклеймер карточки позиции.',
 };
@@ -118,6 +124,93 @@ describe('PositionDetail', () => {
 
     await waitFor(() => expect(screen.getByTestId('if-sold-now-net-proceeds')).toBeInTheDocument());
     expect(screen.getByTestId('if-sold-now-net-proceeds')).toHaveTextContent('100');
+  });
+
+  // ─── T-25: строка налога и итог после налога в если-продать-сейчас ─────────────────────────
+
+  it('shows the tax estimate row and the after-tax total when tax is available', async () => {
+    server.use(http.get('*/api/positions/1', () => HttpResponse.json(baseDetail)));
+
+    renderDetail();
+
+    await waitFor(() => expect(screen.getByTestId('if-sold-now-tax-estimate')).toBeInTheDocument());
+    expect(screen.getByTestId('if-sold-now-tax-estimate').textContent).toMatch(/383/);
+
+    const netAfterTax = screen.getByTestId('if-sold-now-net-after-tax');
+    expect(netAfterTax.textContent).toMatch(/6[\s]063/);
+
+    expect(screen.getByTestId('if-sold-now-pretax-caption').textContent).toMatch(/6[\s]446/);
+  });
+
+  it('shows "налог не оценён" captions when the tax cannot be estimated (incomplete journal)', async () => {
+    server.use(
+      http.get('*/api/positions/1', () =>
+        HttpResponse.json({
+          ...baseDetail,
+          ifSoldNow: { ...baseDetail.ifSoldNow, taxEstimateRub: null, netAfterTaxRub: null },
+        }),
+      ),
+    );
+
+    renderDetail();
+
+    await waitFor(() => expect(screen.getByTestId('if-sold-now-tax-unavailable')).toBeInTheDocument());
+    expect(screen.getByTestId('if-sold-now-tax-unavailable').textContent).toMatch(/журнал операций неполон/);
+    expect(screen.getByTestId('if-sold-now-net-after-tax-unavailable').textContent).toMatch(/журнал операций неполон/);
+    expect(screen.queryByTestId('if-sold-now-tax-estimate')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('if-sold-now-net-after-tax')).not.toBeInTheDocument();
+  });
+
+  // ─── T-24: разложение выручки на чистую стоимость + НКД − комиссию ────────────────────────
+
+  it('shows the accrued caption and the "если продать" formula when accruedTotalRub is positive', async () => {
+    server.use(http.get('*/api/positions/1', () => HttpResponse.json(baseDetail)));
+
+    renderDetail();
+
+    await waitFor(() => expect(screen.getByTestId('if-sold-now-accrued-caption')).toBeInTheDocument());
+    expect(screen.getByTestId('if-sold-now-accrued-caption')).toHaveTextContent('1 250');
+
+    const formula = screen.getByTestId('if-sold-now-formula');
+    expect(formula).toHaveTextContent('чистая стоимость');
+    expect(formula).toHaveTextContent('100 000'); // cleanValueRub
+    expect(formula).toHaveTextContent('НКД');
+    expect(formula).toHaveTextContent('1 250'); // accruedTotalRub
+    expect(formula).toHaveTextContent('комиссия');
+  });
+
+  it('hides the accrued caption and formula when accruedTotalRub is zero', async () => {
+    server.use(
+      http.get('*/api/positions/1', () =>
+        HttpResponse.json({
+          ...baseDetail,
+          ifSoldNow: { ...baseDetail.ifSoldNow, accruedTotalRub: 0, cleanValueRub: baseDetail.ifSoldNow.marketValueRub },
+        }),
+      ),
+    );
+
+    renderDetail();
+
+    await waitFor(() => expect(screen.getByTestId('if-sold-now-net-proceeds')).toBeInTheDocument());
+    expect(screen.queryByTestId('if-sold-now-accrued-caption')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('if-sold-now-formula')).not.toBeInTheDocument();
+  });
+
+  // Plan/22 часть E: подпись с применённой ставкой комиссии и её источником.
+  it('shows the commission rate source caption in the если-продать-сейчас card', async () => {
+    server.use(
+      http.get('*/api/positions/1', () =>
+        HttpResponse.json({
+          ...baseDetail,
+          ifSoldNow: { ...baseDetail.ifSoldNow, commissionRateSource: 'EstimatedFromTrades' },
+        }),
+      ),
+    );
+
+    renderDetail();
+
+    await waitFor(() => expect(screen.getByTestId('if-sold-now-commission-source')).toBeInTheDocument());
+    expect(screen.getByTestId('if-sold-now-commission-source')).toHaveTextContent('из ваших сделок');
   });
 
   it('shows past and future rows in the instrument calendar', async () => {

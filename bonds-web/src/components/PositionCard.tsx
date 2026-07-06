@@ -135,6 +135,16 @@ export function PositionCard({ row, onClick }: { row: PositionRow; onClick: () =
             </Text>
             <Text size="xs">{formatRub(row.averageCostRub)}</Text>
           </Group>
+          {row.accruedTotalRub > 0 && (
+            <Group justify="space-between">
+              <Text size="xs" c="dimmed">
+                в т.ч. НКД
+              </Text>
+              <Text size="xs" data-testid={`accrued-caption-card-${row.positionId}`}>
+                {formatRub(row.accruedTotalRub)}
+              </Text>
+            </Group>
+          )}
           <Group justify="space-between">
             <Text size="xs" c="dimmed">
               Купоны получено

@@ -116,6 +116,10 @@ public static class CashAllocationService
                 leftover -= costRub;
                 issuerValueAfterAllocation[issuerKey] = issuerValue + costRub;
 
+                // Задача 24: разложение costRub (вся докупка) на компоненты — тот же множитель
+                // "число купленных лотов", что и у costRub относительно PricePerLotRub.
+                var lotsBought = candidate.LotSize > 0m ? quantity / candidate.LotSize : 0m;
+
                 allocations.Add(new CashAllocationLine
                 {
                     InstrumentId = candidate.InstrumentId,
@@ -125,6 +129,9 @@ public static class CashAllocationService
                     EstimatedCostRub = costRub,
                     EffectiveYield = candidate.EffectiveYield.Value,
                     LotSizeAssumed = candidate.LotSizeIsAssumed,
+                    CleanCostRub = candidate.CleanPriceRub * lotsBought,
+                    AccruedCostRub = candidate.AccruedRub * lotsBought,
+                    CommissionCostRub = candidate.CommissionRub * lotsBought,
                 });
             }
             else
@@ -163,6 +170,20 @@ public sealed record CashAllocationCandidate
     /// <summary>Грязная цена (цена + НКД) одного лота с учётом комиссии покупки (<see cref="SwitchAnalysisService.DefaultCommissionRate"/> либо переопределённая ставка) — сколько рублей стоит купить <see cref="LotSize"/> штук.</summary>
     public required decimal PricePerLotRub { get; init; }
 
+    /// <summary>
+    /// Задача 24: разложение <see cref="PricePerLotRub"/> на компоненты (чистая цена + НКД + комиссия)
+    /// для одного лота — только для отображения в UI («купить N шт × цена (чистая + НКД + комиссия)»),
+    /// не участвует в расчёте распределения (тот использует только <see cref="PricePerLotRub"/>).
+    /// Сумма CleanPriceRub + AccruedRub + CommissionRub должна равняться PricePerLotRub.
+    /// </summary>
+    public decimal CleanPriceRub { get; init; }
+
+    /// <summary>Задача 24: НКД в составе цены одного лота — см. <see cref="CleanPriceRub"/>.</summary>
+    public decimal AccruedRub { get; init; }
+
+    /// <summary>Задача 24: комиссия покупки в составе цены одного лота — см. <see cref="CleanPriceRub"/>.</summary>
+    public decimal CommissionRub { get; init; }
+
     /// <summary>Размер лота в штуках. У большинства корп. облигаций 1 — если источник (Instrument/T-Invest) не отдаёт лот, берётся 1 и помечается <see cref="LotSizeIsAssumed"/>.</summary>
     public required decimal LotSize { get; init; }
 
@@ -195,6 +216,19 @@ public sealed record CashAllocationLine
 
     /// <summary>true — размер лота принят равным 1 по умолчанию (источник не предоставил лот).</summary>
     public required bool LotSizeAssumed { get; init; }
+
+    /// <summary>
+    /// Задача 24: разложение EstimatedCostRub на всю докупку (не на 1 лот) — чистая цена всех купленных
+    /// бумаг. CleanCostRub + AccruedCostRub + CommissionCostRub = EstimatedCostRub (с точностью до
+    /// округления). 0, если у кандидата не было разложения (см. <see cref="CashAllocationCandidate.CleanPriceRub"/>).
+    /// </summary>
+    public decimal CleanCostRub { get; init; }
+
+    /// <summary>Задача 24: НКД в составе EstimatedCostRub — см. <see cref="CleanCostRub"/>.</summary>
+    public decimal AccruedCostRub { get; init; }
+
+    /// <summary>Задача 24: комиссия покупки в составе EstimatedCostRub — см. <see cref="CleanCostRub"/>.</summary>
+    public decimal CommissionCostRub { get; init; }
 }
 
 /// <summary>Почему кандидат пропущен и не получил докупку.</summary>
