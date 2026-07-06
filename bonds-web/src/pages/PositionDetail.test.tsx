@@ -80,6 +80,7 @@ const baseDetail: PositionDetailDto = {
     marketValueRub: 101250,
     commissionRub: 303.75,
     commissionRate: 0.003,
+    commissionRateSource: 'Default',
     netProceedsRub: 100946.25,
     realizedPnlRub: 2946.25,
     realizedPnlPercent: 0.0301,
@@ -118,6 +119,23 @@ describe('PositionDetail', () => {
 
     await waitFor(() => expect(screen.getByTestId('if-sold-now-net-proceeds')).toBeInTheDocument());
     expect(screen.getByTestId('if-sold-now-net-proceeds')).toHaveTextContent('100');
+  });
+
+  // Plan/22 часть E: подпись с применённой ставкой комиссии и её источником.
+  it('shows the commission rate source caption in the если-продать-сейчас card', async () => {
+    server.use(
+      http.get('*/api/positions/1', () =>
+        HttpResponse.json({
+          ...baseDetail,
+          ifSoldNow: { ...baseDetail.ifSoldNow, commissionRateSource: 'EstimatedFromTrades' },
+        }),
+      ),
+    );
+
+    renderDetail();
+
+    await waitFor(() => expect(screen.getByTestId('if-sold-now-commission-source')).toBeInTheDocument());
+    expect(screen.getByTestId('if-sold-now-commission-source')).toHaveTextContent('из ваших сделок');
   });
 
   it('shows past and future rows in the instrument calendar', async () => {

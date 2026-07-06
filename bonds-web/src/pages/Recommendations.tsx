@@ -19,7 +19,7 @@ import {
 import { useRecommendationsStore } from '../store/useRecommendationsStore';
 import { useWatchlistStore } from '../store/useWatchlistStore';
 import { Disclaimer } from '../components/Disclaimer';
-import { formatRub, formatPercent, formatNumber, formatDate } from '../utils/format';
+import { formatRub, formatPercent, formatNumber, formatDate, commissionSourceLabel } from '../utils/format';
 import type { ComparisonRow } from '../api/types';
 
 /** Карточка одного sell-кандидата с бейджами-причинами (plan/17 §A.1). Формулировки — оценочные («кандидат»), не «продайте». */
@@ -177,6 +177,9 @@ function ReplacementsSection() {
                   <>, окупится за {formatNumber(pair.result.breakEvenYears * 12, 0)} мес</>
                 )}
               </Text>
+              <Text size="xs" c="dimmed">
+                комиссия {formatPercent(pair.result.sellCommissionRateUsed)} — {commissionSourceLabel(pair.result.commissionRateSource)}
+              </Text>
             </Paper>
           ))}
         </SimpleGrid>
@@ -257,6 +260,10 @@ function AllocationSection() {
           )}
           <Text size="sm" fw={600} data-testid="allocation-leftover">
             На счету останется {formatRub(allocation.leftoverRub)}
+          </Text>
+          <Text size="xs" c="dimmed" data-testid="allocation-commission-source">
+            Цена лота учитывает комиссию покупки {formatPercent(allocation.commissionRateUsed)} —{' '}
+            {commissionSourceLabel(allocation.commissionRateSource)}
           </Text>
           <Disclaimer text={allocation.disclaimer} />
         </Stack>

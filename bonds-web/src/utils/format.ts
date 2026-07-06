@@ -107,6 +107,24 @@ export function formatNumber(value: number | null | undefined, fractionDigits = 
   return value.toFixed(fractionDigits);
 }
 
+/**
+ * Человекочитаемый маппинг источника эффективной ставки комиссии (plan/22 части D/E) —
+ * переиспользуется экраном настроек и подписями на карточках замен/аллокации/«если продать сейчас».
+ */
+export function commissionSourceLabel(source: 'UserOverride' | 'EstimatedFromTrades' | 'Default' | 'ExplicitRequest'): string {
+  switch (source) {
+    case 'UserOverride':
+      return 'ваш override в настройках';
+    case 'EstimatedFromTrades':
+      return 'из ваших сделок';
+    case 'ExplicitRequest':
+      return 'указана явно';
+    case 'Default':
+    default:
+      return 'дефолт 0.3%';
+  }
+}
+
 /** Форматирует месяц вида "2026-07" в человекочитаемый "июль 2026". */
 export function formatMonthLabel(month: string | null | undefined): string {
   if (!month) return '—';

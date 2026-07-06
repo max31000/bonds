@@ -33,7 +33,7 @@ import { Disclaimer } from '../components/Disclaimer';
 import { ChartCard, ChartTooltip, CHART_GRID_PROPS, CHART_HEIGHT, CHART_MARGIN } from '../components/charts';
 import { pickAxisTicks } from '../components/charts/axisTicks';
 import type { PositionDetail as PositionDetailDto, PriceHistoryRange } from '../api/types';
-import { formatRub, formatPercent, formatBp, formatNumber, formatDate, formatDaysUntil } from '../utils/format';
+import { formatRub, formatPercent, formatBp, formatNumber, formatDate, commissionSourceLabel, formatDaysUntil } from '../utils/format';
 
 const COUPON_TYPE_LABEL: Record<PositionDetailDto['couponType'], string> = {
   Fixed: 'Фиксированный',
@@ -489,6 +489,9 @@ export function PositionDetail() {
                 )}
               </div>
             </SimpleGrid>
+            <Text size="xs" c="dimmed" mt="sm" data-testid="if-sold-now-commission-source">
+              Комиссия {formatPercent(detail.ifSoldNow.commissionRate)} — {commissionSourceLabel(detail.ifSoldNow.commissionRateSource)}
+            </Text>
             <Text size="xs" c="dimmed" mt="sm">
               {detail.ifSoldNow.disclaimer}
             </Text>

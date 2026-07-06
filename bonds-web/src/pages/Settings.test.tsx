@@ -32,6 +32,11 @@ const baseSettings: SettingsResponse = {
   maturityWindowDaysForAlternativeComparison: 30,
   defaultMaxConcentrationPercent: 25,
   durationDriftToleranceYears: 0.5,
+  commissionRateOverride: null,
+  commissionAutoEstimate: null,
+  tInvestTariff: null,
+  commissionEffectiveRate: 0.003,
+  commissionEffectiveSource: 'Default',
 };
 
 describe('Settings', () => {
@@ -140,5 +145,98 @@ describe('Settings', () => {
     renderSettings();
 
     await waitFor(() => expect(screen.getByTestId('settings-error')).toBeInTheDocument());
+  });
+
+  // Plan/22 часть D: блок «Комиссия брокера» — тариф T-Invest, авто-оценка из журнала, применённая ставка+источник.
+  describe('commission section (plan/22)', () => {
+    it('shows tariff, auto-estimate, and effective rate from the journal', async () => {
+      server.use(
+        http.get('*/api/settings', () =>
+          HttpResponse.json({
+            ...baseSettings,
+            tInvestTariff: 'Инвестор',
+            commissionAutoEstimate: {
+              rate: 0.00046,
+              turnoverRub: 150000,
+              feeTotalRub: 69,
+              tradeCount: 23,
+              windowMonths: 6,
+            },
+            commissionEffectiveRate: 0.00046,
+            commissionEffectiveSource: 'EstimatedFromTrades',
+          }),
+        ),
+      );
+
+      renderSettings();
+
+      await waitFor(() => expect(screen.getByTestId('commission-section')).toBeInTheDocument());
+      expect(screen.getByTestId('commission-tariff')).toHaveTextContent('Инвестор');
+      expect(screen.getByTestId('commission-auto-estimate')).toHaveTextContent('23 сделок');
+      expect(screen.getByTestId('commission-effective')).toHaveTextContent('из ваших сделок');
+    });
+
+    it('shows a placeholder when the journal has no estimate and effective rate falls back to default', async () => {
+      server.use(http.get('*/api/settings', () => HttpResponse.json(baseSettings)));
+
+      renderSettings();
+
+      await waitFor(() => expect(screen.getByTestId('commission-section')).toBeInTheDocument());
+      expect(screen.getByTestId('commission-tariff')).toHaveTextContent('—');
+      expect(screen.getByTestId('commission-auto-estimate')).toHaveTextContent('недостаточно данных');
+      expect(screen.getByTestId('commission-effective')).toHaveTextContent('дефолт 0.3%');
+    });
+
+    it('converts the percent input to a fraction when saving an override', async () => {
+      server.use(
+        http.get('*/api/settings', () => HttpResponse.json(baseSettings)),
+        http.put('*/api/settings', async ({ request }) => {
+          const body = (await request.json()) as Record<string, unknown>;
+          expect(body.commissionRateOverride).toBeCloseTo(0.0005);
+          return HttpResponse.json({
+            ...baseSettings,
+            commissionRateOverride: 0.0005,
+            commissionEffectiveRate: 0.0005,
+            commissionEffectiveSource: 'UserOverride',
+          });
+        }),
+      );
+
+      renderSettings();
+
+      await waitFor(() => expect(screen.getByTestId('commission-override-input')).toBeInTheDocument());
+
+      const { default: userEvent } = await import('@testing-library/user-event');
+      const input = screen.getByTestId('commission-override-input') as HTMLInputElement;
+      await userEvent.clear(input);
+      await userEvent.type(input, '0.05');
+      await userEvent.click(screen.getByTestId('commission-save'));
+
+      await waitFor(() => expect(screen.getByText('Комиссия сохранена')).toBeInTheDocument());
+    });
+
+    it('shows an error notification when the override is out of range (422)', async () => {
+      server.use(
+        http.get('*/api/settings', () => HttpResponse.json(baseSettings)),
+        http.put('*/api/settings', () =>
+          HttpResponse.json(
+            { error: 'Ставка комиссии должна быть в диапазоне (0, 0.05)', type: 'ValidationException' },
+            { status: 422 },
+          ),
+        ),
+      );
+
+      renderSettings();
+
+      await waitFor(() => expect(screen.getByTestId('commission-override-input')).toBeInTheDocument());
+
+      const { default: userEvent } = await import('@testing-library/user-event');
+      const input = screen.getByTestId('commission-override-input') as HTMLInputElement;
+      await userEvent.clear(input);
+      await userEvent.type(input, '10');
+      await userEvent.click(screen.getByTestId('commission-save'));
+
+      await waitFor(() => expect(screen.getByText('Не удалось сохранить комиссию')).toBeInTheDocument());
+    });
   });
 });

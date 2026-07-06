@@ -112,6 +112,8 @@ export interface IfSoldNow {
   marketValueRub: number;
   commissionRub: number;
   commissionRate: number;
+  /** Plan/22 часть E: источник commissionRate (override/оценка из журнала/дефолт). */
+  commissionRateSource: CommissionRateSource;
   netProceedsRub: number;
   realizedPnlRub: number | null;
   realizedPnlPercent: number | null;
@@ -471,6 +473,12 @@ export interface ReplacementResponse {
   breakEvenYears: number | null;
   yieldDataIncomplete: boolean;
   disclaimer: string;
+
+  /** Plan/22 часть E: фактически применённая ставка продажи/покупки — ДОЛЯ. */
+  sellCommissionRateUsed: number;
+  buyCommissionRateUsed: number;
+  /** Plan/22 часть E: источник ставки — CommissionRateSource либо "ExplicitRequest" (обе ставки заданы явно в запросе). */
+  commissionRateSource: CommissionRateSource | 'ExplicitRequest';
 }
 
 // ---- GET /api/analytics/allocation (plan/17 §B) ----
@@ -504,6 +512,10 @@ export interface AllocationResponse {
   skipped: AllocationSkip[];
   leftoverRub: number;
   disclaimer: string;
+
+  /** Plan/22 часть E: ставка комиссии покупки, применённая к цене лота — ДОЛЯ. */
+  commissionRateUsed: number;
+  commissionRateSource: CommissionRateSource;
 }
 
 // ---- GET/POST /api/watchlist, DELETE /api/watchlist/{id} (plan/20 §A) ----
@@ -559,6 +571,19 @@ export interface WatchlistCreateResponse {
 
 // ---- GET/PUT /api/settings, PUT /api/settings/tinvest-token (см. plan/09c §B.8) ----
 
+/** Read-only авто-оценка ставки комиссии из журнала операций (plan/22 часть A/D). Null — журнал не позволяет оценить (нет сделок/оборот 0). */
+export interface CommissionAutoEstimate {
+  /** Оценённая ставка — ДОЛЯ (0.00046 = 0.046%), не процент. */
+  rate: number;
+  turnoverRub: number;
+  feeTotalRub: number;
+  tradeCount: number;
+  windowMonths: number;
+}
+
+/** Источник эффективной ставки комиссии (plan/22 часть C). */
+export type CommissionRateSource = 'UserOverride' | 'EstimatedFromTrades' | 'Default';
+
 /** Настройки пользователя — пороги триггеров сигналов и базовая валюта. */
 export interface SettingsResponse {
   baseCurrency: 'RUB';
@@ -571,12 +596,28 @@ export interface SettingsResponse {
   maturityWindowDaysForAlternativeComparison: number;
   defaultMaxConcentrationPercent: number;
   durationDriftToleranceYears: number;
+
+  /** Plan/22 часть D: ручной override ставки комиссии — ДОЛЯ (0.0005 = 0.05%). Null — не задан. UI вводит в %, конвертация на границе API. */
+  commissionRateOverride: number | null;
+  /** Read-only: авто-оценка ставки из журнала операций (часть A). Null — журнал не позволяет оценить. */
+  commissionAutoEstimate: CommissionAutoEstimate | null;
+  /** Read-only: имя тарифа T-Invest (GetInfo) — только контекст, не участвует в расчётах. Null — не удалось получить. */
+  tInvestTariff: string | null;
+  /** Read-only: ставка, которая реально применяется расчётами (резолвер части C) — ДОЛЯ. */
+  commissionEffectiveRate: number;
+  /** Read-only: источник commissionEffectiveRate. */
+  commissionEffectiveSource: CommissionRateSource;
 }
 
-/** Тело PUT /api/settings — все поля кроме токена/статуса токена (read-only производные). */
+/** Тело PUT /api/settings — все поля кроме токена/статуса токена и read-only контекста комиссии. */
 export type SettingsUpdateRequest = Omit<
   SettingsResponse,
-  'tInvestTokenConfigured' | 'tInvestTokenMasked'
+  | 'tInvestTokenConfigured'
+  | 'tInvestTokenMasked'
+  | 'commissionAutoEstimate'
+  | 'tInvestTariff'
+  | 'commissionEffectiveRate'
+  | 'commissionEffectiveSource'
 >;
 
 /** Ответ PUT /api/settings/tinvest-token. */

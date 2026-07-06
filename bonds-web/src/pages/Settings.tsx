@@ -17,9 +17,10 @@ import {
 import { useForm } from '@mantine/form';
 import { notifications } from '@mantine/notifications';
 import { useSettingsStore } from '../store/useSettingsStore';
+import { commissionSourceLabel, formatPercent, formatRub } from '../utils/format';
 import type { SettingsUpdateRequest } from '../api/types';
 
-type ThresholdsForm = Omit<SettingsUpdateRequest, 'baseCurrency'>;
+type ThresholdsForm = Omit<SettingsUpdateRequest, 'baseCurrency' | 'commissionRateOverride'>;
 
 /**
  * Экран настроек: пороги триггеров сигналов + токен T-Invest (write-only) (план 09c §B.8).
@@ -31,6 +32,7 @@ export function Settings() {
   const [tokenInput, setTokenInput] = useState('');
   const [savingToken, setSavingToken] = useState(false);
   const [savingThresholds, setSavingThresholds] = useState(false);
+  const [savingCommission, setSavingCommission] = useState(false);
 
   useEffect(() => {
     load();
@@ -72,10 +74,30 @@ export function Settings() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings]);
 
+  // Plan/22 часть D: override вводится в ПРОЦЕНТАХ (UI-конвенция), конвертация в долю — на границе
+  // API (handleSaveCommission ниже), бэкенд хранит и резолвит только доли (см. CLAUDE.md). Отдельная
+  // mantine-форма (не useState) — синхронизация из settings через form.setValues, как у thresholds
+  // выше, избегает прямого вызова setState в эффекте.
+  const commissionForm = useForm<{ percent: number | '' }>({ initialValues: { percent: '' } });
+
+  useEffect(() => {
+    if (!settings) return;
+    commissionForm.setValues({
+      percent: settings.commissionRateOverride === null ? '' : settings.commissionRateOverride * 100,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings]);
+
   const handleSaveThresholds = form.onSubmit(async (values) => {
     if (!settings) return;
     setSavingThresholds(true);
-    const ok = await save({ baseCurrency: settings.baseCurrency, ...values });
+    // Пороги — отдельная форма от override комиссии (см. handleSaveCommission) — сохраняем
+    // текущее значение override как есть, не трогаем.
+    const ok = await save({
+      baseCurrency: settings.baseCurrency,
+      commissionRateOverride: settings.commissionRateOverride,
+      ...values,
+    });
     setSavingThresholds(false);
     notifications.show({
       color: ok ? 'green' : 'red',
@@ -101,6 +123,35 @@ export function Settings() {
           ? `Токен T-Invest обновлён, счёт подтверждён: ${result.validatedAccountIdMasked}.`
           : 'Токен T-Invest обновлён.'
         : result.error,
+    });
+  };
+
+  const handleSaveCommission = async () => {
+    if (!settings) return;
+    setSavingCommission(true);
+    // Проценты -> доля на границе API (конвенция бэкенда — см. doc-comment выше). Пустое поле — сброс override.
+    const percent = commissionForm.values.percent;
+    const commissionRateOverride = percent === '' ? null : percent / 100;
+    const ok = await save({
+      baseCurrency: settings.baseCurrency,
+      upcomingEventDaysThreshold: settings.upcomingEventDaysThreshold,
+      uninvestedCashThresholdRub: settings.uninvestedCashThresholdRub,
+      uninvestedCashLookbackDays: settings.uninvestedCashLookbackDays,
+      yieldBelowAlternativeBpsThreshold: settings.yieldBelowAlternativeBpsThreshold,
+      maturityWindowDaysForAlternativeComparison: settings.maturityWindowDaysForAlternativeComparison,
+      defaultMaxConcentrationPercent: settings.defaultMaxConcentrationPercent,
+      durationDriftToleranceYears: settings.durationDriftToleranceYears,
+      commissionRateOverride,
+    });
+    setSavingCommission(false);
+    notifications.show({
+      color: ok ? 'green' : 'red',
+      title: ok ? 'Комиссия сохранена' : 'Не удалось сохранить комиссию',
+      message: ok
+        ? commissionRateOverride === null
+          ? 'Override убран — снова применяется авто-оценка/дефолт.'
+          : 'Override ставки комиссии обновлён.'
+        : 'Проверьте значение (0-5%) и попробуйте ещё раз.',
     });
   };
 
@@ -156,6 +207,52 @@ export function Settings() {
             </Group>
             <Text size="xs" c="dimmed" mt="xs">
               Токен никогда не отображается повторно после сохранения — только статус «задан».
+            </Text>
+          </Paper>
+
+          <Divider />
+
+          <Paper withBorder p="md" radius="md" data-testid="commission-section">
+            <Text fw={600} mb="xs">
+              Комиссия брокера
+            </Text>
+            <Stack gap={4} mb="sm">
+              <Text size="sm" data-testid="commission-tariff">
+                Тариф T-Invest: {settings.tInvestTariff ?? '—'}
+              </Text>
+              <Text size="sm" data-testid="commission-auto-estimate">
+                {settings.commissionAutoEstimate
+                  ? `Фактическая по сделкам: ≈${formatPercent(settings.commissionAutoEstimate.rate)} (${settings.commissionAutoEstimate.tradeCount} сделок за ${settings.commissionAutoEstimate.windowMonths} мес, оборот ${formatRub(settings.commissionAutoEstimate.turnoverRub)})`
+                  : 'Фактическая по сделкам: недостаточно данных в журнале операций'}
+              </Text>
+              <Text size="sm" fw={600} data-testid="commission-effective">
+                Применяется: {formatPercent(settings.commissionEffectiveRate)} (
+                {commissionSourceLabel(settings.commissionEffectiveSource)})
+              </Text>
+            </Stack>
+            <Group align="flex-end" wrap="wrap">
+              <NumberInput
+                label="Переопределить, %"
+                placeholder="например, 0.05"
+                min={0}
+                max={5}
+                step={0.01}
+                decimalScale={4}
+                style={{ width: 200 }}
+                data-testid="commission-override-input"
+                {...commissionForm.getInputProps('percent')}
+              />
+              <Button
+                onClick={handleSaveCommission}
+                loading={savingCommission}
+                data-testid="commission-save"
+              >
+                Сохранить
+              </Button>
+            </Group>
+            <Text size="xs" c="dimmed" mt="xs">
+              Пусто — override не задан, применяется авто-оценка из журнала сделок либо дефолт 0.3%.
+              Ввод в процентах, на бэкенде хранится и применяется как доля (0.05% = 0.0005).
             </Text>
           </Paper>
 

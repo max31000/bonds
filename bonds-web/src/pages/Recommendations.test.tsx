@@ -100,6 +100,9 @@ const favorableReplacement: ReplacementResponse = {
   breakEvenYears: 0.2,
   yieldDataIncomplete: false,
   disclaimer: 'Анализ замены сравнивает только текущие позиции портфеля.',
+  sellCommissionRateUsed: 0.003,
+  buyCommissionRateUsed: 0.003,
+  commissionRateSource: 'Default',
 };
 
 const allocationResult: AllocationResponse = {
@@ -118,6 +121,8 @@ const allocationResult: AllocationResponse = {
   skipped: [],
   leftoverRub: 5000,
   disclaimer: 'Оценка распределения свободных средств по бумагам текущего портфеля. Не учитывает налоги и не является инвестиционной рекомендацией.',
+  commissionRateUsed: 0.003,
+  commissionRateSource: 'Default',
 };
 
 describe('Recommendations', () => {
@@ -184,12 +189,28 @@ describe('Recommendations', () => {
     expect(screen.getByTestId('replacement-1-2').textContent).toMatch(/выгода/);
   });
 
+  // Plan/22 часть E: карточка замены показывает применённую ставку комиссии и её источник.
+  it('shows the commission rate source caption on the replacement card', async () => {
+    renderRecommendations();
+
+    await waitFor(() => expect(screen.getByTestId('replacement-1-2')).toBeInTheDocument());
+    expect(screen.getByTestId('replacement-1-2').textContent).toMatch(/дефолт 0\.3%/);
+  });
+
   it('allocation form shows the result and leftover after submit', async () => {
     renderRecommendations();
 
     await waitFor(() => expect(screen.getByTestId('allocation-result')).toBeInTheDocument());
     expect(screen.getByTestId('allocation-line-11')).toBeInTheDocument();
     expect(screen.getByTestId('allocation-leftover').textContent).toMatch(/5[\s\u00a0]000/);
+  });
+
+  // Plan/22 \u0447\u0430\u0441\u0442\u044c E: \u0440\u0435\u0437\u0443\u043b\u044c\u0442\u0430\u0442 \u0430\u043b\u043b\u043e\u043a\u0430\u0446\u0438\u0438 \u043f\u043e\u043a\u0430\u0437\u044b\u0432\u0430\u0435\u0442 \u0441\u0442\u0430\u0432\u043a\u0443 \u043a\u043e\u043c\u0438\u0441\u0441\u0438\u0438, \u043f\u0440\u0438\u043c\u0435\u043d\u0451\u043d\u043d\u0443\u044e \u043a \u0446\u0435\u043d\u0435 \u043b\u043e\u0442\u0430, \u0438 \u0435\u0451 \u0438\u0441\u0442\u043e\u0447\u043d\u0438\u043a.
+  it('shows the commission rate source caption in the allocation result', async () => {
+    renderRecommendations();
+
+    await waitFor(() => expect(screen.getByTestId('allocation-commission-source')).toBeInTheDocument());
+    expect(screen.getByTestId('allocation-commission-source').textContent).toMatch(/\u0434\u0435\u0444\u043e\u043b\u0442 0\.3%/);
   });
 
   it('requests allocation with includeWatchlist=true so watchlist bonds are considered as candidates (plan/20 \u00a7B.2)', async () => {
