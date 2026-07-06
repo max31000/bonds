@@ -244,19 +244,26 @@ function AllocationSection() {
               Ни одна бумага из портфеля не подошла для докупки на эту сумму.
             </Text>
           ) : (
-            allocation.allocations.map((line) => (
-              <Paper key={line.instrumentId} withBorder p="sm" radius="md" data-testid={`allocation-line-${line.instrumentId}`}>
-                <Group justify="space-between">
-                  <Text fw={500}>{line.name ?? line.issuer ?? `Инструмент #${line.instrumentId}`}</Text>
-                  <Text size="sm">{formatPercent(line.effectiveYield)}</Text>
-                </Group>
-                <Text size="sm" c="dimmed">
-                  купить {line.quantity} шт по ~{formatRub(line.estimatedCostRub / line.quantity)} (с НКД), потратите{' '}
-                  {formatRub(line.estimatedCostRub)}
-                  {line.lotSizeAssumed && ' (лот принят за 1 бумагу — точный размер лота не определён)'}
-                </Text>
-              </Paper>
-            ))
+            allocation.allocations.map((line) => {
+              const pricePerBondRub = line.estimatedCostRub / line.quantity;
+              const cleanPricePerBondRub = line.cleanCostRub / line.quantity;
+              const accruedPerBondRub = line.accruedCostRub / line.quantity;
+              const commissionPerBondRub = line.commissionCostRub / line.quantity;
+              return (
+                <Paper key={line.instrumentId} withBorder p="sm" radius="md" data-testid={`allocation-line-${line.instrumentId}`}>
+                  <Group justify="space-between">
+                    <Text fw={500}>{line.name ?? line.issuer ?? `Инструмент #${line.instrumentId}`}</Text>
+                    <Text size="sm">{formatPercent(line.effectiveYield)}</Text>
+                  </Group>
+                  <Text size="sm" c="dimmed">
+                    купить {line.quantity} шт × {formatRub(pricePerBondRub)} (цена {formatRub(cleanPricePerBondRub)} + НКД{' '}
+                    {formatRub(accruedPerBondRub)} + комиссия {formatRub(commissionPerBondRub)}), потратите{' '}
+                    {formatRub(line.estimatedCostRub)}
+                    {line.lotSizeAssumed && ' (лот принят за 1 бумагу — точный размер лота не определён)'}
+                  </Text>
+                </Paper>
+              );
+            })
           )}
           <Text size="sm" fw={600} data-testid="allocation-leftover">
             На счету останется {formatRub(allocation.leftoverRub)}
@@ -265,6 +272,11 @@ function AllocationSection() {
             Цена лота учитывает комиссию покупки {formatPercent(allocation.commissionRateUsed)} —{' '}
             {commissionSourceLabel(allocation.commissionRateSource)}
           </Text>
+          {allocation.allocations.length > 0 && (
+            <Text size="xs" c="dimmed" data-testid="allocation-accrued-note">
+              Уплаченный при покупке НКД вернётся ближайшим купоном — это не дополнительные расходы.
+            </Text>
+          )}
           <Disclaimer text={allocation.disclaimer} />
         </Stack>
       )}

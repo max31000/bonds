@@ -56,6 +56,8 @@ const basePosition: PositionRow = {
   sector: 'ОФЗ',
   quantity: 100,
   marketValueRub: 105000,
+  accruedPerBondRub: 0,
+  accruedTotalRub: 0,
   currencyRub: 'RUB',
   couponType: 'Fixed',
   maturityDate: '2030-01-01',
@@ -584,6 +586,77 @@ describe('Positions', () => {
       renderPositions();
 
       await waitFor(() => expect(screen.getByTestId('mobile-sort-select')).toBeInTheDocument());
+
+      restore();
+    });
+  });
+
+  // ─── T-24: подпись «в т.ч. НКД» ─────────────────────────────────────────────────────────────
+
+  it('shows the "в т.ч. НКД" caption under market value when accruedTotalRub is positive', async () => {
+    const withAccrued: PositionRow = { ...basePosition, positionId: 41, accruedPerBondRub: 12.5, accruedTotalRub: 1250 };
+    server.use(
+      http.get('*/api/positions', () => HttpResponse.json({ positions: [withAccrued], disclaimer: '' })),
+    );
+
+    renderPositions();
+
+    await waitFor(() => expect(screen.getByTestId('accrued-caption-41')).toBeInTheDocument());
+    expect(screen.getByTestId('accrued-caption-41')).toHaveTextContent('в т.ч. НКД');
+    expect(screen.getByTestId('accrued-caption-41')).toHaveTextContent('1 250');
+  });
+
+  it('hides the "в т.ч. НКД" caption when accruedTotalRub is zero', async () => {
+    const noAccrued: PositionRow = { ...basePosition, positionId: 42, accruedPerBondRub: 0, accruedTotalRub: 0 };
+    server.use(
+      http.get('*/api/positions', () => HttpResponse.json({ positions: [noAccrued], disclaimer: '' })),
+    );
+
+    renderPositions();
+
+    await waitFor(() => expect(screen.getByTestId('live-market-value-42')).toBeInTheDocument());
+    expect(screen.queryByTestId('accrued-caption-42')).not.toBeInTheDocument();
+  });
+
+  it('shows a summed "в т.ч. НКД" caption in the totals row', async () => {
+    const a: PositionRow = { ...basePosition, positionId: 43, marketValueRub: 100_000, accruedTotalRub: 1_000 };
+    const b: PositionRow = { ...basePosition, positionId: 44, marketValueRub: 100_000, accruedTotalRub: 2_000 };
+    server.use(
+      http.get('*/api/positions', () => HttpResponse.json({ positions: [a, b], disclaimer: '' })),
+    );
+
+    renderPositions();
+
+    await waitFor(() => expect(screen.getByTestId('accrued-caption-totals')).toBeInTheDocument());
+    expect(screen.getByTestId('accrued-caption-totals')).toHaveTextContent('3 000');
+  });
+
+  it('shows a dirty-price info icon next to the "Рыночная стоимость" header', async () => {
+    server.use(
+      http.get('*/api/positions', () => HttpResponse.json({ positions: [basePosition], disclaimer: '' })),
+    );
+
+    renderPositions();
+
+    await waitFor(() => expect(screen.getByTestId('dirty-price-info-icon')).toBeInTheDocument());
+  });
+
+  describe('mobile layout (< 768px) — accrued caption', () => {
+    it('shows the accrued caption inside the expanded card details', async () => {
+      const restore = mockMobileViewport();
+      const withAccrued: PositionRow = { ...basePosition, positionId: 45, accruedTotalRub: 900 };
+      server.use(
+        http.get('*/api/positions', () => HttpResponse.json({ positions: [withAccrued], disclaimer: '' })),
+      );
+
+      renderPositions();
+      await waitFor(() => expect(screen.getByTestId('position-card-toggle-45')).toBeInTheDocument());
+
+      const { default: userEvent } = await import('@testing-library/user-event');
+      await userEvent.click(screen.getByTestId('position-card-toggle-45'));
+
+      await waitFor(() => expect(screen.getByTestId('accrued-caption-card-45')).toBeVisible());
+      expect(screen.getByTestId('accrued-caption-card-45')).toHaveTextContent('900');
 
       restore();
     });

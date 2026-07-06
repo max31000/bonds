@@ -17,6 +17,8 @@ import type { PositionRow } from '../api/types';
 export interface PositionsTotals {
   /** Сумма marketValueRub по всем позициям. */
   totalMarketValueRub: number;
+  /** Задача 24: сумма accruedTotalRub по всем позициям — уже включена в totalMarketValueRub, показывается как разложение. */
+  totalAccruedRub: number;
   /**
    * Средневзвешенная доходность (YTM/currentYield для обычных бумаг), вес — рыночная стоимость.
    * null, если ни одна позиция не даёт сравнимую доходность (нет обычных бумаг с известным YTM).
@@ -44,6 +46,7 @@ function weightedAverage(items: { value: number; weight: number }[]): number | n
 /** Считает строку «Итого» для таблицы позиций. Пустой массив → нулевая стоимость и null-метрики. */
 export function computePositionsTotals(positions: PositionRow[]): PositionsTotals {
   const totalMarketValueRub = positions.reduce((sum, p) => sum + p.marketValueRub, 0);
+  const totalAccruedRub = positions.reduce((sum, p) => sum + p.accruedTotalRub, 0);
 
   const yieldItems = positions
     .map((p) => ({ value: comparableYield(p), weight: p.marketValueRub }))
@@ -57,6 +60,7 @@ export function computePositionsTotals(positions: PositionRow[]): PositionsTotal
 
   return {
     totalMarketValueRub,
+    totalAccruedRub,
     weightedYield: weightedAverage(yieldItems),
     weightedDuration: weightedAverage(durationItems),
     hasExcludedFloaters,

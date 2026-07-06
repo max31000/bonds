@@ -116,6 +116,9 @@ const allocationResult: AllocationResponse = {
       estimatedCostRub: 10000,
       effectiveYield: 0.16,
       lotSizeAssumed: true,
+      cleanCostRub: 9500,
+      accruedCostRub: 400,
+      commissionCostRub: 100,
     },
   ],
   skipped: [],
@@ -264,6 +267,29 @@ describe('Recommendations', () => {
     renderRecommendations();
 
     await waitFor(() => expect(screen.getAllByTestId('disclaimer').length).toBeGreaterThan(0));
+  });
+
+  // ─── T-24: разбивка цены лота (чистая цена + НКД + комиссия) ───────────────────────────────
+
+  it('shows the clean price / accrued / commission breakdown in the allocation line', async () => {
+    renderRecommendations();
+
+    await waitFor(() => expect(screen.getByTestId('allocation-line-11')).toBeInTheDocument());
+    const line = screen.getByTestId('allocation-line-11');
+    // allocationResult: quantity 10, cleanCostRub 9500, accruedCostRub 400, commissionCostRub 100
+    // => per bond: цена 1000 (950 clean + 40 accrued + 10 commission).
+    expect(line.textContent).toMatch(/950/);
+    expect(line.textContent).toMatch(/40/);
+    expect(line.textContent).toMatch(/10/);
+    expect(line.textContent).toMatch(/НКД/);
+    expect(line.textContent).toMatch(/комиссия/);
+  });
+
+  it('shows a note that the accrued interest paid on purchase returns with the next coupon', async () => {
+    renderRecommendations();
+
+    await waitFor(() => expect(screen.getByTestId('allocation-accrued-note')).toBeInTheDocument());
+    expect(screen.getByTestId('allocation-accrued-note').textContent).toMatch(/вернётся ближайшим купоном/);
   });
 
   it('shows an empty allocation state when nothing matches the amount', async () => {

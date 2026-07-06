@@ -15,6 +15,10 @@ export interface PositionRow {
   sector: string | null;
   quantity: number;
   marketValueRub: number;
+  /** Задача 24: НКД на одну бумагу — уже включён в marketValueRub, показывается как разложение. */
+  accruedPerBondRub: number;
+  /** Задача 24: НКД на всю позицию = accruedPerBondRub × quantity. */
+  accruedTotalRub: number;
   currencyRub: 'RUB';
   couponType: CouponType;
   maturityDate: string;
@@ -110,6 +114,10 @@ export interface OperationItem {
 /** «Если продать сейчас» — GET /api/positions/{id} → ifSoldNow. */
 export interface IfSoldNow {
   marketValueRub: number;
+  /** Задача 24: marketValueRub − accruedTotalRub — «чистая» стоимость остатка без НКД. */
+  cleanValueRub: number;
+  /** Задача 24: НКД на всю позицию, уже включённый в marketValueRub (разложение). */
+  accruedTotalRub: number;
   commissionRub: number;
   commissionRate: number;
   /** Plan/22 часть E: источник commissionRate (override/оценка из журнала/дефолт). */
@@ -142,7 +150,10 @@ export interface PositionDetail {
   hasOffers: boolean;
 
   cleanPrice: number;
+  /** НКД на одну бумагу. */
   accruedInterest: number;
+  /** Задача 24: НКД на всю позицию = accruedInterest × quantity. */
+  accruedTotalRub: number;
   dirtyPrice: number;
   marketValueRub: number;
 
@@ -495,6 +506,12 @@ export interface AllocationLine {
   estimatedCostRub: number;
   effectiveYield: number;
   lotSizeAssumed: boolean;
+  /** Задача 24: разложение estimatedCostRub — чистая цена всей докупки (без НКД/комиссии). cleanCostRub + accruedCostRub + commissionCostRub = estimatedCostRub. */
+  cleanCostRub: number;
+  /** Задача 24: НКД в составе estimatedCostRub. */
+  accruedCostRub: number;
+  /** Задача 24: комиссия покупки в составе estimatedCostRub. */
+  commissionCostRub: number;
 }
 
 /** Кандидат, не получивший докупку, и причина. */

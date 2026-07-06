@@ -12,8 +12,12 @@ import { useWidgetData } from '../hooks/useWidgetData';
 import { Disclaimer } from '../components/Disclaimer';
 import { PortfolioIntradayChart } from '../components/PortfolioIntradayChart';
 import { ChartCard, ChartExplainIcon, ChartTooltip, CHART_COLORS, CHART_HEIGHT_COMPACT, CHART_EXPLANATIONS } from '../components/charts';
+import { DIRTY_PRICE_TOOLTIP_TEXT } from '../utils/positionsDisplay';
 import type { CompositionSlice, XirrResponse, CashflowResponse, PositionsResponse } from '../api/types';
 import { formatRub, formatPercent, formatSharePercent, formatDate } from '../utils/format';
+
+/** Задача 24: та же подсказка про «грязные» цены, что и у таблицы позиций (positionsDisplay.ts) — один источник текста. */
+const DIRTY_PRICE_EXPLANATION = DIRTY_PRICE_TOOLTIP_TEXT;
 
 const FLOW_TYPE_LABEL: Record<string, string> = {
   Coupon: 'Купон',
@@ -43,9 +47,16 @@ function PortfolioValueKpi({ positions }: { positions: PositionsResponse | null 
 
   return (
     <Paper withBorder p="md" radius="md" data-testid="kpi-portfolio-value">
-      <Text size="xs" c="dimmed">
-        Стоимость портфеля
-      </Text>
+      <Group gap={6}>
+        <Text size="xs" c="dimmed">
+          Стоимость портфеля
+        </Text>
+        <ChartExplainIcon
+          title="Стоимость портфеля"
+          explanation={DIRTY_PRICE_EXPLANATION}
+          data-testid="kpi-portfolio-value-explain-icon"
+        />
+      </Group>
       <Text fw={700} size="xl">
         {displayValue === null ? '—' : formatRub(displayValue)}
       </Text>
