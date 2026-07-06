@@ -112,6 +112,8 @@ const favorableMatrixPair = {
   annualizedBenefitFraction: 0.21,
   commissionRateUsed: 0.003,
   commissionRateSource: 'Default' as const,
+  sellTaxEstimateRub: 200,
+  netBenefitAfterTaxRub: 1300,
 };
 
 const rejectedNotProfitablePair = {
@@ -235,6 +237,56 @@ describe('Recommendations', () => {
     const card = screen.getByTestId('replacement-1-2').textContent!;
     expect(card).toMatch(/выгода/);
     expect(card).toMatch(/21\.00%/);
+  });
+
+  // ─── T-25: выгода после налога в заголовке карточки и в раскрывашке формулы ────────────────
+
+  it('shows the after-tax benefit in the headline when sellTaxEstimateRub is available', async () => {
+    renderRecommendations();
+
+    await waitFor(() => expect(screen.getByTestId('replacement-benefit-1-2')).toBeInTheDocument());
+    const headline = screen.getByTestId('replacement-benefit-1-2').textContent!;
+    expect(headline).toMatch(/после налога/);
+    expect(headline).toMatch(/1[\s ]300/); // netBenefitAfterTaxRub
+  });
+
+  it('shows the sell tax row and after-tax net line in the expanded formula', async () => {
+    renderRecommendations();
+
+    await waitFor(() => expect(screen.getByTestId('replacement-toggle-1-2')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('replacement-toggle-1-2'));
+
+    await waitFor(() => expect(screen.getByTestId('replacement-details-1-2')).toBeVisible());
+    const taxRow = screen.getByTestId('replacement-sell-tax-1-2').textContent!;
+    expect(taxRow).toMatch(/НДФЛ от продажи/);
+    expect(taxRow).toMatch(/200/);
+
+    const netAfterTax = screen.getByTestId('replacement-net-after-tax-1-2').textContent!;
+    expect(netAfterTax).toMatch(/1[\s ]300/);
+  });
+
+  it('shows "налог не оценён" caption when sellTaxEstimateRub is null (incomplete journal)', async () => {
+    server.use(
+      http.get('*/api/analytics/replacement-matrix', () =>
+        HttpResponse.json({
+          bestPairs: [{ ...favorableMatrixPair, sellTaxEstimateRub: null, netBenefitAfterTaxRub: null }],
+          rejectedPairs: [],
+          totalConsideredPairs: 1,
+          disclaimer: favorableMatrix.disclaimer,
+        }),
+      ),
+    );
+
+    renderRecommendations();
+
+    await waitFor(() => expect(screen.getByTestId('replacement-benefit-1-2')).toBeInTheDocument());
+    expect(screen.getByTestId('replacement-benefit-1-2').textContent).not.toMatch(/после налога/);
+
+    fireEvent.click(screen.getByTestId('replacement-toggle-1-2'));
+
+    await waitFor(() => expect(screen.getByTestId('replacement-tax-unavailable-1-2')).toBeInTheDocument());
+    expect(screen.getByTestId('replacement-tax-unavailable-1-2').textContent).toMatch(/журнал операций.*неполон/);
+    expect(screen.queryByTestId('replacement-sell-tax-1-2')).not.toBeInTheDocument();
   });
 
   // Задача 23 §B.2: карточка раскрывается в построчную формулу (спред → капитал → горизонт →

@@ -159,8 +159,9 @@ function ReplacementPairCard({ pair }: { pair: MatrixPair }) {
             </Badge>
           )}
         </Group>
-        <Text size="sm" c="teal" fw={600}>
-          выгода ≈ {formatRub(pair.netBenefitRub)}
+        <Text size="sm" c="teal" fw={600} data-testid={`replacement-benefit-${pair.holdPositionId}-${pair.targetPositionId}`}>
+          выгода{pair.netBenefitAfterTaxRub !== null ? ' после налога' : ''} ≈{' '}
+          {formatRub(pair.netBenefitAfterTaxRub ?? pair.netBenefitRub)}
           {pair.annualizedBenefitFraction !== null && <> (~{formatPercent(pair.annualizedBenefitFraction)} годовых)</>} за{' '}
           {formatHorizon(pair.horizonYears)}
         </Text>
@@ -183,6 +184,20 @@ function ReplacementPairCard({ pair }: { pair: MatrixPair }) {
             = чистая выгода {formatRub(pair.netBenefitRub)}
             {pair.annualizedBenefitFraction !== null && <> ≈ {formatPercent(pair.annualizedBenefitFraction)} годовых</>}
           </Text>
+          {pair.sellTaxEstimateRub !== null ? (
+            <>
+              <Text size="xs" data-testid={`replacement-sell-tax-${pair.holdPositionId}-${pair.targetPositionId}`}>
+                − НДФЛ от продажи ≈ {formatRub(pair.sellTaxEstimateRub)} (оценка, 13% с прибыли к средней цене входа)
+              </Text>
+              <Text size="xs" fw={600} data-testid={`replacement-net-after-tax-${pair.holdPositionId}-${pair.targetPositionId}`}>
+                = выгода после налога {formatRub(pair.netBenefitAfterTaxRub)}
+              </Text>
+            </>
+          ) : (
+            <Text size="xs" c="dimmed" data-testid={`replacement-tax-unavailable-${pair.holdPositionId}-${pair.targetPositionId}`}>
+              налог не оценён: журнал операций по hold-позиции неполон
+            </Text>
+          )}
         </Stack>
       </Collapse>
     </Paper>

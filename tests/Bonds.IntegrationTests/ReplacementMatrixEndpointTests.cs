@@ -88,6 +88,30 @@ public class ReplacementMatrixEndpointTests
         return (instrumentId, positionId);
     }
 
+    /// <summary>Как <see cref="SeedYieldingPositionAsync"/>, но дополнительно заводит Buy-операцию на всё количество по <paramref name="buyPriceRub"/> за бумагу — даёт известный cost basis (задача 25, для оценки sellTaxEstimateRub).</summary>
+    private async Task<(ulong InstrumentId, ulong PositionId)> SeedYieldingPositionWithCostBasisAsync(
+        ulong accountId, decimal cleanPrice, decimal couponValueRub, decimal buyPriceRub, int maturityYears = 3, decimal quantity = 10m)
+    {
+        var (instrumentId, positionId) = await SeedYieldingPositionAsync(accountId, cleanPrice, couponValueRub, maturityYears, quantity);
+
+        var operationRepo = new OperationRepository(_factory.Database.ConnectionString);
+        await operationRepo.UpsertManyByExternalIdAsync(new[]
+        {
+            new Operation
+            {
+                AccountId = accountId,
+                InstrumentId = instrumentId,
+                Type = OperationType.Buy,
+                Date = DateTime.UtcNow.AddMonths(-6),
+                AmountRub = -buyPriceRub * quantity,
+                Quantity = quantity,
+                ExternalId = $"buy-{Guid.NewGuid()}",
+            },
+        });
+
+        return (instrumentId, positionId);
+    }
+
     [Fact]
     public async Task GetReplacementMatrix_EmptyPortfolio_Returns200_WithEmptyMatrix()
     {
@@ -250,5 +274,80 @@ public class ReplacementMatrixEndpointTests
         watchlistPair.ValueKind.Should().NotBe(JsonValueKind.Undefined, "матрица должна содержать пару с watchlist-таргетом (plan/23 п.1)");
         watchlistPair.GetProperty("isWatchlistTarget").GetBoolean().Should().BeTrue();
         watchlistPair.GetProperty("holdPositionId").GetUInt64().Should().Be(weakPositionId);
+    }
+
+    // ─── Задача 25 часть C: налог продажи hold-позиции в матрице замен ─────────────────────────
+
+    [Fact]
+    public async Task GetReplacementMatrix_HoldInProfit_CarriesSellTaxEstimateAndNetBenefitAfterTax()
+    {
+        var (client, _, accountId) = await CreateAuthorizedClientAsync();
+        // hold куплен по 900, торгуется по 1000 -> прибыль при продаже -> положительный налог.
+        var (_, weakPositionId) = await SeedYieldingPositionWithCostBasisAsync(
+            accountId, cleanPrice: 1000m, couponValueRub: 30m, buyPriceRub: 900m);
+        await SeedYieldingPositionAsync(accountId, cleanPrice: 950m, couponValueRub: 60m);
+
+        var response = await client.GetAsync("/api/analytics/replacement-matrix");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var bestPairs = body.GetProperty("bestPairs").EnumerateArray().ToList();
+
+        var pair = bestPairs.Single(p => p.GetProperty("holdPositionId").GetUInt64() == weakPositionId);
+        pair.GetProperty("sellTaxEstimateRub").ValueKind.Should().Be(JsonValueKind.Number);
+        pair.GetProperty("sellTaxEstimateRub").GetDecimal().Should().BeGreaterThan(0m, "hold-позиция в прибыли — оценка налога положительна");
+
+        var netBenefit = pair.GetProperty("netBenefitRub").GetDecimal();
+        var tax = pair.GetProperty("sellTaxEstimateRub").GetDecimal();
+        var netBenefitAfterTax = pair.GetProperty("netBenefitAfterTaxRub").GetDecimal();
+        netBenefitAfterTax.Should().Be(netBenefit - tax);
+        netBenefitAfterTax.Should().BeLessThan(netBenefit, "налог уменьшает выгоду после продажи");
+    }
+
+    [Fact]
+    public async Task GetReplacementMatrix_HoldCostBasisIncomplete_SellTaxIsNull_PairStillRankedByPretaxBenefit()
+    {
+        var (client, _, accountId) = await CreateAuthorizedClientAsync();
+        // Без Buy-операции журнал не покрывает остаток -> HasUnknownLots=true -> налог не оценивается.
+        var (_, weakPositionId) = await SeedYieldingPositionAsync(accountId, cleanPrice: 1000m, couponValueRub: 30m);
+        await SeedYieldingPositionAsync(accountId, cleanPrice: 950m, couponValueRub: 60m);
+
+        var response = await client.GetAsync("/api/analytics/replacement-matrix");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var bestPairs = body.GetProperty("bestPairs").EnumerateArray().ToList();
+
+        var pair = bestPairs.Single(p => p.GetProperty("holdPositionId").GetUInt64() == weakPositionId);
+        pair.GetProperty("sellTaxEstimateRub").ValueKind.Should().Be(JsonValueKind.Null, "журнал операций неполон — налог не оценивается, а не 0");
+        pair.GetProperty("netBenefitAfterTaxRub").ValueKind.Should().Be(JsonValueKind.Null);
+        pair.GetProperty("netBenefitRub").GetDecimal().Should().BeGreaterThan(0m, "пара всё равно попадает в bestPairs по до-налоговой выгоде");
+    }
+
+    [Fact]
+    public async Task GetReplacementMatrix_RanksBestPairsByNetBenefitAfterTax_NotPretax()
+    {
+        var (client, _, accountId) = await CreateAuthorizedClientAsync();
+
+        // Пара А: очень высокая до-налоговая выгода (большой спред), но огромная прибыль к продаже
+        // -> большой налог. Слабый hold куплен почти даром (100), торгуется по 1000.
+        var (_, positionAId) = await SeedYieldingPositionWithCostBasisAsync(
+            accountId, cleanPrice: 1000m, couponValueRub: 10m, buyPriceRub: 100m, quantity: 100m);
+        await SeedYieldingPositionAsync(accountId, cleanPrice: 950m, couponValueRub: 90m, quantity: 100m);
+
+        var response = await client.GetAsync("/api/analytics/replacement-matrix");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var bestPairs = body.GetProperty("bestPairs").EnumerateArray().ToList();
+
+        // Ранжирование должно соответствовать netBenefitAfterTaxRub ?? netBenefitRub, убыв.
+        var ranked = bestPairs
+            .Select(p => p.GetProperty("netBenefitAfterTaxRub").ValueKind == JsonValueKind.Null
+                ? p.GetProperty("netBenefitRub").GetDecimal()
+                : p.GetProperty("netBenefitAfterTaxRub").GetDecimal())
+            .ToList();
+
+        ranked.Should().BeInDescendingOrder("bestPairs должны быть отсортированы по выгоде после налога (или до налога, если налог не оценён)");
     }
 }

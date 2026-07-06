@@ -495,6 +495,12 @@ public static class AnalyticsEndpoints
         ModifiedDuration = h.ModifiedDuration,
         DaysToHorizon = h.HorizonDate.DayNumber - asOf.DayNumber,
         IsWatchlist = isWatchlist,
+        // Задача 25: cost basis нужен только у HOLD-стороны пары (продаётся именно она) — у
+        // watchlist-holding'ов CostBasis всегда null (см. doc-comment PortfolioHoldingsBuilder.
+        // BuildForInstrumentsAsync), поэтому HoldHasUnknownLots по умолчанию true (см. MatrixCandidate) —
+        // корректная деградация "оценить нельзя".
+        HoldInvestedRub = h.CostBasis?.InvestedRub,
+        HoldHasUnknownLots = h.CostBasis?.HasUnknownLots ?? true,
     };
 
     private static MatrixPairDto ToMatrixPairDto(ReplacementMatrixService.MatrixPair p) => new()
@@ -516,6 +522,8 @@ public static class AnalyticsEndpoints
         AnnualizedBenefitFraction = p.AnnualizedBenefitFraction,
         CommissionRateUsed = p.CommissionRateUsed,
         CommissionRateSource = p.CommissionRateSource.ToString(),
+        SellTaxEstimateRub = p.SellTaxEstimateRub,
+        NetBenefitAfterTaxRub = p.NetBenefitAfterTaxRub,
     };
 
     private static RejectedPairDto ToRejectedPairDto(ReplacementMatrixService.RejectedPair p) => new()
@@ -1014,6 +1022,12 @@ public sealed record MatrixPairDto
 
     /// <summary>Строка <see cref="CommissionRateSource"/> (задача 22) — источник CommissionRateUsed.</summary>
     public required string CommissionRateSource { get; init; }
+
+    /// <summary>Задача 25: оценка НДФЛ от продажи hold-позиции (13% с прибыли к средней цене входа) — null, если cost basis hold-позиции недоступен/журнал неполон.</summary>
+    public decimal? SellTaxEstimateRub { get; init; }
+
+    /// <summary>Задача 25: NetBenefitRub − SellTaxEstimateRub — выгода после налога. Null, если SellTaxEstimateRub недоступен (ранжирование/фильтр используют NetBenefitAfterTaxRub ?? NetBenefitRub).</summary>
+    public decimal? NetBenefitAfterTaxRub { get; init; }
 }
 
 public sealed record RejectedPairDto

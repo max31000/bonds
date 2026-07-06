@@ -45,6 +45,20 @@ namespace Bonds.Core.Analytics;
 /// (best/rejected) возвращается не более <see cref="MaxPairsPerCategory"/> — best сортирован по
 /// NetBenefit убыв. (лучшие не теряются), rejected — по |NetBenefit| убыв. (важные причины впереди).
 /// </para>
+/// <para>
+/// <b>Задача 25 — налог продажи hold-позиции:</b> <see cref="MatrixPair.SellTaxEstimateRub"/>
+/// (через <see cref="SaleTaxEstimator"/> поверх <see cref="MatrixCandidate.HoldInvestedRub"/>/
+/// <see cref="MatrixCandidate.HoldHasUnknownLots"/> — cost basis нужен только у HOLD-стороны,
+/// продаётся именно она) и <see cref="MatrixPair.NetBenefitAfterTaxRub"/> = NetBenefitRub −
+/// SellTaxEstimateRub (null, если налог не оценён). <b>Ранжирование и фильтр "выгодных" — по
+/// NetBenefitAfterTaxRub ?? NetBenefitRub</b> (после налога, если он оценим; иначе — прежнее
+/// поведение до налога, не 0 и не отбрасываем пару). Экономика упрощения: налог при перекладке НЕ
+/// исчезает бесследно, а платится РАНЬШЕ, чем он был бы уплачен при обычном погашении/продаже в
+/// будущем (при котором тоже возник бы НДФЛ с той же прибыли) — строго говоря, это стоимость
+/// ДОСРОЧНОЙ реализации прибыли, а не абсолютная потеря капитала. Для MVP-оценки порядка величины
+/// налог вычитается ЦЕЛИКОМ (консервативно, как если бы альтернатива держать-до-погашения налога
+/// вообще не порождала) — see disclaimer.
+/// </para>
 /// </summary>
 public static class ReplacementMatrixService
 {
@@ -60,7 +74,22 @@ public static class ReplacementMatrixService
     /// <summary>Максимум пар в каждой категории (best/rejected) при сработавшем предохранителе.</summary>
     public const int MaxPairsPerCategory = 500;
 
-    public const string Disclaimer = SwitchAnalysisService.Disclaimer;
+    /// <summary>
+    /// Задача 25: расширяет <see cref="SwitchAnalysisService.Disclaimer"/> оговоркой про налог —
+    /// тот дисклеймер, унаследованный от плана 17/23, говорит "налог не учтён"; здесь это уже
+    /// неверно (см. doc-comment класса про SellTaxEstimateRub/NetBenefitAfterTaxRub), поэтому
+    /// матрица использует СВОЙ текст, а не общий с SwitchAnalysisService.
+    /// </summary>
+    public const string Disclaimer =
+        "Анализ замены сравнивает только текущие позиции портфеля (не скринер по всей вселенной бумаг). " +
+        "Налог при продаже (НДФЛ 13% на разницу цены покупки/продажи к средней цене входа, не FIFO " +
+        "брокера) учтён ОЦЕНОЧНО в ранжировании и выгоде после налога — без сальдирования прибылей/" +
+        "убытков по другим позициям, без льготы долгосрочного владения (3 года) и без прогрессии до " +
+        "15%; налог при перекладке не исчезает, а платится раньше, чем при удержании до погашения — " +
+        "для оценки он вычитается целиком (консервативно). При неполном журнале операций налог не " +
+        "оценивается (пара ранжируется по выгоде до налога, не считается нулевым). Выгода спреда " +
+        "оценивается линейно (спред × горизонт) на капитале после комиссии продажи; комиссия каждой " +
+        "сделки учтена один раз. Перед сделкой проверьте фактические условия у брокера.";
 
     /// <summary>Один кандидат матрицы — hold ИЛИ target (позиция портфеля либо watchlist-бумага без позиции).</summary>
     public sealed record MatrixCandidate
@@ -76,6 +105,18 @@ public static class ReplacementMatrixService
 
         /// <summary>true — кандидат из watchlist (без позиции в портфеле), см. plan/23 п.1.</summary>
         public bool IsWatchlist { get; init; }
+
+        /// <summary>
+        /// Задача 25: вложено в текущий остаток по средней цене входа (<see cref="PositionCostBasis.InvestedRub"/>,
+        /// plan/14) — используется, ТОЛЬКО когда кандидат выступает HOLD-стороной пары (продаётся
+        /// именно он). Null у watchlist-кандидатов (нет позиции — нечего продавать, см. doc-comment
+        /// <see cref="Infrastructure.Analytics.PortfolioHoldingsBuilder.BuildForInstrumentsAsync"/>
+        /// в вызывающем коде) и там, где cost basis не посчитан.
+        /// </summary>
+        public decimal? HoldInvestedRub { get; init; }
+
+        /// <summary>Задача 25: <see cref="PositionCostBasis.HasUnknownLots"/> — журнал операций не покрывает весь остаток. True по умолчанию (watchlist без cost basis — считаем "неизвестно", не "ноль").</summary>
+        public bool HoldHasUnknownLots { get; init; } = true;
     }
 
     /// <summary>Почему пара не попала в bestPairs (но видима в rejectedPairs).</summary>
@@ -112,6 +153,16 @@ public static class ReplacementMatrixService
 
         public required decimal CommissionRateUsed { get; init; }
         public required Interfaces.CommissionRateSource CommissionRateSource { get; init; }
+
+        /// <summary>
+        /// Задача 25: оценка НДФЛ от продажи HOLD-позиции (<see cref="SaleTaxEstimator"/>, 13% с
+        /// прибыли к средней цене входа). Null — cost basis hold-позиции недоступен/журнал неполон
+        /// (см. doc-comment класса) — "оценить нельзя", НЕ "налога нет".
+        /// </summary>
+        public decimal? SellTaxEstimateRub { get; init; }
+
+        /// <summary>Задача 25: NetBenefitRub − SellTaxEstimateRub — выгода после налога. Null, если SellTaxEstimateRub недоступен (см. doc-comment класса про ранжирование NetBenefitAfterTaxRub ?? NetBenefitRub).</summary>
+        public decimal? NetBenefitAfterTaxRub { get; init; }
     }
 
     public sealed record RejectedPair
@@ -215,7 +266,22 @@ public static class ReplacementMatrixService
                 var result = SwitchAnalysisService.Compare(
                     holdSwitchCandidate, targetSwitchCandidate, horizonYears, sellCommissionRate, buyCommissionRate);
 
-                if (result.NetBenefitRub <= 0m)
+                var netProceedsAfterSale = hold.MarketValueRub - result.SellCommissionRub;
+
+                // Задача 25: налог на продажу HOLD-позиции (только hold — именно она продаётся;
+                // target нужен, только чтобы купить, продажи там нет). Null — cost basis
+                // недоступен/журнал неполон, см. doc-comment класса.
+                var sellTaxEstimate = SaleTaxEstimator.Estimate(
+                    netProceedsAfterSale, hold.HoldInvestedRub, hold.HoldHasUnknownLots);
+                var sellTaxEstimateRub = sellTaxEstimate?.TaxRub;
+                var netBenefitAfterTaxRub = sellTaxEstimateRub is decimal tax ? result.NetBenefitRub - tax : (decimal?)null;
+
+                // Задача 25: фильтр/ранжирование "выгодных" — по netBenefitAfterTaxRub, если налог
+                // оценим, иначе (журнал неполон) по прежнему до-налоговому netBenefitRub — не
+                // отбрасываем пару и не подменяем неизвестный налог нулём (см. doc-comment класса).
+                var rankingBenefitRub = netBenefitAfterTaxRub ?? result.NetBenefitRub;
+
+                if (rankingBenefitRub <= 0m)
                 {
                     rejectedPairs.Add(new RejectedPair
                     {
@@ -227,12 +293,11 @@ public static class ReplacementMatrixService
                         TargetName = target.Name ?? target.Issuer,
                         IsWatchlistTarget = target.IsWatchlist,
                         Reason = RejectedPairReason.NotProfitable,
-                        NetBenefitRub = result.NetBenefitRub,
+                        NetBenefitRub = rankingBenefitRub,
                     });
                     continue;
                 }
 
-                var netProceedsAfterSale = hold.MarketValueRub - result.SellCommissionRub;
                 var spreadFraction = targetYield.Value - holdYield.Value;
                 var grossGainRub = netProceedsAfterSale * spreadFraction * horizonYears;
 
@@ -259,11 +324,16 @@ public static class ReplacementMatrixService
                     AnnualizedBenefitFraction = annualizedBenefitFraction,
                     CommissionRateUsed = sellCommissionRate,
                     CommissionRateSource = commissionRateSource,
+                    SellTaxEstimateRub = sellTaxEstimateRub,
+                    NetBenefitAfterTaxRub = netBenefitAfterTaxRub,
                 });
             }
         }
 
-        bestPairs = bestPairs.OrderByDescending(p => p.NetBenefitRub).ToList();
+        // Задача 25: ранжирование bestPairs — по netBenefitAfterTaxRub, если оценим, иначе по
+        // до-налоговому netBenefitRub (см. doc-comment класса). rejectedPairs (NotProfitable) уже
+        // несёт after-tax-или-pretax значение в NetBenefitRub (см. rankingBenefitRub выше).
+        bestPairs = bestPairs.OrderByDescending(p => p.NetBenefitAfterTaxRub ?? p.NetBenefitRub).ToList();
         rejectedPairs = rejectedPairs.OrderByDescending(p => Math.Abs(p.NetBenefitRub ?? 0m)).ToList();
 
         // Plan/23 §A.4: предохранитель — при большом портфеле возвращаем топ-N по каждой категории,
