@@ -5,6 +5,15 @@ namespace Bonds.Core.Interfaces.Repositories;
 public interface IAccountRepository
 {
     Task<Account?> GetByIdAsync(ulong id, ulong userId);
+
+    /// <summary>
+    /// Возвращает счёт по Id без привязки к пользователю (plan/22 часть C: <c>ICommissionRateProvider</c>
+    /// резолвит эффективную ставку по AccountId и должен сам найти UserId для override из настроек —
+    /// вызывающий HTTP-слой уже проверил принадлежность счёта пользователю на входе запроса, здесь
+    /// повторная проверка избыточна, single-user MVP §2). Null — счёт не найден.
+    /// </summary>
+    Task<Account?> GetByIdAsync(ulong id);
+
     Task<IEnumerable<Account>> GetByUserIdAsync(ulong userId);
     Task<ulong> CreateAsync(Account account);
     Task UpdateAsync(Account account);

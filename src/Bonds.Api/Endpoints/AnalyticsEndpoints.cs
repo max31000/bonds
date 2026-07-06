@@ -3,6 +3,7 @@ using Bonds.Api.Middleware;
 using Bonds.Core.Analytics;
 using Bonds.Core.Calculation;
 using Bonds.Core.CashFlow;
+using Bonds.Core.Interfaces;
 using Bonds.Core.Interfaces.Repositories;
 using Bonds.Core.Time;
 using Bonds.Infrastructure.Analytics;
@@ -314,7 +315,9 @@ public static class AnalyticsEndpoints
         ReplacementRequestDto request,
         ClaimsPrincipal principal,
         IAccountRepository accountRepo,
-        PortfolioHoldingsBuilder holdingsBuilder)
+        PortfolioHoldingsBuilder holdingsBuilder,
+        ICommissionRateProvider commissionRateProvider,
+        CancellationToken ct)
     {
         var accountId = await PositionsEndpoints.ResolveAccountIdAsync(principal, accountRepo);
         if (accountId is null) throw new NotFoundException("Счёт не найден");
@@ -360,8 +363,16 @@ public static class AnalyticsEndpoints
             EffectiveYield = (targetPosition.IsFloater || targetPosition.IsIndexed) ? targetPosition.CurrentYield : targetPosition.YtmEffective,
         };
 
-        var sellRate = request.SellCommissionRate ?? SwitchAnalysisService.DefaultCommissionRate;
-        var buyRate = request.BuyCommissionRate ?? SwitchAnalysisService.DefaultCommissionRate;
+        // Plan/22 часть E: явные ставки в запросе по-прежнему побеждают резолвер (контракт не
+        // ломается) — резолвер вызывается, только если хотя бы одна из ставок не передана явно.
+        ResolvedCommissionRate? resolved = null;
+        if (request.SellCommissionRate is null || request.BuyCommissionRate is null)
+        {
+            resolved = await commissionRateProvider.GetAsync(accountId.Value, ct);
+        }
+
+        var sellRate = request.SellCommissionRate ?? resolved!.Rate;
+        var buyRate = request.BuyCommissionRate ?? resolved!.Rate;
 
         var result = SwitchAnalysisService.Compare(holdCandidate, targetCandidate, request.HorizonYears, sellRate, buyRate);
 
@@ -379,6 +390,11 @@ public static class AnalyticsEndpoints
             BreakEvenYears = result.BreakEvenYears,
             YieldDataIncomplete = result.YieldDataIncomplete,
             Disclaimer = result.Disclaimer,
+            // Plan/22 часть E: ставка(и) и источник, который реально применился (явный запрос
+            // выигрывает — тогда Source отражается как "явно передана запросом", см. doc-comment DTO).
+            SellCommissionRateUsed = sellRate,
+            BuyCommissionRateUsed = buyRate,
+            CommissionRateSource = resolved?.Source.ToString() ?? "ExplicitRequest",
         };
 
         return Results.Ok(dto);
@@ -507,8 +523,10 @@ public static class AnalyticsEndpoints
         PortfolioHoldingsBuilder holdingsBuilder,
         IWatchlistItemRepository watchlistRepo,
         IInstrumentRepository instrumentRepo,
+        ICommissionRateProvider commissionRateProvider,
         decimal amountRub,
-        bool includeWatchlist = false)
+        bool includeWatchlist = false,
+        CancellationToken ct = default)
     {
         if (amountRub <= 0m)
         {
@@ -527,8 +545,15 @@ public static class AnalyticsEndpoints
                 Skipped = [],
                 LeftoverRub = amountRub,
                 Disclaimer = CashAllocationService.Disclaimer,
+                CommissionRateUsed = SwitchAnalysisService.DefaultCommissionRate,
+                CommissionRateSource = nameof(CommissionRateSource.Default),
             });
         }
+
+        // Plan/22 часть E: ставка покупки для оценки грязной цены лота — через резолвер (override →
+        // оценка из журнала → дефолт), не захардкоженная константа.
+        var resolvedRate = await commissionRateProvider.GetAsync(accountId.Value, ct);
+        var commissionRate = resolvedRate.Rate;
 
         var asOf = BusinessClock.MoscowToday();
         var holdings = (await holdingsBuilder.BuildForAccountAsync(accountId.Value, asOf)).ToList();
@@ -543,7 +568,7 @@ public static class AnalyticsEndpoints
             .Select(h =>
             {
                 var pricePerUnitRub = h.MarketValueRub / h.Quantity;
-                var pricePerLotWithCommission = pricePerUnitRub * (1m + SwitchAnalysisService.DefaultCommissionRate);
+                var pricePerLotWithCommission = pricePerUnitRub * (1m + commissionRate);
                 var effectiveYield = (h.IsFloater || h.IsIndexed) ? h.CurrentYield : h.YtmEffective;
                 var issuerKey = h.Issuer ?? $"__instrument_{h.InstrumentId}";
 
@@ -589,7 +614,7 @@ public static class AnalyticsEndpoints
                 .Where(h => !h.IsOutOfScopeCurrency)
                 .Select(h =>
                 {
-                    var pricePerLotWithCommission = h.MarketValueRub * (1m + SwitchAnalysisService.DefaultCommissionRate);
+                    var pricePerLotWithCommission = h.MarketValueRub * (1m + commissionRate);
                     var effectiveYield = (h.IsFloater || h.IsIndexed) ? h.CurrentYield : h.YtmEffective;
                     var issuerKey = h.Issuer ?? $"__instrument_{h.InstrumentId}";
 
@@ -634,6 +659,8 @@ public static class AnalyticsEndpoints
             }).ToList(),
             LeftoverRub = result.LeftoverRub,
             Disclaimer = result.Disclaimer,
+            CommissionRateUsed = resolvedRate.Rate,
+            CommissionRateSource = resolvedRate.Source.ToString(),
         };
 
         return Results.Ok(dto);
@@ -776,6 +803,15 @@ public sealed record ReplacementResponseDto
     public decimal? BreakEvenYears { get; init; }
     public required bool YieldDataIncomplete { get; init; }
     public required string Disclaimer { get; init; }
+
+    /// <summary>Plan/22 часть E: фактически применённая ставка продажи — ДОЛЯ (явная ставка запроса, если была передана, иначе резолвер части C).</summary>
+    public required decimal SellCommissionRateUsed { get; init; }
+
+    /// <summary>Plan/22 часть E: фактически применённая ставка покупки — ДОЛЯ.</summary>
+    public required decimal BuyCommissionRateUsed { get; init; }
+
+    /// <summary>Plan/22 часть E: источник ставки — строка <see cref="CommissionRateSource"/> либо "ExplicitRequest" (обе ставки заданы явно в запросе — резолвер не вызывался).</summary>
+    public required string CommissionRateSource { get; init; }
 }
 
 public sealed record RateScenarioResponseDto
@@ -827,6 +863,12 @@ public sealed record AllocationResponseDto
     public required IReadOnlyList<AllocationSkipDto> Skipped { get; init; }
     public required decimal LeftoverRub { get; init; }
     public required string Disclaimer { get; init; }
+
+    /// <summary>Plan/22 часть E: ставка комиссии покупки, применённая к цене лота — ДОЛЯ (резолвер части C).</summary>
+    public required decimal CommissionRateUsed { get; init; }
+
+    /// <summary>Plan/22 часть E: источник ставки — строка <see cref="CommissionRateSource"/>.</summary>
+    public required string CommissionRateSource { get; init; }
 }
 
 public sealed record AllocationLineDto

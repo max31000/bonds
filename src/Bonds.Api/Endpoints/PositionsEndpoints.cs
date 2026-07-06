@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using Bonds.Api.Middleware;
 using Bonds.Core.Analytics;
+using Bonds.Core.Interfaces;
 using Bonds.Core.Interfaces.Repositories;
 using Bonds.Core.Models;
 using Bonds.Core.Time;
@@ -54,7 +55,9 @@ public static class PositionsEndpoints
         IOfferScheduleRepository offerRepo,
         IOperationRepository operationRepo,
         PortfolioHoldingsBuilder holdingsBuilder,
-        InstrumentPriceHistoryService priceHistoryService)
+        InstrumentPriceHistoryService priceHistoryService,
+        ICommissionRateProvider commissionRateProvider,
+        CancellationToken ct)
     {
         var accountId = await ResolveAccountIdAsync(principal, accountRepo);
         if (accountId is null) throw new NotFoundException("Позиция не найдена");
@@ -92,8 +95,12 @@ public static class PositionsEndpoints
             .OrderByDescending(op => op.Date)
             .ToList();
 
+        // Plan/22 часть E: ставка комиссии — из резолвера (override → оценка из журнала → дефолт),
+        // не захардкоженная константа SwitchAnalysisService.DefaultCommissionRate.
+        var resolvedRate = await commissionRateProvider.GetAsync(accountId.Value, ct);
+
         // plan/19 §A.4: «если продать сейчас» — выручка минус комиссия (+P&L при известном cost basis).
-        var ifSoldNow = IfSoldNowService.Calculate(holding.MarketValueRub, holding.CostBasis);
+        var ifSoldNow = IfSoldNowService.Calculate(holding.MarketValueRub, holding.CostBasis, resolvedRate.Rate);
 
         var dto = new PositionDetailDto
         {
@@ -182,6 +189,7 @@ public static class PositionsEndpoints
                 MarketValueRub = ifSoldNow.MarketValueRub,
                 CommissionRub = ifSoldNow.CommissionRub,
                 CommissionRate = ifSoldNow.CommissionRate,
+                CommissionRateSource = resolvedRate.Source.ToString(),
                 NetProceedsRub = ifSoldNow.NetProceedsRub,
                 RealizedPnlRub = ifSoldNow.RealizedPnlRub,
                 RealizedPnlPercent = ifSoldNow.RealizedPnlPercent,
@@ -483,6 +491,9 @@ public sealed record IfSoldNowDto
     public required decimal MarketValueRub { get; init; }
     public required decimal CommissionRub { get; init; }
     public required decimal CommissionRate { get; init; }
+
+    /// <summary>Plan/22 часть E: источник CommissionRate — строка <see cref="CommissionRateSource"/> (UserOverride/EstimatedFromTrades/Default).</summary>
+    public required string CommissionRateSource { get; init; }
     public required decimal NetProceedsRub { get; init; }
     public decimal? RealizedPnlRub { get; init; }
     public decimal? RealizedPnlPercent { get; init; }

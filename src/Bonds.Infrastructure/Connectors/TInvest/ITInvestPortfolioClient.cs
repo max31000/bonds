@@ -30,4 +30,24 @@ public interface ITInvestPortfolioClient
 
     /// <summary>Текущая цена/лучшие цены спроса-предложения по набору FIGI (открытые позиции).</summary>
     Task<IReadOnlyDictionary<string, TInvestQuote>> GetQuotesAsync(IReadOnlyCollection<string> figis, CancellationToken ct = default);
+
+    /// <summary>
+    /// Имя тарифа пользователя (<c>Users.GetInfo</c>, plan/22 часть B) — ТОЛЬКО для отображения в
+    /// настройках (контекст для пользователя, "у вас тариф X"). T-Invest НЕ отдаёт числовую ставку
+    /// комиссии тарифа нигде в API — этот метод не участвует в расчёте эффективной ставки
+    /// (см. <see cref="Bonds.Core.Interfaces.ICommissionRateProvider"/>, который использует только
+    /// override/оценку из журнала/дефолт). Ошибка гRPC или отсутствие токена — null, не исключение
+    /// наружу (тариф не критичен для работы продукта).
+    /// </summary>
+    Task<TInvestTariffInfo?> GetUserTariffAsync(CancellationToken ct = default);
+}
+
+/// <summary>Тариф пользователя T-Invest (plan/22 часть B) — только контекст для UI, не влияет на расчёты.</summary>
+public sealed record TInvestTariffInfo
+{
+    /// <summary>Имя тарифа (например, "Инвестор", "Трейдер") — как отдаёт GetInfoResponse.Tariff.</summary>
+    public required string Tariff { get; init; }
+
+    /// <summary>Признак премиального статуса (GetInfoResponse.PremStatus) — доп. контекст, не используется в расчётах.</summary>
+    public required bool PremStatus { get; init; }
 }

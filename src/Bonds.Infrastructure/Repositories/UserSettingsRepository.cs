@@ -24,6 +24,7 @@ public class UserSettingsRepository : IUserSettingsRepository
         maturity_window_days AS MaturityWindowDaysForAlternativeComparison,
         default_max_concentration_pct AS DefaultMaxConcentrationPercent,
         duration_drift_tolerance_years AS DurationDriftToleranceYears,
+        commission_rate_override AS CommissionRateOverride,
         created_at AS CreatedAt, updated_at AS UpdatedAt";
 
     public async Task<UserSettings?> GetByUserIdAsync(ulong userId)
@@ -41,12 +42,12 @@ public class UserSettingsRepository : IUserSettingsRepository
                 user_id, tinvest_token_encrypted, tinvest_token_last4,
                 upcoming_event_days_threshold, uninvested_cash_threshold_rub, uninvested_cash_lookback_days,
                 yield_below_alternative_bps, maturity_window_days, default_max_concentration_pct,
-                duration_drift_tolerance_years)
+                duration_drift_tolerance_years, commission_rate_override)
             VALUES (
                 @UserId, @TInvestTokenEncrypted, @TInvestTokenLast4,
                 @UpcomingEventDaysThreshold, @UninvestedCashThresholdRub, @UninvestedCashLookbackDays,
                 @YieldBelowAlternativeBpsThreshold, @MaturityWindowDaysForAlternativeComparison, @DefaultMaxConcentrationPercent,
-                @DurationDriftToleranceYears)
+                @DurationDriftToleranceYears, @CommissionRateOverride)
             ON DUPLICATE KEY UPDATE
                 tinvest_token_encrypted = @TInvestTokenEncrypted,
                 tinvest_token_last4 = @TInvestTokenLast4,
@@ -56,7 +57,8 @@ public class UserSettingsRepository : IUserSettingsRepository
                 yield_below_alternative_bps = @YieldBelowAlternativeBpsThreshold,
                 maturity_window_days = @MaturityWindowDaysForAlternativeComparison,
                 default_max_concentration_pct = @DefaultMaxConcentrationPercent,
-                duration_drift_tolerance_years = @DurationDriftToleranceYears";
+                duration_drift_tolerance_years = @DurationDriftToleranceYears,
+                commission_rate_override = @CommissionRateOverride";
 
         await conn.ExecuteAsync(sql, settings);
     }

@@ -26,6 +26,13 @@ public class AccountRepository : IAccountRepository
             new { Id = id, UserId = userId });
     }
 
+    public async Task<Account?> GetByIdAsync(ulong id)
+    {
+        using var conn = CreateConnection();
+        return await conn.QueryFirstOrDefaultAsync<Account>(
+            $"SELECT {SelectColumns} FROM accounts WHERE id = @Id", new { Id = id });
+    }
+
     public async Task<IEnumerable<Account>> GetByUserIdAsync(ulong userId)
     {
         using var conn = CreateConnection();

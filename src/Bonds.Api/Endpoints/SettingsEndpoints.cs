@@ -1,5 +1,7 @@
 using System.Security.Claims;
 using Bonds.Api.Middleware;
+using Bonds.Core.Analytics;
+using Bonds.Core.Interfaces;
 using Bonds.Core.Interfaces.Repositories;
 using Bonds.Core.Models;
 using Bonds.Core.Signals;
@@ -38,18 +40,29 @@ public static class SettingsEndpoints
         app.MapPut("/api/settings/tinvest-token", PutTInvestToken);
     }
 
+    /// <summary>Валидация override (plan/22 часть D): null допустим (сброс), иначе строго 0 &lt; x &lt; 0.05 — ставка ≥5% явно опечатка (ввод в % на фронте, доля на бэкенде).</summary>
+    private const decimal MaxCommissionRateOverride = 0.05m;
+
     private static async Task<IResult> GetSettings(
         ClaimsPrincipal principal,
         IUserRepository userRepo,
         IUserSettingsRepository settingsRepo,
-        IOptions<SignalEngineOptions> defaultSignalOptions)
+        IAccountRepository accountRepo,
+        IOperationRepository operationRepo,
+        ICommissionRateProvider commissionRateProvider,
+        ITInvestPortfolioClient tInvestClient,
+        IOptions<SignalEngineOptions> defaultSignalOptions,
+        CancellationToken ct)
     {
         var userId = ResolveUserId(principal);
         var user = await userRepo.GetByIdAsync(userId);
         if (user is null) throw new NotFoundException("Пользователь не найден");
 
         var settings = await settingsRepo.GetByUserIdAsync(userId);
-        return Results.Ok(BuildSettingsDto(user, settings, defaultSignalOptions.Value));
+        var context = await BuildCommissionContextAsync(
+            principal, accountRepo, operationRepo, commissionRateProvider, tInvestClient, ct);
+
+        return Results.Ok(BuildSettingsDto(user, settings, defaultSignalOptions.Value, context));
     }
 
     private static async Task<IResult> PutSettings(
@@ -57,11 +70,28 @@ public static class SettingsEndpoints
         ClaimsPrincipal principal,
         IUserRepository userRepo,
         IUserSettingsRepository settingsRepo,
-        IOptions<SignalEngineOptions> defaultSignalOptions)
+        IAccountRepository accountRepo,
+        IOperationRepository operationRepo,
+        ICommissionRateProvider commissionRateProvider,
+        ITInvestPortfolioClient tInvestClient,
+        IOptions<SignalEngineOptions> defaultSignalOptions,
+        CancellationToken ct)
     {
         var userId = ResolveUserId(principal);
         var user = await userRepo.GetByIdAsync(userId);
         if (user is null) throw new NotFoundException("Пользователь не найден");
+
+        if (request.CommissionRateOverride is decimal overrideRate
+            && (overrideRate <= 0m || overrideRate >= MaxCommissionRateOverride))
+        {
+            return Results.Json(
+                new
+                {
+                    error = $"Ставка комиссии должна быть в диапазоне (0, {MaxCommissionRateOverride:0.##}) — похоже на опечатку",
+                    type = "ValidationException",
+                },
+                statusCode: StatusCodes.Status422UnprocessableEntity);
+        }
 
         if (request.BaseCurrency is not null)
         {
@@ -79,12 +109,75 @@ public static class SettingsEndpoints
         existing.DefaultMaxConcentrationPercent = request.DefaultMaxConcentrationPercent ?? existing.DefaultMaxConcentrationPercent;
         existing.DurationDriftToleranceYears = request.DurationDriftToleranceYears ?? existing.DurationDriftToleranceYears;
 
+        // CommissionRateOverride — фронт всегда шлёт текущее значение поля формы целиком (как и
+        // остальные пороги ниже в Settings.tsx), поэтому null здесь означает "убрать override",
+        // не "не менять" (в отличие от полей выше, где PUT — частичное обновление per-поле).
+        existing.CommissionRateOverride = request.CommissionRateOverride;
+
         await settingsRepo.UpsertAsync(existing);
 
-        return Results.Ok(BuildSettingsDto(user, existing, defaultSignalOptions.Value));
+        var context = await BuildCommissionContextAsync(
+            principal, accountRepo, operationRepo, commissionRateProvider, tInvestClient, ct);
+
+        return Results.Ok(BuildSettingsDto(user, existing, defaultSignalOptions.Value, context));
     }
 
-    private static SettingsResponseDto BuildSettingsDto(User user, UserSettings? settings, SignalEngineOptions defaults) => new()
+    /// <summary>Контекст комиссии для GET/PUT ответа (plan/22 часть D) — авто-оценка из журнала, тариф T-Invest, эффективная ставка+источник.</summary>
+    private sealed record CommissionContext(
+        CommissionAutoEstimateDto? AutoEstimate,
+        string? TInvestTariff,
+        decimal CommissionEffectiveRate,
+        string CommissionEffectiveSource);
+
+    private static async Task<CommissionContext> BuildCommissionContextAsync(
+        ClaimsPrincipal principal,
+        IAccountRepository accountRepo,
+        IOperationRepository operationRepo,
+        ICommissionRateProvider commissionRateProvider,
+        ITInvestPortfolioClient tInvestClient,
+        CancellationToken ct)
+    {
+        var accountId = await PositionsEndpoints.ResolveAccountIdAsync(principal, accountRepo);
+
+        // Тариф — best-effort, не должен ронять GET/PUT /api/settings (см. doc-comment GetUserTariffAsync).
+        string? tariff = null;
+        try
+        {
+            var tariffInfo = await tInvestClient.GetUserTariffAsync(ct);
+            tariff = tariffInfo?.Tariff;
+        }
+        catch (Exception)
+        {
+            // Проглатываем — тариф это необязательный контекст для UI (plan/22 часть B).
+        }
+
+        if (accountId is null)
+        {
+            return new CommissionContext(null, tariff, SwitchAnalysisService.DefaultCommissionRate, nameof(CommissionRateSource.Default));
+        }
+
+        var operations = (await operationRepo.GetByAccountIdAsync(accountId.Value)).ToList();
+        var asOf = Bonds.Core.Time.BusinessClock.MoscowToday().ToDateTime(TimeOnly.MinValue);
+        var estimate = CommissionRateEstimator.Estimate(operations, asOf);
+
+        var resolved = await commissionRateProvider.GetAsync(accountId.Value, ct);
+
+        var autoEstimateDto = estimate is null
+            ? null
+            : new CommissionAutoEstimateDto
+            {
+                Rate = estimate.Rate,
+                TurnoverRub = estimate.TurnoverRub,
+                FeeTotalRub = estimate.FeeTotalRub,
+                TradeCount = estimate.TradeCount,
+                WindowMonths = estimate.WindowMonths,
+            };
+
+        return new CommissionContext(autoEstimateDto, tariff, resolved.Rate, resolved.Source.ToString());
+    }
+
+    private static SettingsResponseDto BuildSettingsDto(
+        User user, UserSettings? settings, SignalEngineOptions defaults, CommissionContext commission) => new()
     {
         BaseCurrency = user.BaseCurrency,
         TInvestTokenConfigured = !string.IsNullOrEmpty(settings?.TInvestTokenEncrypted),
@@ -96,6 +189,11 @@ public static class SettingsEndpoints
         MaturityWindowDaysForAlternativeComparison = settings?.MaturityWindowDaysForAlternativeComparison ?? defaults.MaturityWindowDaysForAlternativeComparison,
         DefaultMaxConcentrationPercent = settings?.DefaultMaxConcentrationPercent ?? defaults.DefaultMaxConcentrationPercent,
         DurationDriftToleranceYears = settings?.DurationDriftToleranceYears ?? defaults.DurationDriftToleranceYears,
+        CommissionRateOverride = settings?.CommissionRateOverride,
+        CommissionAutoEstimate = commission.AutoEstimate,
+        TInvestTariff = commission.TInvestTariff,
+        CommissionEffectiveRate = commission.CommissionEffectiveRate,
+        CommissionEffectiveSource = commission.CommissionEffectiveSource,
     };
 
     private static async Task<IResult> PutTInvestToken(
@@ -169,6 +267,32 @@ public sealed record SettingsResponseDto
     public required int MaturityWindowDaysForAlternativeComparison { get; init; }
     public required decimal DefaultMaxConcentrationPercent { get; init; }
     public required decimal DurationDriftToleranceYears { get; init; }
+
+    /// <summary>Plan/22 часть D: ручной override ставки комиссии — ДОЛЯ (0.0005 = 0.05%). Null — не задан.</summary>
+    public decimal? CommissionRateOverride { get; init; }
+
+    /// <summary>Read-only: авто-оценка ставки из журнала операций (часть A). Null — журнал не позволяет оценить (нет сделок/оборот 0).</summary>
+    public CommissionAutoEstimateDto? CommissionAutoEstimate { get; init; }
+
+    /// <summary>Read-only: имя тарифа T-Invest (часть B, GetInfo) — только контекст, в расчёт не входит. Null — не удалось получить (нет токена/ошибка gRPC).</summary>
+    public string? TInvestTariff { get; init; }
+
+    /// <summary>Read-only: ставка, которая реально будет применена расчётами (резолвер части C) — ДОЛЯ.</summary>
+    public required decimal CommissionEffectiveRate { get; init; }
+
+    /// <summary>Read-only: источник CommissionEffectiveRate — строковое имя <see cref="Bonds.Core.Interfaces.CommissionRateSource"/> (UserOverride/EstimatedFromTrades/Default).</summary>
+    public required string CommissionEffectiveSource { get; init; }
+}
+
+/// <summary>Read-only контекст авто-оценки ставки комиссии из журнала (plan/22 часть A/D) — см. <see cref="Bonds.Core.Analytics.CommissionEstimate"/>.</summary>
+public sealed record CommissionAutoEstimateDto
+{
+    /// <summary>Оценённая ставка — ДОЛЯ (0.00046 = 0.046%), не процент.</summary>
+    public required decimal Rate { get; init; }
+    public required decimal TurnoverRub { get; init; }
+    public required decimal FeeTotalRub { get; init; }
+    public required int TradeCount { get; init; }
+    public required int WindowMonths { get; init; }
 }
 
 public sealed record SettingsUpdateRequestDto
@@ -181,6 +305,9 @@ public sealed record SettingsUpdateRequestDto
     public int? MaturityWindowDaysForAlternativeComparison { get; init; }
     public decimal? DefaultMaxConcentrationPercent { get; init; }
     public decimal? DurationDriftToleranceYears { get; init; }
+
+    /// <summary>Plan/22 часть D: override ставки комиссии — ДОЛЯ (не процент; конвертация из % на фронте). Null — убрать override. Валидация: 0 &lt; x &lt; 0.05, иначе 422.</summary>
+    public decimal? CommissionRateOverride { get; init; }
 }
 
 public sealed record TInvestTokenRequestDto
