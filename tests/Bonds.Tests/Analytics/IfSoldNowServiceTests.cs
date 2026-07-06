@@ -115,4 +115,80 @@ public class IfSoldNowServiceTests
         result.AccruedTotalRub.Should().Be(0m);
         result.CleanValueRub.Should().Be(50_000m);
     }
+
+    // ─── Задача 25: оценка НДФЛ с продажи и итог после налога ──────────────────────────────────
+
+    [Fact]
+    public void Calculate_ProfitablePosition_ComputesTaxEstimateAndNetAfterTax()
+    {
+        var costBasis = new PositionCostBasis
+        {
+            AverageCostRub = 950m,
+            InvestedRub = 95_000m,
+            UnrealizedPnlRub = 5_000m,
+            UnrealizedPnlPercent = 5_000m / 95_000m,
+            CouponsReceivedRub = 3_000m,
+            TotalReturnRub = 8_000m,
+            TotalReturnPercent = 8_000m / 95_000m,
+            HasUnknownLots = false,
+        };
+
+        var result = IfSoldNowService.Calculate(marketValueRub: 100_000m, costBasis: costBasis, commissionRate: 0.003m);
+
+        // NetProceedsRub = 99700, RealizedPnlRub = 4700, TaxableGain = 4700, Tax = 4700 * 0.13 = 611
+        result.TaxEstimateRub.Should().Be(611m);
+        result.TotalReturnWithCouponsRub.Should().Be(7_700m);
+        result.NetAfterTaxRub.Should().Be(7_089m); // 7700 - 611
+    }
+
+    [Fact]
+    public void Calculate_LossPosition_TaxEstimateIsZero_NotNegative()
+    {
+        var costBasis = new PositionCostBasis
+        {
+            AverageCostRub = 1_200m,
+            InvestedRub = 120_000m,
+            UnrealizedPnlRub = -20_000m,
+            UnrealizedPnlPercent = -20_000m / 120_000m,
+            CouponsReceivedRub = 0m,
+            TotalReturnRub = -20_000m,
+            TotalReturnPercent = -20_000m / 120_000m,
+            HasUnknownLots = false,
+        };
+
+        var result = IfSoldNowService.Calculate(marketValueRub: 100_000m, costBasis: costBasis, commissionRate: 0.003m);
+
+        result.TaxEstimateRub.Should().Be(0m);
+        result.NetAfterTaxRub.Should().Be(result.TotalReturnWithCouponsRub);
+    }
+
+    [Fact]
+    public void Calculate_HasUnknownLots_TaxEstimateAndNetAfterTaxAreNull_NotZero()
+    {
+        var costBasis = new PositionCostBasis
+        {
+            AverageCostRub = 950m,
+            InvestedRub = 95_000m,
+            UnrealizedPnlRub = 5_000m,
+            UnrealizedPnlPercent = 5_000m / 95_000m,
+            CouponsReceivedRub = 0m,
+            TotalReturnRub = 5_000m,
+            TotalReturnPercent = 5_000m / 95_000m,
+            HasUnknownLots = true,
+        };
+
+        var result = IfSoldNowService.Calculate(marketValueRub: 100_000m, costBasis: costBasis, commissionRate: 0.003m);
+
+        result.TaxEstimateRub.Should().BeNull("журнал операций неполон — налог нельзя оценить");
+        result.NetAfterTaxRub.Should().BeNull();
+    }
+
+    [Fact]
+    public void Calculate_WithoutCostBasis_TaxEstimateAndNetAfterTaxAreNull()
+    {
+        var result = IfSoldNowService.Calculate(marketValueRub: 100_000m, costBasis: null, commissionRate: 0.003m);
+
+        result.TaxEstimateRub.Should().BeNull();
+        result.NetAfterTaxRub.Should().BeNull();
+    }
 }

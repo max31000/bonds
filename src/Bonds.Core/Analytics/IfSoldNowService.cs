@@ -9,17 +9,26 @@ namespace Bonds.Core.Analytics;
 /// (<see cref="Bonds.Core.Analytics.PositionCostBasis"/>, plan/14) — дополнительно считает итоговый
 /// P&amp;L при продаже: (чистая выручка − вложено) + уже полученные купоны.
 /// <para>
-/// Это НЕ анализ замены (<see cref="SwitchAnalysisService"/> — сравнение с альтернативной бумагой)
-/// и не налоговый расчёт (НДФЛ на разницу цены покупки/продажи вне MVP, см. spec §3) — просто
-/// снимок "что я получу на руки, если закрою позицию сегодня".
+/// Это НЕ анализ замены (<see cref="SwitchAnalysisService"/> — сравнение с альтернативной бумагой).
+/// </para>
+/// <para>
+/// <b>Задача 25 — налог при продаже:</b> <see cref="IfSoldNowResult.TaxEstimateRub"/>/
+/// <see cref="IfSoldNowResult.NetAfterTaxRub"/> считаются через <see cref="SaleTaxEstimator"/> поверх
+/// той же <paramref name="costBasis"/> (см. <see cref="Calculate"/>) — оценка НДФЛ на разницу цены
+/// покупки/продажи, average cost, без сальдирования/ЛДВ, плоские 13% (см. doc-comment
+/// SaleTaxEstimator для полного списка упрощений). Null у обоих полей — <see cref="SaleTaxEstimator.Estimate"/>
+/// вернул null (cost basis недоступен/журнал неполон), а не "налог = 0".
 /// </para>
 /// </summary>
 public static class IfSoldNowService
 {
     public const string Disclaimer =
         "Оценочный расчёт: рыночная стоимость по последней известной котировке минус комиссия " +
-        "брокера. Налог при продаже (НДФЛ на разницу цены покупки/продажи) не учтён. Фактическая " +
-        "цена исполнения на бирже может отличаться от последней котировки.";
+        "брокера. Налог при продаже (НДФЛ 13% на разницу цены покупки/продажи к средней цене входа, " +
+        "не FIFO брокера) учтён ОЦЕНОЧНО — без сальдирования прибылей/убытков по другим позициям, " +
+        "без льготы долгосрочного владения (3 года) и без прогрессии до 15%; при неполном журнале " +
+        "операций налог не оценивается (не 0). Фактическая цена исполнения на бирже может " +
+        "отличаться от последней котировки.";
 
     /// <summary>
     /// Считает оценку продажи текущего остатка. <paramref name="marketValueRub"/> — грязная
@@ -52,6 +61,16 @@ public static class IfSoldNowService
             totalReturnWithCouponsRub = realizedPnlRub + costBasis.CouponsReceivedRub;
         }
 
+        // Задача 25: оценка НДФЛ с продажи (average cost, без сальдирования/ЛДВ, плоские 13% —
+        // см. doc-comment SaleTaxEstimator) поверх той же cost basis. Null у HasUnknownLots/нет
+        // InvestedRub — "оценить нельзя", не "налог 0" (см. doc-comment SaleTaxEstimator.Estimate).
+        var taxEstimate = SaleTaxEstimator.Estimate(
+            netProceedsRub, costBasis?.InvestedRub, costBasis?.HasUnknownLots ?? true);
+        var taxEstimateRub = taxEstimate?.TaxRub;
+        decimal? netAfterTaxRub = totalReturnWithCouponsRub is decimal totalReturn && taxEstimateRub is decimal tax
+            ? totalReturn - tax
+            : null;
+
         return new IfSoldNowResult
         {
             MarketValueRub = marketValueRub,
@@ -65,6 +84,8 @@ public static class IfSoldNowService
             CouponsReceivedRub = costBasis?.CouponsReceivedRub,
             TotalReturnWithCouponsRub = totalReturnWithCouponsRub,
             PnlAvailable = costBasis?.InvestedRub is not null,
+            TaxEstimateRub = taxEstimateRub,
+            NetAfterTaxRub = netAfterTaxRub,
             Disclaimer = Disclaimer,
         };
     }
@@ -102,6 +123,19 @@ public sealed record IfSoldNowResult
 
     /// <summary>True — P&amp;L-поля посчитаны (cost basis известен, plan/14); false — доступна только выручка/комиссия.</summary>
     public required bool PnlAvailable { get; init; }
+
+    /// <summary>
+    /// Задача 25: оценка НДФЛ с продажи (<see cref="SaleTaxEstimator"/>) — 13% с прибыли к средней
+    /// цене входа, average cost, без сальдирования/ЛДВ (см. doc-comment класса). Null — cost basis
+    /// недоступен/журнал неполон (<c>HasUnknownLots</c>) — "оценить нельзя", НЕ "налог 0".
+    /// </summary>
+    public decimal? TaxEstimateRub { get; init; }
+
+    /// <summary>
+    /// TotalReturnWithCouponsRub − TaxEstimateRub — итог владения бумагой при продаже сейчас ПОСЛЕ
+    /// оценки налога. Null, если TaxEstimateRub недоступен (тот же null-каскад, что у TotalReturnWithCouponsRub).
+    /// </summary>
+    public decimal? NetAfterTaxRub { get; init; }
 
     public required string Disclaimer { get; init; }
 }

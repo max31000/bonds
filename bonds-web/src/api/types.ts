@@ -128,6 +128,10 @@ export interface IfSoldNow {
   couponsReceivedRub: number | null;
   totalReturnWithCouponsRub: number | null;
   pnlAvailable: boolean;
+  /** Задача 25: оценка НДФЛ с продажи (13% с прибыли к средней цене входа) — null, если журнал операций неполон/cost basis недоступен. */
+  taxEstimateRub: number | null;
+  /** Задача 25: totalReturnWithCouponsRub − taxEstimateRub — итог после налога. Null, если taxEstimateRub недоступен. */
+  netAfterTaxRub: number | null;
   disclaimer: string;
 }
 
@@ -524,6 +528,10 @@ export interface MatrixPair {
   /** Ставка комиссии, применённая к обеим сделкам пары — ДОЛЯ. */
   commissionRateUsed: number;
   commissionRateSource: CommissionRateSource;
+  /** Задача 25: оценка НДФЛ от продажи hold-позиции (13% с прибыли к средней цене входа) — null, если cost basis hold-позиции недоступен/журнал неполон. */
+  sellTaxEstimateRub: number | null;
+  /** Задача 25: netBenefitRub − sellTaxEstimateRub — выгода после налога. Null, если sellTaxEstimateRub недоступен (ранжирование использует netBenefitAfterTaxRub ?? netBenefitRub). */
+  netBenefitAfterTaxRub: number | null;
 }
 
 /** Пара, не попавшая в bestPairs, но видимая с причиной отказа (plan/23 §A.4). */

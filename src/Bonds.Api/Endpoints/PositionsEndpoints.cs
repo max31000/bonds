@@ -204,6 +204,8 @@ public static class PositionsEndpoints
                 CouponsReceivedRub = ifSoldNow.CouponsReceivedRub,
                 TotalReturnWithCouponsRub = ifSoldNow.TotalReturnWithCouponsRub,
                 PnlAvailable = ifSoldNow.PnlAvailable,
+                TaxEstimateRub = ifSoldNow.TaxEstimateRub,
+                NetAfterTaxRub = ifSoldNow.NetAfterTaxRub,
                 Disclaimer = ifSoldNow.Disclaimer,
             },
             Disclaimer = Disclaimers.Metrics,
@@ -527,5 +529,12 @@ public sealed record IfSoldNowDto
     public decimal? CouponsReceivedRub { get; init; }
     public decimal? TotalReturnWithCouponsRub { get; init; }
     public required bool PnlAvailable { get; init; }
+
+    /// <summary>Задача 25: оценка НДФЛ с продажи (13% с прибыли к средней цене входа, average cost) — null, если журнал операций неполон/cost basis недоступен (см. doc-comment IfSoldNowService).</summary>
+    public decimal? TaxEstimateRub { get; init; }
+
+    /// <summary>Задача 25: TotalReturnWithCouponsRub − TaxEstimateRub — итог после оценки налога. Null, если TaxEstimateRub недоступен.</summary>
+    public decimal? NetAfterTaxRub { get; init; }
+
     public required string Disclaimer { get; init; }
 }

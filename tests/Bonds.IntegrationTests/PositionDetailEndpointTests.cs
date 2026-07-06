@@ -229,4 +229,112 @@ public class PositionDetailEndpointTests
         // Второй запрос начинается позже первого (не повторяет уже закэшированный диапазон целиком).
         calls[1].From.Should().BeAfter(calls[0].From);
     }
+
+    // ─── Задача 25 часть B: налог в «если продать сейчас» ──────────────────────────────────────
+
+    private Mock<IMoexIssClient> EmptyMoexMock()
+    {
+        var mock = new Mock<IMoexIssClient>();
+        mock.Setup(m => m.GetHistoryPricesAsync(It.IsAny<string>(), It.IsAny<DateOnly>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<MoexHistoryPricePoint>());
+        return mock;
+    }
+
+    [Fact]
+    public async Task GetPositionById_PositionInProfit_IfSoldNowCarriesTaxEstimateAndNetAfterTax()
+    {
+        var httpClient = CreateClientWithMoexStub(EmptyMoexMock());
+        var (client, accountId) = await CreateAuthorizedClientAsync(httpClient);
+        var (instrumentId, positionId) = await SeedPositionAsync(accountId);
+
+        // Котировка выше цены покупки => позиция в прибыли при продаже сейчас.
+        var quoteRepo = new MarketQuoteRepository(_factory.Database.ConnectionString);
+        await quoteRepo.UpsertAsync(new MarketQuote
+        {
+            InstrumentId = instrumentId,
+            AsOf = DateOnly.FromDateTime(DateTime.UtcNow),
+            CleanPrice = 1050m,
+            DirtyPrice = 1050m,
+            Accrued = 0m,
+            Source = MarketQuoteSource.Moex,
+        });
+
+        // Журнал полностью покрывает остаток (одна покупка на всё количество) — cost basis известен.
+        var operationRepo = new OperationRepository(_factory.Database.ConnectionString);
+        await operationRepo.UpsertManyByExternalIdAsync(new[]
+        {
+            new Operation
+            {
+                AccountId = accountId,
+                InstrumentId = instrumentId,
+                Type = OperationType.Buy,
+                Date = DateTime.UtcNow.AddMonths(-6),
+                AmountRub = -10_000m,
+                Quantity = 10m,
+                ExternalId = $"buy-{Guid.NewGuid()}",
+            },
+        });
+
+        var response = await client.GetAsync($"/api/positions/{positionId}");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+
+        var ifSoldNow = body.GetProperty("ifSoldNow");
+        ifSoldNow.GetProperty("pnlAvailable").GetBoolean().Should().BeTrue();
+        ifSoldNow.GetProperty("taxEstimateRub").GetDecimal().Should().BeGreaterThan(0m, "позиция в прибыли — оценка налога должна быть положительной");
+
+        var totalReturn = ifSoldNow.GetProperty("totalReturnWithCouponsRub").GetDecimal();
+        var tax = ifSoldNow.GetProperty("taxEstimateRub").GetDecimal();
+        var netAfterTax = ifSoldNow.GetProperty("netAfterTaxRub").GetDecimal();
+        netAfterTax.Should().Be(totalReturn - tax);
+        netAfterTax.Should().BeLessThan(totalReturn, "налог уменьшает итог после налога относительно до-налогового значения");
+    }
+
+    [Fact]
+    public async Task GetPositionById_IncompleteJournal_IfSoldNowTaxFieldsAreNull_NotZero()
+    {
+        // Журнал НЕ покрывает остаток целиком (позиция куплена частично до начала истории синка) —
+        // HasUnknownLots=true, налог не должен оцениваться (null, не 0).
+        var httpClient = CreateClientWithMoexStub(EmptyMoexMock());
+        var (client, accountId) = await CreateAuthorizedClientAsync(httpClient);
+        var (instrumentId, positionId) = await SeedPositionAsync(accountId); // Quantity=10 в позиции
+
+        var quoteRepo = new MarketQuoteRepository(_factory.Database.ConnectionString);
+        await quoteRepo.UpsertAsync(new MarketQuote
+        {
+            InstrumentId = instrumentId,
+            AsOf = DateOnly.FromDateTime(DateTime.UtcNow),
+            CleanPrice = 1050m,
+            DirtyPrice = 1050m,
+            Accrued = 0m,
+            Source = MarketQuoteSource.Moex,
+        });
+
+        // Журнал покрывает только 4 из 10 бумаг остатка — HasUnknownLots должен сработать.
+        var operationRepo = new OperationRepository(_factory.Database.ConnectionString);
+        await operationRepo.UpsertManyByExternalIdAsync(new[]
+        {
+            new Operation
+            {
+                AccountId = accountId,
+                InstrumentId = instrumentId,
+                Type = OperationType.Buy,
+                Date = DateTime.UtcNow.AddMonths(-6),
+                AmountRub = -4_000m,
+                Quantity = 4m,
+                ExternalId = $"buy-{Guid.NewGuid()}",
+            },
+        });
+
+        var response = await client.GetAsync($"/api/positions/{positionId}");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+
+        body.GetProperty("costBasisIncomplete").GetBoolean().Should().BeTrue();
+        var ifSoldNow = body.GetProperty("ifSoldNow");
+        ifSoldNow.GetProperty("taxEstimateRub").ValueKind.Should().Be(JsonValueKind.Null, "журнал операций неполон — налог не оценивается, а не 0");
+        ifSoldNow.GetProperty("netAfterTaxRub").ValueKind.Should().Be(JsonValueKind.Null);
+    }
 }

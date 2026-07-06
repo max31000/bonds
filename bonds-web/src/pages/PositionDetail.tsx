@@ -451,7 +451,7 @@ export function PositionDetail() {
             <Text fw={600} mb="xs">
               Если продать сейчас
             </Text>
-            <SimpleGrid cols={{ base: 2, sm: 4 }}>
+            <SimpleGrid cols={{ base: 2, sm: 5 }}>
               <div>
                 <Text size="xs" c="dimmed">
                   Рыночная стоимость
@@ -481,15 +481,45 @@ export function PositionDetail() {
               </div>
               <div>
                 <Text size="xs" c="dimmed">
-                  Итог (P&amp;L + купоны)
+                  − НДФЛ (оценка, 13% с прибыли к средней цене входа)
+                </Text>
+                {detail.ifSoldNow.taxEstimateRub !== null ? (
+                  <Text fw={600} c="red" data-testid="if-sold-now-tax-estimate">
+                    −{formatRub(detail.ifSoldNow.taxEstimateRub)}
+                  </Text>
+                ) : (
+                  <Text size="sm" c="dimmed" data-testid="if-sold-now-tax-unavailable">
+                    налог не оценён: журнал операций неполон
+                  </Text>
+                )}
+              </div>
+              <div>
+                <Text size="xs" c="dimmed">
+                  Итог после налога (P&amp;L + купоны − НДФЛ)
                 </Text>
                 {detail.ifSoldNow.pnlAvailable ? (
-                  <Text fw={700} size="lg" c={(detail.ifSoldNow.totalReturnWithCouponsRub ?? 0) >= 0 ? 'green' : 'red'}>
-                    {formatRub(detail.ifSoldNow.totalReturnWithCouponsRub)}
-                  </Text>
+                  detail.ifSoldNow.netAfterTaxRub !== null ? (
+                    <Text
+                      fw={700}
+                      size="lg"
+                      c={detail.ifSoldNow.netAfterTaxRub >= 0 ? 'green' : 'red'}
+                      data-testid="if-sold-now-net-after-tax"
+                    >
+                      {formatRub(detail.ifSoldNow.netAfterTaxRub)}
+                    </Text>
+                  ) : (
+                    <Text size="sm" c="dimmed" data-testid="if-sold-now-net-after-tax-unavailable">
+                      налог не оценён: журнал операций неполон
+                    </Text>
+                  )
                 ) : (
                   <Text size="sm" c="dimmed">
                     Недоступно — журнал операций не покрывает остаток
+                  </Text>
+                )}
+                {detail.ifSoldNow.pnlAvailable && (
+                  <Text size="xs" c="dimmed" data-testid="if-sold-now-pretax-caption">
+                    до налога {formatRub(detail.ifSoldNow.totalReturnWithCouponsRub)}
                   </Text>
                 )}
               </div>
