@@ -11,7 +11,6 @@ import { useAuthStore } from '../store/useAuthStore';
 import type {
   ComparisonResponse,
   ReplacementMatrixResponse,
-  AllocationResponse,
   CompositionResponse,
   WatchlistItem,
 } from '../api/types';
@@ -147,29 +146,6 @@ const favorableMatrix: ReplacementMatrixResponse = {
   disclaimer: 'Анализ замены сравнивает только текущие позиции портфеля.',
 };
 
-const allocationResult: AllocationResponse = {
-  amountRub: 15000,
-  allocations: [
-    {
-      instrumentId: 11,
-      name: 'Сильная бумага',
-      issuer: 'Хороший Эмитент',
-      quantity: 10,
-      estimatedCostRub: 10000,
-      effectiveYield: 0.16,
-      lotSizeAssumed: true,
-      cleanCostRub: 9500,
-      accruedCostRub: 400,
-      commissionCostRub: 100,
-    },
-  ],
-  skipped: [],
-  leftoverRub: 5000,
-  disclaimer: 'Оценка распределения свободных средств по бумагам текущего портфеля. Не учитывает налоги и не является инвестиционной рекомендацией.',
-  commissionRateUsed: 0.003,
-  commissionRateSource: 'Default',
-};
-
 describe('Recommendations', () => {
   beforeEach(() => {
     useRecommendationsStore.setState({
@@ -182,10 +158,6 @@ describe('Recommendations', () => {
       replacementDisclaimer: '',
       isLoading: false,
       error: null,
-      allocationAmount: 15000,
-      allocation: null,
-      isAllocationLoading: false,
-      allocationError: null,
     });
     useWatchlistStore.setState({
       items: [],
@@ -201,17 +173,17 @@ describe('Recommendations', () => {
       http.get('*/api/analytics/composition', () => HttpResponse.json(baseComposition)),
       http.get('*/api/analytics/comparison', () => HttpResponse.json(baseComparison)),
       http.get('*/api/analytics/replacement-matrix', () => HttpResponse.json(favorableMatrix)),
-      http.get('*/api/analytics/allocation', () => HttpResponse.json(allocationResult)),
+      http.get('*/api/universe*', () => HttpResponse.json({ rows: [], total: 0, hiddenCount: 0 })),
       http.get('*/api/watchlist', () => HttpResponse.json({ items: [], disclaimer: '' })),
     );
   });
 
-  it('renders all three sections', async () => {
+  it('renders the weak-links, replacements, and basket constructor sections', async () => {
     renderRecommendations();
 
     await waitFor(() => expect(screen.getByTestId('weak-links-section')).toBeInTheDocument());
     expect(screen.getByTestId('replacements-section')).toBeInTheDocument();
-    expect(screen.getByTestId('allocation-section')).toBeInTheDocument();
+    expect(screen.getByTestId('basket-constructor')).toBeInTheDocument();
   });
 
   it('shows a sell candidate with reason badges', async () => {
@@ -228,6 +200,19 @@ describe('Recommendations', () => {
 
     await waitFor(() => expect(screen.getByTestId('out-of-comparison-3')).toBeInTheDocument());
     expect(screen.queryByTestId('sell-candidate-3')).not.toBeInTheDocument();
+  });
+
+  // ─── Задача 27: MarketComparator на карточке слабой позиции ────────────────────────────────
+
+  it('reveals the MarketComparator when "сравнить с рынком" is clicked on a weak-link card', async () => {
+    renderRecommendations();
+
+    await waitFor(() => expect(screen.getByTestId('sell-candidate-1')).toBeInTheDocument());
+    expect(screen.queryByTestId('market-comparator-1')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('compare-with-market-toggle-1'));
+
+    await waitFor(() => expect(screen.getByTestId('market-comparator-1')).toBeVisible());
   });
 
   it('shows a favorable replacement card with benefit and annualized percent', async () => {
@@ -366,108 +351,10 @@ describe('Recommendations', () => {
     expect(screen.getByTestId('replacements-empty').textContent).toMatch(/7/);
   });
 
-  it('allocation form shows the result and leftover after submit', async () => {
-    renderRecommendations();
-
-    await waitFor(() => expect(screen.getByTestId('allocation-result')).toBeInTheDocument());
-    expect(screen.getByTestId('allocation-line-11')).toBeInTheDocument();
-    expect(screen.getByTestId('allocation-leftover').textContent).toMatch(/5[\s\u00a0]000/);
-  });
-
-  // Plan/22 \u0447\u0430\u0441\u0442\u044c E: \u0440\u0435\u0437\u0443\u043b\u044c\u0442\u0430\u0442 \u0430\u043b\u043b\u043e\u043a\u0430\u0446\u0438\u0438 \u043f\u043e\u043a\u0430\u0437\u044b\u0432\u0430\u0435\u0442 \u0441\u0442\u0430\u0432\u043a\u0443 \u043a\u043e\u043c\u0438\u0441\u0441\u0438\u0438, \u043f\u0440\u0438\u043c\u0435\u043d\u0451\u043d\u043d\u0443\u044e \u043a \u0446\u0435\u043d\u0435 \u043b\u043e\u0442\u0430, \u0438 \u0435\u0451 \u0438\u0441\u0442\u043e\u0447\u043d\u0438\u043a.
-  it('shows the commission rate source caption in the allocation result', async () => {
-    renderRecommendations();
-
-    await waitFor(() => expect(screen.getByTestId('allocation-commission-source')).toBeInTheDocument());
-    expect(screen.getByTestId('allocation-commission-source').textContent).toMatch(/\u0434\u0435\u0444\u043e\u043b\u0442 0\.3%/);
-  });
-
-  it('requests allocation with includeWatchlist=true so watchlist bonds are considered as candidates (plan/20 \u00a7B.2)', async () => {
-    let requestedUrl: string | null = null;
-    server.use(
-      http.get('*/api/analytics/allocation', ({ request }) => {
-        requestedUrl = request.url;
-        return HttpResponse.json(allocationResult);
-      }),
-    );
-
-    renderRecommendations();
-
-    await waitFor(() => expect(requestedUrl).not.toBeNull());
-    expect(new URL(requestedUrl!).searchParams.get('includeWatchlist')).toBe('true');
-  });
-
-  it('renders a watchlist-originated candidate returned by the allocation endpoint', async () => {
-    // \u041d\u0430 \u0431\u044d\u043a\u0435 watchlist-\u043a\u0430\u043d\u0434\u0438\u0434\u0430\u0442 \u043d\u0435\u043e\u0442\u043b\u0438\u0447\u0438\u043c \u043f\u043e \u0444\u043e\u0440\u043c\u0435 DTO \u043e\u0442 \u043a\u0430\u043d\u0434\u0438\u0434\u0430\u0442\u0430-\u043f\u043e\u0437\u0438\u0446\u0438\u0438 (\u0442\u043e\u0442 \u0436\u0435 AllocationLineDto) \u2014
-    // \u0444\u0440\u043e\u043d\u0442\u0443 \u0434\u043e\u0441\u0442\u0430\u0442\u043e\u0447\u043d\u043e \u043e\u0442\u0440\u0435\u043d\u0434\u0435\u0440\u0438\u0442\u044c \u043b\u044e\u0431\u0443\u044e \u0441\u0442\u0440\u043e\u043a\u0443 \u0438\u0437 \u043e\u0442\u0432\u0435\u0442\u0430; \u0432\u043a\u043b\u044e\u0447\u0451\u043d\u043d\u043e\u0441\u0442\u044c watchlist \u0432 \u043a\u0430\u043d\u0434\u0438\u0434\u0430\u0442\u044b
-    // \u043f\u0440\u043e\u0432\u0435\u0440\u044f\u0435\u0442\u0441\u044f \u043f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u043e\u043c includeWatchlist \u0432 \u043e\u0442\u0434\u0435\u043b\u044c\u043d\u043e\u043c \u0442\u0435\u0441\u0442\u0435 \u0432\u044b\u0448\u0435.
-    server.use(
-      http.get('*/api/analytics/allocation', () =>
-        HttpResponse.json({
-          amountRub: 15000,
-          allocations: [
-            {
-              instrumentId: 77,
-              name: '\u0427\u0443\u0436\u0430\u044f \u0431\u0443\u043c\u0430\u0433\u0430 \u0438\u0437 watchlist',
-              issuer: '\u0414\u0440\u0443\u0433\u043e\u0439 \u044d\u043c\u0438\u0442\u0435\u043d\u0442',
-              quantity: 5,
-              estimatedCostRub: 5000,
-              effectiveYield: 0.18,
-              lotSizeAssumed: true,
-            },
-          ],
-          skipped: [],
-          leftoverRub: 10000,
-          disclaimer: '',
-        }),
-      ),
-    );
-
-    renderRecommendations();
-
-    await waitFor(() => expect(screen.getByTestId('allocation-line-77')).toBeInTheDocument());
-    expect(screen.getByTestId('allocation-line-77').textContent).toMatch(/\u0427\u0443\u0436\u0430\u044f \u0431\u0443\u043c\u0430\u0433\u0430 \u0438\u0437 watchlist/);
-  });
-
   it('renders a disclaimer on the page', async () => {
     renderRecommendations();
 
     await waitFor(() => expect(screen.getAllByTestId('disclaimer').length).toBeGreaterThan(0));
-  });
-
-  // ─── T-24: разбивка цены лота (чистая цена + НКД + комиссия) ───────────────────────────────
-
-  it('shows the clean price / accrued / commission breakdown in the allocation line', async () => {
-    renderRecommendations();
-
-    await waitFor(() => expect(screen.getByTestId('allocation-line-11')).toBeInTheDocument());
-    const line = screen.getByTestId('allocation-line-11');
-    // allocationResult: quantity 10, cleanCostRub 9500, accruedCostRub 400, commissionCostRub 100
-    // => per bond: цена 1000 (950 clean + 40 accrued + 10 commission).
-    expect(line.textContent).toMatch(/950/);
-    expect(line.textContent).toMatch(/40/);
-    expect(line.textContent).toMatch(/10/);
-    expect(line.textContent).toMatch(/НКД/);
-    expect(line.textContent).toMatch(/комиссия/);
-  });
-
-  it('shows a note that the accrued interest paid on purchase returns with the next coupon', async () => {
-    renderRecommendations();
-
-    await waitFor(() => expect(screen.getByTestId('allocation-accrued-note')).toBeInTheDocument());
-    expect(screen.getByTestId('allocation-accrued-note').textContent).toMatch(/вернётся ближайшим купоном/);
-  });
-
-  it('shows an empty allocation state when nothing matches the amount', async () => {
-    server.use(
-      http.get('*/api/analytics/allocation', () =>
-        HttpResponse.json({ amountRub: 100, allocations: [], skipped: [], leftoverRub: 100, disclaimer: '' }),
-      ),
-    );
-
-    renderRecommendations();
-
-    await waitFor(() => expect(screen.getByTestId('allocation-empty')).toBeInTheDocument());
   });
 
   it('shows an error state without crashing when comparison fails', async () => {

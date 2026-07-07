@@ -11,19 +11,17 @@ using Xunit;
 namespace Bonds.Tests.Sync;
 
 /// <summary>
-/// Задача 20 (часть A): синк watchlist-бумаг (ISIN без позиции) — переиспользует
-/// <see cref="BondSyncService.ResolveOrCreateInstrumentByIsinAsync"/> (тот же путь заведения
-/// инструмента, что у позиций) и дополнительно пишет MOEX-котировку (движок сам считает НКД
-/// fallback'ом — см. doc-comment <see cref="WatchlistSyncService"/>).
+/// Задача 27 часть A: путь «обогатить одну бумагу по ISIN», вынесенный из
+/// <see cref="WatchlistSyncService"/> — общий для watchlist (задача 20) и материализации из банка
+/// облигаций (<c>POST /api/universe/{secid}/materialize</c>). Тесты дублируют сценарии
+/// <see cref="WatchlistSyncServiceTests"/>, проверяя сам вынесенный сервис напрямую.
 /// </summary>
-public class WatchlistSyncServiceTests
+public class InstrumentEnrichmentServiceTests
 {
-    private readonly Mock<IWatchlistItemRepository> _watchlistItems = new();
     private readonly Mock<IInstrumentRepository> _instruments = new();
     private readonly Mock<IMoexIssClient> _moex = new();
     private readonly Mock<IMarketQuoteRepository> _quotes = new();
 
-    // BondSyncService dependencies (нужен реальный экземпляр — ResolveOrCreateInstrumentByIsinAsync не виртуальный).
     private readonly Mock<ITInvestPortfolioClient> _tInvest = new();
     private readonly Mock<ICouponScheduleRepository> _coupons = new();
     private readonly Mock<IAmortizationScheduleRepository> _amortizations = new();
@@ -49,16 +47,11 @@ public class WatchlistSyncServiceTests
         _operations.Object,
         NullLogger<BondSyncService>.Instance);
 
-    private InstrumentEnrichmentService CreateEnrichmentService() => new(
+    private InstrumentEnrichmentService CreateService() => new(
         _instruments.Object,
         _moex.Object,
         _quotes.Object,
         CreateBondSyncService());
-
-    private WatchlistSyncService CreateService() => new(
-        _watchlistItems.Object,
-        CreateEnrichmentService(),
-        NullLogger<WatchlistSyncService>.Instance);
 
     private void SetupInstrumentAndBondization(ulong instrumentId = InstrumentId, string isin = Isin, string? secid = Secid)
     {
@@ -88,13 +81,8 @@ public class WatchlistSyncServiceTests
     }
 
     [Fact]
-    public async Task SyncAllAsync_ResolvesInstrumentAndWritesMoexQuote()
+    public async Task EnrichByIsinAsync_KnownIsin_ResolvesInstrumentAndWritesMoexQuote()
     {
-        _watchlistItems.Setup(w => w.GetAllAsync()).ReturnsAsync(new List<WatchlistItem>
-        {
-            new() { Id = 1, UserId = 1, Isin = Isin },
-        });
-
         SetupInstrumentAndBondization();
         _moex.Setup(m => m.GetSecurityInfoAsync(Secid, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new MoexSecurityInfo
@@ -107,11 +95,9 @@ public class WatchlistSyncServiceTests
             });
 
         var service = CreateService();
-        var result = await service.SyncAllAsync();
+        var instrumentId = await service.EnrichByIsinAsync(Isin);
 
-        result.HasErrors.Should().BeFalse();
-        result.InstrumentsSynced.Should().Be(1);
-
+        instrumentId.Should().Be(InstrumentId);
         _quotes.Verify(q => q.UpsertAsync(It.Is<MarketQuote>(mq =>
             mq.InstrumentId == InstrumentId
             && mq.Source == MarketQuoteSource.Moex
@@ -120,14 +106,9 @@ public class WatchlistSyncServiceTests
     }
 
     [Fact]
-    public async Task SyncAllAsync_IsinNotFoundOnMoex_RecordsErrorButDoesNotThrow()
+    public async Task EnrichByIsinAsync_IsinNotFoundOnMoex_ReturnsInstrumentIdButNoQuote()
     {
         const string unknownIsin = "RU000UNKNOWN0";
-        _watchlistItems.Setup(w => w.GetAllAsync()).ReturnsAsync(new List<WatchlistItem>
-        {
-            new() { Id = 2, UserId = 1, Isin = unknownIsin },
-        });
-
         _instruments.Setup(r => r.GetByIsinAsync(unknownIsin)).ReturnsAsync((Instrument?)null);
         _instruments.Setup(r => r.UpsertAsync(It.IsAny<Instrument>())).ReturnsAsync(InstrumentId);
         _instruments.Setup(r => r.GetByIdAsync(InstrumentId)).ReturnsAsync(new Instrument
@@ -140,53 +121,35 @@ public class WatchlistSyncServiceTests
             .ReturnsAsync((string?)null);
 
         var service = CreateService();
-        var result = await service.SyncAllAsync();
+        var instrumentId = await service.EnrichByIsinAsync(unknownIsin);
 
-        result.InstrumentsSynced.Should().Be(1, "инструмент всё равно заводится в справочник с пометкой неполноты, как у позиций");
+        // Инструмент всё равно заводится в справочник с пометкой неполноты, как у позиций.
+        instrumentId.Should().Be(InstrumentId);
         _quotes.Verify(q => q.UpsertAsync(It.IsAny<MarketQuote>()), Times.Never);
     }
 
     [Fact]
-    public async Task SyncAllAsync_DuplicateIsinAcrossUsers_SyncedOnce()
+    public async Task EnrichByIsinAsync_CalledTwice_IsIdempotent()
     {
-        _watchlistItems.Setup(w => w.GetAllAsync()).ReturnsAsync(new List<WatchlistItem>
-        {
-            new() { Id = 1, UserId = 1, Isin = Isin },
-            new() { Id = 2, UserId = 2, Isin = Isin },
-        });
-
         SetupInstrumentAndBondization();
         _moex.Setup(m => m.GetSecurityInfoAsync(Secid, It.IsAny<CancellationToken>()))
-            .ReturnsAsync((MoexSecurityInfo?)null);
+            .ReturnsAsync(new MoexSecurityInfo
+            {
+                Secid = Secid,
+                BoardId = "TQOB",
+                FaceValue = 1000m,
+                MatDate = new DateOnly(2041, 5, 15),
+                PrevPrice = 98.5m,
+            });
 
         var service = CreateService();
-        var result = await service.SyncAllAsync();
+        var first = await service.EnrichByIsinAsync(Isin);
+        var second = await service.EnrichByIsinAsync(Isin);
 
-        result.InstrumentsSynced.Should().Be(1);
-        _moex.Verify(m => m.GetBondizationAsync(Secid, It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    [Fact]
-    public async Task SyncAllAsync_OneIsinThrows_OthersStillSynced()
-    {
-        const string secondIsin = "RU000SECOND01";
-
-        _watchlistItems.Setup(w => w.GetAllAsync()).ReturnsAsync(new List<WatchlistItem>
-        {
-            new() { Id = 1, UserId = 1, Isin = Isin },
-            new() { Id = 2, UserId = 1, Isin = secondIsin },
-        });
-
-        SetupInstrumentAndBondization();
-        _moex.Setup(m => m.GetSecurityInfoAsync(Secid, It.IsAny<CancellationToken>()))
-            .ReturnsAsync((MoexSecurityInfo?)null);
-
-        _instruments.Setup(r => r.GetByIsinAsync(secondIsin)).ThrowsAsync(new InvalidOperationException("boom"));
-
-        var service = CreateService();
-        var result = await service.SyncAllAsync();
-
-        result.InstrumentsSynced.Should().Be(1);
-        result.Errors.Should().ContainSingle(e => e.Contains(secondIsin));
+        first.Should().Be(InstrumentId);
+        second.Should().Be(InstrumentId);
+        // ResolveOrCreateInstrumentByIsinAsync находит существующий по ISIN — не заводит новый (UpsertAsync не вызывается повторно с placeholder).
+        _instruments.Verify(r => r.GetByIsinAsync(Isin), Times.Exactly(2));
+        _quotes.Verify(q => q.UpsertAsync(It.IsAny<MarketQuote>()), Times.Exactly(2));
     }
 }

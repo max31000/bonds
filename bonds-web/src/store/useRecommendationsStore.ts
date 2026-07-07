@@ -1,7 +1,7 @@
 import { create } from 'zustand';
-import { fetchComparison, fetchAllocation, fetchReplacementMatrix } from '../api/recommendations';
+import { fetchComparison, fetchReplacementMatrix } from '../api/recommendations';
 import { fetchComposition } from '../api/analytics';
-import type { AllocationResponse, ComparisonRow, MatrixPair, RejectedPair } from '../api/types';
+import type { ComparisonRow, MatrixPair, RejectedPair } from '../api/types';
 
 /** Причина попадания позиции в «слабые звенья» — отображается бейджем на карточке. */
 export interface SellReason {
@@ -90,24 +90,17 @@ interface RecommendationsStore {
   isLoading: boolean;
   error: string | null;
 
-  allocationAmount: number;
-  allocation: AllocationResponse | null;
-  isAllocationLoading: boolean;
-  allocationError: string | null;
-
   load: () => Promise<void>;
-  setAllocationAmount: (amount: number) => void;
-  loadAllocation: (amountRub?: number) => Promise<void>;
 }
 
 /**
- * Стор экрана «Рекомендации» (plan/17, замены переработаны в задаче 23): три секции — слабые
- * звенья (comparison), замены (GET /replacement-matrix — серверный перебор всех пар) и куда
- * вложить сумму (allocation, по требованию через форму). `load()` собирает первые две секции
- * одним заходом; `loadAllocation()` вызывается отдельно (форма суммы) — не блокирует первичную
- * загрузку страницы.
+ * Стор экрана «Рекомендации» (plan/17, замены переработаны в задаче 23): две секции — слабые
+ * звенья (comparison) и замены (GET /replacement-matrix — серверный перебор всех пар). `load()`
+ * собирает обе одним заходом. Задача 29: секция «куда вложить сумму» переехала в отдельный
+ * компонент <see>BasketConstructor</see> с собственным локальным состоянием (конструктор корзины
+ * не нуждается в глобальном сторе — его данные не переиспользуются другими секциями страницы).
  */
-export const useRecommendationsStore = create<RecommendationsStore>()((set, get) => ({
+export const useRecommendationsStore = create<RecommendationsStore>()((set) => ({
   sellCandidates: [],
   outOfComparison: [],
   comparisonDisclaimer: '',
@@ -119,11 +112,6 @@ export const useRecommendationsStore = create<RecommendationsStore>()((set, get)
 
   isLoading: false,
   error: null,
-
-  allocationAmount: 15000,
-  allocation: null,
-  isAllocationLoading: false,
-  allocationError: null,
 
   load: async () => {
     set({ isLoading: true, error: null });
@@ -151,22 +139,6 @@ export const useRecommendationsStore = create<RecommendationsStore>()((set, get)
       set({
         error: err instanceof Error ? err.message : 'Не удалось загрузить рекомендации',
         isLoading: false,
-      });
-    }
-  },
-
-  setAllocationAmount: (amount) => set({ allocationAmount: amount }),
-
-  loadAllocation: async (amountRub) => {
-    const amount = amountRub ?? get().allocationAmount;
-    set({ isAllocationLoading: true, allocationError: null });
-    try {
-      const allocation = await fetchAllocation(amount);
-      set({ allocation, isAllocationLoading: false });
-    } catch (err) {
-      set({
-        allocationError: err instanceof Error ? err.message : 'Не удалось рассчитать распределение',
-        isAllocationLoading: false,
       });
     }
   },

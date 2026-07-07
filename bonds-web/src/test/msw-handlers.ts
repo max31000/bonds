@@ -66,12 +66,37 @@ export const handlers = [
   http.get('*/api/analytics/allocation', () =>
     HttpResponse.json({ amountRub: 15000, allocations: [], skipped: [], leftoverRub: 15000, disclaimer: '' }),
   ),
+  // Дефолтный кейс для 29 (BasketConstructor) — конкретные сценарии переопределяются в тестах компонента.
+  http.post('*/api/analytics/basket', () =>
+    HttpResponse.json({
+      basket: {
+        amountRub: 0,
+        lines: [],
+        leftoverRub: 0,
+        metrics: { totalCostRub: 0, weightedYield: null, weightedDuration: null, hasExcludedFloaters: false },
+      },
+      whatIf: {
+        before: { totalValueRub: 0, weightedYield: null, weightedDuration: null, hasExcludedFloaters: false },
+        after: { totalValueRub: 0, weightedYield: null, weightedDuration: null, hasExcludedFloaters: false },
+        concentrations: [],
+        warnings: [],
+      },
+      disclaimer: '',
+    }),
+  ),
   // Дефолтные кейсы для 20 — пустой watchlist; конкретные сценарии переопределяются в тестах.
   http.get('*/api/watchlist', () => HttpResponse.json({ items: [], disclaimer: '' })),
   http.post('*/api/watchlist', () =>
     HttpResponse.json({ id: 1, isin: 'RU000A1038V6', note: null, addedAtUtc: new Date().toISOString() }, { status: 201 }),
   ),
   http.delete('*/api/watchlist/:id', () => new HttpResponse(null, { status: 204 })),
+  // Дефолтные кейсы для 27 (MarketComparator — выпадашка-сравнивалка) — пустой банк по умолчанию;
+  // конкретные сценарии переопределяются в тестах MarketComparator/Recommendations/Screener.
+  http.get('*/api/universe', () => HttpResponse.json({ rows: [], total: 0, hiddenCount: 0, disclaimer: '' })),
+  // Дефолтный кейс для 28 (страница «Скринер», статусная строка) — переопределяется в Screener.test.tsx.
+  http.get('*/api/universe/status', () =>
+    HttpResponse.json({ lastRefreshUtc: null, totalBonds: 0, hiddenBonds: 0, historyDays: 0 }),
+  ),
   // Дефолтные кейсы для 09c — пустые/неактивные данные; переопределяются в тестах экранов.
   http.get('*/api/signals', () => HttpResponse.json({ signals: [] })),
   http.post('*/api/signals/:id/read', ({ params }) =>

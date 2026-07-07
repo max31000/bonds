@@ -35,4 +35,18 @@ public interface IMoexIssClient
     /// если источник недоступен/бумага не найдена (не бросает исключение).
     /// </summary>
     Task<IReadOnlyList<MoexHistoryPricePoint>> GetHistoryPricesAsync(string secid, DateOnly from, DateOnly to, CancellationToken ct = default);
+
+    /// <summary>
+    /// Снимок ВСЕЙ рыночной вселенной облигаций MOEX (задача 26 часть A) —
+    /// <c>/iss/engines/stock/markets/bonds/securities.json?iss.only=securities,marketdata</c>.
+    /// Пагинация через <c>start</c> — тот же паттерн, что <see cref="GetHistoryPricesAsync"/>;
+    /// эмпирически этот эндпоинт ISS отдаёт весь рынок (~3000-3500 строк) одной страницей и
+    /// игнорирует <c>start</c>/<c>limit</c>, но дочитывание оставлено на случай, если MOEX начнёт
+    /// пагинировать (без него хвост тихо потерялся бы, тот же класс бага, что в bondization/history).
+    /// Строки НЕ дедуплицированы по SECID — один SECID может встретиться на нескольких BOARDID,
+    /// дедупликация (по максимальному обороту) — ответственность вызывающего кода
+    /// (<see cref="MoexBondUniverseParser.DeduplicateByBoard"/>). Пустой список, если источник
+    /// недоступен (не бросает исключение).
+    /// </summary>
+    Task<IReadOnlyList<MoexBondMarketRow>> GetBondMarketSnapshotAsync(CancellationToken ct = default);
 }

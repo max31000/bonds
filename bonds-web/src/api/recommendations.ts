@@ -1,6 +1,8 @@
 import { apiClient } from './client';
 import type {
   AllocationResponse,
+  BasketRequest,
+  BasketResponse,
   ComparisonResponse,
   ReplacementRequest,
   ReplacementResponse,
@@ -38,4 +40,13 @@ export function fetchAllocation(amountRub: number, includeWatchlist = true): Pro
   return apiClient.get<AllocationResponse>(
     `/analytics/allocation?amountRub=${amountRub}&includeWatchlist=${includeWatchlist}`,
   );
+}
+
+/**
+ * POST /api/analytics/basket — задача 29: конструктор портфеля. Сумма + строки корзины
+ * {instrumentId, weightFraction} (доля 0..1, Σ ≤ 1) → штуки/стоимость (BasketDto) + what-if
+ * всего портфеля до/после покупки (WhatIfDto). 422 при невалидных данных (сумма/веса/инструмент).
+ */
+export function postBasket(request: BasketRequest): Promise<BasketResponse> {
+  return apiClient.post<BasketResponse>('/analytics/basket', request);
 }

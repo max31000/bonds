@@ -1,44 +1,28 @@
 using Bonds.Core.Interfaces.Repositories;
-using Bonds.Core.Models;
-using Bonds.Infrastructure.Connectors.Moex;
 using Microsoft.Extensions.Logging;
 
 namespace Bonds.Infrastructure.Sync;
 
 /// <summary>
 /// Задача 20 (часть A): синк watchlist-бумаг (ISIN без позиции). Переиспользует
-/// <see cref="BondSyncService.ResolveOrCreateInstrumentByIsinAsync"/> — тот же путь заведения в
-/// <c>instruments</c> и обогащения расписаниями, что и у позиций (никакого параллельного пайплайна).
-/// Дополнительно (то, чего нет у позиций — у watchlist-бумаги нет брокерского счёта/T-Invest) —
-/// пишет котировку MOEX как <see cref="MarketQuote"/> с <see cref="MarketQuoteSource.Moex"/>:
-/// чистая цена — из PREVPRICE/PREVWAPRICE securities.json (% от номинала → рубли, тот же перевод,
-/// что <see cref="Analytics.PortfolioHistoryBackfillService"/>). НКД сознательно не пишется здесь
-/// (Accrued=null) — <see cref="Bonds.Core.Calculation.BondMetricsCalculator"/> сам считает его
-/// пропорционально по графику купонов (<see cref="Bonds.Core.Calculation.AccruedInterestCalculator"/>)
-/// как fallback, когда источник не дал НКД явно (см. plan/20 §A.3).
+/// <see cref="InstrumentEnrichmentService.EnrichByIsinAsync"/> — единый путь заведения в
+/// <c>instruments</c> + обогащения расписаниями/котировкой, вынесенный в задаче 27 (общий с
+/// материализацией бумаги из банка облигаций, <c>POST /api/universe/{secid}/materialize</c>), чтобы
+/// watchlist и materialize не дублировали код.
 /// </summary>
 public sealed class WatchlistSyncService
 {
     private readonly IWatchlistItemRepository _watchlistItems;
-    private readonly IInstrumentRepository _instruments;
-    private readonly IMoexIssClient _moex;
-    private readonly IMarketQuoteRepository _quotes;
-    private readonly BondSyncService _bondSync;
+    private readonly InstrumentEnrichmentService _enrichment;
     private readonly ILogger<WatchlistSyncService> _logger;
 
     public WatchlistSyncService(
         IWatchlistItemRepository watchlistItems,
-        IInstrumentRepository instruments,
-        IMoexIssClient moex,
-        IMarketQuoteRepository quotes,
-        BondSyncService bondSync,
+        InstrumentEnrichmentService enrichment,
         ILogger<WatchlistSyncService> logger)
     {
         _watchlistItems = watchlistItems;
-        _instruments = instruments;
-        _moex = moex;
-        _quotes = quotes;
-        _bondSync = bondSync;
+        _enrichment = enrichment;
         _logger = logger;
     }
 
@@ -80,38 +64,12 @@ public sealed class WatchlistSyncService
     /// Обогащает справочник + обновляет котировку для ОДНОГО ISIN — переиспользуется и циклом синка
     /// (<see cref="SyncAllAsync"/>), и синхронным добавлением из <c>POST /api/watchlist</c>
     /// (WatchlistEndpoints), чтобы бумага появлялась с метриками сразу после добавления, не
-    /// дожидаясь следующего тика планировщика (plan/20 §A.4).
+    /// дожидаясь следующего тика планировщика (plan/20 §A.4). Тонкая обёртка над
+    /// <see cref="InstrumentEnrichmentService.EnrichByIsinAsync"/> (задача 27) — сохранена ради
+    /// обратной совместимости вызовов (WatchlistEndpoints, SyncCycleService).
     /// </summary>
-    public async Task<ulong?> SyncOneAsync(string isin, CancellationToken ct = default)
-    {
-        var instrumentId = await _bondSync.ResolveOrCreateInstrumentByIsinAsync(isin, ct);
-        if (instrumentId is null) return null;
-
-        await RefreshQuoteAsync(instrumentId.Value, ct);
-        return instrumentId;
-    }
-
-    /// <summary>Котировка вне позиции — из MOEX (последняя цена marketdata securities.json). НКД не пишется (см. doc-comment класса) — движок считает fallback'ом по графику купонов.</summary>
-    private async Task RefreshQuoteAsync(ulong instrumentId, CancellationToken ct)
-    {
-        var instrument = await _instruments.GetByIdAsync(instrumentId);
-        if (instrument is null || string.IsNullOrEmpty(instrument.Secid)) return;
-
-        var info = await _moex.GetSecurityInfoAsync(instrument.Secid, ct);
-        var pricePercent = info?.PrevPrice ?? info?.PrevWaPrice;
-        if (pricePercent is null) return; // нет свежей котировки — не подставляем ноль молча (spec §4.4)
-
-        var cleanPriceRub = pricePercent.Value / 100m * instrument.FaceValue;
-
-        await _quotes.UpsertAsync(new MarketQuote
-        {
-            InstrumentId = instrumentId,
-            AsOf = DateOnly.FromDateTime(DateTime.UtcNow),
-            CleanPrice = cleanPriceRub,
-            Accrued = null,
-            Source = MarketQuoteSource.Moex,
-        });
-    }
+    public Task<ulong?> SyncOneAsync(string isin, CancellationToken ct = default) =>
+        _enrichment.EnrichByIsinAsync(isin, ct);
 }
 
 /// <summary>Итог одного вызова синка watchlist — для логирования/отображения (без секретов).</summary>

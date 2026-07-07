@@ -30,6 +30,7 @@ public static class AnalyticsEndpoints
         app.MapGet("/api/analytics/rate-scenario", GetRateScenario);
         app.MapGet("/api/analytics/trajectory", GetTrajectory);
         app.MapGet("/api/analytics/allocation", GetAllocation);
+        app.MapPost("/api/analytics/basket", PostBasket);
     }
 
     // ─── GET /api/analytics/xirr ────────────────────────────────────────────────────────────
@@ -377,6 +378,29 @@ public static class AnalyticsEndpoints
 
         var result = SwitchAnalysisService.Compare(holdCandidate, targetCandidate, request.HorizonYears, sellRate, buyRate);
 
+        // Задача 27 часть B: та же построчная формула-разбивка, что у матрицы замен (задача 23/25) —
+        // спред → капитал → горизонт → валовая выгода → минус комиссии → чистая → минус налог.
+        // ReplacementMatrixService.BuildMatrix не переиспользуется целиком (там перебор ВСЕХ пар
+        // портфеля/watchlist), но считает эти же величины по той же формуле — здесь тот же расчёт
+        // для ОДНОЙ явно выбранной пары hold/target (наведение сравнивалки задачи 27, а не матрица).
+        var netProceedsAfterSale = holdPosition.MarketValueRub - result.SellCommissionRub;
+        decimal? spreadFraction = null;
+        decimal? grossGainRub = null;
+        decimal? annualizedBenefitFraction = null;
+        if (holdCandidate.EffectiveYield is { } holdYield && targetCandidate.EffectiveYield is { } targetYield)
+        {
+            spreadFraction = targetYield - holdYield;
+            grossGainRub = netProceedsAfterSale * spreadFraction.Value * request.HorizonYears;
+            annualizedBenefitFraction = (netProceedsAfterSale > 0m && request.HorizonYears > 0m)
+                ? result.NetBenefitRub / netProceedsAfterSale / request.HorizonYears
+                : null;
+        }
+
+        var sellTaxEstimate = SaleTaxEstimator.Estimate(
+            netProceedsAfterSale, holdPosition.CostBasis?.InvestedRub, holdPosition.CostBasis?.HasUnknownLots ?? true);
+        var sellTaxEstimateRub = sellTaxEstimate?.TaxRub;
+        var netBenefitAfterTaxRub = sellTaxEstimateRub is decimal tax ? result.NetBenefitRub - tax : (decimal?)null;
+
         var dto = new ReplacementResponseDto
         {
             HoldPositionId = result.HoldPositionId,
@@ -396,6 +420,14 @@ public static class AnalyticsEndpoints
             SellCommissionRateUsed = sellRate,
             BuyCommissionRateUsed = buyRate,
             CommissionRateSource = resolved?.Source.ToString() ?? "ExplicitRequest",
+            // Задача 27 часть B: формула-разбивка (см. doc-comment выше) — null, если доходность
+            // одной из сторон не определена (YieldDataIncomplete=true).
+            SpreadFraction = spreadFraction,
+            CapitalRub = netProceedsAfterSale,
+            GrossGainRub = grossGainRub,
+            AnnualizedBenefitFraction = annualizedBenefitFraction,
+            SellTaxEstimateRub = sellTaxEstimateRub,
+            NetBenefitAfterTaxRub = netBenefitAfterTaxRub,
         };
 
         return Results.Ok(dto);
@@ -823,6 +855,232 @@ public static class AnalyticsEndpoints
 
         return Results.Ok(dto);
     }
+
+    // ─── POST /api/analytics/basket ─────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Конструктор портфеля (plan/29 §B.2) — «собрал корзину процентами → штуки + what-if». Вход —
+    /// сумма + строки {instrumentId, weightFraction} (доля 0..1, Σ ≤ 1 — та же конвенция, что
+    /// <see cref="BasketBuilderService"/>). Кандидаты собираются тем же путём, что
+    /// <see cref="GetAllocation"/> (holdings портфеля через <see cref="PortfolioHoldingsBuilder.BuildForAccountAsync"/>,
+    /// бумаги вне портфеля — через <see cref="PortfolioHoldingsBuilder.BuildForInstrumentsAsync"/>,
+    /// цена лота — грязная (clean+НКД) + комиссия из <see cref="ICommissionRateProvider"/>).
+    /// Вызывает <see cref="BasketBuilderService.Build"/>, затем <see cref="PortfolioWhatIfService.Evaluate"/>
+    /// (текущие holdings "до" + строки корзины "после"), лимит концентрации для warnings —
+    /// <c>UserSettings.DefaultMaxConcentrationPercent</c> (тот же дефолт, что у аллокации/сигналов).
+    /// <para>
+    /// <b>Валидация (422):</b> amountRub &gt; 0; каждая строка weightFraction ∈ (0,1]; Σ весов ≤ 1.0001;
+    /// instrumentId должен существовать (иначе неясно, что показывать пользователю — лучше явная
+    /// ошибка, чем молчаливый пропуск строки).
+    /// </para>
+    /// </summary>
+    private static async Task<IResult> PostBasket(
+        ClaimsPrincipal principal,
+        BasketRequestDto request,
+        IAccountRepository accountRepo,
+        IUserSettingsRepository userSettingsRepo,
+        PortfolioHoldingsBuilder holdingsBuilder,
+        IInstrumentRepository instrumentRepo,
+        ICommissionRateProvider commissionRateProvider,
+        Microsoft.Extensions.Options.IOptions<Bonds.Core.Signals.SignalEngineOptions> defaultSignalOptions,
+        CancellationToken ct = default)
+    {
+        if (request.AmountRub <= 0m)
+        {
+            return ValidationError("amountRub должен быть положительным");
+        }
+
+        if (request.Lines is null || request.Lines.Count == 0)
+        {
+            return ValidationError("Корзина должна содержать хотя бы одну строку");
+        }
+
+        foreach (var line in request.Lines)
+        {
+            if (line.WeightFraction <= 0m || line.WeightFraction > 1m)
+            {
+                return ValidationError($"Вес строки instrumentId={line.InstrumentId} должен быть в диапазоне (0, 1]");
+            }
+        }
+
+        var totalWeight = request.Lines.Sum(l => l.WeightFraction);
+        if (totalWeight > 1.0001m)
+        {
+            return ValidationError($"Сумма весов строк ({totalWeight:0.####}) не может превышать 1");
+        }
+
+        var requestedInstrumentIds = request.Lines.Select(l => l.InstrumentId).ToList();
+        if (requestedInstrumentIds.Distinct().Count() != requestedInstrumentIds.Count)
+        {
+            return ValidationError("Инструмент не может встречаться в корзине дважды");
+        }
+
+        foreach (var instrumentId in requestedInstrumentIds)
+        {
+            var instrument = await instrumentRepo.GetByIdAsync(instrumentId);
+            if (instrument is null)
+            {
+                return ValidationError($"Инструмент instrumentId={instrumentId} не найден");
+            }
+        }
+
+        var accountId = await PositionsEndpoints.ResolveAccountIdAsync(principal, accountRepo);
+        var asOf = BusinessClock.MoscowToday();
+
+        var resolvedRate = accountId is not null
+            ? await commissionRateProvider.GetAsync(accountId.Value, ct)
+            : new ResolvedCommissionRate(SwitchAnalysisService.DefaultCommissionRate, CommissionRateSource.Default, null);
+        var commissionRate = resolvedRate.Rate;
+
+        var portfolioHoldings = accountId is not null
+            ? (await holdingsBuilder.BuildForAccountAsync(accountId.Value, asOf)).ToList()
+            : [];
+
+        var portfolioHoldingsByInstrument = portfolioHoldings.ToDictionary(h => h.InstrumentId);
+        var missingInstrumentIds = requestedInstrumentIds.Where(id => !portfolioHoldingsByInstrument.ContainsKey(id)).Distinct().ToList();
+        var extraHoldings = missingInstrumentIds.Count > 0
+            ? await holdingsBuilder.BuildForInstrumentsAsync(missingInstrumentIds, asOf)
+            : [];
+        var extraHoldingsByInstrument = extraHoldings.ToDictionary(h => h.InstrumentId);
+
+        var basketLineInputs = new List<BasketLineInput>(request.Lines.Count);
+        foreach (var line in request.Lines)
+        {
+            var holding = portfolioHoldingsByInstrument.TryGetValue(line.InstrumentId, out var owned)
+                ? owned
+                : extraHoldingsByInstrument.GetValueOrDefault(line.InstrumentId);
+
+            if (holding is null)
+            {
+                // Ссылочная целостность нарушилась между проверкой выше и сборкой holdings — не ожидается
+                // в норме (инструмент существует, но BuildForInstrumentsAsync его не вернул из-за гонки).
+                return ValidationError($"Не удалось получить котировку для instrumentId={line.InstrumentId}");
+            }
+
+            basketLineInputs.Add(BuildBasketLineInput(holding, line.WeightFraction, commissionRate));
+        }
+
+        var basketResult = BasketBuilderService.Build(request.AmountRub, basketLineInputs);
+
+        var userIdClaim = principal.FindFirstValue(ClaimTypes.NameIdentifier);
+        var userSettings = ulong.TryParse(userIdClaim, out var userId) ? await userSettingsRepo.GetByUserIdAsync(userId) : null;
+        var maxConcentrationPercent = userSettings?.DefaultMaxConcentrationPercent ?? defaultSignalOptions.Value.DefaultMaxConcentrationPercent;
+
+        var whatIfHoldings = portfolioHoldings
+            .Select(h => new WhatIfHoldingInput
+            {
+                InstrumentId = h.InstrumentId,
+                Issuer = h.Issuer,
+                MarketValueRub = h.MarketValueRub,
+                EffectiveYield = (h.IsFloater || h.IsIndexed) ? h.CurrentYield : h.YtmEffective,
+                ModifiedDuration = h.ModifiedDuration,
+                IsFloater = h.IsFloater || h.IsIndexed,
+            })
+            .ToList();
+
+        var whatIfResult = PortfolioWhatIfService.Evaluate(whatIfHoldings, basketResult.Lines, maxConcentrationPercent);
+
+        return Results.Ok(new BasketResponseDto
+        {
+            Basket = ToBasketDto(basketResult),
+            WhatIf = ToWhatIfDto(whatIfResult),
+            Disclaimer = BasketBuilderService.Disclaimer,
+        });
+    }
+
+    private static BasketLineInput BuildBasketLineInput(
+        PortfolioHolding holding, decimal weightFraction, decimal commissionRate)
+    {
+        // Тот же расчёт цены лота, что GetAllocation/BuildCandidate: MarketValueRub уже грязная цена
+        // (clean+НКД) на Quantity штук; для holding'ов вне портфеля (BuildForInstrumentsAsync) Quantity=1,
+        // поэтому pricePerUnitRub = MarketValueRub в обоих случаях (та же формула).
+        var pricePerUnitRub = holding.Quantity > 0m ? holding.MarketValueRub / holding.Quantity : holding.MarketValueRub;
+        var accruedRub = holding.AccruedPerBondRub;
+        var cleanPriceRub = pricePerUnitRub - accruedRub;
+        var commissionRub = pricePerUnitRub * commissionRate;
+        var pricePerLotWithCommission = pricePerUnitRub + commissionRub;
+        var effectiveYield = (holding.IsFloater || holding.IsIndexed) ? holding.CurrentYield : holding.YtmEffective;
+
+        return new BasketLineInput
+        {
+            InstrumentId = holding.InstrumentId,
+            Name = holding.Name,
+            Issuer = holding.Issuer,
+            TargetWeightFraction = weightFraction,
+            PricePerLotRub = pricePerLotWithCommission,
+            CleanPriceRub = cleanPriceRub,
+            AccruedRub = accruedRub,
+            CommissionRub = commissionRub,
+            LotSize = 1m,
+            LotSizeIsAssumed = true,
+            EffectiveYield = effectiveYield,
+            ModifiedDuration = holding.ModifiedDuration,
+            IsFloater = holding.IsFloater || holding.IsIndexed,
+        };
+    }
+
+    private static BasketDto ToBasketDto(BasketBuildResult result) => new()
+    {
+        AmountRub = result.AmountRub,
+        Lines = result.Lines.Select(l => new BasketLineDto
+        {
+            InstrumentId = l.InstrumentId,
+            Name = l.Name,
+            Issuer = l.Issuer,
+            TargetWeightFraction = l.TargetWeightFraction,
+            ActualWeightFraction = l.ActualWeightFraction,
+            Quantity = l.Quantity,
+            ActualCostRub = l.ActualCostRub,
+            EffectiveYield = l.EffectiveYield,
+            ModifiedDuration = l.ModifiedDuration,
+            IsFloater = l.IsFloater,
+            LotSizeAssumed = l.LotSizeAssumed,
+            CleanCostRub = l.CleanCostRub,
+            AccruedCostRub = l.AccruedCostRub,
+            CommissionCostRub = l.CommissionCostRub,
+        }).ToList(),
+        LeftoverRub = result.LeftoverRub,
+        Metrics = new BasketMetricsDto
+        {
+            TotalCostRub = result.Metrics.TotalCostRub,
+            WeightedYield = result.Metrics.WeightedYield,
+            WeightedDuration = result.Metrics.WeightedDuration,
+            HasExcludedFloaters = result.Metrics.HasExcludedFloaters,
+        },
+    };
+
+    private static WhatIfDto ToWhatIfDto(PortfolioWhatIfResult result) => new()
+    {
+        Before = new WhatIfSnapshotDto
+        {
+            TotalValueRub = result.Before.TotalValueRub,
+            WeightedYield = result.Before.WeightedYield,
+            WeightedDuration = result.Before.WeightedDuration,
+            HasExcludedFloaters = result.Before.HasExcludedFloaters,
+        },
+        After = new WhatIfSnapshotDto
+        {
+            TotalValueRub = result.After.TotalValueRub,
+            WeightedYield = result.After.WeightedYield,
+            WeightedDuration = result.After.WeightedDuration,
+            HasExcludedFloaters = result.After.HasExcludedFloaters,
+        },
+        Concentrations = result.Concentrations.Select(c => new WhatIfConcentrationDto
+        {
+            Issuer = c.Issuer,
+            SharePercentBefore = c.SharePercentBefore,
+            SharePercentAfter = c.SharePercentAfter,
+        }).ToList(),
+        Warnings = result.Warnings.Select(w => new WhatIfWarningDto
+        {
+            Kind = w.Kind.ToString(),
+            Issuer = w.Issuer,
+            SharePercentAfter = w.SharePercentAfter,
+        }).ToList(),
+    };
+
+    private static IResult ValidationError(string message) =>
+        Results.Json(new { error = message, type = "ValidationException" }, statusCode: StatusCodes.Status422UnprocessableEntity);
 }
 
 public sealed record XirrResponseDto
@@ -970,6 +1228,24 @@ public sealed record ReplacementResponseDto
 
     /// <summary>Plan/22 часть E: источник ставки — строка <see cref="CommissionRateSource"/> либо "ExplicitRequest" (обе ставки заданы явно в запросе — резолвер не вызывался).</summary>
     public required string CommissionRateSource { get; init; }
+
+    /// <summary>Задача 27 часть B: спред эффективных доходностей (targetYield − holdYield) — ДОЛЯ. Null — YieldDataIncomplete.</summary>
+    public decimal? SpreadFraction { get; init; }
+
+    /// <summary>Задача 27 часть B: капитал, реально переходящий в target (MarketValueRub hold минус комиссия продажи), в рублях — та же величина, что MatrixPair.CapitalRub.</summary>
+    public required decimal CapitalRub { get; init; }
+
+    /// <summary>Задача 27 часть B: валовая выгода (спред × капитал × горизонт) ДО вычета комиссий, в рублях. Null — YieldDataIncomplete.</summary>
+    public decimal? GrossGainRub { get; init; }
+
+    /// <summary>Задача 27 часть B: NetBenefitRub / CapitalRub / HorizonYears — ДОЛЯ (не процент), та же формула, что MatrixPair.AnnualizedBenefitFraction.</summary>
+    public decimal? AnnualizedBenefitFraction { get; init; }
+
+    /// <summary>Задача 27 часть B: оценка НДФЛ от продажи hold-позиции (13% с прибыли к средней цене входа) — null, если cost basis недоступен/журнал неполон.</summary>
+    public decimal? SellTaxEstimateRub { get; init; }
+
+    /// <summary>Задача 27 часть B: NetBenefitRub − SellTaxEstimateRub — выгода после налога. Null, если SellTaxEstimateRub недоступен.</summary>
+    public decimal? NetBenefitAfterTaxRub { get; init; }
 }
 
 /// <summary>Задача 23 — ответ GET /api/analytics/replacement-matrix (см. doc-comment <see cref="ReplacementMatrixService"/>).</summary>
@@ -1131,4 +1407,93 @@ public sealed record AllocationSkipDto
     public string? Name { get; init; }
     public string? Issuer { get; init; }
     public required string Reason { get; init; }
+}
+
+// ─── POST /api/analytics/basket (plan/29 §B) ───────────────────────────────────────────────
+
+/// <summary>Тело запроса POST /api/analytics/basket — сумма + строки корзины (доля, НЕ проценты — конвенция репо).</summary>
+public sealed record BasketRequestDto
+{
+    public required decimal AmountRub { get; init; }
+    public required IReadOnlyList<BasketRequestLineDto> Lines { get; init; }
+}
+
+public sealed record BasketRequestLineDto
+{
+    public required ulong InstrumentId { get; init; }
+
+    /// <summary>Целевая доля суммы корзины — доля (0, 1], НЕ проценты.</summary>
+    public required decimal WeightFraction { get; init; }
+}
+
+/// <summary>Ответ POST /api/analytics/basket — собранная корзина + what-if всего портфеля.</summary>
+public sealed record BasketResponseDto
+{
+    public required BasketDto Basket { get; init; }
+    public required WhatIfDto WhatIf { get; init; }
+    public required string Disclaimer { get; init; }
+}
+
+public sealed record BasketDto
+{
+    public required decimal AmountRub { get; init; }
+    public required IReadOnlyList<BasketLineDto> Lines { get; init; }
+    public required decimal LeftoverRub { get; init; }
+    public required BasketMetricsDto Metrics { get; init; }
+}
+
+public sealed record BasketLineDto
+{
+    public required ulong InstrumentId { get; init; }
+    public string? Name { get; init; }
+    public string? Issuer { get; init; }
+    public required decimal TargetWeightFraction { get; init; }
+    public required decimal ActualWeightFraction { get; init; }
+    public required decimal Quantity { get; init; }
+    public required decimal ActualCostRub { get; init; }
+    public decimal? EffectiveYield { get; init; }
+    public decimal? ModifiedDuration { get; init; }
+    public bool IsFloater { get; init; }
+    public required bool LotSizeAssumed { get; init; }
+    public decimal CleanCostRub { get; init; }
+    public decimal AccruedCostRub { get; init; }
+    public decimal CommissionCostRub { get; init; }
+}
+
+public sealed record BasketMetricsDto
+{
+    public required decimal TotalCostRub { get; init; }
+    public decimal? WeightedYield { get; init; }
+    public decimal? WeightedDuration { get; init; }
+    public required bool HasExcludedFloaters { get; init; }
+}
+
+public sealed record WhatIfDto
+{
+    public required WhatIfSnapshotDto Before { get; init; }
+    public required WhatIfSnapshotDto After { get; init; }
+    public required IReadOnlyList<WhatIfConcentrationDto> Concentrations { get; init; }
+    public required IReadOnlyList<WhatIfWarningDto> Warnings { get; init; }
+}
+
+public sealed record WhatIfSnapshotDto
+{
+    public required decimal TotalValueRub { get; init; }
+    public decimal? WeightedYield { get; init; }
+    public decimal? WeightedDuration { get; init; }
+    public required bool HasExcludedFloaters { get; init; }
+}
+
+public sealed record WhatIfConcentrationDto
+{
+    public required string Issuer { get; init; }
+    public required decimal SharePercentBefore { get; init; }
+    public required decimal SharePercentAfter { get; init; }
+}
+
+public sealed record WhatIfWarningDto
+{
+    public required string Kind { get; init; }
+    public required string Issuer { get; init; }
+    public required decimal SharePercentAfter { get; init; }
 }

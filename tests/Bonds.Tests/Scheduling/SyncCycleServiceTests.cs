@@ -106,6 +106,7 @@ public class SyncCycleServiceTests
         services.AddScoped<BondSyncService>();
         services.AddScoped<CashFlowProjectionOrchestrator>();
         services.AddScoped<PortfolioSnapshotService>();
+        services.AddScoped<InstrumentEnrichmentService>();
         services.AddScoped<WatchlistSyncService>();
 
         services.AddSingleton<IOptions<SignalEngineOptions>>(Options.Create(new SignalEngineOptions()));
