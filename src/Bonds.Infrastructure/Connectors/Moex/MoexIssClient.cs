@@ -290,6 +290,61 @@ public sealed class MoexIssClient : IMoexIssClient
         return points;
     }
 
+    /// <summary>Размер страницы для снимка вселенной облигаций (задача 26 часть A). ISS на этом
+    /// эндпоинте эмпирически игнорирует start/limit и отдаёт весь рынок (~3000-3500 строк) одной
+    /// страницей — 1000 запрошено "про запас", реальный размер страницы определяется ответом ISS
+    /// (короткая страница = последняя, тот же критерий, что GetHistoryPricesAsync).</summary>
+    private const int IssUniversePageSize = 1000;
+
+    /// <summary>Предохранитель: 20 страниц × 1000 = 20000 строк — с большим запасом перекрывает
+    /// весь рынок облигаций MOEX (~3000-3500 бумаг на момент внедрения).</summary>
+    private const int IssUniverseMaxPages = 20;
+
+    public async Task<IReadOnlyList<MoexBondMarketRow>> GetBondMarketSnapshotAsync(CancellationToken ct = default)
+    {
+        var rows = new List<MoexBondMarketRow>();
+
+        for (var page = 0; page < IssUniverseMaxPages; page++)
+        {
+            var start = page * IssUniversePageSize;
+            var url = "/iss/engines/stock/markets/bonds/securities.json"
+                      + $"?iss.only=securities,marketdata&iss.meta=off&start={start}&limit={IssUniversePageSize}";
+            var json = await GetStringSafeAsync(url, ct);
+            if (json is null)
+            {
+                // Сбой на середине дочитывания — отдаём то, что успели собрать (та же деградация,
+                // что GetHistoryPricesAsync); первая страница недоступна — вернётся пустой список.
+                break;
+            }
+
+            List<MoexBondMarketRow> pageRows;
+            try
+            {
+                pageRows = MoexBondUniverseParser.ParsePage(json);
+            }
+            catch (JsonException ex)
+            {
+                _logger.LogWarning(ex, "Failed to parse MOEX bond universe page at start {Start}", start);
+                break;
+            }
+
+            rows.AddRange(pageRows);
+
+            if (pageRows.Count < IssUniversePageSize)
+            {
+                // Короткая страница — последняя (или ISS вернул всё сразу, игнорируя start/limit).
+                break;
+            }
+
+            if (page == IssUniverseMaxPages - 1)
+            {
+                _logger.LogWarning("MOEX bond universe paging hit page limit at start {Start}", start);
+            }
+        }
+
+        return MoexBondUniverseParser.DeduplicateByBoard(rows);
+    }
+
     private async Task<string?> GetStringSafeAsync(string url, CancellationToken ct)
     {
         try
