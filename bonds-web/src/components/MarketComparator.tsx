@@ -6,37 +6,12 @@ import { postReplacement } from '../api/recommendations';
 import { postWatchlistItem } from '../api/watchlist';
 import { ReplacementBreakdown } from './ReplacementBreakdown';
 import { formatPercent, formatNumber, formatHorizon } from '../utils/format';
+// Задача 28: liquidityLabel/liquidityColor вынесены в utils/universeDisplay (переиспользуются Screener'ом).
+import { liquidityLabel, liquidityColor } from '../utils/universeDisplay';
 import type { UniverseRow, MaterializeResponse, ReplacementResponse } from '../api/types';
 
 const SEARCH_DEBOUNCE_MS = 300;
 const REPLACEMENT_HORIZON_YEARS = 2;
-
-/** Русская подпись бейджа ликвидности (LiquidityScore, задача 26). */
-function liquidityLabel(score: UniverseRow['liquidityScore']): string {
-  switch (score) {
-    case 'High':
-      return 'высокая ликвидность';
-    case 'Medium':
-      return 'средняя ликвидность';
-    case 'Low':
-      return 'низкая ликвидность';
-    default:
-      return 'ликвидность неизвестна';
-  }
-}
-
-function liquidityColor(score: UniverseRow['liquidityScore']): string {
-  switch (score) {
-    case 'High':
-      return 'teal';
-    case 'Medium':
-      return 'yellow';
-    case 'Low':
-      return 'red';
-    default:
-      return 'gray';
-  }
-}
 
 /** Одна опция выпадашки — карточка с именем/YTM/дюрацией/бейджами (renderOption, plan/27 §B.1). */
 function UniverseOptionLabel({ row }: { row: UniverseRow }) {

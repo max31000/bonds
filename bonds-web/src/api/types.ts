@@ -711,8 +711,19 @@ export interface SettingsResponse {
 /** Скор ликвидности бумаги банка (см. LiquidityScoreCalculator) — приблизительная оценка по обороту/спреду/числу сделок. */
 export type LiquidityScore = 'High' | 'Medium' | 'Low' | 'Unknown';
 
-/** Причина, по которой гигиенический фильтр скрыл бумагу из выдачи по умолчанию (plan/26 часть D). */
-export type UniverseHiddenReason = 'LowTurnover' | 'NearMaturity' | 'MissingDurationOrPrice' | 'MissingYield';
+/**
+ * Причина, по которой гигиенический фильтр скрыл бумагу из выдачи по умолчанию (plan/26 часть
+ * D) — значения зеркалят backend enum `HygieneHiddenReason` (см.
+ * `src/Bonds.Core/Universe/UniverseHygieneFilter.cs`), сериализуемый как строка (`.ToString()`).
+ * Задача 28: исправлены на фактические значения enum — было `MissingYield` (никогда не
+ * отправляется backend'ом), не хватало `ListLevelThree`/`ImplausibleYield`.
+ */
+export type UniverseHiddenReason =
+  | 'LowTurnover'
+  | 'ListLevelThree'
+  | 'ImplausibleYield'
+  | 'MissingDurationOrPrice'
+  | 'NearMaturity';
 
 /** Одна строка банка облигаций — дешёвая биржевая статистика MOEX, НЕ точный движок (см. Disclaimer). */
 export interface UniverseRow {
@@ -744,12 +755,31 @@ export interface UniverseResponse {
   disclaimer: string;
 }
 
-/** Параметры GET /api/universe — только те, что нужны выпадашке-сравнивалке (задача 27): поиск + сортировка по доходности + лимит. */
+/**
+ * Параметры GET /api/universe. Задача 27 использовала подмножество (поиск + сортировка по
+ * доходности + лимит) для выпадашки-сравнивалки; задача 28 (страница «Скринер») добавляет
+ * остальные серверные фильтры/пагинацию, зеркалящие сигнатуру `UniverseEndpoints.GetUniverse`.
+ */
 export interface UniverseQuery {
   search?: string;
+  minYield?: number;
+  maxYield?: number;
+  minDurationYears?: number;
+  maxDurationYears?: number;
+  sector?: string;
+  includeHidden?: boolean;
   sortBy?: 'yield' | 'duration' | 'turnover' | 'gspread';
   sortDir?: 'asc' | 'desc';
   limit?: number;
+  offset?: number;
+}
+
+/** Ответ GET /api/universe/status (задача 28) — сводка по банку облигаций для статусной строки скринера. */
+export interface UniverseStatus {
+  lastRefreshUtc: string | null;
+  totalBonds: number;
+  hiddenBonds: number;
+  historyDays: number;
 }
 
 /** Полные метрики движка для материализованной бумаги — POST /api/universe/{secid}/materialize (задача 27). Те же поля, что WatchlistItem (тот же расчётный путь). */

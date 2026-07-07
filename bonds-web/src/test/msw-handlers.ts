@@ -73,8 +73,12 @@ export const handlers = [
   ),
   http.delete('*/api/watchlist/:id', () => new HttpResponse(null, { status: 204 })),
   // Дефолтные кейсы для 27 (MarketComparator — выпадашка-сравнивалка) — пустой банк по умолчанию;
-  // конкретные сценарии переопределяются в тестах MarketComparator/Recommendations.
+  // конкретные сценарии переопределяются в тестах MarketComparator/Recommendations/Screener.
   http.get('*/api/universe', () => HttpResponse.json({ rows: [], total: 0, hiddenCount: 0, disclaimer: '' })),
+  // Дефолтный кейс для 28 (страница «Скринер», статусная строка) — переопределяется в Screener.test.tsx.
+  http.get('*/api/universe/status', () =>
+    HttpResponse.json({ lastRefreshUtc: null, totalBonds: 0, hiddenBonds: 0, historyDays: 0 }),
+  ),
   // Дефолтные кейсы для 09c — пустые/неактивные данные; переопределяются в тестах экранов.
   http.get('*/api/signals', () => HttpResponse.json({ signals: [] })),
   http.post('*/api/signals/:id/read', ({ params }) =>

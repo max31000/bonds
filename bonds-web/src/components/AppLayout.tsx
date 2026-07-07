@@ -39,6 +39,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: 'Денежный поток', path: '/cashflow' },
   { label: 'Аналитика', path: '/analytics' },
   { label: 'Рекомендации', path: '/recommendations' },
+  { label: 'Скринер', path: '/screener' },
   { label: 'Сигналы', path: '/signals', showUnreadBadge: true },
   { label: 'Настройки', path: '/settings' },
 ];
