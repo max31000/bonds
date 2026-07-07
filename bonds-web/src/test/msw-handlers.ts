@@ -72,6 +72,9 @@ export const handlers = [
     HttpResponse.json({ id: 1, isin: 'RU000A1038V6', note: null, addedAtUtc: new Date().toISOString() }, { status: 201 }),
   ),
   http.delete('*/api/watchlist/:id', () => new HttpResponse(null, { status: 204 })),
+  // Дефолтные кейсы для 27 (MarketComparator — выпадашка-сравнивалка) — пустой банк по умолчанию;
+  // конкретные сценарии переопределяются в тестах MarketComparator/Recommendations.
+  http.get('*/api/universe', () => HttpResponse.json({ rows: [], total: 0, hiddenCount: 0, disclaimer: '' })),
   // Дефолтные кейсы для 09c — пустые/неактивные данные; переопределяются в тестах экранов.
   http.get('*/api/signals', () => HttpResponse.json({ signals: [] })),
   http.post('*/api/signals/:id/read', ({ params }) =>

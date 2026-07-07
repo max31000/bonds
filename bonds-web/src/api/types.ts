@@ -494,6 +494,19 @@ export interface ReplacementResponse {
   buyCommissionRateUsed: number;
   /** Plan/22 часть E: источник ставки — CommissionRateSource либо "ExplicitRequest" (обе ставки заданы явно в запросе). */
   commissionRateSource: CommissionRateSource | 'ExplicitRequest';
+
+  /** Задача 27 часть B: та же формула-разбивка, что MatrixPair — спред эффективных доходностей (targetYield − holdYield), ДОЛЯ. Null — yieldDataIncomplete. */
+  spreadFraction: number | null;
+  /** Задача 27 часть B: капитал, реально переходящий в target (marketValueRub hold минус комиссия продажи), в рублях. */
+  capitalRub: number;
+  /** Задача 27 часть B: валовая выгода (спред × капитал × горизонт) ДО вычета комиссий, в рублях. Null — yieldDataIncomplete. */
+  grossGainRub: number | null;
+  /** Задача 27 часть B: netBenefitRub / capitalRub / horizonYears — ДОЛЯ (не процент). */
+  annualizedBenefitFraction: number | null;
+  /** Задача 27 часть B: оценка НДФЛ от продажи hold-позиции — null, если cost basis недоступен/журнал неполон. */
+  sellTaxEstimateRub: number | null;
+  /** Задача 27 часть B: netBenefitRub − sellTaxEstimateRub. Null, если sellTaxEstimateRub недоступен. */
+  netBenefitAfterTaxRub: number | null;
 }
 
 // ---- GET /api/analytics/replacement-matrix (plan/23 §A) ----
@@ -691,6 +704,83 @@ export interface SettingsResponse {
   commissionEffectiveRate: number;
   /** Read-only: источник commissionEffectiveRate. */
   commissionEffectiveSource: CommissionRateSource;
+}
+
+// ---- GET /api/universe, GET /api/universe/status, POST /api/universe/{secid}/materialize (plan/26, plan/27) ----
+
+/** Скор ликвидности бумаги банка (см. LiquidityScoreCalculator) — приблизительная оценка по обороту/спреду/числу сделок. */
+export type LiquidityScore = 'High' | 'Medium' | 'Low' | 'Unknown';
+
+/** Причина, по которой гигиенический фильтр скрыл бумагу из выдачи по умолчанию (plan/26 часть D). */
+export type UniverseHiddenReason = 'LowTurnover' | 'NearMaturity' | 'MissingDurationOrPrice' | 'MissingYield';
+
+/** Одна строка банка облигаций — дешёвая биржевая статистика MOEX, НЕ точный движок (см. Disclaimer). */
+export interface UniverseRow {
+  secid: string;
+  isin: string | null;
+  name: string | null;
+  sector: string | null;
+  yieldFraction: number | null;
+  durationYears: number | null;
+  pricePercent: number | null;
+  turnoverRub: number | null;
+  listLevel: number | null;
+  liquidityScore: LiquidityScore;
+  slippageEstimateFraction: number | null;
+  gspreadApproxFraction: number | null;
+  maturityDate: string | null;
+  offerDate: string | null;
+  isHidden: boolean;
+  hiddenReason: UniverseHiddenReason | null;
+  inPortfolio: boolean;
+  inWatchlist: boolean;
+}
+
+/** Ответ GET /api/universe. */
+export interface UniverseResponse {
+  rows: UniverseRow[];
+  total: number;
+  hiddenCount: number;
+  disclaimer: string;
+}
+
+/** Параметры GET /api/universe — только те, что нужны выпадашке-сравнивалке (задача 27): поиск + сортировка по доходности + лимит. */
+export interface UniverseQuery {
+  search?: string;
+  sortBy?: 'yield' | 'duration' | 'turnover' | 'gspread';
+  sortDir?: 'asc' | 'desc';
+  limit?: number;
+}
+
+/** Полные метрики движка для материализованной бумаги — POST /api/universe/{secid}/materialize (задача 27). Те же поля, что WatchlistItem (тот же расчётный путь). */
+export interface MaterializeMetrics {
+  name: string | null;
+  issuer: string | null;
+  sector: string | null;
+  couponType: CouponType;
+  maturityDate: string;
+  horizonDate: string;
+  calculatedToOffer: boolean;
+  modifiedDuration: number | null;
+  macaulayDuration: number | null;
+  ytmEffective: number | null;
+  currentYield: number | null;
+  /** YTM либо CurrentYield для флоатера/индексируемой — то же правило, что WatchlistItem. */
+  effectiveYield: number | null;
+  gSpread: number | null;
+  isFloater: boolean;
+  isIndexed: boolean;
+  isEstimated: boolean;
+  dataIncomplete: boolean;
+}
+
+/** Ответ POST /api/universe/{secid}/materialize. */
+export interface MaterializeResponse {
+  instrumentId: number;
+  secid: string;
+  isin: string;
+  metrics: MaterializeMetrics;
+  disclaimer: string;
 }
 
 /** Тело PUT /api/settings — все поля кроме токена/статуса токена и read-only контекста комиссии. */

@@ -230,6 +230,19 @@ describe('Recommendations', () => {
     expect(screen.queryByTestId('sell-candidate-3')).not.toBeInTheDocument();
   });
 
+  // ─── Задача 27: MarketComparator на карточке слабой позиции ────────────────────────────────
+
+  it('reveals the MarketComparator when "сравнить с рынком" is clicked on a weak-link card', async () => {
+    renderRecommendations();
+
+    await waitFor(() => expect(screen.getByTestId('sell-candidate-1')).toBeInTheDocument());
+    expect(screen.queryByTestId('market-comparator-1')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('compare-with-market-toggle-1'));
+
+    await waitFor(() => expect(screen.getByTestId('market-comparator-1')).toBeVisible());
+  });
+
   it('shows a favorable replacement card with benefit and annualized percent', async () => {
     renderRecommendations();
 

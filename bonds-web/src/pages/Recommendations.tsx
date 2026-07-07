@@ -21,11 +21,19 @@ import {
 import { useRecommendationsStore } from '../store/useRecommendationsStore';
 import { useWatchlistStore } from '../store/useWatchlistStore';
 import { Disclaimer } from '../components/Disclaimer';
-import { formatRub, formatPercent, formatNumber, formatDate, commissionSourceLabel } from '../utils/format';
+import { ReplacementBreakdown } from '../components/ReplacementBreakdown';
+import { MarketComparator } from '../components/MarketComparator';
+import { formatRub, formatPercent, formatNumber, formatDate, formatHorizon, commissionSourceLabel } from '../utils/format';
 import type { ComparisonRow, MatrixPair, RejectedPair } from '../api/types';
 
-/** Карточка одного sell-кандидата с бейджами-причинами (plan/17 §A.1). Формулировки — оценочные («кандидат»), не «продайте». */
+/**
+ * Карточка одного sell-кандидата с бейджами-причинами (plan/17 §A.1). Формулировки — оценочные
+ * («кандидат»), не «продайте». Задача 27: раскрывающийся MarketComparator — выпадашка со всем
+ * рынком (банк облигаций) для сравнения именно ЭТОЙ слабой позиции с любой бумагой биржи.
+ */
 function SellCandidateCard({ row, reasons }: { row: ComparisonRow; reasons: { kind: string; label: string }[] }) {
+  const [comparing, setComparing] = useState(false);
+
   return (
     <Paper withBorder p="md" radius="md" data-testid={`sell-candidate-${row.positionId}`}>
       <Group justify="space-between" mb="xs">
@@ -34,7 +42,7 @@ function SellCandidateCard({ row, reasons }: { row: ComparisonRow; reasons: { ki
           {formatPercent(row.effectiveYield)}
         </Text>
       </Group>
-      <Group gap={6} wrap="wrap">
+      <Group gap={6} wrap="wrap" mb="xs">
         {reasons.map((reason) => (
           <Badge key={reason.kind} size="sm" color="orange" variant="light">
             {reason.label}
@@ -46,6 +54,20 @@ function SellCandidateCard({ row, reasons }: { row: ComparisonRow; reasons: { ki
           </Badge>
         )}
       </Group>
+
+      <UnstyledButton
+        onClick={() => setComparing((v) => !v)}
+        data-testid={`compare-with-market-toggle-${row.positionId}`}
+      >
+        <Text size="xs" fw={600} c="blue">
+          {comparing ? 'скрыть сравнение с рынком' : 'сравнить с рынком'}
+        </Text>
+      </UnstyledButton>
+      <Collapse expanded={comparing}>
+        <div style={{ marginTop: 8 }}>
+          {comparing && <MarketComparator holdPositionId={row.positionId} />}
+        </div>
+      </Collapse>
     </Paper>
   );
 }
@@ -119,12 +141,6 @@ function WeakLinksSection() {
   );
 }
 
-/** Горизонт замены (min daysToHorizon пары, см. ReplacementMatrixService.HorizonYearsFor) — показываем в месяцах до года, иначе в годах. */
-function formatHorizon(years: number): string {
-  if (years < 1) return `${Math.max(1, Math.round(years * 12))} мес`;
-  return `${years.toFixed(1)} г.`;
-}
-
 /** Русская подпись причины отказа (plan/23 §B.3) — таблица отвергнутых пар. */
 function rejectedReasonLabel(pair: RejectedPair): string {
   if (pair.reason === 'DurationMismatch') return 'дюрации несопоставимы (>1.5 г.)';
@@ -134,32 +150,34 @@ function rejectedReasonLabel(pair: RejectedPair): string {
 /**
  * Карточка одной лучшей пары матрицы (задача 23) — заголовок + крупная выгода (₽ и % годовых),
  * значок watchlist-цели, раскрывашка с построчной формулой (спред → капитал → горизонт → валовая
- * выгода → минус обе комиссии → чистая выгода ≈ % годовых), plan/23 §B.2.
+ * выгода → минус обе комиссии → чистая выгода ≈ % годовых), plan/23 §B.2. Задача 27: сама формула
+ * вынесена в <see>ReplacementBreakdown</see> — переиспользуется MarketComparator.
  */
 function ReplacementPairCard({ pair }: { pair: MatrixPair }) {
   const [expanded, setExpanded] = useState(false);
   const holdLabel = pair.holdName ?? `Позиция #${pair.holdPositionId}`;
   const targetLabel = pair.targetName ?? `Инструмент #${pair.targetInstrumentId}`;
+  const testIdSuffix = `${pair.holdPositionId}-${pair.targetPositionId}`;
 
   return (
     <Paper
       withBorder
       p="sm"
       radius="md"
-      data-testid={`replacement-${pair.holdPositionId}-${pair.targetPositionId}`}
+      data-testid={`replacement-${testIdSuffix}`}
     >
-      <UnstyledButton onClick={() => setExpanded((v) => !v)} w="100%" data-testid={`replacement-toggle-${pair.holdPositionId}-${pair.targetPositionId}`}>
+      <UnstyledButton onClick={() => setExpanded((v) => !v)} w="100%" data-testid={`replacement-toggle-${testIdSuffix}`}>
         <Group justify="space-between" wrap="nowrap" align="flex-start">
           <Text fw={600} size="sm">
             {holdLabel} → {targetLabel}
           </Text>
           {pair.isWatchlistTarget && (
-            <Badge size="sm" color="grape" variant="light" data-testid={`replacement-watchlist-badge-${pair.holdPositionId}-${pair.targetPositionId}`}>
+            <Badge size="sm" color="grape" variant="light" data-testid={`replacement-watchlist-badge-${testIdSuffix}`}>
               watchlist
             </Badge>
           )}
         </Group>
-        <Text size="sm" c="teal" fw={600} data-testid={`replacement-benefit-${pair.holdPositionId}-${pair.targetPositionId}`}>
+        <Text size="sm" c="teal" fw={600} data-testid={`replacement-benefit-${testIdSuffix}`}>
           выгода{pair.netBenefitAfterTaxRub !== null ? ' после налога' : ''} ≈{' '}
           {formatRub(pair.netBenefitAfterTaxRub ?? pair.netBenefitRub)}
           {pair.annualizedBenefitFraction !== null && <> (~{formatPercent(pair.annualizedBenefitFraction)} годовых)</>} за{' '}
@@ -171,34 +189,7 @@ function ReplacementPairCard({ pair }: { pair: MatrixPair }) {
       </UnstyledButton>
 
       <Collapse expanded={expanded}>
-        <Stack gap={2} mt="xs" data-testid={`replacement-details-${pair.holdPositionId}-${pair.targetPositionId}`}>
-          <Text size="xs">спред доходностей: {formatPercent(pair.spreadFraction)}</Text>
-          <Text size="xs">капитал после продажи: {formatRub(pair.capitalRub)}</Text>
-          <Text size="xs">горизонт: {formatHorizon(pair.horizonYears)}</Text>
-          <Text size="xs">валовая выгода: {formatRub(pair.grossGainRub)}</Text>
-          <Text size="xs">
-            − комиссия продажи {formatRub(pair.sellCommissionRub)} − комиссия покупки {formatRub(pair.buyCommissionRub)} (
-            {formatPercent(pair.commissionRateUsed)}, {commissionSourceLabel(pair.commissionRateSource)})
-          </Text>
-          <Text size="xs" fw={600}>
-            = чистая выгода {formatRub(pair.netBenefitRub)}
-            {pair.annualizedBenefitFraction !== null && <> ≈ {formatPercent(pair.annualizedBenefitFraction)} годовых</>}
-          </Text>
-          {pair.sellTaxEstimateRub !== null ? (
-            <>
-              <Text size="xs" data-testid={`replacement-sell-tax-${pair.holdPositionId}-${pair.targetPositionId}`}>
-                − НДФЛ от продажи ≈ {formatRub(pair.sellTaxEstimateRub)} (оценка, 13% с прибыли к средней цене входа)
-              </Text>
-              <Text size="xs" fw={600} data-testid={`replacement-net-after-tax-${pair.holdPositionId}-${pair.targetPositionId}`}>
-                = выгода после налога {formatRub(pair.netBenefitAfterTaxRub)}
-              </Text>
-            </>
-          ) : (
-            <Text size="xs" c="dimmed" data-testid={`replacement-tax-unavailable-${pair.holdPositionId}-${pair.targetPositionId}`}>
-              налог не оценён: журнал операций по hold-позиции неполон
-            </Text>
-          )}
-        </Stack>
+        <ReplacementBreakdown data={pair} testIdSuffix={testIdSuffix} />
       </Collapse>
     </Paper>
   );

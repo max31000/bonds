@@ -166,6 +166,16 @@ export function formatSharePercent(value: number | null | undefined): string {
   return `${value.toFixed(1)}%`;
 }
 
+/**
+ * Горизонт замены (min daysToHorizon пары, см. ReplacementMatrixService.HorizonYearsFor) —
+ * показываем в месяцах до года, иначе в годах. Общая конвенция для карточки матрицы замен
+ * (задача 23) и карточки market-сравнивалки (задача 27) — см. ReplacementBreakdown.
+ */
+export function formatHorizon(years: number): string {
+  if (years < 1) return `${Math.max(1, Math.round(years * 12))} мес`;
+  return `${years.toFixed(1)} г.`;
+}
+
 /** Форматирует дату-время ISO (UTC) в краткий локальный вид ("01.07.2026, 14:30"). */
 export function formatDateTime(dateIso: string | null | undefined): string {
   if (!dateIso) return '—';
