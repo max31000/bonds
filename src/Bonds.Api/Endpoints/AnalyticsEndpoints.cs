@@ -6,7 +6,10 @@ using Bonds.Core.CashFlow;
 using Bonds.Core.Interfaces;
 using Bonds.Core.Interfaces.Repositories;
 using Bonds.Core.Time;
+using Bonds.Core.Universe;
 using Bonds.Infrastructure.Analytics;
+using Bonds.Infrastructure.Universe;
+using static Bonds.Core.Analytics.RelativeValueService;
 
 namespace Bonds.Api.Endpoints;
 
@@ -31,6 +34,7 @@ public static class AnalyticsEndpoints
         app.MapGet("/api/analytics/trajectory", GetTrajectory);
         app.MapGet("/api/analytics/allocation", GetAllocation);
         app.MapPost("/api/analytics/basket", PostBasket);
+        app.MapGet("/api/analytics/relative-value", GetRelativeValue);
     }
 
     // ─── GET /api/analytics/xirr ────────────────────────────────────────────────────────────
@@ -1079,8 +1083,199 @@ public static class AnalyticsEndpoints
         }).ToList(),
     };
 
+    // ─── GET /api/analytics/relative-value ─────────────────────────────────────────────────────
+
+    /// <summary>Порог |deviation| для Fair-вердикта (план часть C.1): меньше — «в рынке», не
+    /// заслуживает бейджа. 0.0020 = 20 базисных пунктов (доля, см. общая конвенция единиц репо).</summary>
+    public const decimal FairVerdictThresholdFraction = 0.0020m;
+
+    /// <summary>Сколько дешёвых кандидатов из корзины показывать для каждой Rich-позиции (план часть C.2).</summary>
+    public const int TopCheapCandidatesPerRichPosition = 3;
+
+    public const string RelativeValueDisclaimer =
+        "Относительная дешевизна/дороговизна считается против медианного G-спреда бумаг ТОЙ ЖЕ " +
+        "корзины (сектор × срок) — это НЕ оценка кредитного качества эмитента: большой спред может " +
+        "означать реальный риск дефолта, а не недооценку рынком. Аналитическая оценка, не " +
+        "инвестиционная рекомендация.";
+
+    /// <summary>
+    /// Задача 30 часть C — для каждой сравнимой позиции портфеля (не floater/indexed/dataIncomplete —
+    /// тот же предикат, что <see cref="ReplacementMatrixService.IsComparable"/>) считает отклонение
+    /// точного G-спреда от сглаженной медианы её корзины (сектор × дюрационный бакет,
+    /// <see cref="RelativeValueSnapshotBuilder"/>), верdict Cheap/Fair/Rich и для Rich-позиций —
+    /// топ-3 дешёвых кандидатов ИЗ ИХ ЖЕ корзины (не скрытых бумаг банка облигаций).
+    /// </summary>
+    private static async Task<IResult> GetRelativeValue(
+        ClaimsPrincipal principal,
+        IAccountRepository accountRepo,
+        PortfolioHoldingsBuilder holdingsBuilder,
+        RelativeValueSnapshotBuilder snapshotBuilder,
+        CancellationToken ct)
+    {
+        var accountId = await PositionsEndpoints.ResolveAccountIdAsync(principal, accountRepo);
+        if (accountId is null)
+        {
+            return Results.Ok(new RelativeValueResponseDto { Positions = [], Disclaimer = RelativeValueDisclaimer });
+        }
+
+        var asOf = BusinessClock.MoscowToday();
+        var holdings = await holdingsBuilder.BuildForAccountAsync(accountId.Value, asOf);
+        var comparableHoldings = holdings
+            .Where(h => ReplacementMatrixService.IsComparable(h.IsFloater, h.IsIndexed, h.DataIncomplete))
+            .Where(h => h.GSpread is not null)
+            .ToList();
+
+        var snapshot = await snapshotBuilder.GetSnapshotAsync(ct);
+
+        var positionDtos = new List<RelativeValuePositionDto>(comparableHoldings.Count);
+        foreach (var holding in comparableHoldings)
+        {
+            var assessment = Assess(holding.Sector, holding.ModifiedDuration, holding.GSpread!.Value, snapshot.AllMembers, snapshot.BasketStats);
+            var verdict = ResolveVerdict(assessment.DeviationFraction);
+
+            var candidates = verdict == RelativeValueVerdict.Rich
+                ? BuildCheapCandidates(assessment.Basket.EffectiveBasket, snapshot)
+                : [];
+
+            positionDtos.Add(new RelativeValuePositionDto
+            {
+                PositionId = holding.PositionId,
+                Basket = new RelativeValueBasketDto
+                {
+                    Sector = assessment.Basket.EffectiveBasket.Sector,
+                    DurationBucket = assessment.Basket.EffectiveBasket.DurationBucket,
+                    Count = assessment.Basket.Stats.Count,
+                    Confidence = assessment.Basket.Confidence.ToString(),
+                },
+                DeviationFraction = assessment.DeviationFraction,
+                Percentile = assessment.Percentile,
+                Verdict = verdict.ToString(),
+                BasedOnDays = snapshot.BasedOnDays,
+                CheapCandidates = candidates,
+            });
+        }
+
+        return Results.Ok(new RelativeValueResponseDto
+        {
+            Positions = positionDtos,
+            Disclaimer = RelativeValueDisclaimer,
+        });
+    }
+
+    /// <summary>Cheap/Fair/Rich по знаку и порогу <see cref="FairVerdictThresholdFraction"/> (план часть C.1):
+    /// |deviation| &lt; порог → Fair (в рынке); иначе положительное — Cheap (спред выше медианы,
+    /// рынок недооценивает/закладывает риск), отрицательное — Rich (спред ниже медианы, дорого
+    /// относительно соседей по корзине, кандидат на пересмотр).</summary>
+    private static RelativeValueVerdict ResolveVerdict(decimal deviationFraction)
+    {
+        if (Math.Abs(deviationFraction) < FairVerdictThresholdFraction) return RelativeValueVerdict.Fair;
+        return deviationFraction > 0 ? RelativeValueVerdict.Cheap : RelativeValueVerdict.Rich;
+    }
+
+    /// <summary>
+    /// Топ-N дешёвых кандидатов ИЗ ТОЙ ЖЕ эффективной корзины (после fallback — план часть C.2:
+    /// "кандидаты — из корзины, не скрытые") для Rich-позиции, отсортированные по deviation убыв.
+    /// Кандидаты берутся из <see cref="RelativeValueSnapshotBuilder.RelativeValueSnapshot.AllMembers"/>
+    /// (уже НЕ скрытые гигиеническим фильтром — см. doc-comment билдера) и обогащаются
+    /// именем/доходностью/ликвидностью из текущего <c>bond_universe</c> (<c>CurrentEntriesBySecid</c>)
+    /// — <see cref="RelativeValueService.BasketMember"/> сам по себе несёт только поля, нужные
+    /// для статистики корзин.
+    /// </summary>
+    private static List<RelativeValueCandidateDto> BuildCheapCandidates(
+        BasketKey effectiveBasket, RelativeValueSnapshotBuilder.RelativeValueSnapshot snapshot)
+    {
+        var basketMedian = snapshot.BasketStats.TryGetValue(effectiveBasket, out var stats) ? stats.Median : 0m;
+
+        var basketMembers = snapshot.AllMembers
+            .Where(m => string.Equals(m.Sector ?? UnknownSector, effectiveBasket.Sector, StringComparison.OrdinalIgnoreCase))
+            .Where(m => effectiveBasket.DurationBucket is SectorWideBucketLabel or MarketWideLabel
+                || Bonds.Core.Analytics.DurationBucketClassifier.Label(m.DurationYears) == effectiveBasket.DurationBucket)
+            .Where(m => m.GSpreadFraction is not null)
+            .OrderByDescending(m => m.GSpreadFraction!.Value - basketMedian)
+            .Take(TopCheapCandidatesPerRichPosition)
+            .ToList();
+
+        var result = new List<RelativeValueCandidateDto>(basketMembers.Count);
+        foreach (var member in basketMembers)
+        {
+            snapshot.CurrentEntriesBySecid.TryGetValue(member.Secid, out var entry);
+            var liquidity = LiquidityScoreCalculator.Assess(entry?.TurnoverRub, entry?.BidPercent, entry?.OfferPercent, entry?.NumTrades);
+
+            result.Add(new RelativeValueCandidateDto
+            {
+                Secid = member.Secid,
+                Name = entry?.ShortName ?? entry?.SecName,
+                YieldFraction = entry?.YieldFraction,
+                DeviationFraction = member.GSpreadFraction!.Value - basketMedian,
+                LiquidityScore = liquidity.Score.ToString(),
+            });
+        }
+
+        return result;
+    }
+
     private static IResult ValidationError(string message) =>
         Results.Json(new { error = message, type = "ValidationException" }, statusCode: StatusCodes.Status422UnprocessableEntity);
+}
+
+/// <summary>Verdict одной позиции (план часть C.1): Cheap — спред заметно выше медианы корзины
+/// (рынок недооценивает/закладывает риск), Rich — заметно ниже (дорого относительно соседей,
+/// кандидат на пересмотр), Fair — в пределах порога (см. <see cref="AnalyticsEndpoints.FairVerdictThresholdFraction"/>).</summary>
+public enum RelativeValueVerdict
+{
+    Cheap,
+    Fair,
+    Rich,
+}
+
+public sealed record RelativeValueResponseDto
+{
+    public required IReadOnlyList<RelativeValuePositionDto> Positions { get; init; }
+    public required string Disclaimer { get; init; }
+}
+
+public sealed record RelativeValuePositionDto
+{
+    public required ulong PositionId { get; init; }
+    public required RelativeValueBasketDto Basket { get; init; }
+
+    /// <summary>ДОЛЯ (0.002 = 20 б.п., см. общая конвенция единиц репо — б.п. рисует фронт formatBp).</summary>
+    public required decimal DeviationFraction { get; init; }
+
+    /// <summary>Перцентиль внутри эффективной корзины (0-100).</summary>
+    public required decimal Percentile { get; init; }
+
+    public required string Verdict { get; init; }
+
+    /// <summary>Сколько торговых дней истории легло в основу сглаженной медианы (0 — банк молодой,
+    /// использован единственный текущий снимок, см. RelativeValueSnapshotBuilder).</summary>
+    public required int BasedOnDays { get; init; }
+
+    /// <summary>Топ-3 дешёвых кандидата из ЕЁ ЖЕ корзины — только для Rich-позиций, иначе пусто.</summary>
+    public required IReadOnlyList<RelativeValueCandidateDto> CheapCandidates { get; init; }
+}
+
+public sealed record RelativeValueBasketDto
+{
+    public required string Sector { get; init; }
+    public required string DurationBucket { get; init; }
+    public required int Count { get; init; }
+
+    /// <summary>High/Medium/Low — см. <see cref="RelativeValueService.RelativeValueConfidence"/>.</summary>
+    public required string Confidence { get; init; }
+}
+
+public sealed record RelativeValueCandidateDto
+{
+    public required string Secid { get; init; }
+    public string? Name { get; init; }
+    public decimal? YieldFraction { get; init; }
+
+    /// <summary>ДОЛЯ — положительное значение (кандидат «дешевле» медианы своей корзины).</summary>
+    public required decimal DeviationFraction { get; init; }
+
+    /// <summary>High/Medium/Low/None — см. <see cref="Bonds.Core.Universe.LiquidityScore"/>.</summary>
+    public required string LiquidityScore { get; init; }
 }
 
 public sealed record XirrResponseDto

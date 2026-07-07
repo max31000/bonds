@@ -27,8 +27,10 @@ namespace Bonds.Infrastructure.Universe;
 /// <b>Кэш.</b> Результат держится в памяти (простое поле + таймстамп — тот же уровень простоты, что
 /// <see cref="BondUniverseRefreshService"/> использует для отслеживания последнего тика; в проекте
 /// нет уже используемого IMemoryCache, изобретать сложную кэш-инфраструктуру ради одного потребителя
-/// не оправдано) на <see cref="CacheDuration"/> — банк обновляется раз в час, пересчитывать корзины
-/// на каждый HTTP-запрос excessive.
+/// не оправдано) на <see cref="BondUniverseRefreshOptions.RelativeValueCacheDuration"/> (дефолт
+/// ~1 час, план часть B.3) — банк обновляется раз в час, пересчитывать корзины на каждый HTTP-
+/// запрос excessive. Вынесено в опции (не константа), чтобы интеграционные тесты могли отключить
+/// кэш (см. doc-comment опции).
 /// </para>
 /// <para>
 /// <b>Lifetime: Singleton</b> (кэш должен переживать отдельные HTTP-запросы) — <see cref="IBondUniverseRepository"/>
@@ -41,11 +43,9 @@ public sealed class RelativeValueSnapshotBuilder
     /// <summary>Сколько последних торговых дней истории использовать для сглаживания (план часть B.1).</summary>
     public const int TradingDaysWindow = 5;
 
-    /// <summary>Как долго кэшировать построенный снимок в памяти (план часть B.3 — "~1 час").</summary>
-    public static readonly TimeSpan CacheDuration = TimeSpan.FromHours(1);
-
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly UniverseHygieneOptions _hygieneOptions;
+    private readonly TimeSpan _cacheDuration;
 
     private RelativeValueSnapshot? _cached;
     private DateTime _cachedAtUtc;
@@ -55,6 +55,7 @@ public sealed class RelativeValueSnapshotBuilder
     {
         _scopeFactory = scopeFactory;
         _hygieneOptions = universeOptions.Value.Hygiene;
+        _cacheDuration = universeOptions.Value.RelativeValueCacheDuration;
     }
 
     /// <summary>Готовый снимок для API/UI — все данные, нужные для одной бумаги: полная резолюция
@@ -64,6 +65,11 @@ public sealed class RelativeValueSnapshotBuilder
         public required Dictionary<BasketKey, BasketStats> BasketStats { get; init; }
         public required IReadOnlyList<BasketMember> AllMembers { get; init; }
         public required int BasedOnDays { get; init; }
+
+        /// <summary>ТЕКУЩИЙ (не исторический) снимок bond_universe по secid — для обогащения
+        /// кандидатов именем/доходностью/ликвидностью (план часть C.2), которых нет в
+        /// <see cref="BasketMember"/> (тот несёт только поля, нужные для статистики корзин).</summary>
+        public required IReadOnlyDictionary<string, BondUniverseEntry> CurrentEntriesBySecid { get; init; }
     }
 
     /// <summary>Возвращает закэшированный снимок либо строит новый, если кэш пуст/протух.
@@ -73,7 +79,7 @@ public sealed class RelativeValueSnapshotBuilder
     public async Task<RelativeValueSnapshot> GetSnapshotAsync(CancellationToken ct = default)
     {
         var now = DateTime.UtcNow;
-        if (_cached is not null && now - _cachedAtUtc < CacheDuration)
+        if (_cached is not null && now - _cachedAtUtc < _cacheDuration)
         {
             return _cached;
         }
@@ -83,7 +89,7 @@ public sealed class RelativeValueSnapshotBuilder
         {
             // Другой запрос мог уже пересчитать снимок, пока этот ждал семафор.
             now = DateTime.UtcNow;
-            if (_cached is not null && now - _cachedAtUtc < CacheDuration)
+            if (_cached is not null && now - _cachedAtUtc < _cacheDuration)
             {
                 return _cached;
             }
@@ -130,6 +136,7 @@ public sealed class RelativeValueSnapshotBuilder
                 BasketStats = BuildBasketStats(members),
                 AllMembers = members,
                 BasedOnDays = 0,
+                CurrentEntriesBySecid = currentBySecid,
             };
         }
 
@@ -210,6 +217,7 @@ public sealed class RelativeValueSnapshotBuilder
             BasketStats = smoothedStats,
             AllMembers = latestMembers,
             BasedOnDays = historyByDate.Count,
+            CurrentEntriesBySecid = currentBySecid,
         };
     }
 
