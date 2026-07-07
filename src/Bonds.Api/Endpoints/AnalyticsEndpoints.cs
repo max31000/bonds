@@ -1134,7 +1134,7 @@ public static class AnalyticsEndpoints
             var verdict = ResolveVerdict(assessment.DeviationFraction);
 
             var candidates = verdict == RelativeValueVerdict.Rich
-                ? BuildCheapCandidates(assessment.Basket.EffectiveBasket, snapshot)
+                ? BuildCheapCandidates(assessment.Basket.EffectiveBasket, snapshot, holding.Isin)
                 : [];
 
             positionDtos.Add(new RelativeValuePositionDto
@@ -1182,7 +1182,7 @@ public static class AnalyticsEndpoints
     /// для статистики корзин.
     /// </summary>
     private static List<RelativeValueCandidateDto> BuildCheapCandidates(
-        BasketKey effectiveBasket, RelativeValueSnapshotBuilder.RelativeValueSnapshot snapshot)
+        BasketKey effectiveBasket, RelativeValueSnapshotBuilder.RelativeValueSnapshot snapshot, string? positionIsin)
     {
         var basketMedian = snapshot.BasketStats.TryGetValue(effectiveBasket, out var stats) ? stats.Median : 0m;
 
@@ -1191,6 +1191,14 @@ public static class AnalyticsEndpoints
             .Where(m => effectiveBasket.DurationBucket is SectorWideBucketLabel or MarketWideLabel
                 || Bonds.Core.Analytics.DurationBucketClassifier.Label(m.DurationYears) == effectiveBasket.DurationBucket)
             .Where(m => m.GSpreadFraction is not null)
+            // Self-exclusion (ревью T-30, MAJOR): банк — вся вселенная MOEX, оцениваемая позиция
+            // почти наверняка присутствует в нём под своим secid, а её approx-спред из банка
+            // отличается от точного спреда движка — без исключения Rich-позиция могла бы
+            // порекомендовать САМУ СЕБЯ как «дешёвого соседа» («купи то же самое дешевле»).
+            // Исключаем по ISIN ДО Take, чтобы самоссылка не съедала слот кандидата.
+            .Where(m => positionIsin is null
+                || !snapshot.CurrentEntriesBySecid.TryGetValue(m.Secid, out var entryForIsin)
+                || !string.Equals(entryForIsin.Isin, positionIsin, StringComparison.OrdinalIgnoreCase))
             .OrderByDescending(m => m.GSpreadFraction!.Value - basketMedian)
             .Take(TopCheapCandidatesPerRichPosition)
             .ToList();

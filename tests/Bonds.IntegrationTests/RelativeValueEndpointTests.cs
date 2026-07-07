@@ -206,6 +206,52 @@ public class RelativeValueEndpointTests
     }
 
     [Fact]
+    public async Task GetRelativeValue_PositionAlsoPresentInUniverse_NotItsOwnCheapCandidate()
+    {
+        // Ревью T-30 (MAJOR): банк — вся вселенная MOEX, позиция присутствует в нём под своим ISIN.
+        // Её approx-спред из банка отличается от точного спреда движка, поэтому без self-exclusion
+        // Rich-позиция могла бы возглавить список «дешёвых соседей» самой себе.
+        await SeedYieldCurveAsync();
+        var (client, _, accountId) = await CreateAuthorizedClientAsync();
+        var marker = Guid.NewGuid().ToString("N")[..6];
+        var sector = $"Sector{marker}";
+
+        var (instrumentId, positionId) = await SeedYieldingPositionAsync(accountId, sector, cleanPrice: 1000m, couponValueRub: 20m, maturityYears: 2);
+        var instrumentRepo = new InstrumentRepository(_factory.Database.ConnectionString);
+        var positionIsin = (await instrumentRepo.GetByIdAsync(instrumentId))!.Isin;
+
+        // Та же бумага в банке: тот же ISIN, САМЫЙ высокий approx-спред корзины — до фикса
+        // она гарантированно попала бы первым «дешёвым» кандидатом.
+        var selfEntry = HealthyEntry($"SELF{marker}", sector, 0.50m, 2m);
+        selfEntry.Isin = positionIsin;
+
+        var universeRepo = new BondUniverseRepository(_factory.Database.ConnectionString);
+        await universeRepo.UpsertSnapshotBatchAsync(new[]
+        {
+            selfEntry,
+            HealthyEntry($"A{marker}", sector, 0.30m, 2m),
+            HealthyEntry($"B{marker}", sector, 0.32m, 2.1m),
+            HealthyEntry($"C{marker}", sector, 0.34m, 1.9m),
+            HealthyEntry($"D{marker}", sector, 0.36m, 2.2m),
+            HealthyEntry($"E{marker}", sector, 0.38m, 1.8m),
+        });
+
+        var response = await client.GetAsync("/api/analytics/relative-value");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var position = body.GetProperty("positions").EnumerateArray()
+            .Single(p => p.GetProperty("positionId").GetUInt64() == positionId);
+        position.GetProperty("verdict").GetString().Should().Be("Rich");
+
+        var candidateSecids = position.GetProperty("cheapCandidates").EnumerateArray()
+            .Select(c => c.GetProperty("secid").GetString())
+            .ToList();
+        candidateSecids.Should().NotBeEmpty("дешёвые соседи по корзине должны найтись среди ЧУЖИХ бумаг");
+        candidateSecids.Should().NotContain($"SELF{marker}", "Rich-позиция не должна рекомендовать саму себя как дешёвого соседа");
+    }
+
+    [Fact]
     public async Task GetRelativeValue_FloaterPosition_ExcludedFromResults()
     {
         await SeedYieldCurveAsync();
