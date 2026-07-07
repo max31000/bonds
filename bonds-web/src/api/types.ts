@@ -793,8 +793,9 @@ export interface SettingsResponse {
 
 // ---- GET /api/universe, GET /api/universe/status, POST /api/universe/{secid}/materialize (plan/26, plan/27) ----
 
-/** Скор ликвидности бумаги банка (см. LiquidityScoreCalculator) — приблизительная оценка по обороту/спреду/числу сделок. */
-export type LiquidityScore = 'High' | 'Medium' | 'Low' | 'Unknown';
+/** Скор ликвидности бумаги банка (см. LiquidityScoreCalculator) — приблизительная оценка по обороту/спреду/числу
+ *  сделок. Зеркалит бэкенд-enum: «нет данных» сериализуется как 'None' (не 'Unknown'). */
+export type LiquidityScore = 'High' | 'Medium' | 'Low' | 'None';
 
 /**
  * Причина, по которой гигиенический фильтр скрыл бумагу из выдачи по умолчанию (plan/26 часть
