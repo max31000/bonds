@@ -8,11 +8,13 @@ import { Recommendations } from './Recommendations';
 import { useRecommendationsStore } from '../store/useRecommendationsStore';
 import { useWatchlistStore } from '../store/useWatchlistStore';
 import { useAuthStore } from '../store/useAuthStore';
+import { useRelativeValueStore } from '../store/useRelativeValueStore';
 import type {
   ComparisonResponse,
   ReplacementMatrixResponse,
   CompositionResponse,
   WatchlistItem,
+  RelativeValueResponse,
 } from '../api/types';
 
 function renderRecommendations() {
@@ -168,11 +170,13 @@ describe('Recommendations', () => {
       addError: null,
     });
     useAuthStore.setState({ token: 'test-token', user: { id: 1, telegramId: 1 } });
+    useRelativeValueStore.setState({ positionsById: {}, disclaimer: '', isLoading: false, error: null, hasLoaded: false });
 
     server.use(
       http.get('*/api/analytics/composition', () => HttpResponse.json(baseComposition)),
       http.get('*/api/analytics/comparison', () => HttpResponse.json(baseComparison)),
       http.get('*/api/analytics/replacement-matrix', () => HttpResponse.json(favorableMatrix)),
+      http.get('*/api/analytics/relative-value', () => HttpResponse.json({ positions: [], disclaimer: '' })),
       http.get('*/api/universe*', () => HttpResponse.json({ rows: [], total: 0, hiddenCount: 0 })),
       http.get('*/api/watchlist', () => HttpResponse.json({ items: [], disclaimer: '' })),
     );
@@ -471,5 +475,192 @@ describe('Recommendations', () => {
 
     await waitFor(() => expect(deleteCalled).toBe(true));
     await waitFor(() => expect(screen.queryByTestId('watchlist-row-42')).not.toBeInTheDocument());
+  });
+
+  // ─── Задача 30: relative value (RV) — бейджи, секция «дешёвых соседей», устойчивость к отказу ──
+
+  const richRelativeValue: RelativeValueResponse = {
+    positions: [
+      {
+        positionId: 1,
+        basket: { sector: 'Корпоративные', durationBucket: '1–3 года', count: 7, confidence: 'High' },
+        deviationFraction: -0.0038,
+        percentile: 8,
+        verdict: 'Rich',
+        basedOnDays: 5,
+        cheapCandidates: [
+          { secid: 'CHEAP1', name: 'Дешёвая бумага 1', yieldFraction: 0.22, deviationFraction: 0.004, liquidityScore: 'High' },
+          { secid: 'CHEAP2', name: 'Дешёвая бумага 2', yieldFraction: 0.24, deviationFraction: 0.003, liquidityScore: 'Medium' },
+        ],
+      },
+      {
+        positionId: 2,
+        basket: { sector: 'Корпоративные', durationBucket: '1–3 года', count: 7, confidence: 'High' },
+        deviationFraction: 0.0025,
+        percentile: 78,
+        verdict: 'Cheap',
+        basedOnDays: 5,
+        cheapCandidates: [],
+      },
+    ],
+    disclaimer: 'относительная дешевизна к корзине по данным MOEX; НЕ оценка кредитного качества',
+  };
+
+  it('shows an RV badge on a weak-link card with a Rich verdict', async () => {
+    server.use(http.get('*/api/analytics/relative-value', () => HttpResponse.json(richRelativeValue)));
+
+    renderRecommendations();
+
+    await waitFor(() => expect(screen.getByTestId('relative-value-badge-1')).toBeInTheDocument());
+    expect(screen.getByTestId('relative-value-badge-1').textContent).toMatch(/дорогая/);
+  });
+
+  it('shows an RV badge with a Cheap verdict on a different position', async () => {
+    server.use(http.get('*/api/analytics/relative-value', () => HttpResponse.json(richRelativeValue)));
+
+    renderRecommendations();
+
+    await waitFor(() => expect(screen.getByTestId('relative-value-badge-2')).toBeInTheDocument());
+    expect(screen.getByTestId('relative-value-badge-2').textContent).toMatch(/дешёвая/);
+  });
+
+  it('renders the "дорогие бумаги — дешёвые соседи" section with cheap candidate chips for a Rich position', async () => {
+    server.use(http.get('*/api/analytics/relative-value', () => HttpResponse.json(richRelativeValue)));
+
+    renderRecommendations();
+
+    await waitFor(() => expect(screen.getByTestId('relative-value-section')).toBeInTheDocument());
+    expect(screen.getByTestId('rv-rich-row-1')).toBeInTheDocument();
+    expect(screen.getByTestId('rv-candidate-chip-CHEAP1')).toBeInTheDocument();
+    expect(screen.getByTestId('rv-candidate-chip-CHEAP2')).toBeInTheDocument();
+    // Cheap-позиция (positionId=2) не должна получить свою строку в секции — только Rich.
+    expect(screen.queryByTestId('rv-rich-row-2')).not.toBeInTheDocument();
+  });
+
+  it('clicking a cheap candidate chip opens MarketComparator preselected with that bond', async () => {
+    server.use(
+      http.get('*/api/analytics/relative-value', () => HttpResponse.json(richRelativeValue)),
+      http.get('*/api/universe*', ({ request }) => {
+        const url = new URL(request.url);
+        if (url.searchParams.get('search') === 'CHEAP1') {
+          return HttpResponse.json({
+            rows: [
+              {
+                secid: 'CHEAP1',
+                isin: 'RU000CHEAP01',
+                name: 'Дешёвая бумага 1',
+                sector: 'Корпоративные',
+                yieldFraction: 0.22,
+                durationYears: 2,
+                pricePercent: 98,
+                turnoverRub: 2_000_000,
+                listLevel: 1,
+                liquidityScore: 'High',
+                slippageEstimateFraction: 0.001,
+                gspreadApproxFraction: 0.05,
+                maturityDate: '2028-01-01',
+                offerDate: null,
+                isHidden: false,
+                hiddenReason: null,
+                inPortfolio: false,
+                inWatchlist: false,
+              },
+            ],
+            total: 1,
+            hiddenCount: 0,
+            disclaimer: '',
+          });
+        }
+        return HttpResponse.json({ rows: [], total: 0, hiddenCount: 0, disclaimer: '' });
+      }),
+      http.post('*/api/universe/:secid/materialize', () =>
+        HttpResponse.json({
+          instrumentId: 999,
+          secid: 'CHEAP1',
+          isin: 'RU000CHEAP01',
+          metrics: {
+            name: 'Дешёвая бумага 1',
+            issuer: 'Эмитент',
+            sector: 'Корпоративные',
+            couponType: 'Fixed',
+            maturityDate: '2028-01-01',
+            horizonDate: '2028-01-01',
+            calculatedToOffer: false,
+            modifiedDuration: 2,
+            macaulayDuration: 2.05,
+            ytmEffective: 0.22,
+            currentYield: 0.2,
+            effectiveYield: 0.22,
+            gSpread: 500,
+            isFloater: false,
+            isIndexed: false,
+            isEstimated: false,
+            dataIncomplete: false,
+          },
+          disclaimer: '',
+        }),
+      ),
+      http.post('*/api/analytics/replacement', () =>
+        HttpResponse.json({
+          holdPositionId: 1,
+          targetPositionId: 0,
+          targetInstrumentId: 999,
+          horizonYears: 2,
+          sellCommissionRub: 30,
+          buyCommissionRub: 30,
+          totalSwitchCostRub: 60,
+          netBenefitRub: 1200,
+          isSwitchFavorable: true,
+          breakEvenYears: 0.4,
+          yieldDataIncomplete: false,
+          disclaimer: '',
+          sellCommissionRateUsed: 0.003,
+          buyCommissionRateUsed: 0.003,
+          commissionRateSource: 'Default',
+          spreadFraction: 0.07,
+          capitalRub: 1490,
+          grossGainRub: 1260,
+          annualizedBenefitFraction: 0.18,
+          sellTaxEstimateRub: null,
+          netBenefitAfterTaxRub: null,
+        }),
+      ),
+    );
+
+    renderRecommendations();
+
+    await waitFor(() => expect(screen.getByTestId('rv-candidate-chip-CHEAP1')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('rv-candidate-chip-CHEAP1'));
+
+    await waitFor(() => expect(screen.getByTestId('rv-market-comparator-1')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTestId('market-comparator-result-1')).toBeInTheDocument());
+  });
+
+  it('shows the young-history caption in the RV badge tooltip when basedOnDays is 0', async () => {
+    const youngHistory: RelativeValueResponse = {
+      positions: [{ ...richRelativeValue.positions[0], basedOnDays: 0 }],
+      disclaimer: richRelativeValue.disclaimer,
+    };
+    server.use(http.get('*/api/analytics/relative-value', () => HttpResponse.json(youngHistory)));
+
+    renderRecommendations();
+
+    await waitFor(() => expect(screen.getByTestId('relative-value-badge-1')).toBeInTheDocument());
+
+    const { default: userEvent } = await import('@testing-library/user-event');
+    await userEvent.hover(screen.getByTestId('relative-value-badge-1'));
+
+    await waitFor(() => expect(screen.getByText(/истории пока мало/)).toBeInTheDocument());
+  });
+
+  it('does not break the recommendations page when GET /api/analytics/relative-value fails', async () => {
+    server.use(http.get('*/api/analytics/relative-value', () => HttpResponse.json({ error: 'boom' }, { status: 500 })));
+
+    renderRecommendations();
+
+    await waitFor(() => expect(screen.getByTestId('weak-links-section')).toBeInTheDocument());
+    expect(screen.getByTestId('replacements-section')).toBeInTheDocument();
+    expect(screen.queryByTestId('relative-value-badge-1')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('relative-value-section')).not.toBeInTheDocument();
   });
 });

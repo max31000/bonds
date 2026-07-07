@@ -8,6 +8,7 @@ import { Positions } from './Positions';
 import { usePositionsStore } from '../store/usePositionsStore';
 import { useAuthStore } from '../store/useAuthStore';
 import { useLiveStore } from '../store/useLiveStore';
+import { useRelativeValueStore } from '../store/useRelativeValueStore';
 import type { PositionRow } from '../api/types';
 
 function renderPositions() {
@@ -86,6 +87,7 @@ describe('Positions', () => {
     usePositionsStore.setState({ positions: [], disclaimer: '', isLoading: false, error: null });
     useAuthStore.setState({ token: 'test-token', user: { id: 1, telegramId: 1 } });
     useLiveStore.setState({ positionsById: {}, totalMarketValueRub: null, asOfUtc: null });
+    useRelativeValueStore.setState({ positionsById: {}, disclaimer: '', isLoading: false, error: null, hasLoaded: false });
   });
 
   it('renders a regular bond using ytmEffective as the yield', async () => {
@@ -639,6 +641,76 @@ describe('Positions', () => {
     renderPositions();
 
     await waitFor(() => expect(screen.getByTestId('dirty-price-info-icon')).toBeInTheDocument());
+  });
+
+  describe('relative value indicator (T-30 часть D.3)', () => {
+    it('shows a compact "дорогая" indicator when relative-value reports a Rich verdict for the position', async () => {
+      server.use(
+        http.get('*/api/positions', () => HttpResponse.json({ positions: [basePosition], disclaimer: '' })),
+        http.get('*/api/analytics/relative-value', () =>
+          HttpResponse.json({
+            positions: [
+              {
+                positionId: basePosition.positionId,
+                basket: { sector: 'ОФЗ', durationBucket: '3–5 лет', count: 8, confidence: 'High' },
+                deviationFraction: -0.0038,
+                percentile: 5,
+                verdict: 'Rich',
+                basedOnDays: 5,
+                cheapCandidates: [],
+              },
+            ],
+            disclaimer: 'не оценка кредитного качества',
+          }),
+        ),
+      );
+
+      renderPositions();
+
+      await waitFor(() =>
+        expect(screen.getByTestId(`relative-value-compact-${basePosition.positionId}`)).toBeInTheDocument(),
+      );
+      expect(screen.getByTestId(`relative-value-compact-${basePosition.positionId}`)).toHaveTextContent('дорогая');
+    });
+
+    it('does not crash the positions table when GET /api/analytics/relative-value fails', async () => {
+      server.use(
+        http.get('*/api/positions', () => HttpResponse.json({ positions: [basePosition], disclaimer: '' })),
+        http.get('*/api/analytics/relative-value', () => HttpResponse.json({ error: 'boom' }, { status: 500 })),
+      );
+
+      renderPositions();
+
+      await waitFor(() => expect(screen.getByTestId('positions-table')).toBeInTheDocument());
+      expect(screen.queryByTestId(`relative-value-compact-${basePosition.positionId}`)).not.toBeInTheDocument();
+    });
+
+    it('shows nothing for a Fair verdict (within threshold — not badge-worthy)', async () => {
+      server.use(
+        http.get('*/api/positions', () => HttpResponse.json({ positions: [basePosition], disclaimer: '' })),
+        http.get('*/api/analytics/relative-value', () =>
+          HttpResponse.json({
+            positions: [
+              {
+                positionId: basePosition.positionId,
+                basket: { sector: 'ОФЗ', durationBucket: '3–5 лет', count: 8, confidence: 'High' },
+                deviationFraction: 0.0001,
+                percentile: 50,
+                verdict: 'Fair',
+                basedOnDays: 5,
+                cheapCandidates: [],
+              },
+            ],
+            disclaimer: '',
+          }),
+        ),
+      );
+
+      renderPositions();
+
+      await waitFor(() => expect(screen.getByTestId('positions-table')).toBeInTheDocument());
+      expect(screen.queryByTestId(`relative-value-compact-${basePosition.positionId}`)).not.toBeInTheDocument();
+    });
   });
 
   describe('mobile layout (< 768px) — accrued caption', () => {

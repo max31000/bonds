@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Select, Group, Text, Badge, Alert, Loader, Center, Button, Stack, Paper } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { fetchUniverse, postMaterialize } from '../api/universe';
@@ -51,9 +51,15 @@ function UniverseOptionLabel({ row }: { row: UniverseRow }) {
  * Пусто в поиске → топ-10 самых доходных (гигиенические фильтры банка исключают скрытые бумаги —
  * дефолт GET /api/universe); ввод текста → тот же запрос с search= (debounce ~300мс).
  * </para>
+ * <para>
+ * <b>initialSecid</b> (задача 30 часть D): предвыбранная бумага (например, клик по дешёвому
+ * кандидату из секции «Дорогие бумаги — дешёвые соседи по корзине») — при монтировании компонент
+ * ищет именно её (search=secid) и автоматически выбирает первую совпавшую строку, минимальная
+ * интеграция без перестройки остального компонента (searchInput/handleSelect переиспользуются как есть).
+ * </para>
  */
-export function MarketComparator({ holdPositionId }: { holdPositionId: number }) {
-  const [searchInput, setSearchInput] = useState('');
+export function MarketComparator({ holdPositionId, initialSecid }: { holdPositionId: number; initialSecid?: string }) {
+  const [searchInput, setSearchInput] = useState(initialSecid ?? '');
   const [debouncedSearch] = useDebouncedValue(searchInput, SEARCH_DEBOUNCE_MS);
 
   const [rows, setRows] = useState<UniverseRow[]>([]);
@@ -62,6 +68,9 @@ export function MarketComparator({ holdPositionId }: { holdPositionId: number })
   const [searchError, setSearchError] = useState<string | null>(null);
 
   const [selectedSecid, setSelectedSecid] = useState<string | null>(null);
+  // Ref, не state — гасить флаг внутри эффекта синхронным setState словил бы react-hooks/set-state-in-effect;
+  // ref не триггерит ререндер и не нужен для отображения, только для "уже пробовали автовыбор один раз".
+  const autoSelectPendingRef = useRef(!!initialSecid);
 
   const [isCompareLoading, setIsCompareLoading] = useState(false);
   const [compareError, setCompareError] = useState<string | null>(null);
@@ -129,6 +138,24 @@ export function MarketComparator({ holdPositionId }: { holdPositionId: number })
       setIsCompareLoading(false);
     }
   };
+
+  useEffect(() => {
+    // Задача 30: как только пришли строки по initialSecid, выбираем совпавшую автоматически — один
+    // раз (ref гасится сразу, не setState — не триггерит доп. ререндер/лint), дальше обычный ручной
+    // поиск/выбор пользователя не трогаем. Отдельный эффект (не внутри эффекта загрузки rows выше) —
+    // там handleSelect ещё не объявлен по порядку кода компонента (react-hooks/immutability).
+    if (!autoSelectPendingRef.current || rows.length === 0) return;
+    autoSelectPendingRef.current = false;
+    const match = rows.find((r) => r.secid === initialSecid);
+    if (match) {
+      // handleSelect сам синхронно вызывает setState первой строкой (обычно это обработчик
+      // Select.onChange, не тело эффекта) — оборачиваем в микротаск, чтобы разорвать "синхронный
+      // setState прямо в теле эффекта" (react-hooks/set-state-in-effect), тот же приём, что React
+      // рекомендует для "эффект должен вызвать обработчик события, а не сам быть им".
+      void Promise.resolve().then(() => handleSelect(match.secid));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows]);
 
   const handleAddToWatchlist = async () => {
     if (!materialized) return;

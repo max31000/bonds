@@ -20,11 +20,13 @@ import { useMediaQuery } from '@mantine/hooks';
 import { useNavigate } from 'react-router-dom';
 import { usePositionsStore } from '../store/usePositionsStore';
 import { useSettingsStore } from '../store/useSettingsStore';
+import { useRelativeValueStore } from '../store/useRelativeValueStore';
 import { useLiveQuotes } from '../hooks/useLiveQuotes';
 import { Disclaimer } from '../components/Disclaimer';
 import { PortfolioIntradayChart } from '../components/PortfolioIntradayChart';
 import { PositionCard } from '../components/PositionCard';
 import { LiveMarketValueCell } from '../components/positionsShared';
+import { CompactRelativeValueIndicator } from '../components/RelativeValueBadge';
 import {
   effectiveYield,
   COUPON_TYPE_LABEL,
@@ -46,6 +48,8 @@ import { buildYieldHeatmapScale } from '../utils/yieldHeatmap';
 export function Positions() {
   const { positions, disclaimer, isLoading, error, load } = usePositionsStore();
   const { settings, load: loadSettings } = useSettingsStore();
+  const relativeValueByPosition = useRelativeValueStore((s) => s.positionsById);
+  const loadRelativeValue = useRelativeValueStore((s) => s.load);
   const navigate = useNavigate();
   const [sort, setSort] = useState<SortState>({ key: 'yield', direction: 'desc' });
   // Plan/21 часть C.2: < 768px — карточки вместо таблицы (10+ колонок нечитаемы на телефоне).
@@ -58,7 +62,11 @@ export function Positions() {
   useEffect(() => {
     load();
     loadSettings();
-  }, [load, loadSettings]);
+    // Задача 30 часть D.3: RV-индикатор грузится ленивым ОДНИМ запросом (не блокируя таблицу
+    // позиций) — useRelativeValueStore.load() сам не даёт себе выполниться дважды и молча
+    // проглатывает ошибку (индикатор просто не покажется, см. doc-comment стора).
+    loadRelativeValue();
+  }, [load, loadSettings, loadRelativeValue]);
 
   const sorted = useMemo(() => {
     const copy = [...positions];
@@ -378,6 +386,7 @@ export function Positions() {
                               валютная / вне скоупа
                             </Badge>
                           )}
+                          <CompactRelativeValueIndicator rv={relativeValueByPosition[row.positionId]} />
                         </Group>
                       </Table.Td>
                     </Table.Tr>

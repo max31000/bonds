@@ -62,6 +62,12 @@ public class TestWebApplicationFactory : WebApplicationFactory<Program>, IAsyncL
                 // тестовом хосте — свой temp dir на процесс теста, чтобы PUT /api/settings/tinvest-token
                 // (шифрует токен через IDataProtectionProvider) не падал 500 в тестах.
                 ["DataProtection:KeysPath"] = _dataProtectionKeysPath,
+                // Задача 30: RelativeValueSnapshotBuilder — singleton с in-memory кэшем ~1 час
+                // (план часть B.3). TestWebApplicationFactory общий на всю коллекцию "Integration"
+                // (IntegrationCollectionFixture) — без отключения кэша здесь тест, засеявший новые
+                // данные ПОСЛЕ первого запроса другого теста в той же коллекции, получал бы стухший
+                // снимок вместо своих собственных данных. 00:00:00 — кэш всегда считается протухшим.
+                ["BondUniverse:RelativeValueCacheDuration"] = "00:00:00",
             });
         });
 

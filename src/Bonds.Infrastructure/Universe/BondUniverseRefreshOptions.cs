@@ -34,4 +34,13 @@ public sealed class BondUniverseRefreshOptions
     /// <summary>Пороги гигиенического фильтра (часть C.4) — вынесены в общий Options-объект,
     /// т.к. дефолты одинаковы что для refresh-сервиса (не используются им напрямую), что для API.</summary>
     public UniverseHygieneOptions Hygiene { get; set; } = new();
+
+    /// <summary>
+    /// Задача 30 часть B.3 — как долго кэшировать сглаженный снимок relative value в памяти
+    /// (<c>RelativeValueSnapshotBuilder</c>). Дефолт ~1 час (план); вынесено в конфиг (не константа
+    /// в коде), чтобы интеграционные тесты могли поставить 0 — иначе singleton-кэш пережил бы
+    /// сидирование новых данных следующим тестом в той же коллекции (TestWebApplicationFactory
+    /// общий на всю коллекцию "Integration", см. IntegrationCollectionFixture).
+    /// </summary>
+    public TimeSpan RelativeValueCacheDuration { get; set; } = TimeSpan.FromHours(1);
 }

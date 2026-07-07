@@ -19,10 +19,13 @@ import {
 } from '@mantine/core';
 import { useRecommendationsStore } from '../store/useRecommendationsStore';
 import { useWatchlistStore } from '../store/useWatchlistStore';
+import { useRelativeValueStore } from '../store/useRelativeValueStore';
 import { Disclaimer } from '../components/Disclaimer';
 import { ReplacementBreakdown } from '../components/ReplacementBreakdown';
 import { MarketComparator } from '../components/MarketComparator';
 import { BasketConstructor } from '../components/BasketConstructor';
+import { RelativeValueBadge } from '../components/RelativeValueBadge';
+import { RelativeValueSection } from '../components/RelativeValueSection';
 import { formatRub, formatPercent, formatNumber, formatDate, formatHorizon } from '../utils/format';
 import type { ComparisonRow, MatrixPair, RejectedPair } from '../api/types';
 
@@ -33,6 +36,9 @@ import type { ComparisonRow, MatrixPair, RejectedPair } from '../api/types';
  */
 function SellCandidateCard({ row, reasons }: { row: ComparisonRow; reasons: { kind: string; label: string }[] }) {
   const [comparing, setComparing] = useState(false);
+  // Задача 30 часть D.1: RV-бейдж читается из отдельного стора — отказ GET /api/analytics/relative-value
+  // просто не покажет бейдж (undefined), не роняя карточку/страницу.
+  const rv = useRelativeValueStore((s) => s.positionsById[row.positionId]);
 
   return (
     <Paper withBorder p="md" radius="md" data-testid={`sell-candidate-${row.positionId}`}>
@@ -53,6 +59,7 @@ function SellCandidateCard({ row, reasons }: { row: ComparisonRow; reasons: { ki
             кандидат на сравнение
           </Badge>
         )}
+        {rv && <RelativeValueBadge rv={rv} />}
       </Group>
 
       <UnstyledButton
@@ -430,9 +437,14 @@ function WatchlistSection() {
  */
 export function Recommendations() {
   const load = useRecommendationsStore((s) => s.load);
+  const positionNamesById = useRecommendationsStore((s) => s.positionNamesById);
+  const loadRelativeValue = useRelativeValueStore((s) => s.load);
 
   useEffect(() => {
     load();
+    // Задача 30: RV грузится ОТДЕЛЬНЫМ вызовом (не Promise.all внутри useRecommendationsStore.load) —
+    // отказ GET /api/analytics/relative-value не должен блокировать/ронять остальную страницу.
+    loadRelativeValue();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -445,6 +457,7 @@ export function Recommendations() {
       </Text>
 
       <WeakLinksSection />
+      <RelativeValueSection positionLabelById={positionNamesById} />
       <ReplacementsSection />
       <BasketConstructor />
       <WatchlistSection />
