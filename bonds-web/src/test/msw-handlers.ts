@@ -66,6 +66,9 @@ export const handlers = [
   http.get('*/api/analytics/allocation', () =>
     HttpResponse.json({ amountRub: 15000, allocations: [], skipped: [], leftoverRub: 15000, disclaimer: '' }),
   ),
+  // Дефолтный кейс для 30 (relative value) — пусто; конкретные сценарии переопределяются в тестах
+  // Recommendations/Positions/RelativeValueSection.
+  http.get('*/api/analytics/relative-value', () => HttpResponse.json({ positions: [], disclaimer: '' })),
   // Дефолтный кейс для 29 (BasketConstructor) — конкретные сценарии переопределяются в тестах компонента.
   http.post('*/api/analytics/basket', () =>
     HttpResponse.json({

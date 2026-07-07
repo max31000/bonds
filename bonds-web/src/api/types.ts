@@ -947,6 +947,55 @@ export interface IntradaySeriesPoint {
   totalMarketValueRub: number;
 }
 
+// ---- GET /api/analytics/relative-value (задача 30) ----
+
+/** Насколько надёжна статистика корзины (RelativeValueService.RelativeValueConfidence):
+ * High — родная корзина сектор×дюрация набрала ≥5 бумаг, Medium — откат на весь сектор,
+ * Low — откат на весь рынок. */
+export type RelativeValueConfidence = 'High' | 'Medium' | 'Low';
+
+/** Cheap — спред бумаги заметно ВЫШЕ медианы её корзины («дешёвая», недооценена рынком либо
+ * закладывает риск); Rich — заметно НИЖЕ («дорогая», кандидат на пересмотр); Fair — в пределах
+ * порога (не заслуживает бейджа). */
+export type RelativeValueVerdict = 'Cheap' | 'Fair' | 'Rich';
+
+export interface RelativeValueBasket {
+  sector: string;
+  durationBucket: string;
+  count: number;
+  confidence: RelativeValueConfidence;
+}
+
+/** Дешёвый кандидат из ТОЙ ЖЕ корзины, что Rich-позиция (топ-3, задача 30 часть C.2). */
+export interface RelativeValueCandidate {
+  secid: string;
+  name: string | null;
+  yieldFraction: number | null;
+  /** ДОЛЯ — положительное значение (кандидат дешевле медианы корзины). */
+  deviationFraction: number;
+  liquidityScore: LiquidityScore;
+}
+
+export interface RelativeValuePosition {
+  positionId: number;
+  basket: RelativeValueBasket;
+  /** ДОЛЯ (0.002 = 20 б.п.) — рисуется фронтом через formatBp. */
+  deviationFraction: number;
+  /** Перцентиль внутри эффективной корзины, 0-100. */
+  percentile: number;
+  verdict: RelativeValueVerdict;
+  /** Сколько торговых дней истории легло в основу сглаженной медианы (0 — молодой банк, единственный снимок). */
+  basedOnDays: number;
+  /** Только для Rich-позиций — иначе пусто. */
+  cheapCandidates: RelativeValueCandidate[];
+}
+
+/** Ответ GET /api/analytics/relative-value. */
+export interface RelativeValueResponse {
+  positions: RelativeValuePosition[];
+  disclaimer: string;
+}
+
 /** Ответ GET /api/live/portfolio-intraday. */
 export interface PortfolioIntradayResponse {
   points: IntradaySeriesPoint[];

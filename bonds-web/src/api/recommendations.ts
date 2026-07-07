@@ -7,6 +7,7 @@ import type {
   ReplacementRequest,
   ReplacementResponse,
   ReplacementMatrixResponse,
+  RelativeValueResponse,
 } from './types';
 
 /** GET /api/analytics/comparison — сравнительная таблица позиций (plan/17 §A, секция «Слабые звенья»). */
@@ -49,4 +50,14 @@ export function fetchAllocation(amountRub: number, includeWatchlist = true): Pro
  */
 export function postBasket(request: BasketRequest): Promise<BasketResponse> {
   return apiClient.post<BasketResponse>('/analytics/basket', request);
+}
+
+/**
+ * GET /api/analytics/relative-value — задача 30: «дорого/дёшево ОТНОСИТЕЛЬНО СВОИХ» (сектор ×
+ * дюрационная корзина), не «где YTM больше». Загружается ОТДЕЛЬНО от useRecommendationsStore.load()
+ * (не через Promise.all) — отказ этого эндпоинта не должен ронять остальную страницу рекомендаций
+ * (план часть D: индикатор просто не показывается при ошибке).
+ */
+export function fetchRelativeValue(): Promise<RelativeValueResponse> {
+  return apiClient.get<RelativeValueResponse>('/analytics/relative-value');
 }

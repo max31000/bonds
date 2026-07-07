@@ -81,6 +81,11 @@ interface RecommendationsStore {
   outOfComparison: ComparisonRow[];
   comparisonDisclaimer: string;
 
+  /** Задача 30 часть D.2: имя/эмитент по positionId для ЛЮБОЙ позиции (не только топ-3 слабых
+   * звеньев) — нужно секции «Дорогие бумаги — дешёвые соседи по корзине», т.к. Rich-verdict может
+   * получить позиция, не попавшая в sellCandidates. */
+  positionNamesById: Record<number, string>;
+
   // Задача 23: секция «Замены» — один запрос матрицы вместо цикла до 6 постов.
   bestPairs: MatrixPair[];
   rejectedPairs: RejectedPair[];
@@ -104,6 +109,7 @@ export const useRecommendationsStore = create<RecommendationsStore>()((set) => (
   sellCandidates: [],
   outOfComparison: [],
   comparisonDisclaimer: '',
+  positionNamesById: {},
 
   bestPairs: [],
   rejectedPairs: [],
@@ -124,11 +130,15 @@ export const useRecommendationsStore = create<RecommendationsStore>()((set) => (
 
       const issuerSharePercent = new Map(composition.byIssuer.map((s) => [s.key, s.sharePercent]));
       const { candidates, outOfComparison } = buildSellCandidates(comparison.rows, issuerSharePercent);
+      const positionNamesById = Object.fromEntries(
+        comparison.rows.map((r) => [r.positionId, r.name ?? r.issuer ?? `Позиция #${r.positionId}`]),
+      );
 
       set({
         sellCandidates: candidates,
         outOfComparison,
         comparisonDisclaimer: comparison.disclaimer,
+        positionNamesById,
         bestPairs: matrix.bestPairs,
         rejectedPairs: matrix.rejectedPairs,
         totalConsideredPairs: matrix.totalConsideredPairs,
