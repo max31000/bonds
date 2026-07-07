@@ -42,4 +42,12 @@ public interface IBondUniverseRepository
     /// <summary>Число дней, за которые есть хотя бы одна строка в bond_universe_history —
     /// для GET /api/universe/status (historyDays).</summary>
     Task<int> GetHistoryDaysCountAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// Задача 30 часть B — строки bond_universe_history за <paramref name="tradingDaysBack"/>
+    /// САМЫХ ПОСЛЕДНИХ отличных дат снимка (не календарных дней — если истории меньше, вернёт
+    /// всё, что есть). Используется <c>RelativeValueSnapshotBuilder</c> для сглаживания медиан
+    /// корзин по нескольким дням (защита от однодневных выбросов).
+    /// </summary>
+    Task<IReadOnlyList<BondUniverseHistoryPoint>> GetRecentHistoryAsync(int tradingDaysBack, CancellationToken ct = default);
 }

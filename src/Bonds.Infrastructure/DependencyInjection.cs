@@ -195,6 +195,11 @@ public static class DependencyInjection
         services.Configure<Bonds.Infrastructure.Universe.BondUniverseRefreshOptions>(configuration.GetSection("BondUniverse"));
         services.AddHostedService<Bonds.Infrastructure.Universe.BondUniverseRefreshService>();
 
+        // Задача 30 часть B: сглаженная (медиана дневных медиан за 5 торговых дней) статистика
+        // корзин relative value + кэш ~1 час в памяти — Singleton (кэш переживает HTTP-запросы),
+        // резолвит Scoped IBondUniverseRepository через IServiceScopeFactory (см. doc-comment).
+        services.AddSingleton<Bonds.Infrastructure.Universe.RelativeValueSnapshotBuilder>();
+
         return services;
     }
 }

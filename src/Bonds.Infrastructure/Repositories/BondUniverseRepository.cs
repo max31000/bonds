@@ -195,4 +195,28 @@ public class BondUniverseRepository : IBondUniverseRepository
         using var conn = CreateConnection();
         return await conn.ExecuteScalarAsync<int>("SELECT COUNT(DISTINCT snapshot_date) FROM bond_universe_history");
     }
+
+    public async Task<IReadOnlyList<BondUniverseHistoryPoint>> GetRecentHistoryAsync(int tradingDaysBack, CancellationToken ct = default)
+    {
+        using var conn = CreateConnection();
+
+        // Топ-N САМЫХ ПОСЛЕДНИХ отличных дат снимка (не календарных дней — выходные/праздники не
+        // пишут историю, см. BondUniverseRefreshService.MaybeWriteHistorySnapshotAsync), затем все
+        // строки за эти даты одним запросом (план часть B.1 — "медиана дневных медиан").
+        const string sql = @"
+            SELECT snapshot_date AS SnapshotDate, secid AS Secid, yield_fraction AS YieldFraction,
+                   duration_years AS DurationYears, gspread_approx_fraction AS GspreadApproxFraction,
+                   turnover_rub AS TurnoverRub, price_percent AS PricePercent
+            FROM bond_universe_history
+            WHERE snapshot_date IN (
+                SELECT snapshot_date FROM (
+                    SELECT DISTINCT snapshot_date FROM bond_universe_history
+                    ORDER BY snapshot_date DESC
+                    LIMIT @TradingDaysBack
+                ) AS recent_dates
+            )";
+
+        var rows = await conn.QueryAsync<BondUniverseHistoryPoint>(sql, new { TradingDaysBack = tradingDaysBack });
+        return rows.ToList();
+    }
 }
