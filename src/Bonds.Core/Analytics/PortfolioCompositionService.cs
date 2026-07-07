@@ -10,22 +10,6 @@ namespace Bonds.Core.Analytics;
 /// </summary>
 public static class PortfolioCompositionService
 {
-    /// <summary>
-    /// Границы корзин дюрации в годах (spec §9 «корзины дюрации» — конкретные границы не заданы
-    /// спекой, выбраны как разумные дефолты профильных калькуляторов; см. финальный отчёт этапа,
-    /// помечено как требующее согласования с владельцем, если потребуется другая разбивка):
-    /// 0–1, 1–3, 3–5, 5–7, 7+ лет. Holding без дюрации (флоатер/неполные данные) попадает
-    /// в отдельную корзину "Без оценки", не отбрасывается молча (spec §4.4).
-    /// </summary>
-    private static readonly (decimal UpperBoundYears, string Label)[] DurationBuckets =
-    [
-        (1m, "0–1 года"),
-        (3m, "1–3 года"),
-        (5m, "3–5 лет"),
-        (7m, "5–7 лет"),
-        (decimal.MaxValue, "7+ лет"),
-    ];
-
     private const string UnknownLabel = "Не определено";
 
     public static PortfolioComposition Calculate(IReadOnlyList<PortfolioHolding> holdings)
@@ -38,20 +22,10 @@ public static class PortfolioCompositionService
             ByIssuer = GroupByShare(holdings, totalMarketValue, h => h.Issuer ?? UnknownLabel),
             BySector = GroupByShare(holdings, totalMarketValue, h => h.Sector ?? UnknownLabel),
             ByCouponType = GroupByShare(holdings, totalMarketValue, h => h.CouponType.ToString()),
-            ByDurationBucket = GroupByShare(holdings, totalMarketValue, h => DurationBucketLabel(h.ModifiedDuration)),
+            // Задача 30: границы корзин дюрации вынесены в общий DurationBucketClassifier (переиспользуется
+            // RelativeValueService) — консистентность с разрезом композиции портфеля, не копипаста границ.
+            ByDurationBucket = GroupByShare(holdings, totalMarketValue, h => DurationBucketClassifier.Label(h.ModifiedDuration)),
         };
-    }
-
-    private static string DurationBucketLabel(decimal? modifiedDuration)
-    {
-        if (modifiedDuration is null) return UnknownLabel;
-
-        foreach (var (upperBound, label) in DurationBuckets)
-        {
-            if (modifiedDuration.Value < upperBound) return label;
-        }
-
-        return DurationBuckets[^1].Label;
     }
 
     private static IReadOnlyList<CompositionShare> GroupByShare(
