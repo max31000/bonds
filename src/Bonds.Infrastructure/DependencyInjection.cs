@@ -119,8 +119,13 @@ public static class DependencyInjection
         // вызывается программно/из тестов (см. plan/04).
         services.AddScoped<BondSyncService>();
 
-        // Задача 20 часть A: синк watchlist-бумаг (ISIN без позиции) — переиспользует BondSyncService,
-        // отдельный шаг в SyncCycleService.
+        // Задача 27 часть A: единый путь "обогатить одну бумагу по ISIN" (резолв инструмента +
+        // MOEX-котировка), вынесенный из WatchlistSyncService — переиспользуется watchlist
+        // (задача 20) и материализацией из банка облигаций (POST /api/universe/{secid}/materialize).
+        services.AddScoped<InstrumentEnrichmentService>();
+
+        // Задача 20 часть A: синк watchlist-бумаг (ISIN без позиции) — переиспользует
+        // InstrumentEnrichmentService, отдельный шаг в SyncCycleService.
         services.AddScoped<WatchlistSyncService>();
 
         // Cash-Flow Projection + Portfolio Analytics (этап 06) — координирующие сервисы поверх
