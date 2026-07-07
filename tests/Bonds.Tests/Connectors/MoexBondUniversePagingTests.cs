@@ -185,4 +185,28 @@ public class MoexBondUniversePagingTests
 
         result.Should().BeEmpty();
     }
+
+    [Fact]
+    public async Task GetBondMarketSnapshotAsync_IssIgnoresStart_StopsAfterSecondRequest()
+    {
+        // Реальное поведение ISS на этом эндпоинте (ревью волны 26-29, MAJOR): start/limit
+        // игнорируются, весь рынок (>= размера страницы) приходит на КАЖДЫЙ запрос. Без критерия
+        // "страница не добавила новых строк" цикл делал бы все 20 одинаковых запросов к бирже
+        // за каждый часовой refresh. Ожидание: ровно 2 запроса (второй подтверждает повтор) и
+        // никаких дублей в результате.
+        var secRows = Enumerable.Range(0, 1000).Select(i => SecRow($"BOND{i:D5}", "TQCB")).ToArray();
+        var fullPage = BuildPage(secRows, []);
+        var pages = new Dictionary<int, string>();
+        for (var start = 0; start < 20_000; start += 1000)
+        {
+            pages[start] = fullPage;
+        }
+        var handler = new FakeUniverseHandler(pages);
+        var client = CreateClient(handler);
+
+        var result = await client.GetBondMarketSnapshotAsync();
+
+        handler.RequestCount.Should().Be(2, "вторая страница без новых (Secid, BoardId) должна остановить цикл");
+        result.Should().HaveCount(1000, "повторные страницы не должны дублировать бумаги");
+    }
 }

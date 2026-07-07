@@ -303,6 +303,13 @@ public sealed class MoexIssClient : IMoexIssClient
     public async Task<IReadOnlyList<MoexBondMarketRow>> GetBondMarketSnapshotAsync(CancellationToken ct = default)
     {
         var rows = new List<MoexBondMarketRow>();
+        // ISS на этом эндпоинте эмпирически ИГНОРИРУЕТ start/limit и отдаёт весь рынок одной
+        // страницей (~3000-3500 строк) — тогда критерий "короткая страница" не сработал бы никогда
+        // и цикл выжигал бы все IssUniverseMaxPages одинаковых запросов к бирже за каждый refresh.
+        // Поэтому второй критерий остановки: страница не добавила НИ ОДНОЙ новой (Secid, BoardId)
+        // строки — значит, ISS повторяет уже виденное, дальше ходить бессмысленно. Работает и для
+        // честной пагинации (каждая страница даёт новые строки), и для "всё сразу" (стоп на 2-й).
+        var seenKeys = new HashSet<(string Secid, string BoardId)>();
 
         for (var page = 0; page < IssUniverseMaxPages; page++)
         {
@@ -328,11 +335,19 @@ public sealed class MoexIssClient : IMoexIssClient
                 break;
             }
 
-            rows.AddRange(pageRows);
-
-            if (pageRows.Count < IssUniversePageSize)
+            var newRows = 0;
+            foreach (var row in pageRows)
             {
-                // Короткая страница — последняя (или ISS вернул всё сразу, игнорируя start/limit).
+                if (seenKeys.Add((row.Secid, row.BoardId)))
+                {
+                    rows.Add(row);
+                    newRows++;
+                }
+            }
+
+            if (newRows == 0 || pageRows.Count < IssUniversePageSize)
+            {
+                // Короткая страница — последняя; ноль новых строк — ISS игнорирует start.
                 break;
             }
 
