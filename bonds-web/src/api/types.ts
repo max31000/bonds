@@ -615,6 +615,91 @@ export interface AllocationResponse {
   commissionRateSource: CommissionRateSource;
 }
 
+// ---- POST /api/analytics/basket (plan/29 §B) ----
+
+/** Тело запроса POST /api/analytics/basket. */
+export interface BasketRequest {
+  amountRub: number;
+  lines: BasketRequestLine[];
+}
+
+/** Одна строка запроса — доля (0, 1], НЕ проценты (конвенция репо: бэкенд — доли). */
+export interface BasketRequestLine {
+  instrumentId: number;
+  weightFraction: number;
+}
+
+/** Одна строка собранной корзины — штук, стоимость с разбивкой, факт. вес vs целевой. */
+export interface BasketLine {
+  instrumentId: number;
+  name: string | null;
+  issuer: string | null;
+  targetWeightFraction: number;
+  actualWeightFraction: number;
+  quantity: number;
+  actualCostRub: number;
+  effectiveYield: number | null;
+  modifiedDuration: number | null;
+  isFloater: boolean;
+  lotSizeAssumed: boolean;
+  cleanCostRub: number;
+  accruedCostRub: number;
+  commissionCostRub: number;
+}
+
+/** Метрики корзины — средневзвешенные по фактической стоимости строк. */
+export interface BasketMetrics {
+  totalCostRub: number;
+  weightedYield: number | null;
+  weightedDuration: number | null;
+  /** true — хотя бы одна купленная строка-флоатер/индексируемая исключена из weightedYield (сноска в UI). */
+  hasExcludedFloaters: boolean;
+}
+
+export interface BasketDto {
+  amountRub: number;
+  lines: BasketLine[];
+  leftoverRub: number;
+  metrics: BasketMetrics;
+}
+
+/** Снимок метрик портфеля в один момент (до либо после покупки корзины). */
+export interface WhatIfSnapshot {
+  totalValueRub: number;
+  weightedYield: number | null;
+  weightedDuration: number | null;
+  hasExcludedFloaters: boolean;
+}
+
+/** Доля одного эмитента до и после покупки корзины. */
+export interface WhatIfConcentration {
+  issuer: string;
+  sharePercentBefore: number;
+  sharePercentAfter: number;
+}
+
+export type WhatIfWarningKind = 'ConcentrationLimitBreached' | 'NewIssuerAboveThreshold';
+
+export interface WhatIfWarning {
+  kind: WhatIfWarningKind;
+  issuer: string;
+  sharePercentAfter: number;
+}
+
+export interface WhatIfDto {
+  before: WhatIfSnapshot;
+  after: WhatIfSnapshot;
+  concentrations: WhatIfConcentration[];
+  warnings: WhatIfWarning[];
+}
+
+/** Ответ POST /api/analytics/basket. */
+export interface BasketResponse {
+  basket: BasketDto;
+  whatIf: WhatIfDto;
+  disclaimer: string;
+}
+
 // ---- GET/POST /api/watchlist, DELETE /api/watchlist/{id} (plan/20 §A) ----
 
 /** Строка watchlist — бумага вне текущих позиций, отслеживаемая по ISIN. Метрики — тот же расчётный путь, что у позиций. */

@@ -10,7 +10,6 @@ import {
   Center,
   Group,
   Button,
-  NumberInput,
   SimpleGrid,
   Table,
   TextInput,
@@ -23,7 +22,8 @@ import { useWatchlistStore } from '../store/useWatchlistStore';
 import { Disclaimer } from '../components/Disclaimer';
 import { ReplacementBreakdown } from '../components/ReplacementBreakdown';
 import { MarketComparator } from '../components/MarketComparator';
-import { formatRub, formatPercent, formatNumber, formatDate, formatHorizon, commissionSourceLabel } from '../utils/format';
+import { BasketConstructor } from '../components/BasketConstructor';
+import { formatRub, formatPercent, formatNumber, formatDate, formatHorizon } from '../utils/format';
 import type { ComparisonRow, MatrixPair, RejectedPair } from '../api/types';
 
 /**
@@ -287,98 +287,6 @@ function ReplacementsSection() {
   );
 }
 
-function AllocationSection() {
-  const {
-    allocationAmount,
-    allocation,
-    isAllocationLoading,
-    allocationError,
-    setAllocationAmount,
-    loadAllocation,
-  } = useRecommendationsStore();
-
-  return (
-    <Paper withBorder p="md" radius="md" data-testid="allocation-section">
-      <Title order={4} mb="sm">
-        Куда вложить сумму
-      </Title>
-      <Group align="flex-end" mb="sm" wrap="wrap">
-        <NumberInput
-          label="Сумма, ₽"
-          min={1}
-          value={allocationAmount}
-          onChange={(v) => setAllocationAmount(typeof v === 'number' ? v : Number(v) || 0)}
-          data-testid="allocation-amount-input"
-          w={200}
-        />
-        <Button
-          onClick={() => loadAllocation()}
-          loading={isAllocationLoading}
-          data-testid="allocation-submit-button"
-        >
-          Рассчитать
-        </Button>
-      </Group>
-
-      {isAllocationLoading && (
-        <Center py="md">
-          <Loader size="sm" />
-        </Center>
-      )}
-
-      {!isAllocationLoading && allocationError && (
-        <Alert color="red" data-testid="allocation-error">
-          {allocationError}
-        </Alert>
-      )}
-
-      {!isAllocationLoading && !allocationError && allocation && (
-        <Stack gap="sm" data-testid="allocation-result">
-          {allocation.allocations.length === 0 ? (
-            <Text size="sm" c="dimmed" data-testid="allocation-empty">
-              Ни одна бумага из портфеля не подошла для докупки на эту сумму.
-            </Text>
-          ) : (
-            allocation.allocations.map((line) => {
-              const pricePerBondRub = line.estimatedCostRub / line.quantity;
-              const cleanPricePerBondRub = line.cleanCostRub / line.quantity;
-              const accruedPerBondRub = line.accruedCostRub / line.quantity;
-              const commissionPerBondRub = line.commissionCostRub / line.quantity;
-              return (
-                <Paper key={line.instrumentId} withBorder p="sm" radius="md" data-testid={`allocation-line-${line.instrumentId}`}>
-                  <Group justify="space-between">
-                    <Text fw={500}>{line.name ?? line.issuer ?? `Инструмент #${line.instrumentId}`}</Text>
-                    <Text size="sm">{formatPercent(line.effectiveYield)}</Text>
-                  </Group>
-                  <Text size="sm" c="dimmed">
-                    купить {line.quantity} шт × {formatRub(pricePerBondRub)} (цена {formatRub(cleanPricePerBondRub)} + НКД{' '}
-                    {formatRub(accruedPerBondRub)} + комиссия {formatRub(commissionPerBondRub)}), потратите{' '}
-                    {formatRub(line.estimatedCostRub)}
-                    {line.lotSizeAssumed && ' (лот принят за 1 бумагу — точный размер лота не определён)'}
-                  </Text>
-                </Paper>
-              );
-            })
-          )}
-          <Text size="sm" fw={600} data-testid="allocation-leftover">
-            На счету останется {formatRub(allocation.leftoverRub)}
-          </Text>
-          <Text size="xs" c="dimmed" data-testid="allocation-commission-source">
-            Цена лота учитывает комиссию покупки {formatPercent(allocation.commissionRateUsed)} —{' '}
-            {commissionSourceLabel(allocation.commissionRateSource)}
-          </Text>
-          {allocation.allocations.length > 0 && (
-            <Text size="xs" c="dimmed" data-testid="allocation-accrued-note">
-              Уплаченный при покупке НКД вернётся ближайшим купоном — это не дополнительные расходы.
-            </Text>
-          )}
-          <Disclaimer text={allocation.disclaimer} />
-        </Stack>
-      )}
-    </Paper>
-  );
-}
-
 /** Секция «Watchlist» (plan/20 §B.1) — ручной список бумаг вне текущих позиций: ввод ISIN + заметка, таблица метрик, удаление. */
 function WatchlistSection() {
   const { items, disclaimer, isLoading, error, isAdding, addError, load, add, remove, clearAddError } =
@@ -512,18 +420,19 @@ function WatchlistSection() {
 }
 
 /**
- * Страница «Рекомендации» (plan/17): три секции — слабые звенья (comparison), замены
- * (replacement) и куда вложить сумму (allocation). Все формулировки — оценочные, не
- * индивидуальные инвестрекомендации (см. Disclaimer/юридическая рамка плана). Задача 20
- * добавляет секцию watchlist (бумаги вне портфеля).
+ * Страница «Рекомендации» (plan/17, задача 29 переработала третью секцию): слабые звенья
+ * (comparison), замены (replacement) и конструктор портфеля — куда вложить сумму
+ * (<see>BasketConstructor</see>, plan/29 — заменяет прежний чистый вывод жадного алгоритма
+ * настраиваемой корзиной с процентами и what-if всего портфеля; сам жадный алгоритм остаётся
+ * доступен как пресет внутри конструктора). Все формулировки — оценочные, не индивидуальные
+ * инвестрекомендации (см. Disclaimer/юридическая рамка плана). Задача 20 добавляет секцию
+ * watchlist (бумаги вне портфеля).
  */
 export function Recommendations() {
   const load = useRecommendationsStore((s) => s.load);
-  const loadAllocation = useRecommendationsStore((s) => s.loadAllocation);
 
   useEffect(() => {
     load();
-    loadAllocation();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -537,7 +446,7 @@ export function Recommendations() {
 
       <WeakLinksSection />
       <ReplacementsSection />
-      <AllocationSection />
+      <BasketConstructor />
       <WatchlistSection />
     </Stack>
   );

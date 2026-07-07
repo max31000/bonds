@@ -66,6 +66,24 @@ export const handlers = [
   http.get('*/api/analytics/allocation', () =>
     HttpResponse.json({ amountRub: 15000, allocations: [], skipped: [], leftoverRub: 15000, disclaimer: '' }),
   ),
+  // Дефолтный кейс для 29 (BasketConstructor) — конкретные сценарии переопределяются в тестах компонента.
+  http.post('*/api/analytics/basket', () =>
+    HttpResponse.json({
+      basket: {
+        amountRub: 0,
+        lines: [],
+        leftoverRub: 0,
+        metrics: { totalCostRub: 0, weightedYield: null, weightedDuration: null, hasExcludedFloaters: false },
+      },
+      whatIf: {
+        before: { totalValueRub: 0, weightedYield: null, weightedDuration: null, hasExcludedFloaters: false },
+        after: { totalValueRub: 0, weightedYield: null, weightedDuration: null, hasExcludedFloaters: false },
+        concentrations: [],
+        warnings: [],
+      },
+      disclaimer: '',
+    }),
+  ),
   // Дефолтные кейсы для 20 — пустой watchlist; конкретные сценарии переопределяются в тестах.
   http.get('*/api/watchlist', () => HttpResponse.json({ items: [], disclaimer: '' })),
   http.post('*/api/watchlist', () =>
