@@ -74,6 +74,9 @@ public static class DependencyInjection
         // Задача 20 часть A: ручной watchlist (бумаги вне текущих позиций, отслеживаемые по ISIN).
         services.AddScoped<IWatchlistItemRepository>(sp => new WatchlistItemRepository(GetConnStr(sp)));
 
+        // Задача 26 часть B: банк облигаций MOEX — снимок всей рыночной вселенной + дневная история.
+        services.AddScoped<IBondUniverseRepository>(sp => new BondUniverseRepository(GetConnStr(sp)));
+
         // Migration runner
         services.AddSingleton(sp => new MigrationRunner(
             GetConnStr(sp),
@@ -181,6 +184,11 @@ public static class DependencyInjection
         // ограничение плана). Options вынесены в конфиг с дефолтами самого класса опций.
         services.Configure<LiveQuotesOptions>(configuration.GetSection("LiveQuotes"));
         services.AddHostedService<LiveQuotesPollingService>();
+
+        // Задача 26 часть C: банк облигаций MOEX — снимок всей рыночной вселенной (не только
+        // позиций/watchlist), раз в час в торговые часы + дневная история для трендов (задача 30).
+        services.Configure<Bonds.Infrastructure.Universe.BondUniverseRefreshOptions>(configuration.GetSection("BondUniverse"));
+        services.AddHostedService<Bonds.Infrastructure.Universe.BondUniverseRefreshService>();
 
         return services;
     }

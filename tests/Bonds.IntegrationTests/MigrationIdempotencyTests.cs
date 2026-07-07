@@ -62,6 +62,7 @@ public class MigrationIdempotencyTests : IAsyncLifetime
             "010_purge_intraday_quotes.sql",
             "011_add_amortization_is_known.sql",
             "012_add_commission_rate_override.sql",
+            "013_add_bond_universe.sql",
         });
 
         var expectedTables = new[]
@@ -70,6 +71,7 @@ public class MigrationIdempotencyTests : IAsyncLifetime
             "market_quotes", "yield_curve_snapshots", "accounts", "positions", "operations",
             "projected_cash_flows", "portfolio_value_snapshots", "signals", "target_allocations",
             "user_settings", "intraday_quotes", "instrument_price_history", "watchlist_items",
+            "bond_universe", "bond_universe_history",
         };
 
         foreach (var table in expectedTables)
@@ -95,7 +97,7 @@ public class MigrationIdempotencyTests : IAsyncLifetime
         await conn.OpenAsync();
 
         var migrationCount = await conn.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM _migrations");
-        migrationCount.Should().Be(12, "повторный запуск не должен заново применять уже применённые миграции");
+        migrationCount.Should().Be(13, "повторный запуск не должен заново применять уже применённые миграции");
 
         // users.base_currency существует ровно один раз (ALTER ... ADD COLUMN IF NOT EXISTS не падает повторно).
         var columnCount = await conn.ExecuteScalarAsync<long>(
