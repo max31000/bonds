@@ -3,6 +3,8 @@ using Bonds.Core.Interfaces.Repositories;
 using Bonds.Core.Models;
 using Bonds.Core.Time;
 using Bonds.Core.Universe;
+using Bonds.Infrastructure.Analytics;
+using Bonds.Infrastructure.Sync;
 using Microsoft.Extensions.Options;
 
 namespace Bonds.Api.Endpoints;
@@ -20,6 +22,7 @@ public static class UniverseEndpoints
     {
         app.MapGet("/api/universe", GetUniverse);
         app.MapGet("/api/universe/status", GetUniverseStatus);
+        app.MapPost("/api/universe/{secid}/materialize", PostMaterialize);
     }
 
     public const string Disclaimer =
@@ -217,6 +220,111 @@ public static class UniverseEndpoints
             HistoryDays = historyDays,
         });
     }
+
+    // ─── POST /api/universe/{secid}/materialize ────────────────────────────────────────────────
+
+    /// <summary>
+    /// Задача 27 часть A: превращает биржевую статистику банка (GET /api/universe, дешёвое) в
+    /// точную бумагу нашего движка — резолвит ISIN из <c>bond_universe</c> по <paramref name="secid"/>,
+    /// заводит/находит <see cref="Instrument"/> + котировку через
+    /// <see cref="InstrumentEnrichmentService.EnrichByIsinAsync"/> (ОДИН путь с watchlist, см.
+    /// doc-comment сервиса), затем считает полные метрики тем же способом, что watchlist/матрица
+    /// замен (<see cref="PortfolioHoldingsBuilder.BuildForInstrumentsAsync"/>). НЕ создаёт
+    /// watchlist-запись — это отдельное явное действие пользователя (кнопка "В watchlist" на
+    /// карточке результата фронта, POST /api/watchlist).
+    /// <para>
+    /// Идемпотентно: повторный вызов на тот же SECID не плодит дублей Instrument
+    /// (ResolveOrCreateInstrumentByIsinAsync находит существующий по ISIN), только обновляет
+    /// котировку.
+    /// </para>
+    /// </summary>
+    private static async Task<IResult> PostMaterialize(
+        string secid,
+        IBondUniverseRepository universeRepo,
+        InstrumentEnrichmentService enrichment,
+        IInstrumentRepository instrumentRepo,
+        PortfolioHoldingsBuilder holdingsBuilder,
+        CancellationToken ct)
+    {
+        var all = await universeRepo.GetAllAsync(ct);
+        var entry = all.FirstOrDefault(e => string.Equals(e.Secid, secid, StringComparison.OrdinalIgnoreCase));
+        if (entry is null)
+        {
+            return MaterializeError($"Бумага {secid} не найдена в банке облигаций");
+        }
+
+        if (string.IsNullOrWhiteSpace(entry.Isin))
+        {
+            return MaterializeError($"У бумаги {secid} нет ISIN в банке облигаций — материализация невозможна");
+        }
+
+        var instrumentId = await enrichment.EnrichByIsinAsync(entry.Isin, ct);
+        if (instrumentId is null)
+        {
+            return MaterializeError($"Бумага {secid} (ISIN {entry.Isin}) не найдена на MOEX или это не облигация");
+        }
+
+        var instrument = await instrumentRepo.GetByIdAsync(instrumentId.Value);
+        if (instrument is null)
+        {
+            // Не должно происходить — EnrichByIsinAsync только что создал/нашёл запись. Защита от гонки.
+            return MaterializeError($"Инструмент для {secid} не удалось прочитать после материализации");
+        }
+
+        if (string.IsNullOrEmpty(instrument.Secid))
+        {
+            // EnrichByIsinAsync заводит placeholder-Instrument (DataIncomplete=true) даже когда ISIN
+            // не резолвится на MOEX (тот же путь, что у watchlist, см. doc-comment
+            // BondSyncService.ResolveOrCreateInstrumentByIsinAsync) — для materialize из банка это
+            // именно "бумага не нашлась на MOEX", а не частично неполные данные, поэтому 422, не 200
+            // с dataIncomplete=true (план требует человекочитаемую причину отказа).
+            return MaterializeError($"Бумага {secid} (ISIN {entry.Isin}) не найдена на MOEX или это не облигация");
+        }
+
+        var asOf = BusinessClock.MoscowToday();
+        var holdings = await holdingsBuilder.BuildForInstrumentsAsync([instrumentId.Value], asOf, ct);
+        var holding = holdings.FirstOrDefault(h => h.InstrumentId == instrumentId.Value);
+
+        if (holding is null)
+        {
+            // Инструмент заведён, но движок не смог посчитать holding (например, IsOutOfScopeCurrency
+            // либо ссылочная целостность нарушена между вызовами) — 422 с явной причиной, не 500.
+            return MaterializeError($"Не удалось посчитать метрики для {secid} — данные неполные или бумага вне контура расчёта");
+        }
+
+        var dto = new MaterializeResponseDto
+        {
+            InstrumentId = instrumentId.Value,
+            Secid = secid,
+            Isin = entry.Isin,
+            Metrics = new MaterializeMetricsDto
+            {
+                Name = holding.Name,
+                Issuer = holding.Issuer,
+                Sector = holding.Sector,
+                CouponType = holding.CouponType.ToString(),
+                MaturityDate = instrument.MaturityDate,
+                HorizonDate = holding.HorizonDate,
+                CalculatedToOffer = holding.IsCalculatedToOffer,
+                ModifiedDuration = holding.ModifiedDuration,
+                MacaulayDuration = holding.MacaulayDuration,
+                YtmEffective = holding.YtmEffective,
+                CurrentYield = holding.CurrentYield,
+                EffectiveYield = (holding.IsFloater || holding.IsIndexed) ? holding.CurrentYield : holding.YtmEffective,
+                GSpread = holding.GSpread,
+                IsFloater = holding.IsFloater,
+                IsIndexed = holding.IsIndexed,
+                IsEstimated = holding.IsEstimated,
+                DataIncomplete = holding.DataIncomplete,
+            },
+            Disclaimer = WatchlistEndpoints.WatchlistDisclaimer,
+        };
+
+        return Results.Ok(dto);
+    }
+
+    private static IResult MaterializeError(string message) =>
+        Results.Json(new { error = message, type = "ValidationException" }, statusCode: StatusCodes.Status422UnprocessableEntity);
 }
 
 public sealed record UniverseResponseDto
@@ -255,4 +363,38 @@ public sealed record UniverseStatusDto
     public required int TotalBonds { get; init; }
     public required int HiddenBonds { get; init; }
     public required int HistoryDays { get; init; }
+}
+
+/// <summary>Задача 27 часть A — ответ POST /api/universe/{secid}/materialize.</summary>
+public sealed record MaterializeResponseDto
+{
+    public required ulong InstrumentId { get; init; }
+    public required string Secid { get; init; }
+    public required string Isin { get; init; }
+    public required MaterializeMetricsDto Metrics { get; init; }
+    public required string Disclaimer { get; init; }
+}
+
+/// <summary>Полные метрики движка для материализованной бумаги — те же поля, что WatchlistItemDto (тот же расчётный путь).</summary>
+public sealed record MaterializeMetricsDto
+{
+    public string? Name { get; init; }
+    public string? Issuer { get; init; }
+    public string? Sector { get; init; }
+    public required string CouponType { get; init; }
+    public required DateOnly MaturityDate { get; init; }
+    public required DateOnly HorizonDate { get; init; }
+    public required bool CalculatedToOffer { get; init; }
+    public decimal? ModifiedDuration { get; init; }
+    public decimal? MacaulayDuration { get; init; }
+    public decimal? YtmEffective { get; init; }
+    public decimal? CurrentYield { get; init; }
+
+    /// <summary>YTM либо CurrentYield для флоатера/индексируемой — то же правило, что WatchlistItemDto/ScatterPointDto.</summary>
+    public decimal? EffectiveYield { get; init; }
+    public decimal? GSpread { get; init; }
+    public required bool IsFloater { get; init; }
+    public required bool IsIndexed { get; init; }
+    public required bool IsEstimated { get; init; }
+    public required bool DataIncomplete { get; init; }
 }
