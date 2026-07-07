@@ -350,4 +350,56 @@ public class ReplacementMatrixEndpointTests
 
         ranked.Should().BeInDescendingOrder("bestPairs должны быть отсортированы по выгоде после налога (или до налога, если налог не оценён)");
     }
+
+    // ─── Задача 27 часть B: POST /api/analytics/replacement несёт ту же формулу-разбивку, что матрица ──
+
+    [Fact]
+    public async Task PostReplacement_BetweenPositionsWithYield_CarriesSameBreakdownFieldsAsMatrix()
+    {
+        var (client, _, accountId) = await CreateAuthorizedClientAsync();
+        var (_, weakPositionId) = await SeedYieldingPositionAsync(accountId, cleanPrice: 1000m, couponValueRub: 30m);
+        var (_, strongPositionId) = await SeedYieldingPositionAsync(accountId, cleanPrice: 950m, couponValueRub: 60m);
+
+        var response = await client.PostAsJsonAsync("/api/analytics/replacement", new
+        {
+            holdPositionId = weakPositionId,
+            targetPositionId = strongPositionId,
+            horizonYears = 2,
+        });
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+
+        body.GetProperty("spreadFraction").GetDecimal().Should().BeGreaterThan(0m);
+        body.GetProperty("capitalRub").GetDecimal().Should().BeGreaterThan(0m);
+        body.GetProperty("grossGainRub").ValueKind.Should().NotBe(JsonValueKind.Undefined);
+        body.GetProperty("annualizedBenefitFraction").ValueKind.Should().NotBe(JsonValueKind.Null);
+        // Журнал операций пуст (SeedYieldingPositionAsync не пишет Buy) -> cost basis неизвестен -> налог не оценивается.
+        body.GetProperty("sellTaxEstimateRub").ValueKind.Should().Be(JsonValueKind.Null);
+        body.GetProperty("netBenefitAfterTaxRub").ValueKind.Should().Be(JsonValueKind.Null);
+    }
+
+    [Fact]
+    public async Task PostReplacement_HoldInProfitWithCostBasis_CarriesSellTaxEstimate()
+    {
+        var (client, _, accountId) = await CreateAuthorizedClientAsync();
+        var (_, weakPositionId) = await SeedYieldingPositionWithCostBasisAsync(
+            accountId, cleanPrice: 1000m, couponValueRub: 30m, buyPriceRub: 900m);
+        var (_, strongPositionId) = await SeedYieldingPositionAsync(accountId, cleanPrice: 950m, couponValueRub: 60m);
+
+        var response = await client.PostAsJsonAsync("/api/analytics/replacement", new
+        {
+            holdPositionId = weakPositionId,
+            targetPositionId = strongPositionId,
+            horizonYears = 2,
+        });
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+
+        body.GetProperty("sellTaxEstimateRub").GetDecimal().Should().BeGreaterThan(0m, "hold-позиция в прибыли — оценка налога положительна");
+        var netBenefit = body.GetProperty("netBenefitRub").GetDecimal();
+        var tax = body.GetProperty("sellTaxEstimateRub").GetDecimal();
+        body.GetProperty("netBenefitAfterTaxRub").GetDecimal().Should().Be(netBenefit - tax);
+    }
 }

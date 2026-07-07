@@ -377,6 +377,29 @@ public static class AnalyticsEndpoints
 
         var result = SwitchAnalysisService.Compare(holdCandidate, targetCandidate, request.HorizonYears, sellRate, buyRate);
 
+        // Задача 27 часть B: та же построчная формула-разбивка, что у матрицы замен (задача 23/25) —
+        // спред → капитал → горизонт → валовая выгода → минус комиссии → чистая → минус налог.
+        // ReplacementMatrixService.BuildMatrix не переиспользуется целиком (там перебор ВСЕХ пар
+        // портфеля/watchlist), но считает эти же величины по той же формуле — здесь тот же расчёт
+        // для ОДНОЙ явно выбранной пары hold/target (наведение сравнивалки задачи 27, а не матрица).
+        var netProceedsAfterSale = holdPosition.MarketValueRub - result.SellCommissionRub;
+        decimal? spreadFraction = null;
+        decimal? grossGainRub = null;
+        decimal? annualizedBenefitFraction = null;
+        if (holdCandidate.EffectiveYield is { } holdYield && targetCandidate.EffectiveYield is { } targetYield)
+        {
+            spreadFraction = targetYield - holdYield;
+            grossGainRub = netProceedsAfterSale * spreadFraction.Value * request.HorizonYears;
+            annualizedBenefitFraction = (netProceedsAfterSale > 0m && request.HorizonYears > 0m)
+                ? result.NetBenefitRub / netProceedsAfterSale / request.HorizonYears
+                : null;
+        }
+
+        var sellTaxEstimate = SaleTaxEstimator.Estimate(
+            netProceedsAfterSale, holdPosition.CostBasis?.InvestedRub, holdPosition.CostBasis?.HasUnknownLots ?? true);
+        var sellTaxEstimateRub = sellTaxEstimate?.TaxRub;
+        var netBenefitAfterTaxRub = sellTaxEstimateRub is decimal tax ? result.NetBenefitRub - tax : (decimal?)null;
+
         var dto = new ReplacementResponseDto
         {
             HoldPositionId = result.HoldPositionId,
@@ -396,6 +419,14 @@ public static class AnalyticsEndpoints
             SellCommissionRateUsed = sellRate,
             BuyCommissionRateUsed = buyRate,
             CommissionRateSource = resolved?.Source.ToString() ?? "ExplicitRequest",
+            // Задача 27 часть B: формула-разбивка (см. doc-comment выше) — null, если доходность
+            // одной из сторон не определена (YieldDataIncomplete=true).
+            SpreadFraction = spreadFraction,
+            CapitalRub = netProceedsAfterSale,
+            GrossGainRub = grossGainRub,
+            AnnualizedBenefitFraction = annualizedBenefitFraction,
+            SellTaxEstimateRub = sellTaxEstimateRub,
+            NetBenefitAfterTaxRub = netBenefitAfterTaxRub,
         };
 
         return Results.Ok(dto);
@@ -970,6 +1001,24 @@ public sealed record ReplacementResponseDto
 
     /// <summary>Plan/22 часть E: источник ставки — строка <see cref="CommissionRateSource"/> либо "ExplicitRequest" (обе ставки заданы явно в запросе — резолвер не вызывался).</summary>
     public required string CommissionRateSource { get; init; }
+
+    /// <summary>Задача 27 часть B: спред эффективных доходностей (targetYield − holdYield) — ДОЛЯ. Null — YieldDataIncomplete.</summary>
+    public decimal? SpreadFraction { get; init; }
+
+    /// <summary>Задача 27 часть B: капитал, реально переходящий в target (MarketValueRub hold минус комиссия продажи), в рублях — та же величина, что MatrixPair.CapitalRub.</summary>
+    public required decimal CapitalRub { get; init; }
+
+    /// <summary>Задача 27 часть B: валовая выгода (спред × капитал × горизонт) ДО вычета комиссий, в рублях. Null — YieldDataIncomplete.</summary>
+    public decimal? GrossGainRub { get; init; }
+
+    /// <summary>Задача 27 часть B: NetBenefitRub / CapitalRub / HorizonYears — ДОЛЯ (не процент), та же формула, что MatrixPair.AnnualizedBenefitFraction.</summary>
+    public decimal? AnnualizedBenefitFraction { get; init; }
+
+    /// <summary>Задача 27 часть B: оценка НДФЛ от продажи hold-позиции (13% с прибыли к средней цене входа) — null, если cost basis недоступен/журнал неполон.</summary>
+    public decimal? SellTaxEstimateRub { get; init; }
+
+    /// <summary>Задача 27 часть B: NetBenefitRub − SellTaxEstimateRub — выгода после налога. Null, если SellTaxEstimateRub недоступен.</summary>
+    public decimal? NetBenefitAfterTaxRub { get; init; }
 }
 
 /// <summary>Задача 23 — ответ GET /api/analytics/replacement-matrix (см. doc-comment <see cref="ReplacementMatrixService"/>).</summary>
