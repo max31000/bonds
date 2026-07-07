@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+#
+# Git pre-push hook — runs the BondAnalytics pre-push checklist and aborts the push if it fails.
+#
+# Activate (tracked, opt-in because it runs the full suite on every push):
+#   git config core.hooksPath scripts/git-hooks
+#
+# Bypass for a one-off push (use sparingly):
+#   git push --no-verify
+#
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+echo "▶ pre-push hook: running scripts/pre-push-check.sh ..."
+if ! "$REPO_ROOT/scripts/pre-push-check.sh"; then
+  echo "✗ pre-push check failed — push aborted. Fix the issues above or use 'git push --no-verify' to override."
+  exit 1
+fi
+exit 0

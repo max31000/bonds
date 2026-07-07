@@ -1,309 +1,79 @@
 # Bond Portfolio Analytics (bonds)
 
-Персональный аналитический сервис для облигационного портфеля: подтягивает позиции
-и операции с брокерского счёта Т-Инвестиции, обогащает их облигационной математикой
-(НКД, YTM, дюрация, выпуклость, PVBP, G-спред), строит персональный календарь
-денежного потока с НДФЛ, считает XIRR портфеля и генерирует сигналы (оферты, купоны,
-концентрация и т.д.).
+Персональный сервис аналитики облигационного портфеля Т-Инвестиций: синхронизирует позиции и
+операции с брокерского счёта, обогащает их облигационной математикой и отвечает на главные
+вопросы владельца портфеля — «что у меня слабое», «на что заменить», «куда вложить N ₽».
+Single-user, деплой на VDS `mvv42.ru/bonds/` как часть микрофронтенд-портала.
 
-Полная бизнес-спека: [`bond-portfolio-analytics-spec.md`](bond-portfolio-analytics-spec.md).
-Технический план по этапам: [`plan/`](plan/) (начать с `plan/00-overview-and-architecture.md`).
+## Что умеет (состояние на июль 2026, этапы 01–30 завершены)
 
-> Все расчёты в этом сервисе — аналитические оценки, не инвестиционные рекомендации.
+- **Портфель**: живая таблица позиций (котировки раз в минуту в торговые часы, интрадей-график
+  стоимости), НКД/цена входа/P&L/купоны по каждой бумаге, средневзвешенные итоги, heatmap
+  доходности, мобильные карточки, тёмная тема.
+- **Математика движка**: НКД, YTM/доходность к оферте, дюрации, PVBP, G-спред (кривая КБД MOEX),
+  XIRR портфеля (с ретро-восстановлением истории по журналу операций и дневным ценам MOEX),
+  денежный календарь с НДФЛ, сигналы (оферты/купоны/концентрация) с Telegram-алертами.
+  Верифицирована кросс-чеками: сверка YTM/дюрации с MOEX ~1 б.п., XIRR — с независимым
+  решателем до 1e-6 (см. `docs/history/CALC_AUDIT_*.md`).
+- **Банк облигаций**: снимок всей вселенной MOEX (~3400 бумаг) с доходностью/дюрацией/
+  ликвидностью/приближённым G-спредом, дневная история, гигиенический фильтр мусора; страница
+  «Скринер» с фильтрами и «в watchlist» в клик.
+- **Рекомендации**: слабые звенья портфеля с причинами; серверная матрица замен по всем парам
+  (портфель + watchlist) с формулой выгоды, % годовых, комиссией **твоего** тарифа (авто-оценка
+  из журнала сделок), НКД и оценкой НДФЛ; сравнение любой позиции с любой бумагой рынка;
+  relative value — «дорогая/дешёвая относительно своей корзины (сектор × дюрация)» с дешёвыми
+  соседями; конструктор портфеля (проценты → штуки) с what-if всего портфеля.
+- **Надёжность**: токен T-Invest хранится шифрованным и переживает передеплой; здоровье синка
+  видно в шапке; автосинк при открытии; ~450 юнит + ~150 интеграционных + ~250 фронт-тестов.
 
-## Статус
+Всё аналитическое — **оценки, не инвестиционные рекомендации** (дисклеймеры в UI обязательны).
 
-**Этапы 01–09 выполнены** (фундамент/CI-конфигурация, Telegram-авторизация, доменная
-модель и хранилище, внешние коннекторы MOEX/T-Invest, расчётный движок, проекция
-денежного потока и портфельная аналитика, сигналы и планировщик, backend API,
-фронтенд). Этап 10 (интеграция и hardening) — следующий.
+## Стек
 
-- **Этап 01** — скаффолдинг монорепо, CI-воркфлоу (`backend.yml`/`frontend.yml`),
-  `/health`, заглушка-страница на фронте. Деплой на живой VDS в рамках этого этапа
-  **не выполнялся** — см. раздел "Деплой — TODO" ниже (он остаётся актуальным и после
-  всех последующих этапов: ни один из них не требовал живого VDS/GitHub-репозитория).
-- **Этап 02** — Telegram Login + JWT: `POST /api/auth/telegram`, `GET /api/auth/me`,
-  allowlist по `Telegram:OwnerId`, `FallbackPolicy.RequireAuthenticatedUser()` на всех
-  доменных эндпоинтах, фронтовый `useAuthStore`/`ProtectedRoute`.
-  Тесты — `Bonds.Tests/TelegramAuthServiceTests.cs`, `Bonds.IntegrationTests/AuthEndpointsTests.cs`.
-- **Этап 03** — доменные модели (§5 спеки) в `Bonds.Core/Models`, миграции
-  `003_domain_schema.sql`/`004_add_user_base_currency.sql`, Dapper-репозитории на каждый
-  агрегат, идемпотентный upsert операций по `ExternalId`, пометки "неполные данные"/
-  "не-RUB вне скоупа". 38 интеграционных round-trip тестов в `Bonds.IntegrationTests`.
-- **Этап 04** — коннекторы `Bonds.Infrastructure/Connectors/Moex` (резолвер ISIN→SECID,
-  парсеры купонов/амортизаций/оферт/Gcurve по реальным фикстурам MOEX ISS) и
-  `Connectors/TInvest` (gRPC SDK `Tinkoff.InvestApi`, контракт по облигациям верифицирован
-  отражением сборки — см. `Connectors/TInvest/README.md`), оркестратор `BondSyncService`.
-- **Этап 05** — изолированный расчётный движок `Bonds.Core/Calculation` без I/O: НКД,
-  грязная цена, YTM/доходность к оферте (Ньютон-Рафсон + фолбэк на бисекцию), дюрация
-  Маколея/модифицированная, выпуклость, PVBP, G-спред по официальной методике MOEX
-  (реконструкция NSS-кривой с гауссовыми корректирующими членами), XIRR. Полная
-  обработка флоатеров/индексируемых/амортизации/оферт/неполных данных.
-- **Этап 06** — `Bonds.Core/CashFlow` (проекция купонов/амортизаций/погашений с НДФЛ 13%
-  на купонный доход, агрегация по месяцам/позициям) и `Bonds.Core/Analytics` (XIRR
-  портфеля, композиция по эмитенту/сектору/типу купона/корзинам дюрации, сравнение и
-  сортировка позиций с дисклеймером, анализ замены между текущими позициями).
-- **Этап 07** — `Bonds.Core/Signals` (триггеры §8: купоны/амортизация/погашение, оферты
-  put/call — высокий приоритет, пересчёт ставки флоатера, незаинвестированный кэш,
-  доходность ниже альтернативы, концентрация по эмитенту, дрейф дюрации; дедупликация)
-  и `Bonds.Infrastructure/Scheduling` (`IHostedService`-планировщик с окнами автосинка
-  по Europe/Moscow, форс-обновление через `ISyncCycleRunner`, защита от параллельного
-  запуска).
-- **Этап 08** — `Bonds.Api/Endpoints` (positions/cashflow/analytics/signals/sync/settings,
-  все под JWT-авторизацией кроме `/health`/`/api/auth/*`), `PortfolioHoldingsBuilder`
-  (сборка входа для аналитики/движка из репозиториев), хранение T-Invest токена через
-  UI (`Microsoft.AspNetCore.DataProtection`, шифрование, токен никогда не отдаётся на
-  фронт), Swagger на все эндпоинты.
-- **Ревью после этапов 01–03 и 04–06** — два независимых прохода нашли и исправили
-  реальные баги: некорректная передача enum-полей в Dapper-параметры на запись (этап
-  03), неверный масштаб единиц измерения в G-спреде и рассинхронизация знака суммы
-  операции между сервисами XIRR/InvestedRub (этапы 04-06). См. историю коммитов
-  `Review: ...` для деталей.
-- **Этап 09** (фронтенд `bonds-web/`, декомпозирован на 09a/09b/09c) — React 19 +
-  TypeScript + Mantine 9, Recharts 3, Zustand (серверный кэш без `persist`, кроме
-  `useAuthStore`), MSW в тестах.
-  - **09a** — каркас (`AppLayout` на Mantine `AppShell`, скрывает себя внутри
-    iframe portal-shell), таблица позиций (`GET /api/positions`) с сортировкой по
-    доходности и пометками флоатер/индексируемая/неполные данные/к оферте,
-    переиспользуемый `Disclaimer`.
-  - **09b** — календарь поступлений (`GET /api/cashflow`: бары брутто/налог/нетто
-    по месяцам + даты освобождения тела долга + разбивка по позициям), scatter
-    «дюрация × доходность» над **нейтрально названной** «безрисковой кривой»
-    (`GET /api/analytics/scatter` — без использования товарного знака MOEX в UI,
-    см. §4.3 спеки), композиция портфеля в 4 разрезах (`GET /api/analytics/composition`),
-    кривая XIRR во времени с понятным состоянием на пустой истории
-    (`GET /api/analytics/xirr`).
-  - **09c** — панель сигналов с сортировкой по важности и отметкой прочитанным
-    (`GET /api/signals`, `POST /api/signals/{id}/read`), кнопка форс-обновления в
-    шапке с поллингом `GET /api/sync/status` и нотификацией по завершении
-    (`POST /api/sync`), настройки — пороги триггеров (`GET/PUT /api/settings`) и
-    write-only токен T-Invest, который **никогда не возвращается от API**
-    (`PUT /api/settings/tinvest-token`) — поле всегда очищается после сохранения.
-    Интеграция с portal-shell (basename, `/bonds/` префикс ассетов, postMessage
-    через `useShellSync`) была заложена уже в 09a и не регрессировала; добавление
-    записи в `portal-shell/registry.json` остаётся ручным шагом — см. "Деплой — TODO".
-  - 71 фронтовый тест (Vitest + Testing Library + MSW), `yarn typecheck && yarn
-    test:run && yarn build` — зелёные. Проверки, требующие живого прода/VDS
-    (`https://mvv42.ru/bonds/`, `?app=bonds` в реальном portal-shell), не выполнялись
-    в этом запуске — честно отмечены как «не проверено», см. "Деплой — TODO".
-
-## Архитектура
-
-```
-Backend (.NET 8 / ASP.NET Core Minimal API, Dapper + MySqlConnector)
-  └── Bonds.Api             — HTTP endpoints, middleware, Program.cs
-  └── Bonds.Core            — Domain models, чистая логика (Calculation Engine и т.д.)
-  └── Bonds.Infrastructure  — Dapper-репозитории, MigrationRunner, коннекторы (MOEX/T-Invest)
-
-Frontend (React 19 + TypeScript + Mantine 9)
-  └── bonds-web/            — Vite app, base: '/bonds/'
-
-Database: MySQL 8.0
-Deploy (план): GitHub Actions → GHCR → VDS (Docker), фронт → /var/www/bonds/ через SCP
-```
-
-Маппинг модулей бизнес-спеки на этапы плана — см. `plan/00-overview-and-architecture.md`, §4.
+.NET 8 (minimal API, Clean: `Bonds.Api`/`Bonds.Core`/`Bonds.Infrastructure`), Dapper +
+MySqlConnector, MySQL 8 · React 19 + TypeScript strict + Mantine 9 + Recharts 3 + Zustand,
+Vite, **yarn** · xUnit + Testcontainers, vitest + Testing Library + MSW · GitHub Actions →
+GHCR/scp → VDS (пуш в `main` = автодеплой). Данные: T-Invest API (портфель/операции/котировки) +
+MOEX ISS (справочник, расписания, кривая, вся вселенная).
 
 ## Локальный запуск
 
-### Предварительные требования
-- .NET 8 SDK
-- Node.js 20+, Yarn 1.22.x (`nodeLinker: node-modules`)
-- Docker + Docker Compose
-
-### Backend + MySQL (docker-compose)
+Требования: .NET 8 SDK, Node.js 20+ и Yarn 1.22.x, Docker + Docker Compose.
 
 ```bash
+# Backend + MySQL целиком
 docker compose up -d --build
-curl -s localhost:5001/health
-# => {"status":"ok"}
-```
+curl -s localhost:5001/health   # => {"status":"ok"}
 
-### Backend локально без Docker (например, если Docker недоступен)
-
-```bash
-# Поднять только MySQL
+# Либо backend без Docker (MySQL всё равно в контейнере)
 docker compose up mysql -d
+cd src/Bonds.Api && dotnet run  # API :5001, Swagger UI /swagger
 
-cd src/Bonds.Api
-dotnet run
-# API на http://localhost:5001, Swagger UI: http://localhost:5001/swagger
+# Frontend
+cd bonds-web && yarn install && yarn dev   # http://localhost:5174
 ```
 
-### Frontend
+В dev фронт ходит на `VITE_API_BASE` (по умолчанию `/bonds/api`). T-Invest токен вводится через
+UI настроек (хранится шифрованным в БД; в `.env` не живёт — коммитить реальный `.env` запрещено).
+
+## Проверки перед пушем
 
 ```bash
-cd bonds-web
-yarn install
-yarn dev
-# http://localhost:5174
+scripts/pre-push-check.sh --all
 ```
 
-В dev фронт ходит на `VITE_API_BASE` (по умолчанию `/bonds/api`, относительный путь —
-работает и standalone через Vite proxy/прямой адрес, и внутри portal-shell iframe).
+Зеркалит оба CI-пайплайна + гварды; обязателен перед любым пушем (`main` автодеплоится).
+Подробности — [CLAUDE.md](CLAUDE.md).
 
-### Сборка и проверки
+## Структура репозитория и документация
 
-```bash
-dotnet build Bonds.sln -c Release
-dotnet test Bonds.sln -c Release
-( cd bonds-web && yarn typecheck && yarn test:run && yarn build )
-```
-
-## Структура репозитория
-
-```
-BondAnalytics/
-├── Bonds.sln
-├── src/
-│   ├── Bonds.Api/              — minimal API, Program.cs, Dockerfile, Endpoints/, Middleware/
-│   ├── Bonds.Core/             — модели, интерфейсы, доменные сервисы (чистая логика)
-│   └── Bonds.Infrastructure/   — Dapper-репозитории, MigrationRunner, DI, Migrations/*.sql, Connectors/
-├── tests/
-│   ├── Bonds.Tests/            — xUnit, юнит-тесты
-│   └── Bonds.IntegrationTests/ — xUnit, TestWebApplicationFactory + Testcontainers MySQL
-├── bonds-web/                  — Vite + React + TS фронт
-├── docker-compose.yml          — локальный запуск (api + mysql)
-├── .env.example
-├── .github/workflows/
-│   ├── backend.yml
-│   └── frontend.yml
-├── .editorconfig
-├── .gitignore
-├── bond-portfolio-analytics-spec.md
-├── plan/                       — технический план по этапам (00…10)
-└── README.md
-```
-
-## Конвенции (см. `plan/00-overview-and-architecture.md`, §8)
-
-- Namespace/сборки: `Bonds.Api`, `Bonds.Core`, `Bonds.Infrastructure`, `Bonds.Tests`, `Bonds.IntegrationTests`.
-- Docker-образ: `ghcr.io/max31000/bonds-api`. Контейнер: `bonds-api`. БД: `bonds`. Порт: `5001`.
-- Фронт-пакет: `bonds-web`. Базовый путь: `/bonds/`.
-- Таблицы MySQL: snake_case, множественное число (`instruments`, `positions`, `operations`, ...).
-- Эндпоинты внутри приложения — `/api/...`; nginx навешивает префикс `/bonds` на проде.
-
-## Секреты (GitHub Actions Secrets/Variables)
-
-Полный список из `plan/00-overview-and-architecture.md`, §7. **Значения не вписываются
-в репозиторий** — задаются в `Settings → Secrets and variables → Actions` живого
-GitHub-репозитория (когда он будет создан и подключён; в рамках этого запуска
-репозиторий локальный, без удалённого GitHub).
-
-| Имя | Тип | Назначение | Где взять |
-|---|---|---|---|
-| `VDS_HOST` | Secret | IP/домен VDS для деплоя (`89.167.34.3` / `mvv42.ru`) | известен владельцу |
-| `VDS_USER` | Secret | SSH-пользователь VDS (`root`) | известен владельцу |
-| `VDS_SSH_KEY` | Secret | Приватный SSH-ключ для деплоя | сгенерировать отдельную ключевую пару для CI, публичный ключ добавить на VDS |
-| `DB_CONNECTION_STRING` | Secret | Строка подключения к базе `bonds` на общем MySQL VDS | создаётся вручную на VDS (см. "Деплой — TODO", шаг 2) |
-| `JWT_SECRET` | Secret | Подпись JWT (≥32 символа, случайная строка) | сгенерировать (`openssl rand -base64 32`) |
-| `TELEGRAM_BOT_TOKEN` | Secret | Токен Telegram-бота (тот же бот, что у cashpulse) | у владельца, из настроек существующего бота |
-| `TELEGRAM_CHAT_ID` | Secret | Chat ID для алертов CI о падении деплоя | у владельца |
-| `OWNER_TELEGRAM_ID` | Secret | Telegram user id владельца (allowlist авторизации, этап 02) | узнать у `@userinfobot` или аналога |
-| `VITE_API_BASE` | Variable | Базовый путь API для фронта (по умолчанию `/bonds/api`) | задать как Variable, не Secret |
-| `TELEGRAM_BOT_USERNAME` | Variable | Имя бота для Telegram Login Widget на фронте | задать как Variable, не Secret |
-
-**Токен T-Invest НЕ заводится через GitHub Secrets и ENV вообще** — он хранится только в БД,
-привязан к аккаунту и вводится через UI (`Settings → PUT /api/settings/tinvest-token`,
-шифруется `DataProtection`). Деплой-пайплайн его не знает и не передаёт в контейнер.
-
-Локальная разработка использует dev-заглушки из `.env.example` /
-`appsettings.Development.json` (например `Jwt:Secret = dev-secret-change-me-...`,
-пароль MySQL `dev-only-not-for-prod`) — они **непригодны для прода** и существуют
-только для локального docker-compose/`dotnet run`.
-
-## CI/CD — текущий статус этого запуска
-
-`.github/workflows/backend.yml` и `.github/workflows/frontend.yml` присутствуют,
-зеркалируют пайплайны `cashpulse` (адаптированы под имена/порт `bonds`) и прошли
-синтаксическую проверку `actionlint` (0 замечаний). **Эти воркфлоу не выполнялись** —
-нет удалённого GitHub-репозитория, не логинились в GHCR, не пушили образы, не трогали
-VDS. Когда репозиторий будет подключён к GitHub:
-
-1. Открыть `Packages → bonds-api → Package settings → Change visibility → Public`
-   после первого успешного пуша образа (см. план 01, B1 — позволяет `docker pull`
-   на VDS без логина, как у cashpulse).
-2. Заполнить секреты/переменные из таблицы выше.
-3. Push в `main` запускает оба пайплайна.
-
-## Деплой — TODO (часть C плана 01, не выполнена в этом запуске)
-
-Эта часть требует SSH-доступа к живому VDS (`root@89.167.34.3` / `mvv42.ru`), которого
-не было в текущем запуске. Чеклист ручных шагов для следующего запуска/агента:
-
-1. **Сверить реальное состояние сервера** (план 01, C1):
-   - `docker ps --format '{{.Names}}\t{{.Networks}}\t{{.Ports}}' | grep -i mysql` —
-     зафиксировать точное имя контейнера MySQL и его docker-сеть (предполагается
-     общий с cashpulse, но это нужно подтвердить фактом, не предполагать).
-   - `cat /etc/nginx/sites-enabled/portal` (или `sites-enabled/*` / `conf.d/*`) —
-     текущий nginx-конфиг.
-   - `ss -tlnp | grep -E ':500[0-9]'` — убедиться, что порт `5001` свободен.
-2. **Создать базу и пользователя MySQL** (план 01, C2):
-   ```sql
-   CREATE DATABASE IF NOT EXISTS bonds CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-   CREATE USER IF NOT EXISTS 'bonds_app'@'%' IDENTIFIED BY '<СГЕНЕРИРОВАННЫЙ_ПАРОЛЬ>';
-   GRANT ALL PRIVILEGES ON bonds.* TO 'bonds_app'@'%';
-   FLUSH PRIVILEGES;
-   ```
-   Пароль сгенерировать на месте, не записывать в репозиторий/доки — передать
-   владельцу для занесения в секрет `DB_CONNECTION_STRING`.
-3. **Подставить `<DB_NETWORK>`** в `.github/workflows/backend.yml` (строка
-   `--network <DB_NETWORK>`) — именем реальной docker-сети MySQL-контейнера,
-   определённым на шаге 1. Если изоляция нежелательна — альтернатива из плана
-   (`host.docker.internal:host-gateway` на опубликованный `127.0.0.1:3306`).
-4. **Добавить nginx-локации для bonds** (план 01, C3) в существующий server-блок
-   `mvv42.ru` (443), не трогая `/cashpulse/`, `/credit_calc/`, `/api/`, `location = /`:
-   - `location /bonds/` → статика `/var/www/bonds/`, SPA fallback на `index.html`.
-   - `location /bonds/api/` → `proxy_pass http://127.0.0.1:5001/api/;` (префикс
-     срезается nginx'ом, в приложении маршруты остаются `/api/...`).
-   - `location = /bonds/health` → `proxy_pass http://127.0.0.1:5001/health;`.
-   - Точный текст конфига — в `plan/01-foundation-scaffold-and-deploy.md`, раздел C3.
-   - `mkdir -p /var/www/bonds`, затем `nginx -t && systemctl reload nginx`.
-5. **Добавить запись `bonds` в `portal-shell/registry.json`** (план 01, C4) —
-   отдельный коммит/PR в репозитории `portal-shell` (не в этом репозитории):
-   ```json
-   {
-     "id": "bonds",
-     "name": "Bond Analytics",
-     "description": "Аналитика облигационного портфеля",
-     "icon": "📈",
-     "path": "/bonds/",
-     "color": "#7048e8"
-   }
-   ```
-6. После шагов 1–5 и подключения репозитория к GitHub — первый push в `main`
-   должен задеплоить сквозной канал. Проверить:
-   ```bash
-   curl -sf https://mvv42.ru/bonds/health && echo OK
-   curl -sf https://mvv42.ru/cashpulse/ >/dev/null && echo "cashpulse intact"
-   ```
-
-**Ни один из критериев приёмки плана 01, требующих прода, не проверялся и не
-имитировался в этом запуске** — см. финальный отчёт агента, реализовавшего этап 01,
-для точного статуса каждого пункта.
-
-## Юридические пометки (спека §4.3)
-
-- **«КБД Московской Биржи» / «MOEX GCURVE»** — зарегистрированный товарный знак. Сами данные
-  (параметры Нельсона-Сигеля-Свенссона из `/iss/engines/stock/zcyc/securities.json`) использовать
-  можно; в UI кривая называется нейтрально — **«безрисковая кривая»** (см. `bonds-web`, scatter-виджет
-  этапа 09b). Не переименовывать обратно в брендированное название при доработках фронта.
-- **Данные MOEX ISS — собственность MOEX.** Личное использование (этот продукт — single-user,
-  не публичный сервис) — ок без дополнительных согласований. **Если продукт когда-либо станет
-  публичным/мультитенантным** — перед таким релизом обязательно сверить актуальные Terms of Use
-  MOEX ISS на предмет ограничений на перераспределение данных третьим лицам; на момент реализации
-  (2026) это не проверялось, т.к. не требовалось для личного использования.
-- **Кредитные рейтинги** — структурированная выгрузка платная у всех агентств и агрегаторов,
-  полностью вне MVP (см. `IRatingProvider` — точка расширения, не реализована).
-
-## MVP-ограничения (после этапа 09)
-
-- T-Invest коннектор (этап 04) написан и протестирован против мока SDK — без реального
-  read-only токена живые вызовы не выполнялись (см. `Connectors/TInvest/README.md`).
-  Токен заводится единственным способом — через `PUT /api/settings/tinvest-token` (хранится
-  только в БД на аккаунт, без ENV/Secrets-фолбэка), но реальный синк с живым счётом всё равно
-  не проверялся в этом запуске.
-- Стакан (bid/ask) запрашивается у T-Invest, но не персистируется — осознанно вне MVP
-  (спека §8 относит предупреждение о низкой ликвидности к категории "на будущее").
-- Деплой на живой VDS не выполнялся ни на одном из этапов 01–09 — см. "Деплой — TODO".
-  Нет подключённого GitHub-репозитория, секреты не заведены.
+| Путь | Что |
+|---|---|
+| `src/` · `tests/` · `bonds-web/` | backend, тесты, frontend |
+| [CLAUDE.md](CLAUDE.md) | правила работы агентов: pre-push-гейт, оркестрация, конвенции |
+| [docs/CODEBASE-GUIDE.md](docs/CODEBASE-GUIDE.md) | паттерны кодовой базы + контракт единиц измерения |
+| [BACKLOG.md](BACKLOG.md) | actionable-бэклог следующих циклов |
+| [bond-portfolio-analytics-spec.md](bond-portfolio-analytics-spec.md) | бизнес-спека |
+| [plan/](plan/) | пошаговые планы этапов 00–30 (все выполнены, см. `plan/README.md`) |
+| [docs/history/](docs/history/) | исторические аудиты корректности и решения этапов |
+| `.claude/agents/` | `bond-implementer`, `bond-reviewer` — субагенты для циклов доработок |

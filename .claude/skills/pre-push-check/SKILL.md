@@ -26,12 +26,18 @@ This skill runs the same steps CI runs, locally, so you catch failures before pu
 
 ## How to use it
 
-Run the checks **relevant to what changed** (mirror CI's path filters), from the repo root.
-Run every relevant check (don't stop at the first failure) so one pass surfaces all problems.
-If unsure what changed, run both backend and frontend.
+**Preferred: run the committed wrapper — it executes exactly this checklist and prints a summary:**
 
-> The commands below ARE the checklist — run them directly. (There is no `scripts/pre-push-check.sh`
-> in the repo; if one is later added as a convenience wrapper, it must run exactly these steps.)
+```bash
+scripts/pre-push-check.sh --all       # or no flags to auto-detect scope vs origin/main
+```
+
+(`--backend`/`--frontend` to scope manually, `--docker` adds the image build, `--format` adds
+`dotnet format --verify-no-changes`.) It runs every relevant check without stopping at the first
+failure. Optional hard enforcement: `git config core.hooksPath scripts/git-hooks`.
+
+The manual commands below remain the reference checklist (the script must stay in sync with
+them — when adding a check, update both).
 
 ### 0. Universal guards (cheap, always run)
 
