@@ -28,18 +28,35 @@ import type { AllocationLine, AllocationSource, BasketResponse, RiskSignals, Uni
 
 const SEARCH_DEBOUNCE_MS = 300;
 
+/**
+ * Задача 35 review (MAJOR 2): верхний предел числа строк пула кандидатов пресета, которые
+ * последовательно материализуются HTTP-запросами к MOEX (source=market/recommended). Пул
+ * кандидатов ограничен бэкендом до AnalyticsEndpoints.MarketAllocationCandidatePoolLimit=200
+ * строк (1 лот на secid, у market нет секторного лимита) — без верхнего предела здесь цикл
+ * `await postMaterialize` по всем строкам пула мог зависать на минуты последовательных HTTP-
+ * вызовов без прогресса (крупная сумма, ~200 тыс. ₽, при лотах ~1000 ₽ — почти весь пул).
+ * 25 — компромисс: последовательная материализация 25 бумаг занимает разумное время (секунды —
+ * первые десятки секунд) и покрывает типичные суммы пресета; излишек пула отсекается по
+ * фактическому весу строки (estimatedCostRub) — оставляем крупнейшие покупки.
+ */
+const PRESET_MATERIALIZE_LIMIT = 25;
+
 const SOURCE_OPTIONS: { label: string; value: AllocationSource }[] = [
   { label: 'Весь рынок — доходные', value: 'market' },
   { label: 'Рекомендованные', value: 'recommended' },
   { label: 'Мой портфель', value: 'portfolio' },
 ];
 
+// Задача 35 review (MAJOR 1): банк облигаций (bond_universe) не хранит эмитента — источники
+// market/recommended диверсифицируются по грубой классификации сектора (задача 34), НЕ по
+// эмитенту. Текст ниже описывает фактическое поведение, не желаемое.
 const SOURCE_EXPLANATION =
   'Весь рынок — самые доходные фикс-купонные бумаги биржи (банк облигаций), без дополнительных ' +
   'фильтров, кроме гигиенических (низкая ликвидность/некотировальный список отсеяны). ' +
   'Рекомендованные — та же вселенная, но дополнительно отфильтрована по риск-сигналам (спред/' +
-  'ликвидность) и диверсифицирована по эмитентам. Мой портфель — докупка только тех бумаг, что ' +
-  'уже есть у вас (прежнее поведение пресета).';
+  'ликвидность) и диверсифицирована по секторам (грубая классификация: гособлигации / ' +
+  'муниципальные / корпоративные — эмитента биржевая статистика не хранит). Мой портфель — ' +
+  'докупка только тех бумаг, что уже есть у вас (прежнее поведение пресета).';
 
 /** Одна строка корзины, собираемая пользователем (проценты — UI-конвенция, конвертируются в доли на границе с API, см. doc-comment handleCalculate). */
 interface BasketDraftLine {
@@ -133,6 +150,12 @@ export function BasketConstructor() {
   const [isPresetLoading, setIsPresetLoading] = useState(false);
   const [presetError, setPresetError] = useState<string | null>(null);
   const [presetDisclaimer, setPresetDisclaimer] = useState<string | null>(null);
+  // Задача 35 review (MAJOR 2): прогресс последовательной материализации пресета (source=market/
+  // recommended) — null вне батча материализации (source=portfolio не материализует построчно).
+  const [presetProgress, setPresetProgress] = useState<{ current: number; total: number } | null>(null);
+  // Задача 35 review (MAJOR 2): предупреждение (не ошибка) о том, что пул кандидатов больше
+  // PRESET_MATERIALIZE_LIMIT — показаны только крупнейшие по весу строки.
+  const [presetCapWarning, setPresetCapWarning] = useState<string | null>(null);
 
   const [isCalculating, setIsCalculating] = useState(false);
   const [calculateError, setCalculateError] = useState<string | null>(null);
@@ -228,11 +251,22 @@ export function BasketConstructor() {
    * загрузку. Ошибка материализации ОДНОЙ бумаги не роняет весь пресет — строка пропускается,
    * `presetError` сообщает, сколько бумаг пропущено.
    * </para>
+   * <para>
+   * <b>Задача 35 review (MAJOR 2):</b> пул кандидатов source=market/recommended может доходить до
+   * бэкендового потолка (200 строк) — последовательная материализация всех строк HTTP-запросами к
+   * MOEX могла зависать на минуты без обратной связи. Материализуем не более
+   * {@link PRESET_MATERIALIZE_LIMIT} строк — крупнейшие по фактическому весу покупки
+   * (<c>estimatedCostRub</c>), остальные молча отбрасываются с предупреждением
+   * (`presetCapWarning`, не ошибка). На время батча `presetProgress` даёт счётчик «X из Y» вместо
+   * голого спиннера.
+   * </para>
    */
   const handleUseGreedyPreset = async () => {
     setIsPresetLoading(true);
     setPresetError(null);
     setPresetDisclaimer(null);
+    setPresetCapWarning(null);
+    setPresetProgress(null);
     try {
       const allocation = await fetchAllocation(amountRub, { source });
       setPresetDisclaimer(allocation.disclaimer || null);
@@ -254,11 +288,18 @@ export function BasketConstructor() {
       }
 
       // source=market/recommended: instrumentId всегда null — материализуем каждую строку по её
-      // secid, последовательно (пул кандидатов ограничен потолком бэкенда — обычно единицы строк).
+      // secid, последовательно. Пул кандидатов ограничен потолком бэкенда (200 строк) — капим до
+      // PRESET_MATERIALIZE_LIMIT крупнейших по estimatedCostRub (см. doc-comment выше/MAJOR 2).
+      const eligible = allocation.allocations.filter(
+        (a): a is AllocationLine & { secid: string } => a.secid !== null, // контракт задачи 34: market/recommended всегда несут secid.
+      );
+      const capped = [...eligible].sort((a, b) => b.estimatedCostRub - a.estimatedCostRub).slice(0, PRESET_MATERIALIZE_LIMIT);
+
+      setPresetProgress({ current: 0, total: capped.length });
       const materializedLines: BasketDraftLine[] = [];
       let failedCount = 0;
-      for (const a of allocation.allocations) {
-        if (a.secid === null) continue; // контракт задачи 34: market/recommended всегда несут secid.
+      for (let i = 0; i < capped.length; i++) {
+        const a = capped[i];
         try {
           const materialized = await postMaterialize(a.secid);
           materializedLines.push({
@@ -271,6 +312,8 @@ export function BasketConstructor() {
           });
         } catch {
           failedCount += 1;
+        } finally {
+          setPresetProgress({ current: i + 1, total: capped.length });
         }
       }
       setLines(materializedLines);
@@ -278,10 +321,16 @@ export function BasketConstructor() {
       if (failedCount > 0) {
         setPresetError(`Не удалось добавить ${failedCount} бумаг(и) из пресета — пропущены.`);
       }
+      if (eligible.length > capped.length) {
+        setPresetCapWarning(
+          `Показаны ${capped.length} крупнейших строк пресета из ${eligible.length} — остальные пропущены.`,
+        );
+      }
     } catch (err) {
       setPresetError(err instanceof Error ? err.message : 'Не удалось применить пресет');
     } finally {
       setIsPresetLoading(false);
+      setPresetProgress(null);
     }
   };
 
@@ -321,6 +370,7 @@ export function BasketConstructor() {
           min={1}
           value={amountRub}
           onChange={(v) => setAmountRub(typeof v === 'number' ? v : Number(v) || 0)}
+          disabled={isPresetLoading}
           data-testid="basket-amount-input"
           w={200}
         />
@@ -333,6 +383,15 @@ export function BasketConstructor() {
           Пресет «Максимум доходности»
         </Button>
       </Group>
+
+      {/* Задача 35 review (MAJOR MINOR/контролы): на время батча материализации пресета сумма и
+          источник кандидатов заблокированы — пользователь не может менять параметры под ногами у
+          идущего последовательного цикла запросов к MOEX (см. handleUseGreedyPreset). */}
+      {isPresetLoading && presetProgress && (
+        <Text size="xs" c="dimmed" mb="sm" data-testid="basket-preset-progress">
+          Материализация {presetProgress.current} из {presetProgress.total}…
+        </Text>
+      )}
 
       <Group gap={6} align="center" mb="sm">
         <Text size="xs" fw={600} c="dimmed">
@@ -348,6 +407,7 @@ export function BasketConstructor() {
         value={source}
         onChange={(v) => setSource(v as AllocationSource)}
         data={SOURCE_OPTIONS}
+        disabled={isPresetLoading}
         mb="sm"
         data-testid="basket-source-control"
       />
@@ -355,6 +415,12 @@ export function BasketConstructor() {
       {presetError && (
         <Alert color="red" mb="sm" data-testid="basket-preset-error">
           {presetError}
+        </Alert>
+      )}
+
+      {!presetError && presetCapWarning && (
+        <Alert color="yellow" mb="sm" data-testid="basket-preset-cap-warning">
+          {presetCapWarning}
         </Alert>
       )}
 

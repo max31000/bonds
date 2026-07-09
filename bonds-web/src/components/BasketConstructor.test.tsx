@@ -326,6 +326,167 @@ describe('BasketConstructor', () => {
     expect(screen.getByTestId('basket-preset-error').textContent).toMatch(/1 бумаг/);
   });
 
+  // ─── Задача 35 review (MAJOR 2): кап материализации пресета + прогресс + блокировка контролов ───
+
+  /** Строка аллокации market/recommended с фиксированной формой полей, различается secid/estimatedCostRub. */
+  function makeAllocationLine(secid: string, estimatedCostRub: number) {
+    return {
+      instrumentId: null,
+      secid,
+      name: `Бумага ${secid}`,
+      issuer: null,
+      sector: 'Корпоративные',
+      quantity: 1,
+      estimatedCostRub,
+      effectiveYield: 0.18,
+      lotSizeAssumed: true,
+      cleanCostRub: estimatedCostRub - 50,
+      accruedCostRub: 40,
+      commissionCostRub: 10,
+      riskSignals: goodSignals,
+    };
+  }
+
+  it('caps the preset materialization batch at 25 rows, keeping the largest by weight, and warns about the rest', async () => {
+    // 30 кандидатов пула > лимита (PRESET_MATERIALIZE_LIMIT=25 в BasketConstructor.tsx) — вес
+    // (estimatedCostRub) убывает с индексом, топ-25 по весу — MKT001..MKT025.
+    const allocations = Array.from({ length: 30 }, (_, i) =>
+      makeAllocationLine(`MKT${String(i + 1).padStart(3, '0')}`, (30 - i) * 1000),
+    );
+    const materializedSecids: string[] = [];
+    server.use(
+      http.get('*/api/analytics/allocation', () =>
+        HttpResponse.json({
+          amountRub: 200000,
+          source: 'market',
+          allocations,
+          skipped: [],
+          leftoverRub: 0,
+          disclaimer: '',
+          commissionRateUsed: 0.003,
+          commissionRateSource: 'Default',
+          candidatePoolAvailable: 30,
+          candidatePoolLimit: 200,
+          candidatePoolTruncated: false,
+        }),
+      ),
+      http.post('*/api/universe/:secid/materialize', ({ params }) => {
+        const secid = String(params.secid);
+        materializedSecids.push(secid);
+        return HttpResponse.json({
+          instrumentId: Number(secid.replace('MKT', '')),
+          secid,
+          isin: `RU000${secid}0`,
+          metrics: { name: `Бумага ${secid}`, issuer: null },
+          disclaimer: '',
+        });
+      }),
+    );
+
+    renderBasketConstructor();
+
+    fireEvent.click(screen.getByTestId('basket-preset-button'));
+
+    await waitFor(() => expect(screen.getByTestId('basket-draft-line-MKT025')).toBeInTheDocument());
+    // Только 25 крупнейших по весу строк материализованы — MKT026..MKT030 (наименьший вес) пропущены.
+    expect(materializedSecids).toHaveLength(25);
+    expect(materializedSecids).not.toContain('MKT026');
+    expect(materializedSecids).not.toContain('MKT030');
+    expect(screen.queryByTestId('basket-draft-line-MKT026')).not.toBeInTheDocument();
+    expect(screen.getByTestId('basket-preset-cap-warning').textContent).toMatch(/25 крупнейших строк пресета из 30/);
+  });
+
+  it('shows a materialization progress counter while the preset batch is running', async () => {
+    const allocations = [makeAllocationLine('PRG001', 6000), makeAllocationLine('PRG002', 5000)];
+    server.use(
+      http.get('*/api/analytics/allocation', () =>
+        HttpResponse.json({
+          amountRub: 15000,
+          source: 'market',
+          allocations,
+          skipped: [],
+          leftoverRub: 0,
+          disclaimer: '',
+          commissionRateUsed: 0.003,
+          commissionRateSource: 'Default',
+          candidatePoolAvailable: 2,
+          candidatePoolLimit: 200,
+          candidatePoolTruncated: false,
+        }),
+      ),
+      http.post('*/api/universe/:secid/materialize', async ({ params }) => {
+        // Небольшая задержка имитирует сетевой вызов к MOEX — даёт тесту окно, чтобы поймать
+        // промежуточное состояние счётчика прогресса до завершения батча.
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        const secid = String(params.secid);
+        return HttpResponse.json({
+          instrumentId: secid === 'PRG001' ? 501 : 502,
+          secid,
+          isin: `RU000${secid}0`,
+          metrics: { name: `Бумага ${secid}`, issuer: null },
+          disclaimer: '',
+        });
+      }),
+    );
+
+    renderBasketConstructor();
+
+    fireEvent.click(screen.getByTestId('basket-preset-button'));
+
+    await waitFor(() => expect(screen.getByTestId('basket-preset-progress')).toBeInTheDocument());
+    expect(screen.getByTestId('basket-preset-progress').textContent).toMatch(/Материализация \d+ из 2…/);
+
+    await waitFor(() => expect(screen.getByTestId('basket-draft-line-PRG002')).toBeInTheDocument());
+    // Счётчик прогресса исчезает по завершении батча вместе с isPresetLoading.
+    expect(screen.queryByTestId('basket-preset-progress')).not.toBeInTheDocument();
+  });
+
+  it('disables the source control and amount input while the preset materialization batch is loading', async () => {
+    const allocations = [makeAllocationLine('DIS001', 6000)];
+    server.use(
+      http.get('*/api/analytics/allocation', () =>
+        HttpResponse.json({
+          amountRub: 15000,
+          source: 'market',
+          allocations,
+          skipped: [],
+          leftoverRub: 0,
+          disclaimer: '',
+          commissionRateUsed: 0.003,
+          commissionRateSource: 'Default',
+          candidatePoolAvailable: 1,
+          candidatePoolLimit: 200,
+          candidatePoolTruncated: false,
+        }),
+      ),
+      http.post('*/api/universe/:secid/materialize', async ({ params }) => {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        const secid = String(params.secid);
+        return HttpResponse.json({
+          instrumentId: 601,
+          secid,
+          isin: 'RU000DIS0010',
+          metrics: { name: 'Бумага DIS001', issuer: null },
+          disclaimer: '',
+        });
+      }),
+    );
+
+    renderBasketConstructor();
+
+    expect(screen.getByTestId('basket-amount-input')).not.toBeDisabled();
+
+    fireEvent.click(screen.getByTestId('basket-preset-button'));
+
+    await waitFor(() => expect(screen.getByTestId('basket-amount-input')).toBeDisabled());
+    within(screen.getByTestId('basket-source-control'))
+      .getAllByRole('radio')
+      .forEach((radio) => expect(radio).toBeDisabled());
+
+    await waitFor(() => expect(screen.getByTestId('basket-draft-line-DIS001')).toBeInTheDocument());
+    expect(screen.getByTestId('basket-amount-input')).not.toBeDisabled();
+  });
+
   it('calculates the basket and renders quantities, metrics, and the what-if block', async () => {
     server.use(http.post('*/api/analytics/basket', () => HttpResponse.json(basketResult)));
 
