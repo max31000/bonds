@@ -8,6 +8,7 @@ import {
   NumberInput,
   Button,
   Select,
+  SegmentedControl,
   Badge,
   Alert,
   Loader,
@@ -21,9 +22,41 @@ import { fetchAllocation, postBasket } from '../api/recommendations';
 import { liquidityLabel, liquidityColor } from '../utils/universeDisplay';
 import { formatRub, formatPercent, formatNumber } from '../utils/format';
 import { Disclaimer } from './Disclaimer';
-import type { BasketResponse, UniverseRow, WhatIfWarning } from '../api/types';
+import { ChartExplainIcon } from './charts/ChartCard';
+import { RiskSignalBadges, RiskSignalsCaption } from './RiskSignalBadges';
+import type { AllocationLine, AllocationSource, BasketResponse, RiskSignals, UniverseRow, WhatIfWarning } from '../api/types';
 
 const SEARCH_DEBOUNCE_MS = 300;
+
+/**
+ * Задача 35 review (MAJOR 2): верхний предел числа строк пула кандидатов пресета, которые
+ * последовательно материализуются HTTP-запросами к MOEX (source=market/recommended). Пул
+ * кандидатов ограничен бэкендом до AnalyticsEndpoints.MarketAllocationCandidatePoolLimit=200
+ * строк (1 лот на secid, у market нет секторного лимита) — без верхнего предела здесь цикл
+ * `await postMaterialize` по всем строкам пула мог зависать на минуты последовательных HTTP-
+ * вызовов без прогресса (крупная сумма, ~200 тыс. ₽, при лотах ~1000 ₽ — почти весь пул).
+ * 25 — компромисс: последовательная материализация 25 бумаг занимает разумное время (секунды —
+ * первые десятки секунд) и покрывает типичные суммы пресета; излишек пула отсекается по
+ * фактическому весу строки (estimatedCostRub) — оставляем крупнейшие покупки.
+ */
+const PRESET_MATERIALIZE_LIMIT = 25;
+
+const SOURCE_OPTIONS: { label: string; value: AllocationSource }[] = [
+  { label: 'Весь рынок — доходные', value: 'market' },
+  { label: 'Рекомендованные', value: 'recommended' },
+  { label: 'Мой портфель', value: 'portfolio' },
+];
+
+// Задача 35 review (MAJOR 1): банк облигаций (bond_universe) не хранит эмитента — источники
+// market/recommended диверсифицируются по грубой классификации сектора (задача 34), НЕ по
+// эмитенту. Текст ниже описывает фактическое поведение, не желаемое.
+const SOURCE_EXPLANATION =
+  'Весь рынок — самые доходные фикс-купонные бумаги биржи (банк облигаций), без дополнительных ' +
+  'фильтров, кроме гигиенических (низкая ликвидность/некотировальный список отсеяны). ' +
+  'Рекомендованные — та же вселенная, но дополнительно отфильтрована по риск-сигналам (спред/' +
+  'ликвидность) и диверсифицирована по секторам (грубая классификация: гособлигации / ' +
+  'муниципальные / корпоративные — эмитента биржевая статистика не хранит). Мой портфель — ' +
+  'докупка только тех бумаг, что уже есть у вас (прежнее поведение пресета).';
 
 /** Одна строка корзины, собираемая пользователем (проценты — UI-конвенция, конвертируются в доли на границе с API, см. doc-comment handleCalculate). */
 interface BasketDraftLine {
@@ -31,6 +64,13 @@ interface BasketDraftLine {
   name: string;
   issuer: string | null;
   weightPercent: number;
+  /** Задача 35: SECID банк-кандидата, из которого материализована строка пресетом source=market/
+   * recommended — undefined для строк портфеля/ручного добавления. Ключ рендера рыночных строк
+   * (см. эскалацию задачи 34 в plan/35) — избегает коллизий с instrumentId ручных строк. */
+  secid?: string;
+  /** Задача 35: риск-сигналы строки (эхо AllocationLine.riskSignals) — только для source=market/
+   * recommended, undefined/null для остальных. */
+  riskSignals?: RiskSignals | null;
 }
 
 /** Опция выпадашки поиска — переиспользует карточку UniverseRow (тот же паттерн, что MarketComparator/задача 27). */
@@ -94,6 +134,10 @@ export function BasketConstructor() {
   const [amountRub, setAmountRub] = useState<number>(15000);
   const [lines, setLines] = useState<BasketDraftLine[]>([]);
 
+  // Задача 35 §C.1: источник кандидатов пресета «Максимум доходности» — дефолт "market" (весь
+  // рынок доходных), пользователь может вернуться к прежнему поведению ("portfolio").
+  const [source, setSource] = useState<AllocationSource>('market');
+
   const [searchInput, setSearchInput] = useState('');
   const [debouncedSearch] = useDebouncedValue(searchInput, SEARCH_DEBOUNCE_MS);
   const [searchRows, setSearchRows] = useState<UniverseRow[]>([]);
@@ -105,6 +149,13 @@ export function BasketConstructor() {
 
   const [isPresetLoading, setIsPresetLoading] = useState(false);
   const [presetError, setPresetError] = useState<string | null>(null);
+  const [presetDisclaimer, setPresetDisclaimer] = useState<string | null>(null);
+  // Задача 35 review (MAJOR 2): прогресс последовательной материализации пресета (source=market/
+  // recommended) — null вне батча материализации (source=portfolio не материализует построчно).
+  const [presetProgress, setPresetProgress] = useState<{ current: number; total: number } | null>(null);
+  // Задача 35 review (MAJOR 2): предупреждение (не ошибка) о том, что пул кандидатов больше
+  // PRESET_MATERIALIZE_LIMIT — показаны только крупнейшие по весу строки.
+  const [presetCapWarning, setPresetCapWarning] = useState<string | null>(null);
 
   const [isCalculating, setIsCalculating] = useState(false);
   const [calculateError, setCalculateError] = useState<string | null>(null);
@@ -184,29 +235,102 @@ export function BasketConstructor() {
   };
 
   /**
-   * Пресет «Максимум доходности» (plan/29 §C.2) — заполняет корзину результатом жадного алгоритма
-   * (GET /api/analytics/allocation, тот же вызов, что раньше показывался напрямую в этой секции)
-   * как отправную точку: вес каждой строки = её фактическая доля потраченной суммы (estimatedCostRub
-   * / amountRub × 100), НЕ включает скипнутые бумаги (allocation.skipped). Дальше пользователь сам
-   * подстраивает проценты — сам алгоритм по-прежнему живёт в GET /allocation без изменений контракта.
+   * Пресет «Максимум доходности» (plan/29 §C.2, задача 35 §C.1 — источник кандидатов): заполняет
+   * корзину результатом жадного алгоритма (GET /api/analytics/allocation?source=) как отправную
+   * точку: вес каждой строки = её фактическая доля потраченной суммы (estimatedCostRub / amountRub
+   * × 100), НЕ включает скипнутые бумаги (allocation.skipped). Дальше пользователь сам подстраивает
+   * проценты — сам алгоритм по-прежнему живёт в GET /allocation без изменений контракта.
+   * <para>
+   * <b>Подводный камень (эскалация задачи 34, решено здесь):</b> для source=portfolio каждая строка
+   * несёт реальный <c>instrumentId</c> (как раньше) — используем напрямую. Для source=market/
+   * recommended бэкенд отдаёт <c>instrumentId: null</c> (банк-кандидат не связан с таблицей
+   * Instrument) — <c>POST /basket</c> требует реальный Instrument.Id, поэтому каждую такую строку
+   * материализуем через <see cref="postMaterialize"/> по её <c>secid</c> (тот же путь, что ручное
+   * добавление строки ниже/MarketComparator.handleSelect) ПЕРЕД тем, как класть в корзину.
+   * `isPresetLoading` остаётся true на всё время материализации — кнопка пресета показывает
+   * загрузку. Ошибка материализации ОДНОЙ бумаги не роняет весь пресет — строка пропускается,
+   * `presetError` сообщает, сколько бумаг пропущено.
+   * </para>
+   * <para>
+   * <b>Задача 35 review (MAJOR 2):</b> пул кандидатов source=market/recommended может доходить до
+   * бэкендового потолка (200 строк) — последовательная материализация всех строк HTTP-запросами к
+   * MOEX могла зависать на минуты без обратной связи. Материализуем не более
+   * {@link PRESET_MATERIALIZE_LIMIT} строк — крупнейшие по фактическому весу покупки
+   * (<c>estimatedCostRub</c>), остальные молча отбрасываются с предупреждением
+   * (`presetCapWarning`, не ошибка). На время батча `presetProgress` даёт счётчик «X из Y» вместо
+   * голого спиннера.
+   * </para>
    */
   const handleUseGreedyPreset = async () => {
     setIsPresetLoading(true);
     setPresetError(null);
+    setPresetDisclaimer(null);
+    setPresetCapWarning(null);
+    setPresetProgress(null);
     try {
-      const allocation = await fetchAllocation(amountRub);
-      const newLines: BasketDraftLine[] = allocation.allocations.map((a) => ({
-        instrumentId: a.instrumentId,
-        name: a.name ?? a.issuer ?? `Инструмент #${a.instrumentId}`,
-        issuer: a.issuer,
-        weightPercent: amountRub > 0 ? (a.estimatedCostRub / amountRub) * 100 : 0,
-      }));
-      setLines(newLines);
+      const allocation = await fetchAllocation(amountRub, { source });
+      setPresetDisclaimer(allocation.disclaimer || null);
+
+      if (source === 'portfolio') {
+        const newLines: BasketDraftLine[] = allocation.allocations
+          .filter((a): a is AllocationLine & { instrumentId: number } => a.instrumentId !== null)
+          .map((a) => ({
+            instrumentId: a.instrumentId,
+            name: a.name ?? a.issuer ?? `Инструмент #${a.instrumentId}`,
+            issuer: a.issuer,
+            weightPercent: amountRub > 0 ? (a.estimatedCostRub / amountRub) * 100 : 0,
+            secid: a.secid ?? undefined,
+            riskSignals: a.riskSignals,
+          }));
+        setLines(newLines);
+        setResult(null);
+        return;
+      }
+
+      // source=market/recommended: instrumentId всегда null — материализуем каждую строку по её
+      // secid, последовательно. Пул кандидатов ограничен потолком бэкенда (200 строк) — капим до
+      // PRESET_MATERIALIZE_LIMIT крупнейших по estimatedCostRub (см. doc-comment выше/MAJOR 2).
+      const eligible = allocation.allocations.filter(
+        (a): a is AllocationLine & { secid: string } => a.secid !== null, // контракт задачи 34: market/recommended всегда несут secid.
+      );
+      const capped = [...eligible].sort((a, b) => b.estimatedCostRub - a.estimatedCostRub).slice(0, PRESET_MATERIALIZE_LIMIT);
+
+      setPresetProgress({ current: 0, total: capped.length });
+      const materializedLines: BasketDraftLine[] = [];
+      let failedCount = 0;
+      for (let i = 0; i < capped.length; i++) {
+        const a = capped[i];
+        try {
+          const materialized = await postMaterialize(a.secid);
+          materializedLines.push({
+            instrumentId: materialized.instrumentId,
+            name: a.name ?? materialized.metrics.name ?? a.secid,
+            issuer: a.issuer ?? materialized.metrics.issuer ?? null,
+            weightPercent: amountRub > 0 ? (a.estimatedCostRub / amountRub) * 100 : 0,
+            secid: a.secid,
+            riskSignals: a.riskSignals,
+          });
+        } catch {
+          failedCount += 1;
+        } finally {
+          setPresetProgress({ current: i + 1, total: capped.length });
+        }
+      }
+      setLines(materializedLines);
       setResult(null);
+      if (failedCount > 0) {
+        setPresetError(`Не удалось добавить ${failedCount} бумаг(и) из пресета — пропущены.`);
+      }
+      if (eligible.length > capped.length) {
+        setPresetCapWarning(
+          `Показаны ${capped.length} крупнейших строк пресета из ${eligible.length} — остальные пропущены.`,
+        );
+      }
     } catch (err) {
       setPresetError(err instanceof Error ? err.message : 'Не удалось применить пресет');
     } finally {
       setIsPresetLoading(false);
+      setPresetProgress(null);
     }
   };
 
@@ -246,6 +370,7 @@ export function BasketConstructor() {
           min={1}
           value={amountRub}
           onChange={(v) => setAmountRub(typeof v === 'number' ? v : Number(v) || 0)}
+          disabled={isPresetLoading}
           data-testid="basket-amount-input"
           w={200}
         />
@@ -259,11 +384,53 @@ export function BasketConstructor() {
         </Button>
       </Group>
 
+      {/* Задача 35 review (MAJOR MINOR/контролы): на время батча материализации пресета сумма и
+          источник кандидатов заблокированы — пользователь не может менять параметры под ногами у
+          идущего последовательного цикла запросов к MOEX (см. handleUseGreedyPreset). */}
+      {isPresetLoading && presetProgress && (
+        <Text size="xs" c="dimmed" mb="sm" data-testid="basket-preset-progress">
+          Материализация {presetProgress.current} из {presetProgress.total}…
+        </Text>
+      )}
+
+      <Group gap={6} align="center" mb="sm">
+        <Text size="xs" fw={600} c="dimmed">
+          Источник кандидатов пресета
+        </Text>
+        <ChartExplainIcon
+          title="Источник кандидатов"
+          explanation={SOURCE_EXPLANATION}
+          data-testid="basket-source-explain-icon"
+        />
+      </Group>
+      <SegmentedControl
+        value={source}
+        onChange={(v) => setSource(v as AllocationSource)}
+        data={SOURCE_OPTIONS}
+        disabled={isPresetLoading}
+        mb="sm"
+        data-testid="basket-source-control"
+      />
+
       {presetError && (
         <Alert color="red" mb="sm" data-testid="basket-preset-error">
           {presetError}
         </Alert>
       )}
+
+      {!presetError && presetCapWarning && (
+        <Alert color="yellow" mb="sm" data-testid="basket-preset-cap-warning">
+          {presetCapWarning}
+        </Alert>
+      )}
+
+      {!presetError && presetDisclaimer && (
+        <Text size="xs" c="dimmed" mb="sm" data-testid="basket-preset-disclaimer">
+          {presetDisclaimer}
+        </Text>
+      )}
+
+      {lines.some((l) => l.riskSignals) && <RiskSignalsCaption />}
 
       <Select
         label="Добавить бумагу в корзину"
@@ -309,32 +476,41 @@ export function BasketConstructor() {
                 </Table.Tr>
               </Table.Thead>
               <Table.Tbody>
-                {lines.map((line) => (
-                  <Table.Tr key={line.instrumentId} data-testid={`basket-draft-line-${line.instrumentId}`}>
-                    <Table.Td>{line.name}</Table.Td>
-                    <Table.Td>
-                      <NumberInput
-                        min={1}
-                        max={100}
-                        value={line.weightPercent}
-                        onChange={(v) => handleWeightChange(line.instrumentId, typeof v === 'number' ? v : Number(v) || 0)}
-                        data-testid={`basket-draft-weight-${line.instrumentId}`}
-                        w={100}
-                      />
-                    </Table.Td>
-                    <Table.Td>
-                      <ActionIcon
-                        color="red"
-                        variant="subtle"
-                        onClick={() => handleRemoveLine(line.instrumentId)}
-                        aria-label="Удалить строку"
-                        data-testid={`basket-draft-remove-${line.instrumentId}`}
-                      >
-                        ×
-                      </ActionIcon>
-                    </Table.Td>
-                  </Table.Tr>
-                ))}
+                {lines.map((line) => {
+                  // Задача 35 §C.1/пресет: ключ рендера рыночных строк (source=market/recommended) —
+                  // secid, не instrumentId (см. doc-comment handleUseGreedyPreset) — ручные строки
+                  // secid не несут, откатываются на instrumentId (прежнее поведение, тесты не меняются).
+                  const rowKey = line.secid ?? line.instrumentId;
+                  return (
+                    <Table.Tr key={rowKey} data-testid={`basket-draft-line-${rowKey}`}>
+                      <Table.Td>
+                        <Text size="sm">{line.name}</Text>
+                        {line.riskSignals && <RiskSignalBadges signals={line.riskSignals} testIdSuffix={`draft-${rowKey}`} />}
+                      </Table.Td>
+                      <Table.Td>
+                        <NumberInput
+                          min={1}
+                          max={100}
+                          value={line.weightPercent}
+                          onChange={(v) => handleWeightChange(line.instrumentId, typeof v === 'number' ? v : Number(v) || 0)}
+                          data-testid={`basket-draft-weight-${line.instrumentId}`}
+                          w={100}
+                        />
+                      </Table.Td>
+                      <Table.Td>
+                        <ActionIcon
+                          color="red"
+                          variant="subtle"
+                          onClick={() => handleRemoveLine(line.instrumentId)}
+                          aria-label="Удалить строку"
+                          data-testid={`basket-draft-remove-${line.instrumentId}`}
+                        >
+                          ×
+                        </ActionIcon>
+                      </Table.Td>
+                    </Table.Tr>
+                  );
+                })}
               </Table.Tbody>
             </Table>
           </Table.ScrollContainer>

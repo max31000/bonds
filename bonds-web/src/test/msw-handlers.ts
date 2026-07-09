@@ -64,10 +64,27 @@ export const handlers = [
     }),
   ),
   http.get('*/api/analytics/allocation', () =>
-    HttpResponse.json({ amountRub: 15000, allocations: [], skipped: [], leftoverRub: 15000, disclaimer: '' }),
+    HttpResponse.json({
+      amountRub: 15000,
+      source: 'portfolio',
+      allocations: [],
+      skipped: [],
+      leftoverRub: 15000,
+      disclaimer: '',
+      commissionRateUsed: 0.003,
+      commissionRateSource: 'Default',
+      candidatePoolAvailable: null,
+      candidatePoolLimit: null,
+      candidatePoolTruncated: null,
+    }),
+  ),
+  // Дефолтный кейс для 33/35 (панель подбора замены, блок 1) — пусто; конкретные сценарии
+  // переопределяются в тестах Recommendations.
+  http.get('*/api/analytics/replacement-candidates', () =>
+    HttpResponse.json({ mode: 'market', positionIsin: '', candidates: [], disclaimer: '' }),
   ),
   // Дефолтный кейс для 30 (relative value) — пусто; конкретные сценарии переопределяются в тестах
-  // Recommendations/Positions/RelativeValueSection.
+  // Recommendations/Positions.
   http.get('*/api/analytics/relative-value', () => HttpResponse.json({ positions: [], disclaimer: '' })),
   // Дефолтный кейс для 29 (BasketConstructor) — конкретные сценарии переопределяются в тестах компонента.
   http.post('*/api/analytics/basket', () =>

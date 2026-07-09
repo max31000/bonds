@@ -1,12 +1,14 @@
 import { apiClient } from './client';
 import type {
   AllocationResponse,
+  AllocationSource,
   BasketRequest,
   BasketResponse,
   ComparisonResponse,
   ReplacementRequest,
   ReplacementResponse,
-  ReplacementMatrixResponse,
+  ReplacementCandidatesMode,
+  ReplacementCandidatesResponse,
   RelativeValueResponse,
 } from './types';
 
@@ -16,31 +18,49 @@ export function fetchComparison(): Promise<ComparisonResponse> {
 }
 
 /**
- * POST /api/analytics/replacement — «держать A vs переложиться в B» (plan/17 §A, секция «Замены»).
- * Задача 23: фронт больше не вызывает этот эндпоинт напрямую (см. fetchReplacementMatrix) — оставлен
- * ради обратной совместимости контракта (интеграционные тесты старого эндпоинта).
+ * POST /api/analytics/replacement — «держать A vs переложиться в B» (plan/17 §A). Задача 35:
+ * единый путь оценки выгоды выбранного кандидата — вызывается из блока 1 после materialize
+ * выбранного кандидата (mode=market/rv/поиск), тот же путь, что раньше использовал MarketComparator.
  */
 export function postReplacement(request: ReplacementRequest): Promise<ReplacementResponse> {
   return apiClient.post<ReplacementResponse>('/analytics/replacement', request);
 }
 
 /**
- * GET /api/analytics/replacement-matrix — задача 23: серверный перебор ВСЕХ пар «держать vs
- * переложиться» (портфель + watchlist-таргеты) одним запросом вместо фронтового цикла из до 6
- * постов (buildReplacementRequests, удалён из useRecommendationsStore).
+ * GET /api/analytics/replacement-candidates?positionId=&mode= — задача 33 часть B / задача 35 §A:
+ * единый источник кандидатов-замен ОДНОЙ позиции портфеля для блока 1 «Рекомендаций» —
+ * mode=market (самые доходные фикс-купонные бумаги банка) / mode=rv (дешёвые соседи по корзине
+ * сектор×дюрация позиции). Дешёвая банк-статистика + информационные риск-сигналы; точную выгоду
+ * выбранного кандидата считает POST /analytics/replacement (см. doc-comment postReplacement).
  */
-export function fetchReplacementMatrix(): Promise<ReplacementMatrixResponse> {
-  return apiClient.get<ReplacementMatrixResponse>('/analytics/replacement-matrix');
+export function fetchReplacementCandidates(
+  positionId: number,
+  mode: ReplacementCandidatesMode,
+  limit?: number,
+): Promise<ReplacementCandidatesResponse> {
+  const params = new URLSearchParams({ positionId: String(positionId), mode });
+  if (limit !== undefined) params.set('limit', String(limit));
+  return apiClient.get<ReplacementCandidatesResponse>(`/analytics/replacement-candidates?${params.toString()}`);
 }
 
 /**
- * GET /api/analytics/allocation?amountRub=&includeWatchlist= — «куда вложить сумму» (plan/17 §A/§B).
- * Задача 20: includeWatchlist=true (дефолт здесь на фронте) добавляет watchlist-бумаги как кандидатов.
+ * GET /api/analytics/allocation?amountRub=&source=&includeWatchlist= — «куда вложить сумму»
+ * (plan/17 §A/§B, задача 34 добавила source). source по умолчанию "portfolio" (прежнее поведение —
+ * докупка только позиций счёта); "market"/"recommended" — вся биржа/отфильтрованная выборка банка,
+ * не зависят от includeWatchlist (бэкенд игнорирует его вне source=portfolio).
  */
-export function fetchAllocation(amountRub: number, includeWatchlist = true): Promise<AllocationResponse> {
-  return apiClient.get<AllocationResponse>(
-    `/analytics/allocation?amountRub=${amountRub}&includeWatchlist=${includeWatchlist}`,
-  );
+export function fetchAllocation(
+  amountRub: number,
+  options?: { source?: AllocationSource; includeWatchlist?: boolean },
+): Promise<AllocationResponse> {
+  const source = options?.source ?? 'portfolio';
+  const includeWatchlist = options?.includeWatchlist ?? true;
+  const params = new URLSearchParams({
+    amountRub: String(amountRub),
+    source,
+    includeWatchlist: String(includeWatchlist),
+  });
+  return apiClient.get<AllocationResponse>(`/analytics/allocation?${params.toString()}`);
 }
 
 /**

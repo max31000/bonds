@@ -110,6 +110,7 @@ public class Stage08EndpointsTests
     [InlineData("GET", "/api/analytics/comparison")]
     [InlineData("POST", "/api/analytics/replacement")]
     [InlineData("GET", "/api/analytics/replacement-matrix")]
+    [InlineData("GET", "/api/analytics/replacement-candidates?positionId=1&mode=market")]
     [InlineData("GET", "/api/analytics/allocation?amountRub=1000")]
     [InlineData("GET", "/api/signals")]
     [InlineData("POST", "/api/signals/1/read")]
@@ -426,6 +427,80 @@ public class Stage08EndpointsTests
         // Обе позиции без котировок -> доходность не определена -> YieldDataIncomplete = true,
         // но ответ всё равно 200 (spec §4.4).
         body.GetProperty("yieldDataIncomplete").GetBoolean().Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task PostReplacement_TargetNotInBank_TargetRiskSignalsIsNull()
+    {
+        // Задача 33 часть B.4 — цель без банк-записи (не покрыта биржевой статистикой MOEX, тот
+        // же случай, что SeedPositionAsync — позиция без записи в bond_universe) -> null, не ошибка.
+        var (client, _, accountId) = await CreateAuthorizedClientAsync();
+        var (_, positionId1) = await SeedPositionAsync(accountId);
+        var (_, positionId2) = await SeedPositionAsync(accountId);
+
+        var response = await client.PostAsJsonAsync("/api/analytics/replacement", new
+        {
+            holdPositionId = positionId1,
+            targetPositionId = positionId2,
+            horizonYears = 2,
+        });
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        body.TryGetProperty("targetRiskSignals", out var signals).Should().BeTrue();
+        signals.ValueKind.Should().Be(JsonValueKind.Null);
+    }
+
+    [Fact]
+    public async Task PostReplacement_TargetInBank_ReturnsTargetRiskSignals()
+    {
+        // Задача 33 часть B.4 — цель найдена в банке по ISIN -> риск-сигналы посчитаны.
+        var (client, _, accountId) = await CreateAuthorizedClientAsync();
+        var (_, holdPositionId) = await SeedPositionAsync(accountId);
+        var (targetInstrumentId, targetPositionId) = await SeedPositionAsync(accountId);
+
+        var instrumentRepo = new InstrumentRepository(_factory.Database.ConnectionString);
+        var targetIsin = (await instrumentRepo.GetByIdAsync(targetInstrumentId))!.Isin;
+
+        var universeRepo = new BondUniverseRepository(_factory.Database.ConnectionString);
+        await universeRepo.UpsertSnapshotBatchAsync(new[]
+        {
+            new BondUniverseEntry
+            {
+                Secid = $"TGT{Guid.NewGuid():N}"[..10],
+                Isin = targetIsin,
+                ShortName = "Target bond",
+                FaceValue = 1000m,
+                Sector = "Корпоративные",
+                YieldFraction = 0.20m,
+                DurationYears = 2m,
+                PricePercent = 99m,
+                TurnoverRub = 1_000_000m,
+                BidPercent = 99m,
+                OfferPercent = 100m,
+                NumTrades = 10,
+                ListLevel = 1,
+                GspreadApproxFraction = 0.05m,
+                IsFloater = false,
+                MaturityDate = DateOnly.FromDateTime(DateTime.UtcNow.AddYears(3)),
+                UpdatedAt = DateTime.UtcNow,
+            },
+        });
+
+        var response = await client.PostAsJsonAsync("/api/analytics/replacement", new
+        {
+            holdPositionId,
+            targetPositionId,
+            horizonYears = 2,
+        });
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var signals = body.GetProperty("targetRiskSignals");
+        signals.ValueKind.Should().NotBe(JsonValueKind.Null);
+        signals.GetProperty("liquidity").ValueKind.Should().Be(JsonValueKind.String);
+        signals.GetProperty("spread").ValueKind.Should().Be(JsonValueKind.String);
+        signals.GetProperty("gSpreadFraction").GetDecimal().Should().Be(0.05m);
     }
 
     [Fact]

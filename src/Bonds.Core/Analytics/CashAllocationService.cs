@@ -1,13 +1,46 @@
 namespace Bonds.Core.Analytics;
 
 /// <summary>
-/// «Куда вложить сумму» (plan/17 §B) — жадное распределение свободных денег между текущими
-/// позициями портфеля (НЕ скринер по всей вселенной бумаг — та же граница MVP, что у
-/// <see cref="SwitchAnalysisService"/>, spec §3 «Вне скоупа»). Кандидаты сортируются по убыванию
-/// эффективной доходности (YTM либо текущая купонная доходность для флоатера/индексируемой —
-/// та же логика выбора, что в <see cref="PositionComparisonService"/>), и деньги идут в бумагу
-/// с максимальной доходностью, пока не упрутся в лимит концентрации по эмитенту или в остаток
-/// денег меньше цены одной бумаги. Чистый сервис, без I/O.
+/// Задача 34 часть B.3 — какую ось концентрации применяет <see cref="CashAllocationService.Allocate"/>.
+/// Issuer в банке (<c>bond_universe</c>) отсутствует (задача 34 doc-comment
+/// <see cref="CashAllocationCandidate.Sector"/>) — для рыночных источников (market/recommended)
+/// нужна альтернативная ось, а "market" по решению владельца (см. plan/34 часть B.3 NEEDS DECISION,
+/// принято: "market" — честный greedy по доходности) вовсе без лимита концентрации.
+/// </summary>
+public enum CashAllocationConcentrationAxis
+{
+    /// <summary>Дефолт — лимит доли ЭМИТЕНТА (<see cref="CashAllocationCandidate.Issuer"/>/
+    /// <see cref="CashAllocationCandidate.CurrentIssuerMarketValueRub"/>), source=portfolio, прежнее
+    /// поведение до задачи 34 без изменений.</summary>
+    Issuer,
+
+    /// <summary>Лимит доли СЕКТОРА (<see cref="CashAllocationCandidate.Sector"/>) — source=recommended
+    /// (задача 34). Требует <c>maxSectorSharePercent</c> в <see cref="CashAllocationService.Allocate"/>.
+    /// В отличие от issuer-оси, "текущая доля сектора в портфеле" НЕ учитывается (на банк-слое нет
+    /// данных о секторной композиции уже удерживаемых позиций) — лимит ограничивает распределение
+    /// ТОЛЬКО вносимых денег между секторами кандидатов, не всего портфеля.</summary>
+    Sector,
+
+    /// <summary>Без лимита концентрации вовсе — source=market (задача 34, принятый дефолт NEEDS
+    /// DECISION plan/34 часть B.3): "весь рынок" должен честно показывать самые доходные бумаги без
+    /// диверсификационных искажений; диверсификация в этом режиме — только через
+    /// <c>maxLotsPerCandidate</c> (не более 1 лота на кандидата).</summary>
+    None,
+}
+
+/// <summary>
+/// «Куда вложить сумму» (plan/17 §B, задача 34 §B — источники кандидатов). Жадное распределение
+/// свободных денег между кандидатами: для source=portfolio — текущими позициями портфеля (НЕ
+/// скринер по всей вселенной бумаг — та же граница MVP, что у <see cref="SwitchAnalysisService"/>,
+/// spec §3 «Вне скоупа»); для source=market/recommended (задача 34) — кандидатами всей
+/// фикс-купонной вселенной банка <c>bond_universe</c> (вызывающий эндпоинт строит
+/// <see cref="CashAllocationCandidate"/> из банк-записей, сервис не знает о происхождении
+/// кандидата — тот же принцип, что <see cref="CashAllocationCandidate.IsComparable"/>). Кандидаты
+/// сортируются по убыванию эффективной доходности (YTM либо текущая купонная доходность для
+/// флоатера/индексируемой — та же логика выбора, что в <see cref="PositionComparisonService"/>), и
+/// деньги идут в бумагу с максимальной доходностью, пока не упрутся в активную ось концентрации
+/// (<see cref="CashAllocationConcentrationAxis"/>), в лимит лотов на кандидата
+/// (<c>maxLotsPerCandidate</c>) или в остаток денег меньше цены одной бумаги. Чистый сервис, без I/O.
 /// </summary>
 public static class CashAllocationService
 {
@@ -15,6 +48,20 @@ public static class CashAllocationService
     /// <c>SignalEngineOptions.DefaultMaxConcentrationPercent</c>; здесь отдельная константа, т.к. сервис
     /// не имеет доступа к Signals-слою, но значение намеренно совпадает).</summary>
     public const decimal DefaultMaxIssuerSharePercent = 25m;
+
+    /// <summary>
+    /// Задача 34 часть B.3 — дефолтный лимит доли СЕКТОРА для source=recommended
+    /// (<see cref="CashAllocationConcentrationAxis.Sector"/>). 35% — выбрано в согласованном
+    /// владельцем диапазоне 30-40% (plan/34 NEEDS DECISION), ближе к верхней границе: банк
+    /// классифицирует сектор ГРУБО, всего 3 значения (<c>BondUniverseSectorMapper</c>:
+    /// "Гособлигации"/"Муниципальные"/"Корпоративные", подавляющее большинство корпоративных бумаг
+    /// попадает в один общий бакет) — прямое переиспользование issuer-лимита (25%, рассчитанного на
+    /// десятки/сотни отдельных эмитентов) было бы слишком тесным для всего в 3 бакета и почти всегда
+    /// резало бы "Корпоративные" даже при разумной докупке. 35% (чуть выше равного деления 1/3 ≈
+    /// 33.3%) не даёт жадному проходу полностью уйти в один бакет, но оставляет разумный перекос к
+    /// самому доходному сектору.
+    /// </summary>
+    public const decimal DefaultMaxSectorSharePercent = 35m;
 
     public const string Disclaimer =
         "Оценка распределения свободных средств по бумагам текущего портфеля (не скринер по всей " +
@@ -26,22 +73,49 @@ public static class CashAllocationService
     /// Распределяет <paramref name="amountRub"/> между <paramref name="candidates"/>.
     /// Алгоритм: сортировка кандидатов по убыванию <see cref="CashAllocationCandidate.EffectiveYield"/>
     /// (кандидаты без доходности — в конец, помечаются пропуском «нет доходности», не участвуют в
-    /// распределении); для каждого по очереди докупаем максимум лотов, пока остаток эмитента в
-    /// портфеле ПОСЛЕ покупки не превышает <paramref name="maxIssuerSharePercent"/> от суммы
-    /// (текущая рыночная стоимость всего портфеля + вносимая сумма — база расширяется деньгами,
-    /// которые физически входят в портфель); если лимит не позволяет купить ни одного лота —
-    /// кандидат помечается пропуском «лимит концентрации» и распределение переходит к следующему.
-    /// Остановка — остаток денег меньше цены самой дешёвой доступной бумаги среди кандидатов.
+    /// распределении); для каждого по очереди докупаем максимум лотов, пока:
+    /// <list type="bullet">
+    /// <item>не упрёмся в <paramref name="maxLotsPerCandidate"/> (задача 34 — диверсификация "не
+    /// более N лотов на кандидата"; null — без ограничения, прежнее поведение);</item>
+    /// <item>не упрёмся в активную ось концентрации <paramref name="concentrationAxis"/>: доля
+    /// эмитента (<paramref name="maxIssuerSharePercent"/>, дефолт — прежнее поведение source=portfolio)
+    /// либо доля сектора (<paramref name="maxSectorSharePercent"/>, задача 34 — source=recommended)
+    /// либо совсем без лимита (<see cref="CashAllocationConcentrationAxis.None"/> — source=market,
+    /// задача 34). База лимита РАЗНАЯ для двух осей: Issuer делит на текущую рыночную стоимость
+    /// ВСЕГО портфеля + вносимая сумма (растёт по мере того, как деньги физически входят в
+    /// портфель, иначе лимит считался бы от "старой" базы и позволял бы перекос сильнее заявленного);
+    /// Sector делит на ФИКСИРОВАННЫЙ <paramref name="amountRub"/> (весь бюджет распределения) — у
+    /// сектора нет содержательной "текущей доли в портфеле" (банк не знает секторную композицию уже
+    /// удерживаемых позиций), а деление на растущую с нуля базу сделало бы лимит бесполезным (первый
+    /// же купленный лот любого сектора математически давал бы долю 100% и блокировался бы любым
+    /// лимитом &lt;100%);</item>
+    /// <item>не кончатся деньги (остаток меньше цены ещё одного лота).</item>
+    /// </list>
+    /// Если ни одного лота купить не удалось: для оси Issuer (обратная совместимость source=portfolio,
+    /// поведение НЕ менялось задачей 34) причина всегда <see cref="CashAllocationSkipReason.ConcentrationLimit"/>
+    /// — так было исторически, даже когда истинная причина "не хватило денег на первый лот"; для
+    /// осей Sector/None (задача 34, новый код, ничьё поведение не ломает) причина различается честно:
+    /// <see cref="CashAllocationSkipReason.InsufficientFunds"/>, если денег не хватило бы даже без
+    /// учёта лимита концентрации, иначе <see cref="CashAllocationSkipReason.ConcentrationLimit"/>.
     /// </summary>
     public static CashAllocationResult Allocate(
         decimal amountRub,
         IReadOnlyList<CashAllocationCandidate> candidates,
         decimal currentPortfolioValueRub,
-        decimal maxIssuerSharePercent = DefaultMaxIssuerSharePercent)
+        decimal maxIssuerSharePercent = DefaultMaxIssuerSharePercent,
+        CashAllocationConcentrationAxis concentrationAxis = CashAllocationConcentrationAxis.Issuer,
+        decimal? maxSectorSharePercent = null,
+        int? maxLotsPerCandidate = null)
     {
         if (amountRub <= 0m)
         {
             throw new ArgumentOutOfRangeException(nameof(amountRub), "Сумма должна быть положительной.");
+        }
+
+        if (concentrationAxis == CashAllocationConcentrationAxis.Sector && maxSectorSharePercent is null)
+        {
+            throw new ArgumentException(
+                "maxSectorSharePercent обязателен при concentrationAxis=Sector.", nameof(maxSectorSharePercent));
         }
 
         var allocations = new List<CashAllocationLine>();
@@ -51,10 +125,21 @@ public static class CashAllocationService
         // Итоговая база для лимита концентрации растёт по мере того, как деньги физически входят
         // в портфель (иначе лимит считался бы от "старой" базы и позволял бы перекос сильнее заявленного).
         var portfolioValueAfterAllocation = currentPortfolioValueRub;
-        var issuerValueAfterAllocation = candidates
-            .Where(c => c.Issuer is not null)
-            .GroupBy(c => c.Issuer)
-            .ToDictionary(g => g.Key!, g => g.Sum(c => c.CurrentIssuerMarketValueRub));
+
+        var bucketValueAfterAllocation = concentrationAxis switch
+        {
+            // Sector: своей "текущей" величины на банк-слое нет (см. doc-comment метода) — бакеты
+            // стартуют с нуля, растут только за счёт новой докупки.
+            CashAllocationConcentrationAxis.Sector => candidates
+                .Where(c => c.Sector is not null)
+                .GroupBy(c => c.Sector!)
+                .ToDictionary(g => g.Key, _ => 0m),
+            CashAllocationConcentrationAxis.None => new Dictionary<string, decimal>(),
+            _ => candidates
+                .Where(c => c.Issuer is not null)
+                .GroupBy(c => c.Issuer!)
+                .ToDictionary(g => g.Key, g => g.Sum(c => c.CurrentIssuerMarketValueRub)),
+        };
 
         var ordered = candidates
             .OrderByDescending(c => c.EffectiveYield.HasValue)
@@ -74,6 +159,7 @@ public static class CashAllocationService
                 skipped.Add(new CashAllocationSkip
                 {
                     InstrumentId = candidate.InstrumentId,
+                    Secid = candidate.Secid,
                     Name = candidate.Name,
                     Issuer = candidate.Issuer,
                     Reason = CashAllocationSkipReason.NotComparable,
@@ -86,6 +172,7 @@ public static class CashAllocationService
                 skipped.Add(new CashAllocationSkip
                 {
                     InstrumentId = candidate.InstrumentId,
+                    Secid = candidate.Secid,
                     Name = candidate.Name,
                     Issuer = candidate.Issuer,
                     Reason = CashAllocationSkipReason.NoYield,
@@ -98,6 +185,7 @@ public static class CashAllocationService
                 skipped.Add(new CashAllocationSkip
                 {
                     InstrumentId = candidate.InstrumentId,
+                    Secid = candidate.Secid,
                     Name = candidate.Name,
                     Issuer = candidate.Issuer,
                     Reason = CashAllocationSkipReason.NoPrice,
@@ -105,34 +193,73 @@ public static class CashAllocationService
                 continue;
             }
 
-            var issuerKey = candidate.Issuer ?? $"__instrument_{candidate.InstrumentId}";
-            var issuerValue = issuerValueAfterAllocation.TryGetValue(issuerKey, out var v) ? v : 0m;
+            // Задача 34: ключ бакета зависит от активной оси — Sector/None читают Sector/ничего,
+            // Issuer (прежнее поведение) — Issuer с fallback на InstrumentId, если у кандидата нет
+            // эмитента (тот же fallback, что и до задачи 34; InstrumentId для этой оси всегда не
+            // null — источник portfolio всегда его проставляет, см. doc-comment CashAllocationCandidate.InstrumentId).
+            string? bucketKey = concentrationAxis switch
+            {
+                CashAllocationConcentrationAxis.Sector => candidate.Sector,
+                CashAllocationConcentrationAxis.None => null,
+                _ => candidate.Issuer ?? $"__instrument_{candidate.InstrumentId}",
+            };
+
+            var effectiveMaxSharePercent = concentrationAxis == CashAllocationConcentrationAxis.Sector
+                ? maxSectorSharePercent!.Value
+                : maxIssuerSharePercent;
+
+            var bucketValue = bucketKey is not null && bucketValueAfterAllocation.TryGetValue(bucketKey, out var v) ? v : 0m;
 
             var quantity = 0m;
             var costRub = 0m;
+            var lotsBoughtCount = 0;
 
             while (true)
             {
+                if (maxLotsPerCandidate is { } maxLots && lotsBoughtCount >= maxLots) break; // задача 34: не более N лотов на кандидата
+
                 var nextCostRub = costRub + candidate.PricePerLotRub;
                 if (nextCostRub > leftover) break; // не хватает денег на ещё один лот
 
                 var newPortfolioValue = portfolioValueAfterAllocation + candidate.PricePerLotRub;
-                var newIssuerValue = issuerValue + costRub + candidate.PricePerLotRub;
-                var newIssuerSharePercent = newPortfolioValue > 0m
-                    ? newIssuerValue / newPortfolioValue * 100m
-                    : 0m;
 
-                if (newIssuerSharePercent > maxIssuerSharePercent) break; // лимит концентрации
+                if (bucketKey is not null)
+                {
+                    var newBucketValue = bucketValue + costRub + candidate.PricePerLotRub;
+
+                    // Задача 34: ось Sector делит на ФИКСИРОВАННЫЙ amountRub (весь бюджет
+                    // распределения), а не на растущую базу newPortfolioValue, как ось Issuer.
+                    // Причина: у Issuer есть содержательная "текущая стоимость портфеля" — база
+                    // изначально большая и растёт только за вносимые деньги (реалистичное
+                    // "после докупки"). У Sector такой базы нет (currentPortfolioValueRub=0 для
+                    // market/recommended, см. вызывающий код) — если делить на растущую базу с
+                    // нуля, ПЕРВЫЙ ЖЕ купленный лот любого сектора математически даёт долю 100%
+                    // (это единственное, что куплено на тот момент) и блокируется любым лимитом
+                    // &lt;100%, что делает ось бесполезной. Деление на amountRub — "какая доля
+                    // ВСЕГО вносимого бюджета ушла в этот сектор" — не зависит от порядка покупок.
+                    var denominator = concentrationAxis == CashAllocationConcentrationAxis.Sector
+                        ? amountRub
+                        : newPortfolioValue;
+                    var newSharePercent = denominator > 0m
+                        ? newBucketValue / denominator * 100m
+                        : 0m;
+
+                    if (newSharePercent > effectiveMaxSharePercent) break; // лимит концентрации
+                }
 
                 costRub = nextCostRub;
                 quantity += candidate.LotSize;
+                lotsBoughtCount++;
                 portfolioValueAfterAllocation = newPortfolioValue;
             }
 
             if (quantity > 0m)
             {
                 leftover -= costRub;
-                issuerValueAfterAllocation[issuerKey] = issuerValue + costRub;
+                if (bucketKey is not null)
+                {
+                    bucketValueAfterAllocation[bucketKey] = bucketValue + costRub;
+                }
 
                 // Задача 24: разложение costRub (вся докупка) на компоненты — тот же множитель
                 // "число купленных лотов", что и у costRub относительно PricePerLotRub.
@@ -141,8 +268,10 @@ public static class CashAllocationService
                 allocations.Add(new CashAllocationLine
                 {
                     InstrumentId = candidate.InstrumentId,
+                    Secid = candidate.Secid,
                     Name = candidate.Name,
                     Issuer = candidate.Issuer,
+                    Sector = candidate.Sector,
                     Quantity = quantity,
                     EstimatedCostRub = costRub,
                     EffectiveYield = candidate.EffectiveYield.Value,
@@ -154,12 +283,23 @@ public static class CashAllocationService
             }
             else
             {
+                // Задача 34: ось Issuer сохраняет прежнее поведение (всегда ConcentrationLimit, см.
+                // doc-comment метода) для обратной совместимости source=portfolio; оси Sector/None —
+                // новый код, честно различает "не хватило бы денег даже без лимита" от "лимит
+                // реально заблокировал покупку".
+                var reason = concentrationAxis == CashAllocationConcentrationAxis.Issuer
+                    ? CashAllocationSkipReason.ConcentrationLimit
+                    : candidate.PricePerLotRub > leftover
+                        ? CashAllocationSkipReason.InsufficientFunds
+                        : CashAllocationSkipReason.ConcentrationLimit;
+
                 skipped.Add(new CashAllocationSkip
                 {
                     InstrumentId = candidate.InstrumentId,
+                    Secid = candidate.Secid,
                     Name = candidate.Name,
                     Issuer = candidate.Issuer,
-                    Reason = CashAllocationSkipReason.ConcentrationLimit,
+                    Reason = reason,
                 });
             }
         }
@@ -175,12 +315,42 @@ public static class CashAllocationService
     }
 }
 
-/// <summary>Один кандидат на докупку — текущая позиция портфеля (spec §3 — не вселенная бумаг).</summary>
+/// <summary>
+/// Один кандидат на докупку — для source=portfolio (plan/17 §B) текущая позиция портфеля, для
+/// source=market/recommended (задача 34) — запись <c>bond_universe</c> банка. Сервис не знает,
+/// откуда взялся кандидат (тот же принцип, что <see cref="IsComparable"/>).
+/// </summary>
 public sealed record CashAllocationCandidate
 {
-    public required ulong InstrumentId { get; init; }
+    /// <summary>
+    /// Реальный <c>Instrument.Id</c> — для source=portfolio (в т.ч. watchlist-кандидаты) ВСЕГДА не
+    /// null (holdings строятся из реальных позиций/материализованных инструментов). Для
+    /// source=market/recommended (задача 34) — null: банк-кандидат из <c>bond_universe</c> не связан
+    /// с таблицей Instrument (материализация каждого кандидата через
+    /// <c>POST /api/universe/{secid}/materialize</c> намеренно НЕ вызывается — план явно запрещает
+    /// "материализовывать вселенную через движок"; тот же принцип, что уже применён в
+    /// <c>ReplacementCandidateDto</c>, который по той же причине несёт Secid/Isin, а не InstrumentId).
+    /// Идентификатор для рыночных кандидатов — <see cref="Secid"/>.
+    /// </summary>
+    public required ulong? InstrumentId { get; init; }
+
+    /// <summary>Задача 34: биржевой идентификатор MOEX (SECID) — только для source=market/recommended
+    /// (идентификатор рыночного кандидата, см. <see cref="InstrumentId"/>). Null для source=portfolio.</summary>
+    public string? Secid { get; init; }
+
     public string? Name { get; init; }
+
+    /// <summary>Эмитент — только для source=portfolio (<c>bond_universe</c> банка эмитента не хранит,
+    /// см. <see cref="Sector"/>). Null для source=market/recommended (не выдумывать эмитента из
+    /// имени — см. doc-comment plan/34).</summary>
     public string? Issuer { get; init; }
+
+    /// <summary>Задача 34: грубая секторная классификация банка (<c>BondUniverseEntry.Sector</c> —
+    /// "Гособлигации"/"Муниципальные"/"Корпоративные", НЕ то же самое, что <c>Instrument.Sector</c>)
+    /// — альтернативная ось концентрации для source=market/recommended, когда issuer недоступен (см.
+    /// <see cref="CashAllocationConcentrationAxis.Sector"/>). Null для source=portfolio (issuer-ветка
+    /// не использует Sector).</summary>
+    public string? Sector { get; init; }
 
     /// <summary>YTM либо CurrentYield (для флоатера/индексируемой) — см. <see cref="PositionComparisonService"/>. Null — доходность не определена, кандидат пропускается.</summary>
     public decimal? EffectiveYield { get; init; }
@@ -244,9 +414,18 @@ public sealed record CashAllocationResult
 /// <summary>Одна строка распределения — сколько купить конкретной бумаги.</summary>
 public sealed record CashAllocationLine
 {
-    public required ulong InstrumentId { get; init; }
+    /// <summary>Null для source=market/recommended — см. doc-comment <see cref="CashAllocationCandidate.InstrumentId"/>. Идентификатор для этих строк — <see cref="Secid"/>.</summary>
+    public required ulong? InstrumentId { get; init; }
+
+    /// <summary>Задача 34: см. <see cref="CashAllocationCandidate.Secid"/>.</summary>
+    public string? Secid { get; init; }
+
     public string? Name { get; init; }
     public string? Issuer { get; init; }
+
+    /// <summary>Задача 34: см. <see cref="CashAllocationCandidate.Sector"/>.</summary>
+    public string? Sector { get; init; }
+
     public required decimal Quantity { get; init; }
     public required decimal EstimatedCostRub { get; init; }
     public required decimal EffectiveYield { get; init; }
@@ -274,7 +453,13 @@ public enum CashAllocationSkipReason
     /// <summary>Нет применимой доходности (YTM не сошёлся и не флоатер/индексируемая с CurrentYield).</summary>
     NoYield,
 
-    /// <summary>Лимит концентрации по эмитенту не позволяет купить ни одного лота.</summary>
+    /// <summary>
+    /// Активная ось концентрации (эмитент/сектор, <see cref="CashAllocationConcentrationAxis"/>) не
+    /// позволяет купить ни одного лота. Для оси Issuer (source=portfolio, поведение до задачи 34 не
+    /// менялось) — универсальная причина для ЛЮБОГО нулевого исхода, в т.ч. когда денег не хватило бы
+    /// даже без лимита (историческое упрощение). Для осей Sector/None (задача 34) она отличается от
+    /// <see cref="InsufficientFunds"/> честно (см. doc-comment <see cref="CashAllocationService.Allocate"/>).
+    /// </summary>
     ConcentrationLimit,
 
     /// <summary>Цена лота не определена (нет котировки).</summary>
@@ -287,12 +472,25 @@ public enum CashAllocationSkipReason
     /// если у неё формально есть высокая CurrentYield.
     /// </summary>
     NotComparable,
+
+    /// <summary>
+    /// Задача 34 — только для осей Sector/None (source=market/recommended): остатка денег не хватило
+    /// бы на 1 лот кандидата ДАЖЕ без учёта лимита концентрации (для оси None лимита концентрации
+    /// вообще нет — это единственная возможная причина нулевого исхода). Ось Issuer
+    /// (source=portfolio) этой причиной не пользуется — см. doc-comment <see cref="ConcentrationLimit"/>.
+    /// </summary>
+    InsufficientFunds,
 }
 
 /// <summary>Кандидат, не получивший докупку, и причина.</summary>
 public sealed record CashAllocationSkip
 {
-    public required ulong InstrumentId { get; init; }
+    /// <summary>Null для source=market/recommended — см. doc-comment <see cref="CashAllocationCandidate.InstrumentId"/>.</summary>
+    public required ulong? InstrumentId { get; init; }
+
+    /// <summary>Задача 34: см. <see cref="CashAllocationCandidate.Secid"/>.</summary>
+    public string? Secid { get; init; }
+
     public string? Name { get; init; }
     public string? Issuer { get; init; }
     public required CashAllocationSkipReason Reason { get; init; }

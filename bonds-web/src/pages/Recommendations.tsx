@@ -10,12 +10,12 @@ import {
   Center,
   Group,
   Button,
-  SimpleGrid,
   Table,
   TextInput,
   ActionIcon,
   Collapse,
   UnstyledButton,
+  SegmentedControl,
 } from '@mantine/core';
 import { useRecommendationsStore } from '../store/useRecommendationsStore';
 import { useWatchlistStore } from '../store/useWatchlistStore';
@@ -25,19 +25,277 @@ import { ReplacementBreakdown } from '../components/ReplacementBreakdown';
 import { MarketComparator } from '../components/MarketComparator';
 import { BasketConstructor } from '../components/BasketConstructor';
 import { RelativeValueBadge } from '../components/RelativeValueBadge';
-import { RelativeValueSection } from '../components/RelativeValueSection';
+import { RiskSignalBadges, RiskSignalsCaption } from '../components/RiskSignalBadges';
+import { fetchReplacementCandidates, postReplacement } from '../api/recommendations';
+import { postMaterialize } from '../api/universe';
 import { formatRub, formatPercent, formatNumber, formatDate, formatHorizon } from '../utils/format';
-import type { ComparisonRow, MatrixPair, RejectedPair } from '../api/types';
+import type {
+  ComparisonRow,
+  MaterializeResponse,
+  ReplacementCandidate,
+  ReplacementCandidatesMode,
+  ReplacementResponse,
+} from '../api/types';
+
+const REPLACEMENT_HORIZON_YEARS = 2;
+
+/** Строка «вне сравнения» — floater/indexed/dataIncomplete не участвуют в ранжировании доходности (spec §6). */
+function OutOfComparisonRow({ row }: { row: ComparisonRow }) {
+  return (
+    <Paper withBorder p="sm" radius="md" data-testid={`out-of-comparison-${row.positionId}`}>
+      <Group justify="space-between">
+        <Text size="sm">{row.name ?? row.issuer ?? `Позиция #${row.positionId}`}</Text>
+        <Badge size="sm" color="gray" variant="outline">
+          вне сравнения
+        </Badge>
+      </Group>
+    </Paper>
+  );
+}
+
+/** Одна строка кандидата-замены (mode=market/rv, задача 33) — имя, доходность, дюрация, риск-бейджи. */
+function ReplacementCandidateRow({
+  candidate,
+  onSelect,
+  isSelected,
+  isLoading,
+}: {
+  candidate: ReplacementCandidate;
+  onSelect: (secid: string) => void;
+  isSelected: boolean;
+  isLoading: boolean;
+}) {
+  return (
+    <UnstyledButton
+      onClick={() => onSelect(candidate.secid)}
+      disabled={isLoading}
+      w="100%"
+      data-testid={`replace-candidate-${candidate.secid}`}
+    >
+      <Paper
+        withBorder
+        p="xs"
+        radius="md"
+        style={isSelected ? { borderColor: 'var(--mantine-color-blue-5)' } : undefined}
+      >
+        <Group justify="space-between" wrap="wrap" gap={4}>
+          <Text size="sm" fw={600}>
+            {candidate.name}
+          </Text>
+          <Text size="sm" c="teal" fw={600}>
+            {formatPercent(candidate.yieldFraction)}
+          </Text>
+        </Group>
+        <Text size="xs" c="dimmed" mb={4}>
+          дюрация {candidate.durationYears !== null ? `${formatNumber(candidate.durationYears, 1)} лет` : '—'}
+        </Text>
+        <RiskSignalBadges signals={candidate.riskSignals} testIdSuffix={candidate.secid} />
+      </Paper>
+    </UnstyledButton>
+  );
+}
+
+const MODE_OPTIONS: { label: string; value: ReplacementCandidatesMode | 'search' }[] = [
+  { label: 'доходные рынка', value: 'market' },
+  { label: 'дешёвые соседи (RV)', value: 'rv' },
+  { label: 'поиск', value: 'search' },
+];
 
 /**
- * Карточка одного sell-кандидата с бейджами-причинами (plan/17 §A.1). Формулировки — оценочные
- * («кандидат»), не «продайте». Задача 27: раскрывающийся MarketComparator — выпадашка со всем
- * рынком (банк облигаций) для сравнения именно ЭТОЙ слабой позиции с любой бумагой биржи.
+ * Панель подбора замены на карточке слабой позиции (plan/35 §B) — три режима: «доходные рынка»/
+ * «дешёвые соседи (RV)» читают банк-кандидатов через GET /replacement-candidates (задача 33) и
+ * рендерят их с риск-сигналами; «поиск» переиспользует существующий <see>MarketComparator</see>
+ * (задача 27) без изменений интерфейса. Клик по банк-кандидату материализует бумагу
+ * (POST /universe/{secid}/materialize, тот же путь, что MarketComparator.handleSelect/ручное
+ * добавление в BasketConstructor) и считает точную выгоду через POST /analytics/replacement —
+ * результат рендерится тем же <see>ReplacementBreakdown</see>, что MarketComparator. Отказ
+ * GET /replacement-candidates не роняет карточку/страницу — просто показывает ошибку в панели.
  */
-function SellCandidateCard({ row, reasons }: { row: ComparisonRow; reasons: { kind: string; label: string }[] }) {
-  const [comparing, setComparing] = useState(false);
-  // Задача 30 часть D.1: RV-бейдж читается из отдельного стора — отказ GET /api/analytics/relative-value
-  // просто не покажет бейдж (undefined), не роняя карточку/страницу.
+function ReplacementPanel({ holdPositionId }: { holdPositionId: number }) {
+  const [mode, setMode] = useState<ReplacementCandidatesMode | 'search'>('market');
+  const [candidates, setCandidates] = useState<ReplacementCandidate[]>([]);
+  // Дефолт true — компонент всегда стартует с загрузки кандидатов дефолтного режима "market" (тот
+  // же приём, что MarketComparator.isSearchLoading): "начало загрузки" сигнализируется синхронно из
+  // handleModeChange (реальный обработчик события), НЕ из тела эффекта ниже — react-hooks/
+  // set-state-in-effect запрещает синхронный setState прямо в теле эффекта.
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  const [selectedSecid, setSelectedSecid] = useState<string | null>(null);
+  const [isSelecting, setIsSelecting] = useState(false);
+  const [selectError, setSelectError] = useState<string | null>(null);
+  const [materialized, setMaterialized] = useState<MaterializeResponse | null>(null);
+  const [replacement, setReplacement] = useState<ReplacementResponse | null>(null);
+
+  useEffect(() => {
+    if (mode === 'search') return;
+    let cancelled = false;
+
+    fetchReplacementCandidates(holdPositionId, mode)
+      .then((response) => {
+        if (cancelled) return;
+        setCandidates(response.candidates);
+        setIsLoading(false);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setLoadError(err instanceof Error ? err.message : 'Не удалось загрузить кандидатов');
+        setIsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [mode, holdPositionId]);
+
+  const handleModeChange = (value: string) => {
+    const nextMode = value as ReplacementCandidatesMode | 'search';
+    setMode(nextMode);
+    setCandidates([]);
+    setSelectedSecid(null);
+    setMaterialized(null);
+    setReplacement(null);
+    setSelectError(null);
+    setLoadError(null);
+    setIsLoading(nextMode !== 'search');
+  };
+
+  const handleSelectCandidate = async (secid: string) => {
+    setSelectedSecid(secid);
+    setMaterialized(null);
+    setReplacement(null);
+    setSelectError(null);
+    setIsSelecting(true);
+    try {
+      const materializeResult = await postMaterialize(secid);
+      setMaterialized(materializeResult);
+
+      const replacementResult = await postReplacement({
+        holdPositionId,
+        targetInstrumentId: materializeResult.instrumentId,
+        horizonYears: REPLACEMENT_HORIZON_YEARS,
+      });
+      setReplacement(replacementResult);
+    } catch (err) {
+      setSelectError(err instanceof Error ? err.message : 'Не удалось сравнить с рынком');
+    } finally {
+      setIsSelecting(false);
+    }
+  };
+
+  return (
+    <Stack gap="sm" data-testid={`replace-panel-${holdPositionId}`}>
+      <SegmentedControl
+        value={mode}
+        onChange={handleModeChange}
+        data={MODE_OPTIONS}
+        data-testid={`replace-mode-${holdPositionId}`}
+        fullWidth
+      />
+
+      {mode === 'search' ? (
+        <MarketComparator holdPositionId={holdPositionId} />
+      ) : (
+        <>
+          {isLoading && (
+            <Center py="sm">
+              <Loader size="sm" />
+            </Center>
+          )}
+
+          {!isLoading && loadError && (
+            <Alert color="red" data-testid={`replace-candidates-error-${holdPositionId}`}>
+              {loadError}
+            </Alert>
+          )}
+
+          {!isLoading && !loadError && candidates.length === 0 && (
+            <Text size="xs" c="dimmed" data-testid={`replace-candidates-empty-${holdPositionId}`}>
+              {mode === 'rv'
+                ? 'Нет данных для сравнения по корзине этой позиции (сектор/дюрация/спред не определились).'
+                : 'Кандидатов не найдено.'}
+            </Text>
+          )}
+
+          {!isLoading && !loadError && candidates.length > 0 && (
+            <Stack gap="xs" data-testid={`replace-candidates-list-${holdPositionId}`}>
+              <RiskSignalsCaption />
+              {candidates.map((c) => (
+                <ReplacementCandidateRow
+                  key={c.secid}
+                  candidate={c}
+                  onSelect={handleSelectCandidate}
+                  isSelected={selectedSecid === c.secid}
+                  isLoading={isSelecting && selectedSecid === c.secid}
+                />
+              ))}
+            </Stack>
+          )}
+
+          {isSelecting && (
+            <Center py="sm">
+              <Loader size="sm" />
+            </Center>
+          )}
+
+          {!isSelecting && selectError && (
+            <Alert color="red" data-testid={`replace-select-error-${holdPositionId}`}>
+              {selectError}
+            </Alert>
+          )}
+
+          {!isSelecting && !selectError && materialized && replacement && (
+            <Paper withBorder p="sm" radius="md" data-testid={`replace-result-${holdPositionId}`}>
+              <Text fw={600} size="sm">
+                {materialized.metrics.name ?? materialized.metrics.issuer ?? materialized.secid}
+              </Text>
+              <Text size="sm" c="teal" fw={600} data-testid={`replace-benefit-${holdPositionId}`}>
+                выгода{replacement.netBenefitAfterTaxRub !== null ? ' после налога' : ''} ≈{' '}
+                {formatRub(replacement.netBenefitAfterTaxRub ?? replacement.netBenefitRub)}
+                {replacement.annualizedBenefitFraction !== null && (
+                  <> (~{formatPercent(replacement.annualizedBenefitFraction)} годовых)</>
+                )}{' '}
+                за {formatHorizon(replacement.horizonYears)}
+              </Text>
+
+              {replacement.targetRiskSignals && (
+                <RiskSignalBadges signals={replacement.targetRiskSignals} testIdSuffix={`replace-${holdPositionId}`} />
+              )}
+
+              <ReplacementBreakdown
+                data={{
+                  spreadFraction: replacement.spreadFraction,
+                  capitalRub: replacement.capitalRub,
+                  horizonYears: replacement.horizonYears,
+                  grossGainRub: replacement.grossGainRub,
+                  sellCommissionRub: replacement.sellCommissionRub,
+                  buyCommissionRub: replacement.buyCommissionRub,
+                  netBenefitRub: replacement.netBenefitRub,
+                  annualizedBenefitFraction: replacement.annualizedBenefitFraction,
+                  // ReplacementResponse несёт раздельные ставки продажи/покупки (обычно совпадают) —
+                  // берём ставку продажи как представительную (тот же приём, что MarketComparator).
+                  commissionRateUsed: replacement.sellCommissionRateUsed,
+                  commissionRateSource: replacement.commissionRateSource,
+                  sellTaxEstimateRub: replacement.sellTaxEstimateRub,
+                  netBenefitAfterTaxRub: replacement.netBenefitAfterTaxRub,
+                }}
+                testIdSuffix={`candidate-${holdPositionId}`}
+              />
+            </Paper>
+          )}
+        </>
+      )}
+    </Stack>
+  );
+}
+
+/**
+ * Карточка одной слабой позиции (plan/35 §B, было `SellCandidateCard`) — бейджи-причины
+ * (оценочные, «кандидат», не «продайте»), RV-бейдж (задача 30, отказ GET /relative-value не роняет
+ * карточку — undefined просто не рендерится), раскрывашка «подобрать замену» → <see>ReplacementPanel</see>.
+ */
+function WeakPositionCard({ row, reasons }: { row: ComparisonRow; reasons: { kind: string; label: string }[] }) {
+  const [expanded, setExpanded] = useState(false);
   const rv = useRelativeValueStore((s) => s.positionsById[row.positionId]);
 
   return (
@@ -62,44 +320,30 @@ function SellCandidateCard({ row, reasons }: { row: ComparisonRow; reasons: { ki
         {rv && <RelativeValueBadge rv={rv} />}
       </Group>
 
-      <UnstyledButton
-        onClick={() => setComparing((v) => !v)}
-        data-testid={`compare-with-market-toggle-${row.positionId}`}
-      >
+      <UnstyledButton onClick={() => setExpanded((v) => !v)} data-testid={`replace-toggle-${row.positionId}`}>
         <Text size="xs" fw={600} c="blue">
-          {comparing ? 'скрыть сравнение с рынком' : 'сравнить с рынком'}
+          {expanded ? 'скрыть подбор замены' : 'подобрать замену'}
         </Text>
       </UnstyledButton>
-      <Collapse expanded={comparing}>
-        <div style={{ marginTop: 8 }}>
-          {comparing && <MarketComparator holdPositionId={row.positionId} />}
-        </div>
+      <Collapse expanded={expanded}>
+        <div style={{ marginTop: 8 }}>{expanded && <ReplacementPanel holdPositionId={row.positionId} />}</div>
       </Collapse>
     </Paper>
   );
 }
 
-/** Строка «вне сравнения» — floater/indexed/dataIncomplete не участвуют в ранжировании доходности (spec §6). */
-function OutOfComparisonRow({ row }: { row: ComparisonRow }) {
-  return (
-    <Paper withBorder p="sm" radius="md" data-testid={`out-of-comparison-${row.positionId}`}>
-      <Group justify="space-between">
-        <Text size="sm">{row.name ?? row.issuer ?? `Позиция #${row.positionId}`}</Text>
-        <Badge size="sm" color="gray" variant="outline">
-          вне сравнения
-        </Badge>
-      </Group>
-    </Paper>
-  );
-}
-
+/**
+ * Блок 1 «Слабые позиции → подобрать замену» (plan/35) — объединяет прежние «слабые звенья» +
+ * «матрица замен» + «RV-секцию дешёвых соседей» в один сценарий: список самых слабых по доходности
+ * позиций, у каждой — раскрывашка режимов подбора замены (см. <see>ReplacementPanel</see>).
+ */
 function WeakLinksSection() {
   const { sellCandidates, outOfComparison, comparisonDisclaimer, isLoading, error } = useRecommendationsStore();
 
   return (
     <Paper withBorder p="md" radius="md" data-testid="weak-links-section">
       <Title order={4} mb="sm">
-        Слабые звенья — кандидаты на пересмотр
+        Слабые позиции — подобрать замену
       </Title>
       <Text size="xs" c="dimmed" mb="sm">
         Оценка по доходности относительно медианы портфеля, горизонта и концентрации по эмитенту —
@@ -127,7 +371,7 @@ function WeakLinksSection() {
       {!isLoading && !error && sellCandidates.length > 0 && (
         <Stack gap="sm">
           {sellCandidates.map((c) => (
-            <SellCandidateCard key={c.row.positionId} row={c.row} reasons={c.reasons} />
+            <WeakPositionCard key={c.row.positionId} row={c.row} reasons={c.reasons} />
           ))}
         </Stack>
       )}
@@ -144,152 +388,6 @@ function WeakLinksSection() {
       )}
 
       <Disclaimer text={comparisonDisclaimer} />
-    </Paper>
-  );
-}
-
-/** Русская подпись причины отказа (plan/23 §B.3) — таблица отвергнутых пар. */
-function rejectedReasonLabel(pair: RejectedPair): string {
-  if (pair.reason === 'DurationMismatch') return 'дюрации несопоставимы (>1.5 г.)';
-  return `невыгодна: ${formatRub(pair.netBenefitRub ?? 0)}`;
-}
-
-/**
- * Карточка одной лучшей пары матрицы (задача 23) — заголовок + крупная выгода (₽ и % годовых),
- * значок watchlist-цели, раскрывашка с построчной формулой (спред → капитал → горизонт → валовая
- * выгода → минус обе комиссии → чистая выгода ≈ % годовых), plan/23 §B.2. Задача 27: сама формула
- * вынесена в <see>ReplacementBreakdown</see> — переиспользуется MarketComparator.
- */
-function ReplacementPairCard({ pair }: { pair: MatrixPair }) {
-  const [expanded, setExpanded] = useState(false);
-  const holdLabel = pair.holdName ?? `Позиция #${pair.holdPositionId}`;
-  const targetLabel = pair.targetName ?? `Инструмент #${pair.targetInstrumentId}`;
-  const testIdSuffix = `${pair.holdPositionId}-${pair.targetPositionId}`;
-
-  return (
-    <Paper
-      withBorder
-      p="sm"
-      radius="md"
-      data-testid={`replacement-${testIdSuffix}`}
-    >
-      <UnstyledButton onClick={() => setExpanded((v) => !v)} w="100%" data-testid={`replacement-toggle-${testIdSuffix}`}>
-        <Group justify="space-between" wrap="nowrap" align="flex-start">
-          <Text fw={600} size="sm">
-            {holdLabel} → {targetLabel}
-          </Text>
-          {pair.isWatchlistTarget && (
-            <Badge size="sm" color="grape" variant="light" data-testid={`replacement-watchlist-badge-${testIdSuffix}`}>
-              watchlist
-            </Badge>
-          )}
-        </Group>
-        <Text size="sm" c="teal" fw={600} data-testid={`replacement-benefit-${testIdSuffix}`}>
-          выгода{pair.netBenefitAfterTaxRub !== null ? ' после налога' : ''} ≈{' '}
-          {formatRub(pair.netBenefitAfterTaxRub ?? pair.netBenefitRub)}
-          {pair.annualizedBenefitFraction !== null && <> (~{formatPercent(pair.annualizedBenefitFraction)} годовых)</>} за{' '}
-          {formatHorizon(pair.horizonYears)}
-        </Text>
-        <Text size="xs" c="dimmed">
-          {expanded ? 'скрыть формулу' : 'показать формулу'}
-        </Text>
-      </UnstyledButton>
-
-      <Collapse expanded={expanded}>
-        <ReplacementBreakdown data={pair} testIdSuffix={testIdSuffix} />
-      </Collapse>
-    </Paper>
-  );
-}
-
-/** Свёрнутая таблица «Все рассмотренные пары» (plan/23 §B.3) — пары вне bestPairs с причиной по-русски. */
-function RejectedPairsTable({ pairs }: { pairs: RejectedPair[] }) {
-  const [expanded, setExpanded] = useState(false);
-
-  return (
-    <Stack gap="xs" mt="md">
-      <UnstyledButton onClick={() => setExpanded((v) => !v)} data-testid="rejected-pairs-toggle">
-        <Text size="sm" fw={600}>
-          {expanded ? 'Скрыть' : 'Показать'} все рассмотренные пары ({pairs.length})
-        </Text>
-      </UnstyledButton>
-      <Collapse expanded={expanded}>
-        <Table.ScrollContainer minWidth={500}>
-          <Table striped highlightOnHover data-testid="rejected-pairs-table">
-            <Table.Thead>
-              <Table.Tr>
-                <Table.Th>Пара</Table.Th>
-                <Table.Th>Причина</Table.Th>
-              </Table.Tr>
-            </Table.Thead>
-            <Table.Tbody>
-              {pairs.map((pair) => (
-                <Table.Tr key={`${pair.holdPositionId}-${pair.targetPositionId}`} data-testid={`rejected-pair-${pair.holdPositionId}-${pair.targetPositionId}`}>
-                  <Table.Td>
-                    {pair.holdName ?? `Позиция #${pair.holdPositionId}`} → {pair.targetName ?? `Инструмент #${pair.targetInstrumentId}`}
-                    {pair.isWatchlistTarget && (
-                      <Badge ml={6} size="xs" color="grape" variant="light">
-                        watchlist
-                      </Badge>
-                    )}
-                  </Table.Td>
-                  <Table.Td c={pair.reason === 'NotProfitable' && (pair.netBenefitRub ?? 0) < 0 ? 'red' : undefined}>
-                    {rejectedReasonLabel(pair)}
-                  </Table.Td>
-                </Table.Tr>
-              ))}
-            </Table.Tbody>
-          </Table>
-        </Table.ScrollContainer>
-      </Collapse>
-    </Stack>
-  );
-}
-
-function ReplacementsSection() {
-  const { bestPairs, rejectedPairs, totalConsideredPairs, replacementDisclaimer, isLoading, error } =
-    useRecommendationsStore();
-
-  return (
-    <Paper withBorder p="md" radius="md" data-testid="replacements-section">
-      <Title order={4} mb="sm">
-        Замены — оценка «держать vs переложиться»
-      </Title>
-      <Text size="xs" c="dimmed" mb="sm">
-        Полный перебор всех пар портфеля и watchlist на сервере; комиссии обеих сделок учтены.
-      </Text>
-
-      {isLoading && (
-        <Center py="md">
-          <Loader size="sm" />
-        </Center>
-      )}
-
-      {!isLoading && error && (
-        <Alert color="red" data-testid="replacements-error">
-          {error}
-        </Alert>
-      )}
-
-      {!isLoading && !error && bestPairs.length === 0 && (
-        <Text size="sm" c="dimmed" data-testid="replacements-empty">
-          выгодных замен не найдено — рассмотрено {totalConsideredPairs} пар
-        </Text>
-      )}
-
-      {!isLoading && !error && bestPairs.length > 0 && (
-        <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm">
-          {bestPairs.map((pair) => (
-            <ReplacementPairCard key={`${pair.holdPositionId}-${pair.targetPositionId}`} pair={pair} />
-          ))}
-        </SimpleGrid>
-      )}
-
-      {!isLoading && !error && rejectedPairs.length > 0 && <RejectedPairsTable pairs={rejectedPairs} />}
-
-      {!isLoading && !error && (bestPairs.length > 0 || rejectedPairs.length > 0) && (
-        <Disclaimer text={replacementDisclaimer} />
-      )}
     </Paper>
   );
 }
@@ -427,17 +525,16 @@ function WatchlistSection() {
 }
 
 /**
- * Страница «Рекомендации» (plan/17, задача 29 переработала третью секцию): слабые звенья
- * (comparison), замены (replacement) и конструктор портфеля — куда вложить сумму
- * (<see>BasketConstructor</see>, plan/29 — заменяет прежний чистый вывод жадного алгоритма
- * настраиваемой корзиной с процентами и what-if всего портфеля; сам жадный алгоритм остаётся
- * доступен как пресет внутри конструктора). Все формулировки — оценочные, не индивидуальные
- * инвестрекомендации (см. Disclaimer/юридическая рамка плана). Задача 20 добавляет секцию
- * watchlist (бумаги вне портфеля).
+ * Страница «Рекомендации» (plan/17, задача 35 — переработка в два главных блока, один сценарий =
+ * один блок): Блок 1 «Слабые позиции → подобрать замену» (<see>WeakLinksSection</see>, поглощает
+ * прежние «слабые звенья»+«матрица замен»+«RV дешёвые соседи») и Блок 2 «Куда вложить сумму»
+ * (<see>BasketConstructor</see>, задача 35 добавила переключатель источника кандидатов). Watchlist —
+ * вспомогательная секция внизу (задача 20), независимый стор/загрузка. Дисклеймер сверху страницы +
+ * дисклеймер каждого блока (текст бэкенда). Все формулировки — оценочные, не индивидуальные
+ * инвестрекомендации.
  */
 export function Recommendations() {
   const load = useRecommendationsStore((s) => s.load);
-  const positionNamesById = useRecommendationsStore((s) => s.positionNamesById);
   const loadRelativeValue = useRelativeValueStore((s) => s.load);
 
   useEffect(() => {
@@ -455,10 +552,11 @@ export function Recommendations() {
         Все оценки на этой странице — аналитические, основаны на текущих данных портфеля, не
         индивидуальная инвестиционная рекомендация.
       </Text>
+      <div data-testid="page-disclaimer">
+        <Disclaimer />
+      </div>
 
       <WeakLinksSection />
-      <RelativeValueSection positionLabelById={positionNamesById} />
-      <ReplacementsSection />
       <BasketConstructor />
       <WatchlistSection />
     </Stack>

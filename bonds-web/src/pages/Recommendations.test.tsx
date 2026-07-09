@@ -1,4 +1,4 @@
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
 import { describe, it, expect, beforeEach } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
 import { MantineProvider } from '@mantine/core';
@@ -11,8 +11,9 @@ import { useAuthStore } from '../store/useAuthStore';
 import { useRelativeValueStore } from '../store/useRelativeValueStore';
 import type {
   ComparisonResponse,
-  ReplacementMatrixResponse,
   CompositionResponse,
+  ReplacementCandidatesResponse,
+  RiskSignals,
   WatchlistItem,
   RelativeValueResponse,
 } from '../api/types';
@@ -95,57 +96,50 @@ const baseComparison: ComparisonResponse = {
   disclaimer: 'Сортировка по доходности не учитывает срок до погашения/оферты и кредитный риск эмитента.',
 };
 
-const favorableMatrixPair = {
-  holdPositionId: 1,
-  holdInstrumentId: 10,
-  holdName: 'Слабая бумага',
-  targetPositionId: 2,
-  targetInstrumentId: 11,
-  targetName: 'Сильная бумага',
-  isWatchlistTarget: false,
-  spreadFraction: 0.08,
-  capitalRub: 1490,
-  horizonYears: 2,
-  grossGainRub: 1560,
-  sellCommissionRub: 30,
-  buyCommissionRub: 30,
-  netBenefitRub: 1500,
-  annualizedBenefitFraction: 0.21,
-  commissionRateUsed: 0.003,
-  commissionRateSource: 'Default' as const,
-  sellTaxEstimateRub: 200,
-  netBenefitAfterTaxRub: 1300,
+const goodSignals: RiskSignals = {
+  liquidity: 'Good',
+  liquidityLabel: 'Высокая ликвидность, листинг 1',
+  spread: 'Neutral',
+  gSpreadFraction: 0.03,
+  spreadVsBasketMedianFraction: 0.001,
 };
 
-const rejectedNotProfitablePair = {
-  holdPositionId: 1,
-  holdInstrumentId: 10,
-  holdName: 'Слабая бумага',
-  targetPositionId: 3,
-  targetInstrumentId: 13,
-  targetName: 'Третья бумага',
-  isWatchlistTarget: false,
-  reason: 'NotProfitable' as const,
-  netBenefitRub: -12,
+const marketCandidatesResponse: ReplacementCandidatesResponse = {
+  mode: 'market',
+  positionIsin: 'RU000WEAK001',
+  candidates: [
+    {
+      secid: 'MKT001',
+      isin: 'RU000MKT0001',
+      name: 'Рыночная бумага 1',
+      issuer: null,
+      sector: 'Корпоративные',
+      yieldFraction: 0.22,
+      durationYears: 1.5,
+      gSpreadFraction: 0.04,
+      riskSignals: goodSignals,
+    },
+  ],
+  disclaimer: 'Кандидаты и оценки — аналитическая информация, не рейтинг рейтинговых агентств.',
 };
 
-const rejectedDurationMismatchPair = {
-  holdPositionId: 1,
-  holdInstrumentId: 10,
-  holdName: 'Слабая бумага',
-  targetPositionId: 4,
-  targetInstrumentId: 14,
-  targetName: 'Четвёртая бумага',
-  isWatchlistTarget: true,
-  reason: 'DurationMismatch' as const,
-  netBenefitRub: null,
-};
-
-const favorableMatrix: ReplacementMatrixResponse = {
-  bestPairs: [favorableMatrixPair],
-  rejectedPairs: [rejectedNotProfitablePair, rejectedDurationMismatchPair],
-  totalConsideredPairs: 3,
-  disclaimer: 'Анализ замены сравнивает только текущие позиции портфеля.',
+const rvCandidatesResponse: ReplacementCandidatesResponse = {
+  mode: 'rv',
+  positionIsin: 'RU000WEAK001',
+  candidates: [
+    {
+      secid: 'RVCAND1',
+      isin: 'RU000RVCAND1',
+      name: 'RV-сосед 1',
+      issuer: null,
+      sector: 'Корпоративные',
+      yieldFraction: 0.2,
+      durationYears: 1.8,
+      gSpreadFraction: 0.045,
+      riskSignals: { ...goodSignals, spread: 'Caution' },
+    },
+  ],
+  disclaimer: marketCandidatesResponse.disclaimer,
 };
 
 describe('Recommendations', () => {
@@ -154,10 +148,6 @@ describe('Recommendations', () => {
       sellCandidates: [],
       outOfComparison: [],
       comparisonDisclaimer: '',
-      bestPairs: [],
-      rejectedPairs: [],
-      totalConsideredPairs: 0,
-      replacementDisclaimer: '',
       isLoading: false,
       error: null,
     });
@@ -175,19 +165,33 @@ describe('Recommendations', () => {
     server.use(
       http.get('*/api/analytics/composition', () => HttpResponse.json(baseComposition)),
       http.get('*/api/analytics/comparison', () => HttpResponse.json(baseComparison)),
-      http.get('*/api/analytics/replacement-matrix', () => HttpResponse.json(favorableMatrix)),
       http.get('*/api/analytics/relative-value', () => HttpResponse.json({ positions: [], disclaimer: '' })),
+      http.get('*/api/analytics/replacement-candidates', ({ request }) => {
+        const url = new URL(request.url);
+        const mode = url.searchParams.get('mode');
+        return HttpResponse.json(mode === 'rv' ? rvCandidatesResponse : marketCandidatesResponse);
+      }),
       http.get('*/api/universe*', () => HttpResponse.json({ rows: [], total: 0, hiddenCount: 0 })),
       http.get('*/api/watchlist', () => HttpResponse.json({ items: [], disclaimer: '' })),
     );
   });
 
-  it('renders the weak-links, replacements, and basket constructor sections', async () => {
+  // ─── Задача 35: страница = два главных блока ────────────────────────────────────────────────
+
+  it('renders block 1 (weak positions) and block 2 (basket constructor), with a top disclaimer', async () => {
     renderRecommendations();
 
     await waitFor(() => expect(screen.getByTestId('weak-links-section')).toBeInTheDocument());
-    expect(screen.getByTestId('replacements-section')).toBeInTheDocument();
     expect(screen.getByTestId('basket-constructor')).toBeInTheDocument();
+    expect(screen.getByTestId('page-disclaimer')).toBeInTheDocument();
+  });
+
+  it('does not render the old replacement-matrix or standalone RV sections', async () => {
+    renderRecommendations();
+
+    await waitFor(() => expect(screen.getByTestId('weak-links-section')).toBeInTheDocument());
+    expect(screen.queryByTestId('replacements-section')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('relative-value-section')).not.toBeInTheDocument();
   });
 
   it('shows a sell candidate with reason badges', async () => {
@@ -206,153 +210,169 @@ describe('Recommendations', () => {
     expect(screen.queryByTestId('sell-candidate-3')).not.toBeInTheDocument();
   });
 
-  // ─── Задача 27: MarketComparator на карточке слабой позиции ────────────────────────────────
+  it('shows an error state without crashing when comparison fails', async () => {
+    server.use(http.get('*/api/analytics/comparison', () => HttpResponse.json({ error: 'boom' }, { status: 500 })));
 
-  it('reveals the MarketComparator when "сравнить с рынком" is clicked on a weak-link card', async () => {
+    renderRecommendations();
+
+    await waitFor(() => expect(screen.getByTestId('weak-links-error')).toBeInTheDocument());
+  });
+
+  // ─── Задача 35 §B: подбор замены на карточке слабой позиции ────────────────────────────────
+
+  it('opens the replace panel and defaults to the "доходные рынка" mode, fetching candidates with risk badges', async () => {
     renderRecommendations();
 
     await waitFor(() => expect(screen.getByTestId('sell-candidate-1')).toBeInTheDocument());
-    expect(screen.queryByTestId('market-comparator-1')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('replace-panel-1')).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByTestId('compare-with-market-toggle-1'));
+    fireEvent.click(screen.getByTestId('replace-toggle-1'));
 
-    await waitFor(() => expect(screen.getByTestId('market-comparator-1')).toBeVisible());
+    await waitFor(() => expect(screen.getByTestId('replace-candidate-MKT001')).toBeVisible());
+    const row = screen.getByTestId('replace-candidate-MKT001');
+    expect(within(row).getByTestId('risk-signal-liquidity-MKT001')).toBeInTheDocument();
+    expect(within(row).getByTestId('risk-signal-spread-MKT001')).toBeInTheDocument();
   });
 
-  it('shows a favorable replacement card with benefit and annualized percent', async () => {
-    renderRecommendations();
-
-    await waitFor(() => expect(screen.getByTestId('replacement-1-2')).toBeInTheDocument());
-    const card = screen.getByTestId('replacement-1-2').textContent!;
-    expect(card).toMatch(/выгода/);
-    expect(card).toMatch(/21\.00%/);
-  });
-
-  // ─── T-25: выгода после налога в заголовке карточки и в раскрывашке формулы ────────────────
-
-  it('shows the after-tax benefit in the headline when sellTaxEstimateRub is available', async () => {
-    renderRecommendations();
-
-    await waitFor(() => expect(screen.getByTestId('replacement-benefit-1-2')).toBeInTheDocument());
-    const headline = screen.getByTestId('replacement-benefit-1-2').textContent!;
-    expect(headline).toMatch(/после налога/);
-    expect(headline).toMatch(/1[\s ]300/); // netBenefitAfterTaxRub
-  });
-
-  it('shows the sell tax row and after-tax net line in the expanded formula', async () => {
-    renderRecommendations();
-
-    await waitFor(() => expect(screen.getByTestId('replacement-toggle-1-2')).toBeInTheDocument());
-    fireEvent.click(screen.getByTestId('replacement-toggle-1-2'));
-
-    await waitFor(() => expect(screen.getByTestId('replacement-details-1-2')).toBeVisible());
-    const taxRow = screen.getByTestId('replacement-sell-tax-1-2').textContent!;
-    expect(taxRow).toMatch(/НДФЛ от продажи/);
-    expect(taxRow).toMatch(/200/);
-
-    const netAfterTax = screen.getByTestId('replacement-net-after-tax-1-2').textContent!;
-    expect(netAfterTax).toMatch(/1[\s ]300/);
-  });
-
-  it('shows "налог не оценён" caption when sellTaxEstimateRub is null (incomplete journal)', async () => {
+  it('switches to "дешёвые соседи (RV)" mode and requests mode=rv', async () => {
+    let lastMode: string | null = null;
     server.use(
-      http.get('*/api/analytics/replacement-matrix', () =>
+      http.get('*/api/analytics/replacement-candidates', ({ request }) => {
+        lastMode = new URL(request.url).searchParams.get('mode');
+        return HttpResponse.json(lastMode === 'rv' ? rvCandidatesResponse : marketCandidatesResponse);
+      }),
+    );
+
+    renderRecommendations();
+
+    await waitFor(() => expect(screen.getByTestId('sell-candidate-1')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('replace-toggle-1'));
+    await waitFor(() => expect(lastMode).toBe('market'));
+
+    fireEvent.click(within(screen.getByTestId('replace-mode-1')).getByText('дешёвые соседи (RV)'));
+
+    await waitFor(() => expect(lastMode).toBe('rv'));
+    await waitFor(() => expect(screen.getByTestId('replace-candidate-RVCAND1')).toBeInTheDocument());
+  });
+
+  it('switches to "поиск" mode and reveals the existing MarketComparator', async () => {
+    renderRecommendations();
+
+    await waitFor(() => expect(screen.getByTestId('sell-candidate-1')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('replace-toggle-1'));
+    await waitFor(() => expect(screen.getByTestId('replace-candidate-MKT001')).toBeInTheDocument());
+
+    fireEvent.click(within(screen.getByTestId('replace-mode-1')).getByText('поиск'));
+
+    await waitFor(() => expect(screen.getByTestId('market-comparator-1')).toBeInTheDocument());
+  });
+
+  it('selecting a market candidate materializes it, requests the benefit, and shows the ReplacementBreakdown', async () => {
+    server.use(
+      http.post('*/api/universe/:secid/materialize', () =>
         HttpResponse.json({
-          bestPairs: [{ ...favorableMatrixPair, sellTaxEstimateRub: null, netBenefitAfterTaxRub: null }],
-          rejectedPairs: [],
-          totalConsideredPairs: 1,
-          disclaimer: favorableMatrix.disclaimer,
+          instrumentId: 777,
+          secid: 'MKT001',
+          isin: 'RU000MKT0001',
+          metrics: {
+            name: 'Рыночная бумага 1',
+            issuer: 'Эмитент рынка',
+            sector: 'Корпоративные',
+            couponType: 'Fixed',
+            maturityDate: '2029-01-01',
+            horizonDate: '2029-01-01',
+            calculatedToOffer: false,
+            modifiedDuration: 1.5,
+            macaulayDuration: 1.55,
+            ytmEffective: 0.22,
+            currentYield: 0.2,
+            effectiveYield: 0.22,
+            gSpread: 400,
+            isFloater: false,
+            isIndexed: false,
+            isEstimated: false,
+            dataIncomplete: false,
+          },
+          disclaimer: '',
         }),
       ),
+      http.post('*/api/analytics/replacement', async ({ request }) => {
+        const body = (await request.json()) as Record<string, unknown>;
+        expect(body.targetInstrumentId).toBe(777);
+        expect(body.holdPositionId).toBe(1);
+        return HttpResponse.json({
+          holdPositionId: 1,
+          targetPositionId: 0,
+          targetInstrumentId: 777,
+          horizonYears: 2,
+          sellCommissionRub: 30,
+          buyCommissionRub: 30,
+          totalSwitchCostRub: 60,
+          netBenefitRub: 1400,
+          isSwitchFavorable: true,
+          breakEvenYears: 0.4,
+          yieldDataIncomplete: false,
+          disclaimer: '',
+          sellCommissionRateUsed: 0.003,
+          buyCommissionRateUsed: 0.003,
+          commissionRateSource: 'Default',
+          spreadFraction: 0.09,
+          capitalRub: 1490,
+          grossGainRub: 1460,
+          annualizedBenefitFraction: 0.19,
+          sellTaxEstimateRub: null,
+          netBenefitAfterTaxRub: null,
+          targetRiskSignals: goodSignals,
+        });
+      }),
     );
 
     renderRecommendations();
 
-    await waitFor(() => expect(screen.getByTestId('replacement-benefit-1-2')).toBeInTheDocument());
-    expect(screen.getByTestId('replacement-benefit-1-2').textContent).not.toMatch(/после налога/);
+    await waitFor(() => expect(screen.getByTestId('sell-candidate-1')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('replace-toggle-1'));
+    await waitFor(() => expect(screen.getByTestId('replace-candidate-MKT001')).toBeInTheDocument());
 
-    fireEvent.click(screen.getByTestId('replacement-toggle-1-2'));
+    fireEvent.click(screen.getByTestId('replace-candidate-MKT001'));
 
-    await waitFor(() => expect(screen.getByTestId('replacement-tax-unavailable-1-2')).toBeInTheDocument());
-    expect(screen.getByTestId('replacement-tax-unavailable-1-2').textContent).toMatch(/журнал операций.*неполон/);
-    expect(screen.queryByTestId('replacement-sell-tax-1-2')).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByTestId('replace-result-1')).toBeInTheDocument());
+    const result = screen.getByTestId('replace-result-1');
+    expect(within(result).getByTestId('replace-benefit-1').textContent).toMatch(/выгода/);
+    expect(within(result).getByTestId('replacement-details-candidate-1')).toBeInTheDocument();
+    expect(within(result).getByTestId('risk-signal-liquidity-replace-1')).toBeInTheDocument();
   });
 
-  // Задача 23 §B.2: карточка раскрывается в построчную формулу (спред → капитал → горизонт →
-  // валовая выгода → минус комиссии → чистая выгода ≈ % годовых).
-  it('expands the replacement card to show the formula breakdown', async () => {
+  it('does not break the weak-position card when GET /api/analytics/replacement-candidates fails', async () => {
+    server.use(http.get('*/api/analytics/replacement-candidates', () => HttpResponse.json({ error: 'boom' }, { status: 500 })));
+
     renderRecommendations();
 
-    await waitFor(() => expect(screen.getByTestId('replacement-toggle-1-2')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTestId('sell-candidate-1')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('replace-toggle-1'));
 
-    fireEvent.click(screen.getByTestId('replacement-toggle-1-2'));
-
-    await waitFor(() => expect(screen.getByTestId('replacement-details-1-2')).toBeVisible());
-    const details = screen.getByTestId('replacement-details-1-2').textContent!;
-    expect(details).toMatch(/спред доходностей/);
-    expect(details).toMatch(/капитал после продажи/);
-    expect(details).toMatch(/горизонт/);
-    expect(details).toMatch(/валовая выгода/);
-    expect(details).toMatch(/комиссия продажи/);
-    expect(details).toMatch(/комиссия покупки/);
-    expect(details).toMatch(/чистая выгода/);
+    await waitFor(() => expect(screen.getByTestId('replace-candidates-error-1')).toBeInTheDocument());
+    // Карточка/страница не падают — переключатель режимов остаётся в DOM.
+    expect(screen.getByTestId('replace-mode-1')).toBeInTheDocument();
   });
 
-  // Plan/22 часть E: карточка замены показывает применённую ставку комиссии и её источник.
-  it('shows the commission rate source caption in the expanded formula', async () => {
-    renderRecommendations();
-
-    await waitFor(() => expect(screen.getByTestId('replacement-toggle-1-2')).toBeInTheDocument());
-    fireEvent.click(screen.getByTestId('replacement-toggle-1-2'));
-
-    await waitFor(() => expect(screen.getByTestId('replacement-details-1-2')).toBeVisible());
-    expect(screen.getByTestId('replacement-details-1-2').textContent).toMatch(/дефолт 0\.3%/);
-  });
-
-  // Задача 23 §B.2: значок watchlist-цели на карточке лучшей пары.
-  it('shows a watchlist badge on a replacement card targeting a watchlist bond', async () => {
+  it('shows an empty state for mode=rv when there are no cheap-basket-neighbor candidates', async () => {
     server.use(
-      http.get('*/api/analytics/replacement-matrix', () =>
-        HttpResponse.json({
-          bestPairs: [{ ...favorableMatrixPair, targetPositionId: 0, targetInstrumentId: 99, targetName: 'Watchlist bond', isWatchlistTarget: true }],
-          rejectedPairs: [],
-          totalConsideredPairs: 1,
-          disclaimer: favorableMatrix.disclaimer,
-        }),
-      ),
+      http.get('*/api/analytics/replacement-candidates', ({ request }) => {
+        const mode = new URL(request.url).searchParams.get('mode');
+        if (mode === 'rv') return HttpResponse.json({ mode: 'rv', positionIsin: '', candidates: [], disclaimer: '' });
+        return HttpResponse.json(marketCandidatesResponse);
+      }),
     );
 
     renderRecommendations();
 
-    await waitFor(() => expect(screen.getByTestId('replacement-watchlist-badge-1-0')).toBeInTheDocument());
-  });
+    await waitFor(() => expect(screen.getByTestId('sell-candidate-1')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('replace-toggle-1'));
+    await waitFor(() => expect(screen.getByTestId('replace-candidate-MKT001')).toBeInTheDocument());
 
-  // Задача 23 §B.3: свёрнутая таблица отвергнутых пар с причинами по-русски.
-  it('shows a collapsed table of rejected pairs with reasons in Russian', async () => {
-    renderRecommendations();
+    fireEvent.click(within(screen.getByTestId('replace-mode-1')).getByText('дешёвые соседи (RV)'));
 
-    await waitFor(() => expect(screen.getByTestId('rejected-pairs-toggle')).toBeInTheDocument());
-    expect(screen.getByTestId('rejected-pairs-toggle').textContent).toMatch(/2/);
-
-    fireEvent.click(screen.getByTestId('rejected-pairs-toggle'));
-
-    await waitFor(() => expect(screen.getByTestId('rejected-pairs-table')).toBeVisible());
-    expect(screen.getByTestId('rejected-pair-1-3').textContent).toMatch(/невыгодна.*-?12/);
-    expect(screen.getByTestId('rejected-pair-1-4').textContent).toMatch(/дюрации несопоставимы/);
-  });
-
-  // Задача 23 §B.4: пустое состояние показывает число рассмотренных пар из ответа.
-  it('shows an empty state with the number of considered pairs when there are no favorable replacements', async () => {
-    server.use(
-      http.get('*/api/analytics/replacement-matrix', () =>
-        HttpResponse.json({ bestPairs: [], rejectedPairs: [], totalConsideredPairs: 7, disclaimer: '' }),
-      ),
-    );
-
-    renderRecommendations();
-
-    await waitFor(() => expect(screen.getByTestId('replacements-empty')).toBeInTheDocument());
-    expect(screen.getByTestId('replacements-empty').textContent).toMatch(/7/);
+    await waitFor(() => expect(screen.getByTestId('replace-candidates-empty-1')).toBeInTheDocument());
   });
 
   it('renders a disclaimer on the page', async () => {
@@ -361,12 +381,51 @@ describe('Recommendations', () => {
     await waitFor(() => expect(screen.getAllByTestId('disclaimer').length).toBeGreaterThan(0));
   });
 
-  it('shows an error state without crashing when comparison fails', async () => {
-    server.use(http.get('*/api/analytics/comparison', () => HttpResponse.json({ error: 'boom' }, { status: 500 })));
+  // ─── Задача 30: RV-бейдж на карточке слабой позиции (переработан задачей 35, но переиспользуется) ──
+
+  const richRelativeValue: RelativeValueResponse = {
+    positions: [
+      {
+        positionId: 1,
+        basket: { sector: 'Корпоративные', durationBucket: '1–3 года', count: 7, confidence: 'High' },
+        deviationFraction: -0.0038,
+        percentile: 8,
+        verdict: 'Rich',
+        basedOnDays: 5,
+        cheapCandidates: [],
+      },
+    ],
+    disclaimer: 'относительная дешевизна к корзине по данным MOEX; НЕ оценка кредитного качества',
+  };
+
+  it('shows an RV badge on a weak-position card with a Rich verdict', async () => {
+    server.use(http.get('*/api/analytics/relative-value', () => HttpResponse.json(richRelativeValue)));
 
     renderRecommendations();
 
-    await waitFor(() => expect(screen.getByTestId('weak-links-error')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTestId('relative-value-badge-1')).toBeInTheDocument());
+    expect(screen.getByTestId('relative-value-badge-1').textContent).toMatch(/дорогая/);
+  });
+
+  it('does not break the recommendations page when GET /api/analytics/relative-value fails', async () => {
+    server.use(http.get('*/api/analytics/relative-value', () => HttpResponse.json({ error: 'boom' }, { status: 500 })));
+
+    renderRecommendations();
+
+    await waitFor(() => expect(screen.getByTestId('weak-links-section')).toBeInTheDocument());
+    expect(screen.getByTestId('basket-constructor')).toBeInTheDocument();
+    expect(screen.queryByTestId('relative-value-badge-1')).not.toBeInTheDocument();
+  });
+
+  // ─── Задача 35 §C: Блок 2 — переключатель источника кандидатов аллокации ────────────────────
+
+  it('renders the basket constructor with a source switcher for the greedy preset', async () => {
+    renderRecommendations();
+
+    await waitFor(() => expect(screen.getByTestId('basket-source-control')).toBeInTheDocument());
+    expect(screen.getByText('Весь рынок — доходные')).toBeInTheDocument();
+    expect(screen.getByText('Рекомендованные')).toBeInTheDocument();
+    expect(screen.getByText('Мой портфель')).toBeInTheDocument();
   });
 
   // ─── Задача 20: секция Watchlist ─────────────────────────────────────────────────────────
@@ -475,192 +534,5 @@ describe('Recommendations', () => {
 
     await waitFor(() => expect(deleteCalled).toBe(true));
     await waitFor(() => expect(screen.queryByTestId('watchlist-row-42')).not.toBeInTheDocument());
-  });
-
-  // ─── Задача 30: relative value (RV) — бейджи, секция «дешёвых соседей», устойчивость к отказу ──
-
-  const richRelativeValue: RelativeValueResponse = {
-    positions: [
-      {
-        positionId: 1,
-        basket: { sector: 'Корпоративные', durationBucket: '1–3 года', count: 7, confidence: 'High' },
-        deviationFraction: -0.0038,
-        percentile: 8,
-        verdict: 'Rich',
-        basedOnDays: 5,
-        cheapCandidates: [
-          { secid: 'CHEAP1', name: 'Дешёвая бумага 1', yieldFraction: 0.22, deviationFraction: 0.004, liquidityScore: 'High' },
-          { secid: 'CHEAP2', name: 'Дешёвая бумага 2', yieldFraction: 0.24, deviationFraction: 0.003, liquidityScore: 'Medium' },
-        ],
-      },
-      {
-        positionId: 2,
-        basket: { sector: 'Корпоративные', durationBucket: '1–3 года', count: 7, confidence: 'High' },
-        deviationFraction: 0.0025,
-        percentile: 78,
-        verdict: 'Cheap',
-        basedOnDays: 5,
-        cheapCandidates: [],
-      },
-    ],
-    disclaimer: 'относительная дешевизна к корзине по данным MOEX; НЕ оценка кредитного качества',
-  };
-
-  it('shows an RV badge on a weak-link card with a Rich verdict', async () => {
-    server.use(http.get('*/api/analytics/relative-value', () => HttpResponse.json(richRelativeValue)));
-
-    renderRecommendations();
-
-    await waitFor(() => expect(screen.getByTestId('relative-value-badge-1')).toBeInTheDocument());
-    expect(screen.getByTestId('relative-value-badge-1').textContent).toMatch(/дорогая/);
-  });
-
-  it('shows an RV badge with a Cheap verdict on a different position', async () => {
-    server.use(http.get('*/api/analytics/relative-value', () => HttpResponse.json(richRelativeValue)));
-
-    renderRecommendations();
-
-    await waitFor(() => expect(screen.getByTestId('relative-value-badge-2')).toBeInTheDocument());
-    expect(screen.getByTestId('relative-value-badge-2').textContent).toMatch(/дешёвая/);
-  });
-
-  it('renders the "дорогие бумаги — дешёвые соседи" section with cheap candidate chips for a Rich position', async () => {
-    server.use(http.get('*/api/analytics/relative-value', () => HttpResponse.json(richRelativeValue)));
-
-    renderRecommendations();
-
-    await waitFor(() => expect(screen.getByTestId('relative-value-section')).toBeInTheDocument());
-    expect(screen.getByTestId('rv-rich-row-1')).toBeInTheDocument();
-    expect(screen.getByTestId('rv-candidate-chip-CHEAP1')).toBeInTheDocument();
-    expect(screen.getByTestId('rv-candidate-chip-CHEAP2')).toBeInTheDocument();
-    // Cheap-позиция (positionId=2) не должна получить свою строку в секции — только Rich.
-    expect(screen.queryByTestId('rv-rich-row-2')).not.toBeInTheDocument();
-  });
-
-  it('clicking a cheap candidate chip opens MarketComparator preselected with that bond', async () => {
-    server.use(
-      http.get('*/api/analytics/relative-value', () => HttpResponse.json(richRelativeValue)),
-      http.get('*/api/universe*', ({ request }) => {
-        const url = new URL(request.url);
-        if (url.searchParams.get('search') === 'CHEAP1') {
-          return HttpResponse.json({
-            rows: [
-              {
-                secid: 'CHEAP1',
-                isin: 'RU000CHEAP01',
-                name: 'Дешёвая бумага 1',
-                sector: 'Корпоративные',
-                yieldFraction: 0.22,
-                durationYears: 2,
-                pricePercent: 98,
-                turnoverRub: 2_000_000,
-                listLevel: 1,
-                liquidityScore: 'High',
-                slippageEstimateFraction: 0.001,
-                gspreadApproxFraction: 0.05,
-                maturityDate: '2028-01-01',
-                offerDate: null,
-                isHidden: false,
-                hiddenReason: null,
-                inPortfolio: false,
-                inWatchlist: false,
-              },
-            ],
-            total: 1,
-            hiddenCount: 0,
-            disclaimer: '',
-          });
-        }
-        return HttpResponse.json({ rows: [], total: 0, hiddenCount: 0, disclaimer: '' });
-      }),
-      http.post('*/api/universe/:secid/materialize', () =>
-        HttpResponse.json({
-          instrumentId: 999,
-          secid: 'CHEAP1',
-          isin: 'RU000CHEAP01',
-          metrics: {
-            name: 'Дешёвая бумага 1',
-            issuer: 'Эмитент',
-            sector: 'Корпоративные',
-            couponType: 'Fixed',
-            maturityDate: '2028-01-01',
-            horizonDate: '2028-01-01',
-            calculatedToOffer: false,
-            modifiedDuration: 2,
-            macaulayDuration: 2.05,
-            ytmEffective: 0.22,
-            currentYield: 0.2,
-            effectiveYield: 0.22,
-            gSpread: 500,
-            isFloater: false,
-            isIndexed: false,
-            isEstimated: false,
-            dataIncomplete: false,
-          },
-          disclaimer: '',
-        }),
-      ),
-      http.post('*/api/analytics/replacement', () =>
-        HttpResponse.json({
-          holdPositionId: 1,
-          targetPositionId: 0,
-          targetInstrumentId: 999,
-          horizonYears: 2,
-          sellCommissionRub: 30,
-          buyCommissionRub: 30,
-          totalSwitchCostRub: 60,
-          netBenefitRub: 1200,
-          isSwitchFavorable: true,
-          breakEvenYears: 0.4,
-          yieldDataIncomplete: false,
-          disclaimer: '',
-          sellCommissionRateUsed: 0.003,
-          buyCommissionRateUsed: 0.003,
-          commissionRateSource: 'Default',
-          spreadFraction: 0.07,
-          capitalRub: 1490,
-          grossGainRub: 1260,
-          annualizedBenefitFraction: 0.18,
-          sellTaxEstimateRub: null,
-          netBenefitAfterTaxRub: null,
-        }),
-      ),
-    );
-
-    renderRecommendations();
-
-    await waitFor(() => expect(screen.getByTestId('rv-candidate-chip-CHEAP1')).toBeInTheDocument());
-    fireEvent.click(screen.getByTestId('rv-candidate-chip-CHEAP1'));
-
-    await waitFor(() => expect(screen.getByTestId('rv-market-comparator-1')).toBeInTheDocument());
-    await waitFor(() => expect(screen.getByTestId('market-comparator-result-1')).toBeInTheDocument());
-  });
-
-  it('shows the young-history caption in the RV badge tooltip when basedOnDays is 0', async () => {
-    const youngHistory: RelativeValueResponse = {
-      positions: [{ ...richRelativeValue.positions[0], basedOnDays: 0 }],
-      disclaimer: richRelativeValue.disclaimer,
-    };
-    server.use(http.get('*/api/analytics/relative-value', () => HttpResponse.json(youngHistory)));
-
-    renderRecommendations();
-
-    await waitFor(() => expect(screen.getByTestId('relative-value-badge-1')).toBeInTheDocument());
-
-    const { default: userEvent } = await import('@testing-library/user-event');
-    await userEvent.hover(screen.getByTestId('relative-value-badge-1'));
-
-    await waitFor(() => expect(screen.getByText(/истории пока мало/)).toBeInTheDocument());
-  });
-
-  it('does not break the recommendations page when GET /api/analytics/relative-value fails', async () => {
-    server.use(http.get('*/api/analytics/relative-value', () => HttpResponse.json({ error: 'boom' }, { status: 500 })));
-
-    renderRecommendations();
-
-    await waitFor(() => expect(screen.getByTestId('weak-links-section')).toBeInTheDocument());
-    expect(screen.getByTestId('replacements-section')).toBeInTheDocument();
-    expect(screen.queryByTestId('relative-value-badge-1')).not.toBeInTheDocument();
-    expect(screen.queryByTestId('relative-value-section')).not.toBeInTheDocument();
   });
 });

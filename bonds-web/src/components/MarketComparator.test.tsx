@@ -272,6 +272,60 @@ describe('MarketComparator', () => {
     expect(screen.getByTestId('market-comparator-liquidity-warning-1').textContent).toMatch(/Низкая ликвидность/);
   });
 
+  // ─── Задача 33 часть A.4 / 35 §B.3: риск-сигналы таргета из ответа POST /replacement ──────────
+
+  it('shows risk-signal badges on the result card when the replacement response carries targetRiskSignals', async () => {
+    server.use(
+      http.get('*/api/universe', () => HttpResponse.json({ rows: [gazpromRow], total: 1, hiddenCount: 0, disclaimer: '' })),
+      http.post('*/api/universe/:secid/materialize', () => HttpResponse.json(materializeResponse)),
+      http.post('*/api/analytics/replacement', () =>
+        HttpResponse.json({
+          ...replacementResponse,
+          targetRiskSignals: {
+            liquidity: 'Good',
+            liquidityLabel: 'Высокая ликвидность, листинг 1',
+            spread: 'Caution',
+            gSpreadFraction: 0.05,
+            spreadVsBasketMedianFraction: 0.012,
+          },
+        }),
+      ),
+    );
+
+    renderComparator();
+
+    const input = screen.getByTestId('market-comparator-select-1');
+    fireEvent.click(input);
+    fireEvent.change(input, { target: { value: '' } });
+
+    await waitFor(() => expect(screen.getByText(gazpromRow.name!)).toBeInTheDocument());
+    fireEvent.click(screen.getByText(gazpromRow.name!));
+
+    await waitFor(() => expect(screen.getByTestId('market-comparator-result-1')).toBeInTheDocument());
+    expect(screen.getByTestId('risk-signal-liquidity-market-1')).toBeInTheDocument();
+    expect(screen.getByTestId('risk-signal-spread-market-1')).toBeInTheDocument();
+  });
+
+  it('does not render risk-signal badges when targetRiskSignals is absent (target not found in the bank)', async () => {
+    server.use(
+      http.get('*/api/universe', () => HttpResponse.json({ rows: [gazpromRow], total: 1, hiddenCount: 0, disclaimer: '' })),
+      http.post('*/api/universe/:secid/materialize', () => HttpResponse.json(materializeResponse)),
+      http.post('*/api/analytics/replacement', () => HttpResponse.json(replacementResponse)),
+    );
+
+    renderComparator();
+
+    const input = screen.getByTestId('market-comparator-select-1');
+    fireEvent.click(input);
+    fireEvent.change(input, { target: { value: '' } });
+
+    await waitFor(() => expect(screen.getByText(gazpromRow.name!)).toBeInTheDocument());
+    fireEvent.click(screen.getByText(gazpromRow.name!));
+
+    await waitFor(() => expect(screen.getByTestId('market-comparator-result-1')).toBeInTheDocument());
+    expect(screen.queryByTestId('risk-signal-liquidity-market-1')).not.toBeInTheDocument();
+  });
+
   it('clicking "В watchlist" posts the materialized ISIN to the watchlist endpoint', async () => {
     let postedIsin: string | null = null;
     server.use(

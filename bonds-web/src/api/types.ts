@@ -513,81 +513,81 @@ export interface ReplacementResponse {
   sellTaxEstimateRub: number | null;
   /** Задача 27 часть B: netBenefitRub − sellTaxEstimateRub. Null, если sellTaxEstimateRub недоступен. */
   netBenefitAfterTaxRub: number | null;
+  /** Задача 33 часть A.4/35: риск-сигналы таргета (см. <see>RiskSignals</see>) — только если таргет
+   * найден в банке (bond_universe) по ISIN, иначе null (бумага вне биржевой статистики MOEX). */
+  targetRiskSignals?: RiskSignals | null;
 }
 
-// ---- GET /api/analytics/replacement-matrix (plan/23 §A) ----
+// ---- GET /api/analytics/replacement-candidates (задача 33 часть B, фронт — задача 35 §A) ----
 
-/** Причина, по которой пара НЕ попала в bestPairs, но осталась видимой. */
-export type RejectedPairReason = 'NotProfitable' | 'DurationMismatch';
+/** Уровень информационного риск-сигнала кандидата — НЕ рейтинг кредитного качества/агентства. */
+export type RiskSignalLevel = 'Good' | 'Neutral' | 'Caution';
 
-/** Одна из лучших пар «держать hold vs переложиться в target» — netBenefitRub > 0. */
-export interface MatrixPair {
-  holdPositionId: number;
-  holdInstrumentId: number;
-  holdName: string | null;
-  targetPositionId: number;
-  targetInstrumentId: number;
-  targetName: string | null;
-  /** true — target это watchlist-бумага без позиции в портфеле. */
-  isWatchlistTarget: boolean;
-
-  /** Спред эффективных доходностей (targetYield - holdYield) — ДОЛЯ. */
-  spreadFraction: number;
-  /** Капитал, реально переходящий в target (MarketValueRub hold минус комиссия продажи), в рублях. */
-  capitalRub: number;
-  horizonYears: number;
-  /** Валовая выгода (спред × капитал × горизонт) ДО вычета комиссий, в рублях. */
-  grossGainRub: number;
-  sellCommissionRub: number;
-  buyCommissionRub: number;
-  /** GrossGainRub - обе комиссии — чистая выгода в рублях, всегда > 0 для bestPairs. */
-  netBenefitRub: number;
-  /** NetBenefitRub / CapitalRub / HorizonYears — ДОЛЯ (не процент); фронт форматирует через formatPercent. */
-  annualizedBenefitFraction: number | null;
-  /** Ставка комиссии, применённая к обеим сделкам пары — ДОЛЯ. */
-  commissionRateUsed: number;
-  commissionRateSource: CommissionRateSource;
-  /** Задача 25: оценка НДФЛ от продажи hold-позиции (13% с прибыли к средней цене входа) — null, если cost basis hold-позиции недоступен/журнал неполон. */
-  sellTaxEstimateRub: number | null;
-  /** Задача 25: netBenefitRub − sellTaxEstimateRub — выгода после налога. Null, если sellTaxEstimateRub недоступен (ранжирование использует netBenefitAfterTaxRub ?? netBenefitRub). */
-  netBenefitAfterTaxRub: number | null;
+/**
+ * Два ИНФОРМАЦИОННЫХ риск-сигнала кандидата-замены (ликвидность+листинг, отклонение спреда от
+ * медианы его корзины) — зеркалит `RiskSignalsDto` (задача 33 часть A). Не ранжирует кандидатов
+ * (ранжирование mode=market идёт по доходности) и НЕ является рейтингом агентств.
+ */
+export interface RiskSignals {
+  liquidity: RiskSignalLevel;
+  /** Человекочитаемая подпись, напр. "Высокая ликвидность, листинг 1". */
+  liquidityLabel: string;
+  spread: RiskSignalLevel;
+  /** ДОЛЯ; эхо G-спреда кандидата. Null, если MOEX не отдал спред. */
+  gSpreadFraction: number | null;
+  /** ДОЛЯ; gSpreadFraction − медиана корзины кандидата. Положительное — спред выше медианы. */
+  spreadVsBasketMedianFraction: number | null;
 }
 
-/** Пара, не попавшая в bestPairs, но видимая с причиной отказа (plan/23 §A.4). */
-export interface RejectedPair {
-  holdPositionId: number;
-  holdInstrumentId: number;
-  holdName: string | null;
-  targetPositionId: number;
-  targetInstrumentId: number;
-  targetName: string | null;
-  isWatchlistTarget: boolean;
-  reason: RejectedPairReason;
-  /** Заполнено только для reason="NotProfitable" — чистая выгода в рублях (<= 0). */
-  netBenefitRub: number | null;
+/** Режим подбора кандидатов-замен для одной позиции портфеля (GET /replacement-candidates). */
+export type ReplacementCandidatesMode = 'market' | 'rv';
+
+/** Один кандидат-замена — дешёвая банк-статистика (bond_universe), НЕ точный расчёт движка (см.
+ * doc-comment backend `ReplacementCandidateDto`) — точную выгоду считает POST /replacement. */
+export interface ReplacementCandidate {
+  secid: string;
+  isin: string | null;
+  name: string;
+  /** Задача 33 часть B.2: банк-слой не хранит эмитента — всегда null. */
+  issuer: string | null;
+  sector: string | null;
+  /** ДОЛЯ. */
+  yieldFraction: number | null;
+  /** Годы. */
+  durationYears: number | null;
+  /** ДОЛЯ; приближённый G-спред банка. */
+  gSpreadFraction: number | null;
+  riskSignals: RiskSignals;
 }
 
-/** Ответ GET /api/analytics/replacement-matrix — честный перебор всех пар (plan/23). */
-export interface ReplacementMatrixResponse {
-  /** Пары с netBenefit > 0, отсортированы по netBenefit убыв. */
-  bestPairs: MatrixPair[];
-  /** Пары с netBenefit <= 0 либо вне окна дюраций — targetYield <= holdYield пары сюда не попадают вовсе. */
-  rejectedPairs: RejectedPair[];
-  /** bestPairs.length + rejectedPairs.length ДО срабатывания предохранителя — для пустого состояния («рассмотрено N пар»). */
-  totalConsideredPairs: number;
+/** Ответ GET /api/analytics/replacement-candidates. */
+export interface ReplacementCandidatesResponse {
+  /** "market" | "rv" — эхо запрошенного режима. */
+  mode: string;
+  positionIsin: string;
+  candidates: ReplacementCandidate[];
   disclaimer: string;
 }
 
-// ---- GET /api/analytics/allocation (plan/17 §B) ----
+// ---- GET /api/analytics/allocation (plan/17 §B, задача 34 — source=market/recommended) ----
 
 /** Причина, по которой кандидат не получил докупку. Зеркалит CashAllocationSkipReason бэкенда. */
-export type AllocationSkipReason = 'NoYield' | 'ConcentrationLimit' | 'NoPrice' | 'NotComparable';
+export type AllocationSkipReason = 'NoYield' | 'ConcentrationLimit' | 'NoPrice' | 'NotComparable' | 'InsufficientFunds';
+
+/** Источник кандидатов аллокации (задача 34) — эхо запроса/выбор пользователя. */
+export type AllocationSource = 'portfolio' | 'market' | 'recommended';
 
 /** Одна строка распределения — сколько купить конкретной бумаги. */
 export interface AllocationLine {
-  instrumentId: number;
+  /** Задача 34: null для Source=market/recommended (банк-кандидат не связан с Instrument) —
+   * идентификатор таких строк — {@link AllocationLine.secid}. */
+  instrumentId: number | null;
+  /** Задача 34: биржевой SECID — только для Source=market/recommended. Null для Source=portfolio. */
+  secid: string | null;
   name: string | null;
   issuer: string | null;
+  /** Задача 34: грубая секторная классификация банка — заполнена для Source=market/recommended. */
+  sector: string | null;
   quantity: number;
   estimatedCostRub: number;
   effectiveYield: number;
@@ -598,11 +598,16 @@ export interface AllocationLine {
   accruedCostRub: number;
   /** Задача 24: комиссия покупки в составе estimatedCostRub. */
   commissionCostRub: number;
+  /** Задача 34 часть A.2: риск-сигналы — заполнены для Source=market/recommended, null для Source=portfolio. */
+  riskSignals: RiskSignals | null;
 }
 
 /** Кандидат, не получивший докупку, и причина. */
 export interface AllocationSkip {
-  instrumentId: number;
+  /** Null для Source=market/recommended — см. doc-comment {@link AllocationLine.instrumentId}. */
+  instrumentId: number | null;
+  /** Задача 34: см. {@link AllocationLine.secid}. */
+  secid: string | null;
   name: string | null;
   issuer: string | null;
   reason: AllocationSkipReason;
@@ -611,6 +616,8 @@ export interface AllocationSkip {
 /** Ответ GET /api/analytics/allocation. */
 export interface AllocationResponse {
   amountRub: number;
+  /** Задача 34: эхо запрошенного источника кандидатов. */
+  source: string;
   allocations: AllocationLine[];
   skipped: AllocationSkip[];
   leftoverRub: number;
@@ -619,6 +626,14 @@ export interface AllocationResponse {
   /** Plan/22 часть E: ставка комиссии покупки, применённая к цене лота — ДОЛЯ. */
   commissionRateUsed: number;
   commissionRateSource: CommissionRateSource;
+
+  /** Задача 34 часть B.4: только для Source=market/recommended — сколько кандидатов реально
+   * подходило до отсечения потолком. Null для Source=portfolio. */
+  candidatePoolAvailable: number | null;
+  /** Задача 34 часть B.4: верхняя граница числа кандидатов, участвовавших в жадном проходе. Null для Source=portfolio. */
+  candidatePoolLimit: number | null;
+  /** Задача 34 часть B.4: true — потолок реально обрезал часть подходящих кандидатов. Null для Source=portfolio. */
+  candidatePoolTruncated: boolean | null;
 }
 
 // ---- POST /api/analytics/basket (plan/29 §B) ----
