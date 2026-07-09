@@ -79,7 +79,7 @@ const floaterRow = {
   name: 'Флоатер',
   issuer: 'РЖД',
   effectiveYield: 0.1,
-  yieldKind: 'Current' as const,
+  yieldKind: 'CurrentYield' as const,
   modifiedDuration: null,
   gSpread: null,
   daysToHorizon: 500,

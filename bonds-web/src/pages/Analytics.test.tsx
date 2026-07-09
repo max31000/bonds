@@ -45,7 +45,7 @@ const baseScatter: ScatterResponse = {
       modifiedDuration: 1.5,
       macaulayDuration: 1.6,
       effectiveYield: 0.094,
-      yieldKind: 'Current',
+      yieldKind: 'CurrentYield',
       isFloater: true,
       isIndexed: false,
       isEstimated: true,

@@ -267,8 +267,14 @@ export interface CashflowResponse {
 
 // ---- GET /api/analytics/scatter (см. plan/09b §B.3) ----
 
-/** Вид доходности, использованной для точки на scatter-графике. */
-export type YieldKind = 'Ytm' | 'Current';
+/**
+ * Вид доходности, использованной для точки на scatter-графике/сравнении. Зеркалит
+ * сериализацию бэкенд-enum `YieldKind.ToString()` — значение `CurrentYield`, НЕ `Current`
+ * (задача 32 часть A: до фикса фронт-тип `'Current'` никогда не совпадал со строкой от сервера,
+ * из-за чего ветка «вне сравнения» по yieldKind не срабатывала в проде, см.
+ * `PositionComparisonService.cs`/`AnalyticsEndpoints.cs`).
+ */
+export type YieldKind = 'Ytm' | 'CurrentYield';
 
 /** Точка позиции на графике «дюрация × доходность». */
 export interface ScatterPoint {
