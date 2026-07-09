@@ -707,12 +707,17 @@ public static class AnalyticsEndpoints
     // ─── GET /api/analytics/allocation ──────────────────────────────────────────────────────
 
     /// <summary>
-    /// «Куда вложить сумму» (plan/17 §B): жадное распределение <paramref name="amountRub"/> между
-    /// текущими позициями портфеля через <see cref="CashAllocationService"/>. Кандидаты и их
-    /// грязная цена лота строятся из <see cref="PortfolioHoldingsBuilder"/> holdings — тот же вход,
-    /// что у comparison/replacement. Лот берётся равным 1 (в модели <c>Instrument</c> нет поля
-    /// размера лота — см. doc-comment плана: при отсутствии источника лота считаем 1 и помечаем
-    /// <c>lotSizeAssumed</c>, а не падаем/выдумываем данные).
+    /// «Куда вложить сумму» (plan/17 §B, задача 34 — источники кандидатов). Жадное распределение
+    /// <paramref name="amountRub"/> через <see cref="CashAllocationService"/>. <paramref name="source"/>
+    /// выбирает кандидатов: <c>portfolio</c> (дефолт, обратная совместимость — прежнее поведение)
+    /// строит кандидатов из <see cref="PortfolioHoldingsBuilder"/> holdings — тот же вход, что у
+    /// comparison/replacement, лот берётся равным 1 (в модели <c>Instrument</c> нет поля размера
+    /// лота — см. doc-comment плана: при отсутствии источника лота считаем 1 и помечаем
+    /// <c>lotSizeAssumed</c>, а не падаем/выдумываем данные); <c>market</c>/<c>recommended</c>
+    /// (задача 34) строят кандидатов из ВСЕЙ фикс-купонной вселенной банка <c>bond_universe</c> —
+    /// см. <see cref="BuildMarketAllocationResponseAsync"/>. <paramref name="includeWatchlist"/>
+    /// осмыслен только для <c>portfolio</c> (для market/recommended игнорируется — вся вселенная и
+    /// так шире watchlist).
     /// <para>
     /// <b>Задача 20:</b> <paramref name="includeWatchlist"/>=true добавляет к кандидатам watchlist-
     /// бумаги (<see cref="PortfolioHoldingsBuilder.BuildForInstrumentsAsync"/> — тот же расчётный
@@ -729,7 +734,11 @@ public static class AnalyticsEndpoints
         IWatchlistItemRepository watchlistRepo,
         IInstrumentRepository instrumentRepo,
         ICommissionRateProvider commissionRateProvider,
+        IBondUniverseRepository universeRepo,
+        RelativeValueSnapshotBuilder snapshotBuilder,
+        IOptions<Bonds.Infrastructure.Universe.BondUniverseRefreshOptions> universeOptions,
         decimal amountRub,
+        string source = "portfolio",
         bool includeWatchlist = false,
         CancellationToken ct = default)
     {
@@ -740,25 +749,44 @@ public static class AnalyticsEndpoints
                 statusCode: StatusCodes.Status422UnprocessableEntity);
         }
 
+        if (source is not ("portfolio" or "market" or "recommended"))
+        {
+            return ValidationError("source должен быть 'portfolio', 'market' или 'recommended'");
+        }
+
         var accountId = await PositionsEndpoints.ResolveAccountIdAsync(principal, accountRepo);
+
+        // Plan/22 часть E: ставка покупки для оценки грязной цены лота — через резолвер (override →
+        // оценка из журнала → дефолт), не захардкоженная константа. Задача 34: market/recommended не
+        // зависят от портфеля, но тоже платят комиссию за покупку — резолвим ставку, если есть
+        // привязанный счёт, иначе дефолт (тот же фолбэк, что раньше был только у "нет аккаунта").
+        var resolvedRate = accountId is not null
+            ? await commissionRateProvider.GetAsync(accountId.Value, ct)
+            : new ResolvedCommissionRate(SwitchAnalysisService.DefaultCommissionRate, CommissionRateSource.Default, null);
+        var commissionRate = resolvedRate.Rate;
+
+        if (source is "market" or "recommended")
+        {
+            return await BuildMarketAllocationResponseAsync(
+                amountRub, source, commissionRate, resolvedRate, universeRepo, universeOptions.Value.Hygiene, snapshotBuilder, ct);
+        }
+
+        // ─── source=portfolio (прежнее поведение, обратная совместимость дефолта) ──────────────
+
         if (accountId is null)
         {
             return Results.Ok(new AllocationResponseDto
             {
                 AmountRub = amountRub,
+                Source = source,
                 Allocations = [],
                 Skipped = [],
                 LeftoverRub = amountRub,
                 Disclaimer = CashAllocationService.Disclaimer,
-                CommissionRateUsed = SwitchAnalysisService.DefaultCommissionRate,
-                CommissionRateSource = nameof(CommissionRateSource.Default),
+                CommissionRateUsed = resolvedRate.Rate,
+                CommissionRateSource = resolvedRate.Source.ToString(),
             });
         }
-
-        // Plan/22 часть E: ставка покупки для оценки грязной цены лота — через резолвер (override →
-        // оценка из журнала → дефолт), не захардкоженная константа.
-        var resolvedRate = await commissionRateProvider.GetAsync(accountId.Value, ct);
-        var commissionRate = resolvedRate.Rate;
 
         var asOf = BusinessClock.MoscowToday();
         var holdings = (await holdingsBuilder.BuildForAccountAsync(accountId.Value, asOf)).ToList();
@@ -872,6 +900,7 @@ public static class AnalyticsEndpoints
         var dto = new AllocationResponseDto
         {
             AmountRub = result.AmountRub,
+            Source = source,
             Allocations = result.Allocations.Select(a => new AllocationLineDto
             {
                 InstrumentId = a.InstrumentId,
@@ -884,6 +913,12 @@ public static class AnalyticsEndpoints
                 CleanCostRub = a.CleanCostRub,
                 AccruedCostRub = a.AccruedCostRub,
                 CommissionCostRub = a.CommissionCostRub,
+                // Задача 34 часть A.2: source=portfolio может тоже нести риск-сигналы, если бумага
+                // нашлась в банке по ISIN — план явно допускает более простую альтернативу (null),
+                // если не находится/не резолвится; здесь сознательно null (см. NEEDS DECISION в
+                // отчёте задачи — потребует resolve-по-ISIN на КАЖДУЮ строку портфеля, план это не
+                // требует буквально).
+                RiskSignals = null,
             }).ToList(),
             Skipped = result.Skipped.Select(s => new AllocationSkipDto
             {
@@ -899,6 +934,210 @@ public static class AnalyticsEndpoints
         };
 
         return Results.Ok(dto);
+    }
+
+    // ─── GET /api/analytics/allocation?source=market|recommended (задача 34) ───────────────────
+
+    /// <summary>Задача 34 часть B.4 — верхняя граница числа кандидатов вселенной банка (после
+    /// гигиенического + флоатер + [для recommended] риск-фильтра), реально участвующих в жадном
+    /// проходе. Банк ~3400 строк — без потолка ответ разрастался бы; "не молча" — см.
+    /// <see cref="AllocationResponseDto.CandidatePoolTruncated"/>/дисклеймер с фактическими числами.</summary>
+    public const int MarketAllocationCandidatePoolLimit = 200;
+
+    public const string MarketAllocationDisclaimer =
+        "Оценка распределения свободных средств по всей фикс-купонной гигиенически-чистой вселенной " +
+        "банка облигаций MOEX (флоатеры исключены — их доходность несравнима с фикс-купоном). " +
+        "Кандидаты ранжируются по доходности убыв., без учёта вашего текущего портфеля. Оценки — по " +
+        "биржевой статистике, не является индивидуальной инвестиционной рекомендацией.";
+
+    public const string RecommendedAllocationDisclaimer =
+        "Оценка распределения свободных средств по кандидатам вселенной банка облигаций MOEX, " +
+        "отфильтрованным по позитивным риск-сигналам (ликвидность+листинг, спред к рынку — " +
+        "информационные сигналы биржевой статистики, НЕ рейтинг рейтинговых агентств) и " +
+        "диверсифицированным по секторам. Оценки — по биржевой статистике, не является " +
+        "индивидуальной инвестиционной рекомендацией.";
+
+    /// <summary>
+    /// Задача 34 часть B — source=market/recommended: кандидаты из ВСЕЙ гигиенически-чистой
+    /// фикс-купонной вселенной банка (<c>bond_universe</c>, через <see cref="UniverseHygieneFilter"/>),
+    /// НЕ holdings портфеля — точный движок здесь не вызывается, только банк-статистика (тот же
+    /// принцип "двухъярусной архитектуры", что <see cref="GetReplacementCandidates"/> mode=market;
+    /// план явно запрещает материализовывать вселенную через движок). <paramref name="source"/>=
+    /// <c>recommended</c> дополнительно исключает кандидатов с Caution-сигналом ликвидности ИЛИ
+    /// спреда (<see cref="CandidateRiskSignalService"/>, задача 33) и ограничивает концентрацию по
+    /// СЕКТОРУ (<see cref="CashAllocationConcentrationAxis.Sector"/> — issuer на банк-слое
+    /// недоступен, см. doc-comment <see cref="Core.Analytics.CashAllocationCandidate.Sector"/>);
+    /// <paramref name="source"/>=<c>market</c> — честный greedy по доходности БЕЗ секторного лимита
+    /// (принятый дефолт NEEDS DECISION plan/34 часть B.3: "весь рынок" должен показывать самое
+    /// доходное без искажений диверсификацией). Обе ветки жёстко ограничивают 1 лот на кандидата
+    /// (<c>maxLotsPerCandidate=1</c> — диверсификация "не больше 1 позиции на secid", план часть B.3)
+    /// и потолок пула кандидатов <see cref="MarketAllocationCandidatePoolLimit"/> — потолок применяется
+    /// ПОСЛЕ риск-фильтра (для recommended), чтобы в пул из 200 попадали лучшие ПРОШЕДШИЕ фильтр
+    /// кандидаты, а не обрезок топ-200 "по доходности вообще", из которого фильтр потом выбрасывает
+    /// половину.
+    /// </summary>
+    private static async Task<IResult> BuildMarketAllocationResponseAsync(
+        decimal amountRub,
+        string source,
+        decimal commissionRate,
+        ResolvedCommissionRate resolvedRate,
+        IBondUniverseRepository universeRepo,
+        UniverseHygieneOptions hygieneOptions,
+        RelativeValueSnapshotBuilder snapshotBuilder,
+        CancellationToken ct)
+    {
+        var asOf = BusinessClock.MoscowToday();
+        var all = await universeRepo.GetAllAsync();
+
+        var eligible = all
+            .Where(e => UniverseHygieneFilter.Evaluate(e, hygieneOptions, asOf) == HygieneHiddenReason.None)
+            .Where(e => e.IsFloater != true)
+            .Where(e => e.YieldFraction is not null && e.DurationYears is not null && e.PricePercent is not null)
+            // Задача 34 часть B.1: FaceValue не входит в перечень плана буквально, но без него нечем
+            // перевести PricePercent в рубли (PricePercent/100 × FaceValue) — тот же принцип "нечем
+            // оценить лот", что и для DurationYears/PricePercent.
+            .Where(e => e.FaceValue is > 0m)
+            .ToList();
+
+        var snapshot = await snapshotBuilder.GetSnapshotAsync(ct);
+        var signalsBySecid = new Dictionary<string, CandidateRiskSignals>(StringComparer.OrdinalIgnoreCase);
+
+        List<BondUniverseEntry> pool;
+        int poolAvailable;
+
+        if (source == "recommended")
+        {
+            var withSignals = eligible
+                .Select(e => (Entry: e, Signals: AssessEntryRiskSignals(e, snapshot)))
+                .Where(x => x.Signals.Liquidity != SignalLevel.Caution && x.Signals.Spread != SignalLevel.Caution)
+                .ToList();
+
+            foreach (var (entry, signals) in withSignals)
+            {
+                signalsBySecid[entry.Secid] = signals;
+            }
+
+            poolAvailable = withSignals.Count;
+            pool = withSignals
+                .OrderByDescending(x => x.Entry.YieldFraction!.Value)
+                .Take(MarketAllocationCandidatePoolLimit)
+                .Select(x => x.Entry)
+                .ToList();
+        }
+        else
+        {
+            poolAvailable = eligible.Count;
+            pool = eligible
+                .OrderByDescending(e => e.YieldFraction!.Value)
+                .Take(MarketAllocationCandidatePoolLimit)
+                .ToList();
+
+            foreach (var entry in pool)
+            {
+                signalsBySecid[entry.Secid] = AssessEntryRiskSignals(entry, snapshot);
+            }
+        }
+
+        var candidates = pool.Select(e => ToAllocationCandidate(e, commissionRate)).ToList();
+
+        var concentrationAxis = source == "recommended"
+            ? CashAllocationConcentrationAxis.Sector
+            : CashAllocationConcentrationAxis.None;
+        var maxSectorSharePercent = source == "recommended"
+            ? (decimal?)CashAllocationService.DefaultMaxSectorSharePercent
+            : null;
+
+        var result = CashAllocationService.Allocate(
+            amountRub,
+            candidates,
+            currentPortfolioValueRub: 0m, // задача 34: рыночный скринер не знает состав портфеля — база лимита растёт только за счёт вносимых денег (см. doc-comment CashAllocationConcentrationAxis.Sector).
+            concentrationAxis: concentrationAxis,
+            maxSectorSharePercent: maxSectorSharePercent,
+            maxLotsPerCandidate: 1);
+
+        var truncated = poolAvailable > MarketAllocationCandidatePoolLimit;
+        var baseDisclaimer = source == "recommended" ? RecommendedAllocationDisclaimer : MarketAllocationDisclaimer;
+        var disclaimer = truncated
+            ? $"{baseDisclaimer} Показаны топ-{MarketAllocationCandidatePoolLimit} из {poolAvailable} подходящих бумаг по доходности — не все кандидаты участвовали в распределении."
+            : baseDisclaimer;
+
+        var dto = new AllocationResponseDto
+        {
+            AmountRub = result.AmountRub,
+            Source = source,
+            Allocations = result.Allocations.Select(a => new AllocationLineDto
+            {
+                InstrumentId = a.InstrumentId,
+                Secid = a.Secid,
+                Name = a.Name,
+                Issuer = a.Issuer,
+                Sector = a.Sector,
+                Quantity = a.Quantity,
+                EstimatedCostRub = a.EstimatedCostRub,
+                EffectiveYield = a.EffectiveYield,
+                LotSizeAssumed = a.LotSizeAssumed,
+                CleanCostRub = a.CleanCostRub,
+                AccruedCostRub = a.AccruedCostRub,
+                CommissionCostRub = a.CommissionCostRub,
+                RiskSignals = a.Secid is not null && signalsBySecid.TryGetValue(a.Secid, out var lineSignals)
+                    ? ToRiskSignalsDto(lineSignals)
+                    : null,
+            }).ToList(),
+            Skipped = result.Skipped.Select(s => new AllocationSkipDto
+            {
+                InstrumentId = s.InstrumentId,
+                Secid = s.Secid,
+                Name = s.Name,
+                Issuer = s.Issuer,
+                Reason = s.Reason.ToString(),
+            }).ToList(),
+            LeftoverRub = result.LeftoverRub,
+            Disclaimer = disclaimer,
+            CommissionRateUsed = resolvedRate.Rate,
+            CommissionRateSource = resolvedRate.Source.ToString(),
+            CandidatePoolAvailable = poolAvailable,
+            CandidatePoolLimit = MarketAllocationCandidatePoolLimit,
+            CandidatePoolTruncated = truncated,
+        };
+
+        return Results.Ok(dto);
+    }
+
+    /// <summary>
+    /// Задача 34 часть B.1: маппинг банк-записи в кандидата аллокации. Цена лота (рубли) =
+    /// PricePercent/100 × FaceValue (контракт единиц — см. docs/CODEBASE-GUIDE.md) + комиссия
+    /// покупки; банк НЕ хранит НКД отдельной строкой на бумагу (нет поля в <c>BondUniverseEntry</c>)
+    /// — приближение "чистая цена без НКД" (AccruedRub=0), задокументировано, тот же уровень
+    /// точности, что и остальная банк-статистика (не точный движок). InstrumentId — null (см.
+    /// doc-comment <c>CashAllocationCandidate.InstrumentId</c>), идентификатор — Secid. Issuer — null
+    /// (банк эмитента не хранит), Sector — из банка (альтернативная ось концентрации).
+    /// IsComparable=true безусловно: флоатеры уже исключены фильтром вызывающего кода
+    /// (<c>entry.IsFloater != true</c>), других "несравнимых" типов на банк-слое нет (тот же принцип,
+    /// что <see cref="GetReplacementCandidates"/> mode=market).
+    /// </summary>
+    private static CashAllocationCandidate ToAllocationCandidate(BondUniverseEntry entry, decimal commissionRate)
+    {
+        var cleanPriceRub = entry.PricePercent!.Value / 100m * entry.FaceValue!.Value;
+        var commissionRub = cleanPriceRub * commissionRate;
+        var pricePerLotRub = cleanPriceRub + commissionRub;
+
+        return new CashAllocationCandidate
+        {
+            InstrumentId = null,
+            Secid = entry.Secid,
+            Name = entry.ShortName ?? entry.SecName ?? entry.Secid,
+            Issuer = null,
+            Sector = entry.Sector,
+            EffectiveYield = entry.YieldFraction,
+            PricePerLotRub = pricePerLotRub,
+            LotSize = 1m,
+            LotSizeIsAssumed = true,
+            CurrentIssuerMarketValueRub = 0m,
+            CleanPriceRub = cleanPriceRub,
+            AccruedRub = 0m,
+            CommissionRub = commissionRub,
+            IsComparable = true,
+        };
     }
 
     // ─── POST /api/analytics/basket ─────────────────────────────────────────────────────────
@@ -1412,11 +1651,14 @@ public static class AnalyticsEndpoints
         return basketMembers.Select(m => ToReplacementCandidateDto(m, basketMedian, snapshot)).ToList();
     }
 
-    /// <summary>mode=market: обогащает банк-запись кандидата риск-сигналами. Медиана корзины —
-    /// СВОЯ у каждого кандидата (сектор × дюрация КАНДИДАТА, не позиции — market-режим ранжирует по
-    /// всей вселенной, кандидаты из разных корзин), резолвится через <see cref="RelativeValueService.ResolveBasket"/>
-    /// той же fallback-цепочкой, что RV-вердикт позиций.</summary>
-    private static ReplacementCandidateDto ToReplacementCandidateDto(
+    /// <summary>
+    /// Задача 34 переиспользует эту резолюцию (source=recommended, риск-фильтр Caution +
+    /// RiskSignalsDto на строках аллокации) — вынесено из <see cref="ToReplacementCandidateDto(BondUniverseEntry, RelativeValueSnapshotBuilder.RelativeValueSnapshot)"/>,
+    /// чтобы не дублировать резолюцию корзины/ликвидности. Медиана корзины — СВОЯ у каждой записи
+    /// (сектор × дюрация ЗАПИСИ, не позиции/другого кандидата), резолвится через
+    /// <see cref="RelativeValueService.ResolveBasket"/> той же fallback-цепочкой, что RV-вердикт позиций.
+    /// </summary>
+    private static CandidateRiskSignals AssessEntryRiskSignals(
         BondUniverseEntry entry, RelativeValueSnapshotBuilder.RelativeValueSnapshot snapshot)
     {
         var liquidity = LiquidityScoreCalculator.Assess(entry.TurnoverRub, entry.BidPercent, entry.OfferPercent, entry.NumTrades);
@@ -1432,7 +1674,14 @@ public static class AnalyticsEndpoints
             basketMedian = ResolveBasket(key, snapshot.AllMembers, snapshot.BasketStats).Stats.Median;
         }
 
-        var signals = CandidateRiskSignalService.Assess(liquidity.Score, entry.ListLevel, entry.GspreadApproxFraction, basketMedian);
+        return CandidateRiskSignalService.Assess(liquidity.Score, entry.ListLevel, entry.GspreadApproxFraction, basketMedian);
+    }
+
+    /// <summary>mode=market: обогащает банк-запись кандидата риск-сигналами.</summary>
+    private static ReplacementCandidateDto ToReplacementCandidateDto(
+        BondUniverseEntry entry, RelativeValueSnapshotBuilder.RelativeValueSnapshot snapshot)
+    {
+        var signals = AssessEntryRiskSignals(entry, snapshot);
 
         return new ReplacementCandidateDto
         {
@@ -1922,6 +2171,10 @@ public sealed record TrajectoryPointDto
 public sealed record AllocationResponseDto
 {
     public required decimal AmountRub { get; init; }
+
+    /// <summary>Задача 34: эхо запрошенного источника кандидатов — "portfolio"|"market"|"recommended".</summary>
+    public required string Source { get; init; }
+
     public required IReadOnlyList<AllocationLineDto> Allocations { get; init; }
     public required IReadOnlyList<AllocationSkipDto> Skipped { get; init; }
     public required decimal LeftoverRub { get; init; }
@@ -1932,13 +2185,42 @@ public sealed record AllocationResponseDto
 
     /// <summary>Plan/22 часть E: источник ставки — строка <see cref="CommissionRateSource"/>.</summary>
     public required string CommissionRateSource { get; init; }
+
+    /// <summary>Задача 34 часть B.4: только для Source=market/recommended — сколько кандидатов
+    /// реально ПОДХОДИЛО (после гигиенического + [для recommended] риск-фильтра) ДО отсечения
+    /// потолком <see cref="AnalyticsEndpoints.MarketAllocationCandidatePoolLimit"/>. Null для
+    /// Source=portfolio.</summary>
+    public int? CandidatePoolAvailable { get; init; }
+
+    /// <summary>Задача 34 часть B.4: только для Source=market/recommended — верхняя граница числа
+    /// кандидатов, реально участвовавших в жадном проходе
+    /// (<see cref="AnalyticsEndpoints.MarketAllocationCandidatePoolLimit"/>). Null для Source=portfolio.</summary>
+    public int? CandidatePoolLimit { get; init; }
+
+    /// <summary>Задача 34 часть B.4: true — <see cref="CandidatePoolAvailable"/> &gt;
+    /// <see cref="CandidatePoolLimit"/>, потолок реально обрезал часть подходящих кандидатов ДО
+    /// жадного прохода (план требует "не молча" — см. также текст <see cref="Disclaimer"/>, который
+    /// в этом случае дописывает фактические числа). Null для Source=portfolio.</summary>
+    public bool? CandidatePoolTruncated { get; init; }
 }
 
 public sealed record AllocationLineDto
 {
-    public required ulong InstrumentId { get; init; }
+    /// <summary>Null для Source=market/recommended (задача 34) — банк-кандидат не связан с таблицей
+    /// Instrument, см. doc-comment <c>CashAllocationCandidate.InstrumentId</c>. Идентификатор для
+    /// таких строк — <see cref="Secid"/>.</summary>
+    public required ulong? InstrumentId { get; init; }
+
+    /// <summary>Задача 34: биржевой SECID — только для Source=market/recommended. Null для Source=portfolio.</summary>
+    public string? Secid { get; init; }
+
     public string? Name { get; init; }
     public string? Issuer { get; init; }
+
+    /// <summary>Задача 34: грубая секторная классификация банка ("Гособлигации"/"Муниципальные"/
+    /// "Корпоративные") — заполнена для Source=market/recommended, null для Source=portfolio.</summary>
+    public string? Sector { get; init; }
+
     public required decimal Quantity { get; init; }
     public required decimal EstimatedCostRub { get; init; }
     public required decimal EffectiveYield { get; init; }
@@ -1952,11 +2234,21 @@ public sealed record AllocationLineDto
 
     /// <summary>Задача 24: комиссия покупки в составе EstimatedCostRub.</summary>
     public decimal CommissionCostRub { get; init; }
+
+    /// <summary>Задача 34 часть A.2: риск-сигналы (см. <see cref="RiskSignalsDto"/>, задача 33) —
+    /// заполнены для Source=market/recommended, null для Source=portfolio (план допускает эту
+    /// более простую альтернативу вместо resolve-по-ISIN на каждую строку портфеля).</summary>
+    public RiskSignalsDto? RiskSignals { get; init; }
 }
 
 public sealed record AllocationSkipDto
 {
-    public required ulong InstrumentId { get; init; }
+    /// <summary>Null для Source=market/recommended — см. doc-comment <see cref="AllocationLineDto.InstrumentId"/>.</summary>
+    public required ulong? InstrumentId { get; init; }
+
+    /// <summary>Задача 34: см. <see cref="AllocationLineDto.Secid"/>.</summary>
+    public string? Secid { get; init; }
+
     public string? Name { get; init; }
     public string? Issuer { get; init; }
     public required string Reason { get; init; }
