@@ -5,10 +5,12 @@ using Bonds.Core.Calculation;
 using Bonds.Core.CashFlow;
 using Bonds.Core.Interfaces;
 using Bonds.Core.Interfaces.Repositories;
+using Bonds.Core.Models;
 using Bonds.Core.Time;
 using Bonds.Core.Universe;
 using Bonds.Infrastructure.Analytics;
 using Bonds.Infrastructure.Universe;
+using Microsoft.Extensions.Options;
 using static Bonds.Core.Analytics.RelativeValueService;
 
 namespace Bonds.Api.Endpoints;
@@ -35,6 +37,7 @@ public static class AnalyticsEndpoints
         app.MapGet("/api/analytics/allocation", GetAllocation);
         app.MapPost("/api/analytics/basket", PostBasket);
         app.MapGet("/api/analytics/relative-value", GetRelativeValue);
+        app.MapGet("/api/analytics/replacement-candidates", GetReplacementCandidates);
     }
 
     // ─── GET /api/analytics/xirr ────────────────────────────────────────────────────────────
@@ -323,6 +326,7 @@ public static class AnalyticsEndpoints
         IAccountRepository accountRepo,
         PortfolioHoldingsBuilder holdingsBuilder,
         ICommissionRateProvider commissionRateProvider,
+        RelativeValueSnapshotBuilder snapshotBuilder,
         CancellationToken ct)
     {
         var accountId = await PositionsEndpoints.ResolveAccountIdAsync(principal, accountRepo);
@@ -420,6 +424,16 @@ public static class AnalyticsEndpoints
         var sellTaxEstimateRub = sellTaxEstimate?.TaxRub;
         var netBenefitAfterTaxRub = sellTaxEstimateRub is decimal tax ? result.NetBenefitRub - tax : (decimal?)null;
 
+        // Задача 33 часть B.4: риск-сигналы для ВЫБРАННОЙ цели (не hold — план ограничивает объём
+        // до "для выбранной цели") по её банк-записи (bond_universe), найденной по ISIN — снимок RV
+        // уже загружен (singleton-кэш, ~раз в час), лишний I/O не добавляется. Null, если целевая
+        // бумага не найдена в банке (не покрыта биржевой статистикой MOEX — например, только что
+        // купленный внебиржевой инструмент) — тогда фронт просто не показывает сигналы, это не ошибка.
+        var snapshotForTarget = await snapshotBuilder.GetSnapshotAsync(ct);
+        var targetRiskSignals = targetPosition.Isin is { } targetIsin
+            ? BuildRiskSignalsForIsin(targetIsin, snapshotForTarget)
+            : null;
+
         var dto = new ReplacementResponseDto
         {
             HoldPositionId = result.HoldPositionId,
@@ -447,6 +461,7 @@ public static class AnalyticsEndpoints
             AnnualizedBenefitFraction = annualizedBenefitFraction,
             SellTaxEstimateRub = sellTaxEstimateRub,
             NetBenefitAfterTaxRub = netBenefitAfterTaxRub,
+            TargetRiskSignals = targetRiskSignals,
         };
 
         return Results.Ok(dto);
@@ -1217,23 +1232,7 @@ public static class AnalyticsEndpoints
         BasketKey effectiveBasket, RelativeValueSnapshotBuilder.RelativeValueSnapshot snapshot, string? positionIsin)
     {
         var basketMedian = snapshot.BasketStats.TryGetValue(effectiveBasket, out var stats) ? stats.Median : 0m;
-
-        var basketMembers = snapshot.AllMembers
-            .Where(m => string.Equals(m.Sector ?? UnknownSector, effectiveBasket.Sector, StringComparison.OrdinalIgnoreCase))
-            .Where(m => effectiveBasket.DurationBucket is SectorWideBucketLabel or MarketWideLabel
-                || Bonds.Core.Analytics.DurationBucketClassifier.Label(m.DurationYears) == effectiveBasket.DurationBucket)
-            .Where(m => m.GSpreadFraction is not null)
-            // Self-exclusion (ревью T-30, MAJOR): банк — вся вселенная MOEX, оцениваемая позиция
-            // почти наверняка присутствует в нём под своим secid, а её approx-спред из банка
-            // отличается от точного спреда движка — без исключения Rich-позиция могла бы
-            // порекомендовать САМУ СЕБЯ как «дешёвого соседа» («купи то же самое дешевле»).
-            // Исключаем по ISIN ДО Take, чтобы самоссылка не съедала слот кандидата.
-            .Where(m => positionIsin is null
-                || !snapshot.CurrentEntriesBySecid.TryGetValue(m.Secid, out var entryForIsin)
-                || !string.Equals(entryForIsin.Isin, positionIsin, StringComparison.OrdinalIgnoreCase))
-            .OrderByDescending(m => m.GSpreadFraction!.Value - basketMedian)
-            .Take(TopCheapCandidatesPerRichPosition)
-            .ToList();
+        var basketMembers = ResolveCheapBasketMembers(effectiveBasket, basketMedian, snapshot, positionIsin, TopCheapCandidatesPerRichPosition);
 
         var result = new List<RelativeValueCandidateDto>(basketMembers.Count);
         foreach (var member in basketMembers)
@@ -1252,6 +1251,253 @@ public static class AnalyticsEndpoints
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Задача 33 — общая выборка «дешёвых соседей» одной эффективной корзины (сектор × дюрация
+    /// после fallback), вынесена из <see cref="BuildCheapCandidates"/> (задача 30) для повторного
+    /// использования <see cref="BuildRvModeCandidates"/> (задача 33 часть B.3) — та же фильтрация
+    /// (своя корзина, есть G-спред, self-exclusion по ISIN до Take) и сортировка по deviation убыв.,
+    /// только с настраиваемым <paramref name="take"/> вместо константы
+    /// <see cref="TopCheapCandidatesPerRichPosition"/>.
+    /// </summary>
+    private static List<BasketMember> ResolveCheapBasketMembers(
+        BasketKey effectiveBasket,
+        decimal basketMedian,
+        RelativeValueSnapshotBuilder.RelativeValueSnapshot snapshot,
+        string? excludeIsin,
+        int take)
+    {
+        return snapshot.AllMembers
+            .Where(m => string.Equals(m.Sector ?? UnknownSector, effectiveBasket.Sector, StringComparison.OrdinalIgnoreCase))
+            .Where(m => effectiveBasket.DurationBucket is SectorWideBucketLabel or MarketWideLabel
+                || Bonds.Core.Analytics.DurationBucketClassifier.Label(m.DurationYears) == effectiveBasket.DurationBucket)
+            .Where(m => m.GSpreadFraction is not null)
+            // Self-exclusion (ревью T-30, MAJOR): банк — вся вселенная MOEX, оцениваемая позиция
+            // почти наверняка присутствует в нём под своим secid, а её approx-спред из банка
+            // отличается от точного спреда движка — без исключения позиция могла бы порекомендовать
+            // САМУ СЕБЯ как «дешёвого соседа» («купи то же самое дешевле»). Исключаем по ISIN ДО
+            // Take, чтобы самоссылка не съедала слот кандидата.
+            .Where(m => excludeIsin is null
+                || !snapshot.CurrentEntriesBySecid.TryGetValue(m.Secid, out var entryForIsin)
+                || !string.Equals(entryForIsin.Isin, excludeIsin, StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(m => m.GSpreadFraction!.Value - basketMedian)
+            .Take(take)
+            .ToList();
+    }
+
+    // ─── GET /api/analytics/replacement-candidates ──────────────────────────────────────────
+
+    /// <summary>Дефолтный размер выдачи, если <c>limit</c> не передан (план часть B.1: "дефолт напр. 20").</summary>
+    public const int DefaultReplacementCandidatesLimit = 20;
+
+    /// <summary>Верхняя граница <c>limit</c> — защита от случайного запроса всей вселенной (~3400 бумаг) одним ответом.</summary>
+    public const int MaxReplacementCandidatesLimit = 100;
+
+    public const string ReplacementCandidatesDisclaimer =
+        "Кандидаты и оценки — аналитическая информация, не инвестиционная рекомендация. Точная " +
+        "выгода считается для выбранной бумаги через сравнение (POST /api/analytics/replacement). " +
+        "Риск-сигналы (ликвидность/листинг, спред к рынку) — по биржевой статистике MOEX, не рейтинг " +
+        "рейтинговых агентств.";
+
+    /// <summary>
+    /// Задача 33 часть B — единый источник кандидатов-замен для ОДНОЙ позиции портфеля (блок 1
+    /// переработки «Рекомендаций»): <c>mode=market</c> — вся фикс-купонная гигиенически-чистая
+    /// вселенная банка (<see cref="UniverseHygieneFilter"/>, БЕЗ флоатеров), отсортированная по
+    /// доходности убыв.; <c>mode=rv</c> — дешёвые соседи по корзине сектор×дюрация ПОЗИЦИИ
+    /// (переиспользует <see cref="RelativeValueService"/>/<see cref="ResolveCheapBasketMembers"/> —
+    /// та же инфраструктура, что <see cref="GetRelativeValue"/>). Оба режима отдают дешёвую
+    /// банк-статистику + информационные риск-сигналы (<see cref="CandidateRiskSignalService"/>) —
+    /// точную выгоду конкретного выбранного кандидата считает существующий POST
+    /// /api/analytics/replacement (двухъярусная архитектура, см. doc-comment plan/26); эта ручка
+    /// НЕ материализует вселенную через точный движок.
+    /// </summary>
+    private static async Task<IResult> GetReplacementCandidates(
+        ClaimsPrincipal principal,
+        IAccountRepository accountRepo,
+        PortfolioHoldingsBuilder holdingsBuilder,
+        IBondUniverseRepository universeRepo,
+        RelativeValueSnapshotBuilder snapshotBuilder,
+        IOptions<Bonds.Infrastructure.Universe.BondUniverseRefreshOptions> universeOptions,
+        ulong positionId,
+        string mode,
+        int? limit,
+        CancellationToken ct)
+    {
+        if (mode != "market" && mode != "rv")
+        {
+            return ValidationError("mode должен быть 'market' или 'rv'");
+        }
+
+        var accountId = await PositionsEndpoints.ResolveAccountIdAsync(principal, accountRepo);
+        if (accountId is null) throw new NotFoundException($"Позиция {positionId} не найдена в портфеле");
+
+        var asOf = BusinessClock.MoscowToday();
+        var holdings = await holdingsBuilder.BuildForAccountAsync(accountId.Value, asOf);
+        var position = holdings.FirstOrDefault(h => h.PositionId == positionId);
+        if (position is null) throw new NotFoundException($"Позиция {positionId} не найдена в портфеле");
+
+        var effectiveLimit = Math.Clamp(limit ?? DefaultReplacementCandidatesLimit, 1, MaxReplacementCandidatesLimit);
+        var snapshot = await snapshotBuilder.GetSnapshotAsync(ct);
+
+        var candidates = mode == "market"
+            ? await BuildMarketCandidates(position, universeRepo, universeOptions.Value.Hygiene, asOf, snapshot, effectiveLimit)
+            : BuildRvModeCandidates(position, snapshot, effectiveLimit);
+
+        return Results.Ok(new ReplacementCandidatesResponseDto
+        {
+            Mode = mode,
+            // Позиция портфеля всегда привязана к инструменту с ISIN (см. doc-comment Instrument) —
+            // пустая строка здесь не должна происходить в норме, но не бросаем 500 из-за пробела в данных.
+            PositionIsin = position.Isin ?? string.Empty,
+            Candidates = candidates,
+            Disclaimer = ReplacementCandidatesDisclaimer,
+        });
+    }
+
+    /// <summary>
+    /// mode=market (план часть B.2): гигиенически-чистая (<see cref="UniverseHygieneFilter"/>)
+    /// фикс-купонная (<c>IsFloater != true</c>) вселенная банка, БЕЗ записей с
+    /// <c>YieldFraction == null</c> (иначе нечем ранжировать), БЕЗ самой позиции (по ISIN),
+    /// топ-<paramref name="limit"/> по <see cref="BondUniverseEntry.YieldFraction"/> убыв. Точную
+    /// выгоду каждого кандидата эта ручка НЕ считает — та задача существующего POST
+    /// /api/analytics/replacement (см. doc-comment <see cref="GetReplacementCandidates"/>).
+    /// </summary>
+    private static async Task<List<ReplacementCandidateDto>> BuildMarketCandidates(
+        Core.Analytics.PortfolioHolding position,
+        IBondUniverseRepository universeRepo,
+        UniverseHygieneOptions hygieneOptions,
+        DateOnly asOf,
+        RelativeValueSnapshotBuilder.RelativeValueSnapshot snapshot,
+        int limit)
+    {
+        var all = await universeRepo.GetAllAsync();
+
+        var eligible = all
+            .Where(e => UniverseHygieneFilter.Evaluate(e, hygieneOptions, asOf) == HygieneHiddenReason.None)
+            .Where(e => e.IsFloater != true)
+            .Where(e => e.YieldFraction is not null)
+            .Where(e => position.Isin is null || !string.Equals(e.Isin, position.Isin, StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(e => e.YieldFraction!.Value)
+            .Take(limit)
+            .ToList();
+
+        return eligible.Select(e => ToReplacementCandidateDto(e, snapshot)).ToList();
+    }
+
+    /// <summary>
+    /// mode=rv (план часть B.3): дешёвые соседи ИЗ КОРЗИНЫ ПОЗИЦИИ (сектор × дюрация, тот же путь,
+    /// что <see cref="GetRelativeValue"/>/<see cref="BuildCheapCandidates"/>), топ-<paramref
+    /// name="limit"/> по deviation убыв. Если у позиции нет валидной корзины/спреда (не comparable —
+    /// floater/indexed, или G-спред/дюрация не посчитались движком) — пустой список, НЕ 500 (план
+    /// явно требует понятный признак вместо ошибки; пустой список сам по себе — понятный признак
+    /// "нет данных для RV-режима у этой позиции").
+    /// </summary>
+    private static List<ReplacementCandidateDto> BuildRvModeCandidates(
+        Core.Analytics.PortfolioHolding position,
+        RelativeValueSnapshotBuilder.RelativeValueSnapshot snapshot,
+        int limit)
+    {
+        if (position.GSpread is not { } bondSpread || position.ModifiedDuration is null)
+        {
+            return [];
+        }
+
+        var assessment = Assess(position.Sector, position.ModifiedDuration, bondSpread, snapshot.AllMembers, snapshot.BasketStats);
+        var effectiveBasket = assessment.Basket.EffectiveBasket;
+        var basketMedian = assessment.Basket.Stats.Median;
+
+        var basketMembers = ResolveCheapBasketMembers(effectiveBasket, basketMedian, snapshot, position.Isin, limit);
+
+        return basketMembers.Select(m => ToReplacementCandidateDto(m, basketMedian, snapshot)).ToList();
+    }
+
+    /// <summary>mode=market: обогащает банк-запись кандидата риск-сигналами. Медиана корзины —
+    /// СВОЯ у каждого кандидата (сектор × дюрация КАНДИДАТА, не позиции — market-режим ранжирует по
+    /// всей вселенной, кандидаты из разных корзин), резолвится через <see cref="RelativeValueService.ResolveBasket"/>
+    /// той же fallback-цепочкой, что RV-вердикт позиций.</summary>
+    private static ReplacementCandidateDto ToReplacementCandidateDto(
+        BondUniverseEntry entry, RelativeValueSnapshotBuilder.RelativeValueSnapshot snapshot)
+    {
+        var liquidity = LiquidityScoreCalculator.Assess(entry.TurnoverRub, entry.BidPercent, entry.OfferPercent, entry.NumTrades);
+
+        decimal? basketMedian = null;
+        if (entry.GspreadApproxFraction is not null)
+        {
+            var key = new BasketKey
+            {
+                Sector = string.IsNullOrWhiteSpace(entry.Sector) ? UnknownSector : entry.Sector!,
+                DurationBucket = Bonds.Core.Analytics.DurationBucketClassifier.Label(entry.DurationYears),
+            };
+            basketMedian = ResolveBasket(key, snapshot.AllMembers, snapshot.BasketStats).Stats.Median;
+        }
+
+        var signals = CandidateRiskSignalService.Assess(liquidity.Score, entry.ListLevel, entry.GspreadApproxFraction, basketMedian);
+
+        return new ReplacementCandidateDto
+        {
+            Secid = entry.Secid,
+            Isin = entry.Isin,
+            Name = entry.ShortName ?? entry.SecName ?? entry.Secid,
+            // Задача 33 часть B.2: банк-слой (bond_universe) не хранит эмитента (issuer-поле —
+            // задача 34, НЕ заводить здесь) — null осознанно, не "не удалось определить".
+            Issuer = null,
+            Sector = entry.Sector,
+            YieldFraction = entry.YieldFraction,
+            DurationYears = entry.DurationYears,
+            GSpreadFraction = entry.GspreadApproxFraction,
+            RiskSignals = ToRiskSignalsDto(signals),
+        };
+    }
+
+    /// <summary>mode=rv: обогащает члена корзины именем/доходностью из текущего <c>bond_universe</c>
+    /// (тот же путь, что <see cref="BuildCheapCandidates"/>) + риск-сигналами относительно ОБЩЕЙ
+    /// медианы корзины позиции (все RV-кандидаты — из ОДНОЙ эффективной корзины, поэтому медиана
+    /// одна на всех, в отличие от mode=market).</summary>
+    private static ReplacementCandidateDto ToReplacementCandidateDto(
+        BasketMember member, decimal basketMedian, RelativeValueSnapshotBuilder.RelativeValueSnapshot snapshot)
+    {
+        snapshot.CurrentEntriesBySecid.TryGetValue(member.Secid, out var entry);
+        var liquidity = LiquidityScoreCalculator.Assess(entry?.TurnoverRub, entry?.BidPercent, entry?.OfferPercent, entry?.NumTrades);
+        var signals = CandidateRiskSignalService.Assess(liquidity.Score, entry?.ListLevel, member.GSpreadFraction, basketMedian);
+
+        return new ReplacementCandidateDto
+        {
+            Secid = member.Secid,
+            Isin = entry?.Isin,
+            Name = entry?.ShortName ?? entry?.SecName ?? member.Secid,
+            Issuer = null,
+            Sector = member.Sector,
+            YieldFraction = entry?.YieldFraction,
+            DurationYears = member.DurationYears,
+            GSpreadFraction = member.GSpreadFraction,
+            RiskSignals = ToRiskSignalsDto(signals),
+        };
+    }
+
+    private static RiskSignalsDto ToRiskSignalsDto(CandidateRiskSignals signals) => new()
+    {
+        Liquidity = signals.Liquidity.ToString(),
+        LiquidityLabel = signals.LiquidityLabel,
+        Spread = signals.Spread.ToString(),
+        GSpreadFraction = signals.GSpreadFraction,
+        SpreadVsBasketMedianFraction = signals.SpreadVsBasketMedianFraction,
+    };
+
+    /// <summary>
+    /// Задача 33 часть B.4: риск-сигналы бумаги по её банк-записи, найденной по ISIN среди ТЕКУЩЕГО
+    /// снимка bond_universe (<see cref="RelativeValueSnapshotBuilder.RelativeValueSnapshot.CurrentEntriesBySecid"/>
+    /// индексирован по secid, не по ISIN — банк маленький (~3400 строк), линейный поиск по значению
+    /// один раз за запрос не оправдывает отдельный индекс/репозиторный метод ради единственного
+    /// потребителя). Null, если ISIN не найден в банке (бумага вне биржевой статистики MOEX).
+    /// </summary>
+    private static RiskSignalsDto? BuildRiskSignalsForIsin(string isin, RelativeValueSnapshotBuilder.RelativeValueSnapshot snapshot)
+    {
+        var entry = snapshot.CurrentEntriesBySecid.Values
+            .FirstOrDefault(e => string.Equals(e.Isin, isin, StringComparison.OrdinalIgnoreCase));
+        if (entry is null) return null;
+
+        return ToReplacementCandidateDto(entry, snapshot).RiskSignals;
     }
 
     private static IResult ValidationError(string message) =>
@@ -1316,6 +1562,70 @@ public sealed record RelativeValueCandidateDto
 
     /// <summary>High/Medium/Low/None — см. <see cref="Bonds.Core.Universe.LiquidityScore"/>.</summary>
     public required string LiquidityScore { get; init; }
+}
+
+/// <summary>
+/// Задача 33 часть B — ответ GET /api/analytics/replacement-candidates. Схема — контракт для
+/// фронтовой задачи 35 (зеркалит буквально), не менять без согласования.
+/// </summary>
+public sealed record ReplacementCandidatesResponseDto
+{
+    /// <summary>"market" | "rv" — эхо запрошенного режима.</summary>
+    public required string Mode { get; init; }
+
+    public required string PositionIsin { get; init; }
+    public required IReadOnlyList<ReplacementCandidateDto> Candidates { get; init; }
+    public required string Disclaimer { get; init; }
+}
+
+/// <summary>Один кандидат-замена — дешёвая банк-статистика (bond_universe), НЕ точный расчёт
+/// движка (см. doc-comment <see cref="AnalyticsEndpoints.GetReplacementCandidates"/>).</summary>
+public sealed record ReplacementCandidateDto
+{
+    public required string Secid { get; init; }
+    public string? Isin { get; init; }
+    public required string Name { get; init; }
+
+    /// <summary>Задача 33 часть B.2: банк-слой не хранит эмитента — всегда null (issuer-поле — задача 34).</summary>
+    public string? Issuer { get; init; }
+
+    public string? Sector { get; init; }
+
+    /// <summary>ДОЛЯ (см. общая конвенция единиц репо).</summary>
+    public decimal? YieldFraction { get; init; }
+
+    /// <summary>Годы.</summary>
+    public decimal? DurationYears { get; init; }
+
+    /// <summary>ДОЛЯ; приближённый G-спред банка (<c>BondUniverseEntry.GspreadApproxFraction</c>).</summary>
+    public decimal? GSpreadFraction { get; init; }
+
+    public required RiskSignalsDto RiskSignals { get; init; }
+}
+
+/// <summary>
+/// Задача 33 часть A — два ИНФОРМАЦИОННЫХ риск-сигнала кандидата (не рейтинг кредитного качества,
+/// не «надёжность» — см. doc-comment <see cref="Bonds.Core.Analytics.SignalLevel"/>): ликвидность+
+/// листинг и отклонение спреда от медианы корзины. Уровни не ранжируют кандидатов — ранжирование
+/// mode=market идёт по доходности.
+/// </summary>
+public sealed record RiskSignalsDto
+{
+    /// <summary>"Good"|"Neutral"|"Caution" — см. <see cref="Bonds.Core.Analytics.SignalLevel"/>.</summary>
+    public required string Liquidity { get; init; }
+
+    /// <summary>Человекочитаемая подпись, напр. "Высокая ликвидность, листинг 1".</summary>
+    public required string LiquidityLabel { get; init; }
+
+    /// <summary>"Good"|"Neutral"|"Caution".</summary>
+    public required string Spread { get; init; }
+
+    /// <summary>ДОЛЯ; эхо G-спреда кандидата. Null, если MOEX не отдал спред.</summary>
+    public decimal? GSpreadFraction { get; init; }
+
+    /// <summary>ДОЛЯ; GSpreadFraction − медиана корзины кандидата. Знак: положительное — спред
+    /// выше медианы (рынок закладывает бОльшую премию/риск). Null вместе с GSpreadFraction.</summary>
+    public decimal? SpreadVsBasketMedianFraction { get; init; }
 }
 
 public sealed record XirrResponseDto
@@ -1481,6 +1791,14 @@ public sealed record ReplacementResponseDto
 
     /// <summary>Задача 27 часть B: NetBenefitRub − SellTaxEstimateRub — выгода после налога. Null, если SellTaxEstimateRub недоступен.</summary>
     public decimal? NetBenefitAfterTaxRub { get; init; }
+
+    /// <summary>
+    /// Задача 33 часть B.4: информационные риск-сигналы (ликвидность+листинг, спред) для ЦЕЛИ
+    /// сравнения — по её банк-записи (<c>bond_universe</c>, найдена по ISIN). Null, если целевая
+    /// бумага не найдена в банке (не покрыта биржевой статистикой MOEX) — НЕ ошибка, фронт просто
+    /// не показывает сигналы. См. doc-comment <see cref="RiskSignalsDto"/> — НЕ рейтинг агентств.
+    /// </summary>
+    public RiskSignalsDto? TargetRiskSignals { get; init; }
 }
 
 /// <summary>Задача 23 — ответ GET /api/analytics/replacement-matrix (см. doc-comment <see cref="ReplacementMatrixService"/>).</summary>
