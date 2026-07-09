@@ -50,6 +50,15 @@ const top10Rows: UniverseRow[] = [
   { ...gazpromRow, secid: 'RU000OTHER1', isin: 'RU000OTHER01', name: 'Другая бумага', yieldFraction: 0.15 },
 ];
 
+const floaterRow: UniverseRow = {
+  ...gazpromRow,
+  secid: 'RU000FLOAT01',
+  isin: 'RU000FLOAT001',
+  name: 'Флоатер РЖД',
+  yieldFraction: 0.25,
+  isFloater: true,
+};
+
 const materializeResponse: MaterializeResponse = {
   instrumentId: 555,
   secid: gazpromRow.secid,
@@ -120,7 +129,8 @@ describe('MarketComparator', () => {
     const url = new URL(requestedUrl!);
     expect(url.searchParams.get('sortBy')).toBe('yield');
     expect(url.searchParams.get('sortDir')).toBe('desc');
-    expect(url.searchParams.get('limit')).toBe('10');
+    // Задача 32 часть C: 20, не 10 — запас на клиентский отсев флоатеров (см. MarketComparator.tsx).
+    expect(url.searchParams.get('limit')).toBe('20');
     expect(url.searchParams.get('search')).toBeNull();
   });
 
@@ -169,6 +179,54 @@ describe('MarketComparator', () => {
     expect(within(result).getByTestId('market-comparator-benefit-1').textContent).toMatch(/после налога/);
     expect(within(result).getByTestId('replacement-details-market-1')).toBeInTheDocument();
     expect(within(result).getByTestId('replacement-details-market-1').textContent).toMatch(/спред доходностей/);
+  });
+
+  // ─── Задача 32 часть C: флоатеры-цели исключены из выпадашки сравнивалки ─────────────────
+
+  it('excludes floaters from the target dropdown options — only fixed-coupon bonds are selectable', async () => {
+    server.use(
+      http.get('*/api/universe', () => HttpResponse.json({ rows: [gazpromRow, floaterRow], total: 2, hiddenCount: 0, disclaimer: '' })),
+    );
+
+    renderComparator();
+
+    const input = screen.getByTestId('market-comparator-select-1');
+    fireEvent.click(input);
+    fireEvent.change(input, { target: { value: '' } });
+
+    await waitFor(() => expect(screen.getByText(gazpromRow.name!)).toBeInTheDocument());
+    expect(screen.queryByText(floaterRow.name!)).not.toBeInTheDocument();
+  });
+
+  it('shows a friendly message and does not crash when the server returns 422 for a floater/indexed target', async () => {
+    server.use(
+      http.get('*/api/universe', () => HttpResponse.json({ rows: [gazpromRow], total: 1, hiddenCount: 0, disclaimer: '' })),
+      http.post('*/api/universe/:secid/materialize', () => HttpResponse.json(materializeResponse)),
+      http.post('*/api/analytics/replacement', () =>
+        HttpResponse.json(
+          {
+            error:
+              'Бумага с плавающим/индексируемым купоном несравнима по доходности с фикс-купонной бумагой — выберите фикс-купонную бумагу для сравнения.',
+            type: 'ValidationException',
+          },
+          { status: 422 },
+        ),
+      ),
+    );
+
+    renderComparator();
+
+    const input = screen.getByTestId('market-comparator-select-1');
+    fireEvent.click(input);
+    fireEvent.change(input, { target: { value: '' } });
+
+    await waitFor(() => expect(screen.getByText(gazpromRow.name!)).toBeInTheDocument());
+    fireEvent.click(screen.getByText(gazpromRow.name!));
+
+    await waitFor(() => expect(screen.getByTestId('market-comparator-error-1')).toBeInTheDocument());
+    expect(screen.getByTestId('market-comparator-error-1').textContent).toMatch(/несравнима по доходности/);
+    // Компонент не падает — селект и остальная разметка остаются в DOM.
+    expect(screen.getByTestId('market-comparator-select-1')).toBeInTheDocument();
   });
 
   it('shows the 422 error text from materialize without crashing', async () => {

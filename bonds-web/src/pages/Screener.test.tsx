@@ -1,4 +1,4 @@
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { MantineProvider } from '@mantine/core';
 import { http, HttpResponse } from 'msw';
@@ -46,6 +46,14 @@ const hiddenRow: UniverseRow = {
   hiddenReason: 'LowTurnover',
 };
 
+const floaterRow: UniverseRow = {
+  ...gazpromRow,
+  secid: 'RU000FLOAT01',
+  isin: 'RU000FLOAT001',
+  name: 'Флоатер РЖД',
+  isFloater: true,
+};
+
 const portfolioRow: UniverseRow = {
   ...gazpromRow,
   secid: 'RU000PORT001',
@@ -82,6 +90,7 @@ beforeEach(() => {
       maxDurationYears: null,
       sector: null,
       includeHidden: false,
+      fixedCouponOnly: false,
     },
     sortBy: 'yield',
     sortDir: 'desc',
@@ -238,6 +247,59 @@ describe('Screener', () => {
 
     await waitFor(() => expect(screen.getByTestId(`screener-in-watchlist-${gazpromRow.secid}`)).toBeInTheDocument());
     expect(postedIsin).toBe(gazpromRow.isin);
+  });
+
+  // ─── Задача 32 часть B: пометка флоатера + фильтр «только фикс-купон» ─────────────────────
+
+  it('shows a floater badge instead of a YTM number for floater rows', async () => {
+    server.use(http.get('*/api/universe', () => HttpResponse.json(universeResponse([gazpromRow, floaterRow]))));
+    renderScreener();
+
+    await waitFor(() => expect(screen.getByTestId(`screener-row-${floaterRow.secid}`)).toBeInTheDocument());
+
+    const floaterCell = screen.getByTestId(`screener-row-${floaterRow.secid}`);
+    expect(within(floaterCell).getByTestId(`screener-floater-badge-${floaterRow.secid}`)).toBeInTheDocument();
+    expect(within(floaterCell).getByTestId(`screener-floater-badge-${floaterRow.secid}`).textContent).toContain(
+      'плав. купон',
+    );
+
+    // Фикс-купонная строка (isFloater: false) продолжает показывать доходность числом, не бейджем.
+    const fixedCell = screen.getByTestId(`screener-row-${gazpromRow.secid}`);
+    expect(within(fixedCell).queryByTestId(`screener-floater-badge-${gazpromRow.secid}`)).not.toBeInTheDocument();
+    expect(fixedCell.textContent).toContain('19.00%');
+  });
+
+  it('keeps floaters visible by default and hides them once "только фикс-купон" is toggled on', async () => {
+    server.use(http.get('*/api/universe', () => HttpResponse.json(universeResponse([gazpromRow, floaterRow]))));
+    renderScreener();
+
+    await waitFor(() => expect(screen.getByTestId(`screener-row-${floaterRow.secid}`)).toBeInTheDocument());
+
+    fireEvent.click(screen.getByTestId('screener-fixed-coupon-toggle'));
+
+    await waitFor(() =>
+      expect(screen.queryByTestId(`screener-row-${floaterRow.secid}`)).not.toBeInTheDocument(),
+    );
+    // Фикс-купонная строка остаётся видна.
+    expect(screen.getByTestId(`screener-row-${gazpromRow.secid}`)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('screener-fixed-coupon-toggle'));
+    await waitFor(() => expect(screen.getByTestId(`screener-row-${floaterRow.secid}`)).toBeInTheDocument());
+  });
+
+  it('treats isFloater == null/undefined as "not a floater" — row stays visible, no badge', async () => {
+    const unknownRow: UniverseRow = { ...gazpromRow, secid: 'RU000UNKNOWN', isin: 'RU000UNKNOWN1', isFloater: null };
+    server.use(http.get('*/api/universe', () => HttpResponse.json(universeResponse([unknownRow]))));
+    renderScreener();
+
+    await waitFor(() => expect(screen.getByTestId(`screener-row-${unknownRow.secid}`)).toBeInTheDocument());
+    const row = screen.getByTestId(`screener-row-${unknownRow.secid}`);
+    expect(within(row).queryByTestId(`screener-floater-badge-${unknownRow.secid}`)).not.toBeInTheDocument();
+    expect(row.textContent).toContain('19.00%');
+
+    fireEvent.click(screen.getByTestId('screener-fixed-coupon-toggle'));
+    await waitFor(() => expect(screen.getByTestId(`screener-fixed-coupon-toggle`)).toBeChecked());
+    expect(screen.getByTestId(`screener-row-${unknownRow.secid}`)).toBeInTheDocument();
   });
 
   describe('mobile layout', () => {

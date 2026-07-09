@@ -837,6 +837,12 @@ export interface UniverseRow {
   hiddenReason: UniverseHiddenReason | null;
   inPortfolio: boolean;
   inWatchlist: boolean;
+  /**
+   * Задача 31/32: эвристика по BONDTYPE MOEX — `true` флоатер, `false` фикс-купон, `null`/
+   * `undefined` неизвестно (старые бумаги без BONDTYPE в кеше банка). Контракт фронта (задача 32
+   * часть B): неизвестное значение считается «не флоатер» — НЕ прячется и НЕ помечается бейджем.
+   */
+  isFloater?: boolean | null;
 }
 
 /** Ответ GET /api/universe. */
