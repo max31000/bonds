@@ -5,6 +5,7 @@ import { fetchUniverse, postMaterialize } from '../api/universe';
 import { postReplacement } from '../api/recommendations';
 import { postWatchlistItem } from '../api/watchlist';
 import { ReplacementBreakdown } from './ReplacementBreakdown';
+import { RiskSignalBadges } from './RiskSignalBadges';
 import { formatPercent, formatNumber, formatHorizon } from '../utils/format';
 // Задача 28: liquidityLabel/liquidityColor вынесены в utils/universeDisplay (переиспользуются Screener'ом).
 import { liquidityLabel, liquidityColor } from '../utils/universeDisplay';
@@ -230,6 +231,13 @@ export function MarketComparator({ holdPositionId, initialSecid }: { holdPositio
             )}{' '}
             за {formatHorizon(replacement.horizonYears)}
           </Text>
+
+          {/* Задача 33 часть A.4/35 §B.3: риск-сигналы таргета из ответа POST /replacement — та же
+              информационная пара бейджей, что в списках кандидатов блока 1 (ликвидность+листинг,
+              спред к медиане корзины). Null/undefined — таргет не найден в банке (bond_universe). */}
+          {replacement.targetRiskSignals && (
+            <RiskSignalBadges signals={replacement.targetRiskSignals} testIdSuffix={`market-${holdPositionId}`} />
+          )}
 
           {lowLiquidity && (
             <Alert color="orange" mt="xs" data-testid={`market-comparator-liquidity-warning-${holdPositionId}`}>
