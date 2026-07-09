@@ -105,7 +105,7 @@ public class RelativeValueEndpointTests
         return (instrumentId, positionId);
     }
 
-    private static BondUniverseEntry HealthyEntry(string secid, string sector, decimal yieldFraction, decimal durationYears, decimal turnover = 1_000_000m) => new()
+    private static BondUniverseEntry HealthyEntry(string secid, string sector, decimal yieldFraction, decimal durationYears, decimal turnover = 1_000_000m, bool? isFloater = null) => new()
     {
         Secid = secid,
         Isin = $"ISIN{secid}",
@@ -122,6 +122,7 @@ public class RelativeValueEndpointTests
         NumTrades = 10,
         ListLevel = 1,
         GspreadApproxFraction = yieldFraction - 0.10m, // фиктивный спред для теста — не пересчитан по реальной кривой
+        IsFloater = isFloater,
         MaturityDate = DateOnly.FromDateTime(DateTime.UtcNow.AddYears(3)),
         UpdatedAt = DateTime.UtcNow,
     };
@@ -249,6 +250,49 @@ public class RelativeValueEndpointTests
             .ToList();
         candidateSecids.Should().NotBeEmpty("дешёвые соседи по корзине должны найтись среди ЧУЖИХ бумаг");
         candidateSecids.Should().NotContain($"SELF{marker}", "Rich-позиция не должна рекомендовать саму себя как дешёвого соседа");
+    }
+
+    [Fact]
+    public async Task GetRelativeValue_FloaterInUniverse_NeverAppearsAsCheapCandidate()
+    {
+        // Задача 31 часть B.1/B.2/D.2 — банк содержит флоатер с самым высоким (аномально "дешёвым")
+        // приближённым G-спредом её корзины — без исключения он возглавил бы список "дешёвых
+        // соседей" Rich-позиции (его биржевой YIELD — текущая доходность, не YTM, несравнима с
+        // фикс-купоном). Флоатер должен быть исключён из корпуса RV-корзин целиком (не входит ни в
+        // медиану, ни в кандидаты), фикс-купонные соседи по-прежнему предлагаются.
+        await SeedYieldCurveAsync();
+        var (client, _, accountId) = await CreateAuthorizedClientAsync();
+        var marker = Guid.NewGuid().ToString("N")[..6];
+        var sector = $"Sector{marker}";
+
+        var (_, positionId) = await SeedYieldingPositionAsync(accountId, sector, cleanPrice: 1000m, couponValueRub: 20m, maturityYears: 2);
+
+        var universeRepo = new BondUniverseRepository(_factory.Database.ConnectionString);
+        await universeRepo.UpsertSnapshotBatchAsync(new[]
+        {
+            // Флоатер с самым высоким спредом корзины (0.60) — если бы он не был исключён, обязательно
+            // занял бы первое место в топ-3 "дешёвых соседей".
+            HealthyEntry($"FL{marker}", sector, 0.60m, 2m, isFloater: true),
+            HealthyEntry($"A{marker}", sector, 0.30m, 2m),
+            HealthyEntry($"B{marker}", sector, 0.32m, 2.1m),
+            HealthyEntry($"C{marker}", sector, 0.34m, 1.9m),
+            HealthyEntry($"D{marker}", sector, 0.36m, 2.2m),
+            HealthyEntry($"E{marker}", sector, 0.38m, 1.8m),
+        });
+
+        var response = await client.GetAsync("/api/analytics/relative-value");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var position = body.GetProperty("positions").EnumerateArray()
+            .Single(p => p.GetProperty("positionId").GetUInt64() == positionId);
+        position.GetProperty("verdict").GetString().Should().Be("Rich");
+
+        var candidateSecids = position.GetProperty("cheapCandidates").EnumerateArray()
+            .Select(c => c.GetProperty("secid").GetString())
+            .ToList();
+        candidateSecids.Should().NotBeEmpty("фикс-купонные дешёвые соседи по корзине по-прежнему должны предлагаться");
+        candidateSecids.Should().NotContain($"FL{marker}", "флоатер не должен рекомендоваться как дешёвый сосед, несмотря на самый высокий спред корзины");
     }
 
     [Fact]
