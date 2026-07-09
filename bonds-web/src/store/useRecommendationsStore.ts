@@ -1,7 +1,7 @@
 import { create } from 'zustand';
-import { fetchComparison, fetchReplacementMatrix } from '../api/recommendations';
+import { fetchComparison } from '../api/recommendations';
 import { fetchComposition } from '../api/analytics';
-import type { ComparisonRow, MatrixPair, RejectedPair } from '../api/types';
+import type { ComparisonRow } from '../api/types';
 
 /** Причина попадания позиции в «слабые звенья» — отображается бейджем на карточке. */
 export interface SellReason {
@@ -83,17 +83,6 @@ interface RecommendationsStore {
   outOfComparison: ComparisonRow[];
   comparisonDisclaimer: string;
 
-  /** Задача 30 часть D.2: имя/эмитент по positionId для ЛЮБОЙ позиции (не только топ-3 слабых
-   * звеньев) — нужно секции «Дорогие бумаги — дешёвые соседи по корзине», т.к. Rich-verdict может
-   * получить позиция, не попавшая в sellCandidates. */
-  positionNamesById: Record<number, string>;
-
-  // Задача 23: секция «Замены» — один запрос матрицы вместо цикла до 6 постов.
-  bestPairs: MatrixPair[];
-  rejectedPairs: RejectedPair[];
-  totalConsideredPairs: number;
-  replacementDisclaimer: string;
-
   isLoading: boolean;
   error: string | null;
 
@@ -101,22 +90,18 @@ interface RecommendationsStore {
 }
 
 /**
- * Стор экрана «Рекомендации» (plan/17, замены переработаны в задаче 23): две секции — слабые
- * звенья (comparison) и замены (GET /replacement-matrix — серверный перебор всех пар). `load()`
- * собирает обе одним заходом. Задача 29: секция «куда вложить сумму» переехала в отдельный
- * компонент <see>BasketConstructor</see> с собственным локальным состоянием (конструктор корзины
- * не нуждается в глобальном сторе — его данные не переиспользуются другими секциями страницы).
+ * Стор экрана «Рекомендации» (plan/17). Задача 35 часть D.2 — переработка на два главных блока:
+ * секция «Замены» (GET /replacement-matrix) удалена со страницы (поглощена блоком 1 — подбор
+ * замены на карточке слабой позиции через GET /replacement-candidates, задача 33), поэтому
+ * `fetchReplacementMatrix`/`bestPairs`/`rejectedPairs`/`positionNamesById` здесь больше не нужны —
+ * `load()` теперь собирает только «слабые звенья» (comparison) + композицию портфеля (для причин
+ * концентрации). Блок 2 «куда вложить сумму» (<see>BasketConstructor</see>) и RV-бейджи
+ * (<see>useRelativeValueStore</see>) остаются отдельными от этого стора, как и раньше.
  */
 export const useRecommendationsStore = create<RecommendationsStore>()((set) => ({
   sellCandidates: [],
   outOfComparison: [],
   comparisonDisclaimer: '',
-  positionNamesById: {},
-
-  bestPairs: [],
-  rejectedPairs: [],
-  totalConsideredPairs: 0,
-  replacementDisclaimer: '',
 
   isLoading: false,
   error: null,
@@ -124,27 +109,15 @@ export const useRecommendationsStore = create<RecommendationsStore>()((set) => (
   load: async () => {
     set({ isLoading: true, error: null });
     try {
-      const [comparison, composition, matrix] = await Promise.all([
-        fetchComparison(),
-        fetchComposition(),
-        fetchReplacementMatrix(),
-      ]);
+      const [comparison, composition] = await Promise.all([fetchComparison(), fetchComposition()]);
 
       const issuerSharePercent = new Map(composition.byIssuer.map((s) => [s.key, s.sharePercent]));
       const { candidates, outOfComparison } = buildSellCandidates(comparison.rows, issuerSharePercent);
-      const positionNamesById = Object.fromEntries(
-        comparison.rows.map((r) => [r.positionId, r.name ?? r.issuer ?? `Позиция #${r.positionId}`]),
-      );
 
       set({
         sellCandidates: candidates,
         outOfComparison,
         comparisonDisclaimer: comparison.disclaimer,
-        positionNamesById,
-        bestPairs: matrix.bestPairs,
-        rejectedPairs: matrix.rejectedPairs,
-        totalConsideredPairs: matrix.totalConsideredPairs,
-        replacementDisclaimer: matrix.disclaimer,
         isLoading: false,
       });
     } catch (err) {
