@@ -40,6 +40,17 @@ public static class RelativeValueService
         public required string? Sector { get; init; }
         public required decimal? DurationYears { get; init; }
         public required decimal? GSpreadFraction { get; init; }
+
+        /// <summary>
+        /// Задача 31 часть B.1 — эвристика по BONDTYPE MOEX, из <see cref="Bonds.Core.Models.BondUniverseEntry.IsFloater"/>
+        /// (<c>bool?</c> в источнике; <c>null</c> → <c>false</c>, т.е. НЕ исключаем — BONDTYPE не пришёл
+        /// от MOEX, осознанный дефолт, иначе теряем бумаги с неполным справочником). Флоатеры
+        /// исключаются из корпуса корзин ДО конструирования <see cref="BasketMember"/> —
+        /// см. <c>RelativeValueSnapshotBuilder</c> (их биржевой YIELD — текущая доходность, не YTM,
+        /// несравнима с фикс-купоном, поэтому не должна искажать медиану G-спреда корзины). Поле
+        /// хранится здесь (а не отбрасывается) для явной документации инварианта и для тестов.
+        /// </summary>
+        public bool IsFloater { get; init; }
     }
 
     /// <summary>Ключ корзины — сектор × дюрационный бакет.</summary>

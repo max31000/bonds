@@ -194,6 +194,9 @@ public static class UniverseEndpoints
             HiddenReason = hiddenReason == HygieneHiddenReason.None ? null : hiddenReason.ToString(),
             InPortfolio = isInPortfolio,
             InWatchlist = isInWatchlist,
+            // Задача 31 часть A: проброс признака флоатера для скринера (задача 32) — не скрываем и
+            // не фильтруем здесь (владелец выбрал "пометка + фильтр на фронте", не hygiene-hide).
+            IsFloater = entry.IsFloater,
         };
     }
 
@@ -355,6 +358,11 @@ public sealed record UniverseRowDto
     public string? HiddenReason { get; init; }
     public required bool InPortfolio { get; init; }
     public required bool InWatchlist { get; init; }
+
+    /// <summary>Задача 31 часть A: эвристика по BONDTYPE MOEX (см. <see cref="BondUniverseEntry.IsFloater"/>).
+    /// Null — BONDTYPE не пришёл от MOEX, трактуется фронтом как "не флоатер" (не скрывать/не помечать),
+    /// тот же осознанный дефолт, что и в бэкенд-исключениях (задача 31 часть B).</summary>
+    public bool? IsFloater { get; init; }
 }
 
 public sealed record UniverseStatusDto

@@ -114,14 +114,21 @@ public sealed class RelativeValueSnapshotBuilder
         var currentBySecid = currentEntries.ToDictionary(e => e.Secid, StringComparer.OrdinalIgnoreCase);
 
         var today = BusinessClock.MoscowToday();
-        var visibleSecids = currentEntries
+        // Задача 31 часть B.1: корпус RV-корзин исключает не только hygiene-hidden бумаги, но и
+        // ФЛОАТЕРЫ — их биржевой YIELD — текущая доходность (не YTM), несравнима с фикс-купоном и
+        // искажала бы медиану G-спреда корзины (см. doc-comment BasketMember.IsFloater про
+        // null→false). Единая точка исключения — floater'ы никогда не становятся BasketMember, ни
+        // в статистике корзин, ни в AllMembers (последнее важно и для "дешёвых соседей" RV —
+        // BuildCheapCandidates читает AllMembers напрямую).
+        var eligibleSecids = currentEntries
             .Where(e => UniverseHygieneFilter.Evaluate(e, _hygieneOptions, today) == HygieneHiddenReason.None)
+            .Where(e => e.IsFloater != true)
             .Select(e => e.Secid)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         var history = await repo.GetRecentHistoryAsync(TradingDaysWindow, ct);
         var historyByDate = history
-            .Where(h => visibleSecids.Contains(h.Secid))
+            .Where(h => eligibleSecids.Contains(h.Secid))
             .GroupBy(h => h.SnapshotDate)
             .OrderByDescending(g => g.Key)
             .Take(TradingDaysWindow)
@@ -130,7 +137,7 @@ public sealed class RelativeValueSnapshotBuilder
         if (historyByDate.Count == 0)
         {
             // Банк молодой — истории вообще нет, работаем по единственному текущему снимку (план часть B.2).
-            var members = BuildMembersFromCurrent(currentEntries, currentBySecid, visibleSecids);
+            var members = BuildMembersFromCurrent(currentEntries, currentBySecid, eligibleSecids);
             return new RelativeValueSnapshot
             {
                 BasketStats = BuildBasketStats(members),
@@ -160,6 +167,11 @@ public sealed class RelativeValueSnapshotBuilder
                     Sector = currentBySecid[h.Secid].Sector,
                     DurationYears = h.DurationYears,
                     GSpreadFraction = h.GspreadApproxFraction,
+                    // Задача 31: bond_universe_history не хранит is_floater (см. doc-comment
+                    // BondUniverseHistoryPoint) — берём из ТЕКУЩЕГО снимка, как и Sector выше.
+                    // На практике всегда false здесь: dayGroup уже отфильтрован eligibleSecids
+                    // (флоатеры исключены до этой точки) — поле проставлено для инварианта записи.
+                    IsFloater = currentBySecid[h.Secid].IsFloater == true,
                 })
                 .ToList();
 
@@ -209,6 +221,7 @@ public sealed class RelativeValueSnapshotBuilder
                 Sector = currentBySecid[h.Secid].Sector,
                 DurationYears = h.DurationYears,
                 GSpreadFraction = h.GspreadApproxFraction,
+                IsFloater = currentBySecid[h.Secid].IsFloater == true,
             })
             .ToList();
 
@@ -224,16 +237,17 @@ public sealed class RelativeValueSnapshotBuilder
     private static List<BasketMember> BuildMembersFromCurrent(
         IReadOnlyList<BondUniverseEntry> currentEntries,
         Dictionary<string, BondUniverseEntry> currentBySecid,
-        HashSet<string> visibleSecids)
+        HashSet<string> eligibleSecids)
     {
         return currentEntries
-            .Where(e => visibleSecids.Contains(e.Secid))
+            .Where(e => eligibleSecids.Contains(e.Secid))
             .Select(e => new BasketMember
             {
                 Secid = e.Secid,
                 Sector = e.Sector,
                 DurationYears = e.DurationYears,
                 GSpreadFraction = e.GspreadApproxFraction,
+                IsFloater = e.IsFloater == true,
             })
             .ToList();
     }

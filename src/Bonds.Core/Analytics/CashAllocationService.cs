@@ -63,6 +63,24 @@ public static class CashAllocationService
 
         foreach (var candidate in ordered)
         {
+            // Задача 31 часть B.3: гейт сравнимости — ПЕРЕД гейтом доходности. Сервис по-прежнему не
+            // знает про IsFloater как таковой (см. doc-comment CashAllocationCandidate.IsComparable/
+            // тест Allocate_FloaterWithoutYtm...) — просто получает уже посчитанный вызывающим слоем
+            // булев флаг (тот же паттерн, что EffectiveYield уже готовый CurrentYield для флоатера).
+            // Без этого гейта флоатер с высоким CurrentYield обходил бы фикс-купонные бумаги по
+            // NoYield-проверке (у него ЕСТЬ доходность — просто несравнимая).
+            if (!candidate.IsComparable)
+            {
+                skipped.Add(new CashAllocationSkip
+                {
+                    InstrumentId = candidate.InstrumentId,
+                    Name = candidate.Name,
+                    Issuer = candidate.Issuer,
+                    Reason = CashAllocationSkipReason.NotComparable,
+                });
+                continue;
+            }
+
             if (candidate.EffectiveYield is null)
             {
                 skipped.Add(new CashAllocationSkip
@@ -192,6 +210,25 @@ public sealed record CashAllocationCandidate
 
     /// <summary>Текущая рыночная стоимость позиций этого эмитента в портфеле (для базы лимита концентрации). 0, если эмитента ещё нет в портфеле.</summary>
     public required decimal CurrentIssuerMarketValueRub { get; init; }
+
+    /// <summary>
+    /// Задача 31 часть B.3: true — доходность кандидата сравнима с YTM обычной фикс-купонной
+    /// бумаги (флоатер/индексируемая — не сравнимы, их "доходность" — CurrentYield, не YTM).
+    /// Вызывающий слой (эндпоинт) обязан проставить флаг; дефолт <c>true</c> — существующие
+    /// вызовы без явного значения (в т.ч. старые тесты) продолжают работать как раньше.
+    /// <c>false</c> → кандидат пропускается с <see cref="CashAllocationSkipReason.NotComparable"/>
+    /// ДО проверки <see cref="EffectiveYield"/> (у флоатера ЕСТЬ доходность — CurrentYield, — но
+    /// она не сравнима с YTM фикс-купона, поэтому не должна ранжироваться вместе с ним).
+    /// <para>
+    /// Не обязательно совпадает с полным <see cref="ReplacementMatrixService.IsComparable"/>
+    /// (тем же, что использует матрица замен/RV/PostReplacement) — GetAllocation намеренно НЕ
+    /// включает сюда DataIncomplete: бумага с неполными данными и без цены и так естественно
+    /// получает <see cref="EffectiveYield"/>=null и уходит в существующий
+    /// <see cref="CashAllocationSkipReason.NoYield"/> (см. doc-comment вызывающего кода в
+    /// AnalyticsEndpoints.GetAllocation).
+    /// </para>
+    /// </summary>
+    public bool IsComparable { get; init; } = true;
 }
 
 /// <summary>Итог распределения суммы — что купить, остаток, и что пропущено (spec §9, обязательный дисклеймер).</summary>
@@ -242,6 +279,14 @@ public enum CashAllocationSkipReason
 
     /// <summary>Цена лота не определена (нет котировки).</summary>
     NoPrice,
+
+    /// <summary>
+    /// Задача 31 часть B.3: флоатер/индексируемая/бумага с неполными данными — доходность не
+    /// сравнима с YTM фикс-купона (см. <see cref="CashAllocationCandidate.IsComparable"/> /
+    /// <see cref="ReplacementMatrixService.IsComparable"/>), поэтому исключена из аллокации, даже
+    /// если у неё формально есть высокая CurrentYield.
+    /// </summary>
+    NotComparable,
 }
 
 /// <summary>Кандидат, не получивший докупку, и причина.</summary>
