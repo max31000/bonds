@@ -39,6 +39,25 @@ public class CashAllocationServiceTests
         IsComparable = isComparable,
     };
 
+    /// <summary>Задача 34 — кандидат рыночного источника (market/recommended): InstrumentId=null,
+    /// Issuer=null (банк не хранит эмитента), Secid/Sector заполнены — см. doc-comment
+    /// CashAllocationCandidate.</summary>
+    private static CashAllocationCandidate SectorCandidate(
+        string secid, string sector, decimal yield, decimal price) => new()
+    {
+        InstrumentId = null,
+        Secid = secid,
+        Name = $"Bond {secid}",
+        Issuer = null,
+        Sector = sector,
+        EffectiveYield = yield,
+        PricePerLotRub = price,
+        LotSize = 1m,
+        LotSizeIsAssumed = true,
+        CurrentIssuerMarketValueRub = 0m,
+        IsComparable = true,
+    };
+
     [Fact]
     public void Allocate_AmountBelowCheapestCandidate_ReturnsEmptyList_AllLeftover()
     {
@@ -249,5 +268,129 @@ public class CashAllocationServiceTests
         result.Allocations[0].CleanCostRub.Should().Be(0m);
         result.Allocations[0].AccruedCostRub.Should().Be(0m);
         result.Allocations[0].CommissionCostRub.Should().Be(0m);
+    }
+
+    // ─── Задача 34 часть D: source=market/recommended — ось Sector, лимит лотов, ось None ────────
+
+    [Fact]
+    public void Allocate_SectorAxis_RespectsSectorShareLimit_MovesRemainderToOtherSector()
+    {
+        // Эталон вручную (план часть D.1, лимит 30%, amountRub=10 000):
+        // A1 (Корп, yield 0.20) покупается первым — лоты по 1000 руб, доля сектора считается от
+        // ФИКСИРОВАННОГО amountRub (не от растущей базы, см. doc-comment Allocate): лот 1 → 10%,
+        // лот 2 → 20%, лот 3 → 30% (не строго больше лимита — покупается), лот 4 → 40% > 30% — стоп.
+        // A1 заканчивает с 3 лотами (3000 руб).
+        // A2 (тоже Корп, yield 0.18, ниже A1) видит бакет "Корп" уже на 3000 — первый же лот дал бы
+        // 4000/10000=40% > 30% — блокируется ПОЛНОСТЬЮ (0 лотов), несмотря на то что доходнее B1.
+        // B1 (Гос, yield 0.10) — бакет "Гос" ещё пуст, покупается по той же логике: 3 лота (3000 руб).
+        // Итог: A1=3000, B1=3000, A2 пропущен лимитом, остаток = 10000-3000-3000=4000.
+        var candidates = new[]
+        {
+            SectorCandidate("A1", "Корп", yield: 0.20m, price: 1000m),
+            SectorCandidate("A2", "Корп", yield: 0.18m, price: 1000m),
+            SectorCandidate("B1", "Гос", yield: 0.10m, price: 1000m),
+        };
+
+        var result = CashAllocationService.Allocate(
+            amountRub: 10_000m,
+            candidates,
+            currentPortfolioValueRub: 0m,
+            concentrationAxis: CashAllocationConcentrationAxis.Sector,
+            maxSectorSharePercent: 30m);
+
+        result.Allocations.Should().HaveCount(2);
+        result.Allocations.Single(a => a.Secid == "A1").Quantity.Should().Be(3m);
+        result.Allocations.Single(a => a.Secid == "A1").EstimatedCostRub.Should().Be(3000m);
+        result.Allocations.Single(a => a.Secid == "B1").Quantity.Should().Be(3m);
+        result.Allocations.Single(a => a.Secid == "B1").EstimatedCostRub.Should().Be(3000m);
+
+        result.Skipped.Should().ContainSingle(
+            s => s.Secid == "A2" && s.Reason == CashAllocationSkipReason.ConcentrationLimit,
+            "A2 доходнее B1, но сектор 'Корп' уже занял отведённые 30% — деньги честно уходят в другой сектор");
+
+        result.LeftoverRub.Should().Be(4000m);
+    }
+
+    [Fact]
+    public void Allocate_SectorAxisWithoutMaxSharePercent_Throws()
+    {
+        var act = () => CashAllocationService.Allocate(
+            1000m, [], currentPortfolioValueRub: 0m, concentrationAxis: CashAllocationConcentrationAxis.Sector);
+
+        act.Should().Throw<ArgumentException>();
+    }
+
+    [Fact]
+    public void Allocate_MaxLotsPerCandidate_CapsQuantityToOne_RegardlessOfLeftoverMoney()
+    {
+        // Задача 34 часть D.4 — "1 лот на secid": ось None (source=market) без лимита концентрации,
+        // но maxLotsPerCandidate=1 всё равно останавливает каждого кандидата после первого лота, даже
+        // если денег и лимита хватило бы на больше.
+        var candidates = new[]
+        {
+            SectorCandidate("A1", "Корп", yield: 0.20m, price: 1000m),
+            SectorCandidate("B1", "Гос", yield: 0.10m, price: 1000m),
+        };
+
+        var result = CashAllocationService.Allocate(
+            amountRub: 10_000m,
+            candidates,
+            currentPortfolioValueRub: 0m,
+            concentrationAxis: CashAllocationConcentrationAxis.None,
+            maxLotsPerCandidate: 1);
+
+        result.Allocations.Should().HaveCount(2);
+        result.Allocations.Should().OnlyContain(a => a.Quantity == 1m);
+        result.Allocations.Single(a => a.Secid == "A1").EstimatedCostRub.Should().Be(1000m);
+        result.Allocations.Single(a => a.Secid == "B1").EstimatedCostRub.Should().Be(1000m);
+        result.LeftoverRub.Should().Be(8000m, "оба кандидата получили ровно по 1 лоту, несмотря на 8000 оставшихся денег");
+    }
+
+    [Fact]
+    public void Allocate_NoneAxis_NotEnoughMoneyForOneLot_SkippedAsInsufficientFunds_NotConcentrationLimit()
+    {
+        // Задача 34 — ось None не имеет лимита концентрации вообще, поэтому нулевой исход может быть
+        // ТОЛЬКО нехваткой денег: причина обязана честно отличаться от ConcentrationLimit (см.
+        // doc-comment CashAllocationSkipReason.InsufficientFunds) — иначе market-ответ лгал бы
+        // пользователю про несуществующий лимит.
+        var candidates = new[]
+        {
+            SectorCandidate("A1", "Корп", yield: 0.20m, price: 10_000m),
+        };
+
+        var result = CashAllocationService.Allocate(
+            amountRub: 500m,
+            candidates,
+            currentPortfolioValueRub: 0m,
+            concentrationAxis: CashAllocationConcentrationAxis.None,
+            maxLotsPerCandidate: 1);
+
+        result.Allocations.Should().BeEmpty();
+        result.Skipped.Should().ContainSingle(s => s.Secid == "A1" && s.Reason == CashAllocationSkipReason.InsufficientFunds);
+    }
+
+    [Fact]
+    public void Allocate_IssuerAxisExplicit_SameResultAsDefault_RegressionForSourcePortfolio()
+    {
+        // Задача 34 часть D.2 — явная передача concentrationAxis=Issuer (значение по умолчанию) не
+        // меняет поведение source=portfolio ни на йоту: тот же сценарий, что
+        // Allocate_ConcentrationLimit_StopsLeaderAndFillsSecondCandidate, вызванный с новой сигнатурой.
+        var candidates = new[]
+        {
+            Candidate(1, 0.20m, pricePerLotRub: 10_000m, issuer: "A", currentIssuerMarketValueRub: 240_000m),
+            Candidate(2, 0.15m, pricePerLotRub: 10_000m, issuer: "B", currentIssuerMarketValueRub: 0m),
+        };
+
+        var result = CashAllocationService.Allocate(
+            amountRub: 20_000m,
+            candidates,
+            currentPortfolioValueRub: 250_000m,
+            maxIssuerSharePercent: 25m,
+            concentrationAxis: CashAllocationConcentrationAxis.Issuer);
+
+        result.Skipped.Should().ContainSingle(s => s.InstrumentId == 1 && s.Reason == CashAllocationSkipReason.ConcentrationLimit);
+        result.Allocations.Should().ContainSingle(a => a.InstrumentId == 2);
+        result.Allocations[0].EstimatedCostRub.Should().Be(20_000m);
+        result.LeftoverRub.Should().Be(0m);
     }
 }
