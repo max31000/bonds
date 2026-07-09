@@ -43,7 +43,7 @@ public class UniverseEndpointsTests
         return (client, userId);
     }
 
-    private static BondUniverseEntry HealthyEntry(string secid, string isin, decimal yieldFraction, decimal durationYears, string sector = "Корпоративные", decimal turnover = 1_000_000m) => new()
+    private static BondUniverseEntry HealthyEntry(string secid, string isin, decimal yieldFraction, decimal durationYears, string sector = "Корпоративные", decimal turnover = 1_000_000m, bool? isFloater = null) => new()
     {
         Secid = secid,
         Isin = isin,
@@ -59,6 +59,7 @@ public class UniverseEndpointsTests
         OfferPercent = 100m,
         NumTrades = 10,
         ListLevel = 1,
+        IsFloater = isFloater,
         MaturityDate = DateOnly.FromDateTime(DateTime.UtcNow.AddYears(3)),
         UpdatedAt = DateTime.UtcNow,
     };
@@ -92,6 +93,39 @@ public class UniverseEndpointsTests
         var rows = body.GetProperty("rows");
         rows.GetArrayLength().Should().Be(1);
         rows[0].GetProperty("secid").GetString().Should().Be($"SRCH{marker}");
+    }
+
+    [Fact]
+    public async Task GetUniverse_ReturnsIsFloaterFlag_ForFloaterAndFixedRows_WithoutHidingEither()
+    {
+        // Задача 31 часть A/D.6 — банк отдаёт признак флоатера наружу (для скринера задачи 32), но
+        // НЕ скрывает и не фильтрует флоатеры из выдачи (владелец выбрал "пометка + фильтр на
+        // фронте", не hygiene-hide) — обе строки должны присутствовать в ответе.
+        var repo = new BondUniverseRepository(_factory.Database.ConnectionString);
+        var marker = Guid.NewGuid().ToString("N")[..6];
+        await repo.UpsertSnapshotBatchAsync(
+        [
+            HealthyEntry($"FLOAT{marker}", $"ISF{marker}A", 0.10m, 2m, isFloater: true),
+            HealthyEntry($"FIX{marker}", $"ISF{marker}B", 0.10m, 2m, isFloater: false),
+            HealthyEntry($"UNK{marker}", $"ISF{marker}C", 0.10m, 2m, isFloater: null),
+        ]);
+
+        var client = await CreateAuthorizedClientAsync();
+        var response = await client.GetAsync($"/api/universe?search={marker}&limit=10");
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var rows = body.GetProperty("rows").EnumerateArray().ToList();
+        rows.Should().HaveCount(3, "флоатер не должен быть скрыт/отфильтрован из GET /api/universe");
+
+        var floaterRow = rows.Single(r => r.GetProperty("secid").GetString() == $"FLOAT{marker}");
+        floaterRow.GetProperty("isFloater").GetBoolean().Should().BeTrue();
+
+        var fixedRow = rows.Single(r => r.GetProperty("secid").GetString() == $"FIX{marker}");
+        fixedRow.GetProperty("isFloater").GetBoolean().Should().BeFalse();
+
+        var unknownRow = rows.Single(r => r.GetProperty("secid").GetString() == $"UNK{marker}");
+        unknownRow.GetProperty("isFloater").ValueKind.Should().Be(JsonValueKind.Null, "BONDTYPE не пришёл от MOEX — null, не false");
     }
 
     [Fact]

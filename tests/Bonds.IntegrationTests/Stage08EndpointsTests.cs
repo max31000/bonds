@@ -69,6 +69,34 @@ public class Stage08EndpointsTests
         return (instrumentId, positionId);
     }
 
+    /// <summary>Задача 31 часть B.4 — позиция-флоатер (CouponType.Floating, тот же признак, что
+    /// BondMetricsCalculator использует для IsFloater=true в PortfolioHolding).</summary>
+    private async Task<(ulong InstrumentId, ulong PositionId)> SeedFloaterPositionAsync(ulong accountId)
+    {
+        var instrumentRepo = new InstrumentRepository(_factory.Database.ConnectionString);
+        var isin = $"RU{Guid.NewGuid():N}".Substring(0, 12);
+        var instrumentId = await instrumentRepo.UpsertAsync(new Instrument
+        {
+            Isin = isin,
+            Issuer = "Флоатер Эмитент",
+            FaceValue = 1000m,
+            Currency = "RUB",
+            CouponType = CouponType.Floating,
+            MaturityDate = DateOnly.FromDateTime(DateTime.UtcNow.AddYears(3)),
+        });
+
+        var positionRepo = new PositionRepository(_factory.Database.ConnectionString);
+        var positionId = await positionRepo.UpsertAsync(new Position
+        {
+            AccountId = accountId,
+            InstrumentId = instrumentId,
+            Quantity = 10,
+            AvgPurchasePrice = 1000m,
+        });
+
+        return (instrumentId, positionId);
+    }
+
     // ─── 401 без токена для каждого доменного эндпоинта ────────────────────────────────────
 
     [Theory]
@@ -398,6 +426,28 @@ public class Stage08EndpointsTests
         // Обе позиции без котировок -> доходность не определена -> YieldDataIncomplete = true,
         // но ответ всё равно 200 (spec §4.4).
         body.GetProperty("yieldDataIncomplete").GetBoolean().Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task PostReplacement_FloaterTarget_Returns422_ValidationException()
+    {
+        // Задача 31 часть B.4 — цель-флоатер несравнима по доходности с фикс-купоном (CurrentYield
+        // vs YTM) — карточка выгоды должна отказать явным 422, а не посчитать бессмысленный "спред".
+        var (client, _, accountId) = await CreateAuthorizedClientAsync();
+        var (_, holdPositionId) = await SeedPositionAsync(accountId);
+        var (_, floaterPositionId) = await SeedFloaterPositionAsync(accountId);
+
+        var response = await client.PostAsJsonAsync("/api/analytics/replacement", new
+        {
+            holdPositionId,
+            targetPositionId = floaterPositionId,
+            horizonYears = 2,
+        });
+
+        response.StatusCode.Should().Be((HttpStatusCode)422);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        body.GetProperty("type").GetString().Should().Be("ValidationException");
+        body.GetProperty("error").GetString().Should().Contain("плавающим");
     }
 
     // ─── GET /api/analytics/allocation (plan/17 §B) ────────────────────────────────────────

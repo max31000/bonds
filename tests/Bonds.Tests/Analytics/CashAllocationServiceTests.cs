@@ -22,7 +22,8 @@ public class CashAllocationServiceTests
         bool lotSizeIsAssumed = true,
         decimal cleanPriceRub = 0m,
         decimal accruedRub = 0m,
-        decimal commissionRub = 0m) => new()
+        decimal commissionRub = 0m,
+        bool isComparable = true) => new()
     {
         InstrumentId = instrumentId,
         Name = $"Bond {instrumentId}",
@@ -35,6 +36,7 @@ public class CashAllocationServiceTests
         CleanPriceRub = cleanPriceRub,
         AccruedRub = accruedRub,
         CommissionRub = commissionRub,
+        IsComparable = isComparable,
     };
 
     [Fact]
@@ -132,6 +134,47 @@ public class CashAllocationServiceTests
         result.Allocations.First(a => a.InstrumentId == 2).Quantity.Should().Be(1m);
         result.Allocations.First(a => a.InstrumentId == 3).EstimatedCostRub.Should().Be(1000m);
         result.LeftoverRub.Should().Be(900m);
+    }
+
+    // ─── Задача 31 часть B.3: гейт сравнимости (флоатер исключён, даже с самой высокой доходностью) ──
+
+    [Fact]
+    public void Allocate_NonComparableCandidateWithHighestYield_IsSkipped_FixedCandidateGetsBudgetInstead()
+    {
+        // Флоатер (IsComparable=false) с самой высокой EffectiveYield (0.25 — CurrentYield, не YTM,
+        // подставлен вызывающим слоем как обычно) ранжировался бы первым и получил бы всю сумму —
+        // гейт сравнимости отсекает его ДО ранжирования по доходности, поэтому вся сумма (2 лота по
+        // 1000, большой портфель — лимит концентрации не мешает) уходит фикс-купонной "A", как если
+        // бы флоатера не было в списке кандидатов вовсе (эталон).
+        var candidates = new[]
+        {
+            Candidate(1, effectiveYield: 0.25m, pricePerLotRub: 1000m, issuer: "Floater Co", isComparable: false),
+            Candidate(2, effectiveYield: 0.12m, pricePerLotRub: 1000m, issuer: "A"),
+        };
+
+        var result = CashAllocationService.Allocate(amountRub: 2000m, candidates, currentPortfolioValueRub: 100_000m);
+
+        result.Skipped.Should().ContainSingle(s => s.InstrumentId == 1 && s.Reason == CashAllocationSkipReason.NotComparable);
+        result.Allocations.Should().ContainSingle(a => a.InstrumentId == 2, "флоатер исключён — вся сумма достаётся фикс-купонной бумаге");
+        result.Allocations[0].Quantity.Should().Be(2m);
+        result.Allocations[0].EstimatedCostRub.Should().Be(2000m);
+        result.LeftoverRub.Should().Be(0m);
+    }
+
+    [Fact]
+    public void Allocate_NonComparableCandidate_NotCheckedForYieldOrPrice_SkippedAsNotComparableFirst()
+    {
+        // Гейт сравнимости идёт ПЕРЕД гейтом доходности/цены (план часть B.3) — флоатер без цены
+        // вообще должен уйти в NotComparable, а не в NoPrice (порядок проверок имеет значение для
+        // диагностики причины в UI).
+        var candidates = new[]
+        {
+            Candidate(1, effectiveYield: null, pricePerLotRub: 0m, issuer: "Floater Co", isComparable: false),
+        };
+
+        var result = CashAllocationService.Allocate(amountRub: 1000m, candidates, currentPortfolioValueRub: 100_000m);
+
+        result.Skipped.Should().ContainSingle(s => s.InstrumentId == 1 && s.Reason == CashAllocationSkipReason.NotComparable);
     }
 
     [Fact]

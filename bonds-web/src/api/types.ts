@@ -267,8 +267,14 @@ export interface CashflowResponse {
 
 // ---- GET /api/analytics/scatter (см. plan/09b §B.3) ----
 
-/** Вид доходности, использованной для точки на scatter-графике. */
-export type YieldKind = 'Ytm' | 'Current';
+/**
+ * Вид доходности, использованной для точки на scatter-графике/сравнении. Зеркалит
+ * сериализацию бэкенд-enum `YieldKind.ToString()` — значение `CurrentYield`, НЕ `Current`
+ * (задача 32 часть A: до фикса фронт-тип `'Current'` никогда не совпадал со строкой от сервера,
+ * из-за чего ветка «вне сравнения» по yieldKind не срабатывала в проде, см.
+ * `PositionComparisonService.cs`/`AnalyticsEndpoints.cs`).
+ */
+export type YieldKind = 'Ytm' | 'CurrentYield';
 
 /** Точка позиции на графике «дюрация × доходность». */
 export interface ScatterPoint {
@@ -574,8 +580,8 @@ export interface ReplacementMatrixResponse {
 
 // ---- GET /api/analytics/allocation (plan/17 §B) ----
 
-/** Причина, по которой кандидат не получил докупку. */
-export type AllocationSkipReason = 'NoYield' | 'ConcentrationLimit' | 'NoPrice';
+/** Причина, по которой кандидат не получил докупку. Зеркалит CashAllocationSkipReason бэкенда. */
+export type AllocationSkipReason = 'NoYield' | 'ConcentrationLimit' | 'NoPrice' | 'NotComparable';
 
 /** Одна строка распределения — сколько купить конкретной бумаги. */
 export interface AllocationLine {
@@ -831,6 +837,12 @@ export interface UniverseRow {
   hiddenReason: UniverseHiddenReason | null;
   inPortfolio: boolean;
   inWatchlist: boolean;
+  /**
+   * Задача 31/32: эвристика по BONDTYPE MOEX — `true` флоатер, `false` фикс-купон, `null`/
+   * `undefined` неизвестно (старые бумаги без BONDTYPE в кеше банка). Контракт фронта (задача 32
+   * часть B): неизвестное значение считается «не флоатер» — НЕ прячется и НЕ помечается бейджем.
+   */
+  isFloater?: boolean | null;
 }
 
 /** Ответ GET /api/universe. */

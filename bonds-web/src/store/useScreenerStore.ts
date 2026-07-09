@@ -7,7 +7,11 @@ export const SCREENER_PAGE_SIZE = 50;
 export type ScreenerSortBy = 'yield' | 'duration' | 'turnover' | 'gspread';
 export type ScreenerSortDir = 'asc' | 'desc';
 
-/** Серверные фильтры страницы «Скринер» (plan/28 часть A) — один-в-один параметры GET /api/universe. */
+/**
+ * Серверные фильтры страницы «Скринер» (plan/28 часть A) — один-в-один параметры GET
+ * /api/universe. Задача 32 часть B: `fixedCouponOnly` — исключение, клиентский фильтр (бэкенд не
+ * принимает параметр типа купона), по умолчанию ВЫКЛ — флоатеры остаются видны, но помечены.
+ */
 export interface ScreenerFilters {
   search: string;
   minYield: number | null;
@@ -16,6 +20,7 @@ export interface ScreenerFilters {
   maxDurationYears: number | null;
   sector: string | null;
   includeHidden: boolean;
+  fixedCouponOnly: boolean;
 }
 
 export const DEFAULT_SCREENER_FILTERS: ScreenerFilters = {
@@ -26,6 +31,7 @@ export const DEFAULT_SCREENER_FILTERS: ScreenerFilters = {
   maxDurationYears: null,
   sector: null,
   includeHidden: false,
+  fixedCouponOnly: false,
 };
 
 interface ScreenerStore {
@@ -48,6 +54,12 @@ interface ScreenerStore {
   resetFilters: () => void;
   toggleSort: (key: ScreenerSortBy) => void;
   setOffset: (offset: number) => void;
+  /**
+   * Задача 32 часть B: «только фикс-купон» — чисто клиентский фильтр (бэкенд GET /api/universe не
+   * принимает параметр типа купона), поэтому в отличие от setFilters НЕ дёргает load()/не сбрасывает
+   * offset — просто перекрашивает то, что уже загружено (см. фильтрацию в Screener.tsx).
+   */
+  setFixedCouponOnly: (value: boolean) => void;
 
   load: () => Promise<void>;
   loadStatus: () => Promise<void>;
@@ -101,6 +113,10 @@ export const useScreenerStore = create<ScreenerStore>()((set, get) => ({
   setOffset: (offset) => {
     set({ offset });
     void get().load();
+  },
+
+  setFixedCouponOnly: (value) => {
+    set((s) => ({ filters: { ...s.filters, fixedCouponOnly: value } }));
   },
 
   load: async () => {

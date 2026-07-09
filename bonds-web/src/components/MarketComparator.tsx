@@ -88,10 +88,14 @@ export function MarketComparator({ holdPositionId, initialSecid }: { holdPositio
     // callback'ах (then/catch), тот же паттерн, что PortfolioIntradayChart/PositionDetail.
     // "Начало загрузки" сигнализируется синхронно из onSearchChange (реальный обработчик события),
     // не отсюда — см. handleSearchChange ниже.
-    fetchUniverse({ search: debouncedSearch || undefined, sortBy: 'yield', sortDir: 'desc', limit: 10 })
+    // Задача 32 часть C: флоатер/индексируемая бумага несравнима по доходности с фикс-купоном
+    // (после задачи 31 сервер даже вернёт 422 на такую цель) — не даём выбрать её целью. Берём
+    // limit 20 вместо 10, чтобы после клиентского отсева обычно оставался полный топ-10.
+    fetchUniverse({ search: debouncedSearch || undefined, sortBy: 'yield', sortDir: 'desc', limit: 20 })
       .then((response) => {
         if (cancelled) return;
-        setRows(response.rows);
+        const fixedCouponRows = response.rows.filter((row) => row.isFloater !== true).slice(0, 10);
+        setRows(fixedCouponRows);
         setIsSearchLoading(false);
       })
       .catch((err) => {

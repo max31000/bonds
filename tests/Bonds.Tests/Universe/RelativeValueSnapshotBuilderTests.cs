@@ -21,7 +21,7 @@ public class RelativeValueSnapshotBuilderTests
 {
     private readonly Mock<IBondUniverseRepository> _repo = new();
 
-    private static BondUniverseEntry Entry(string secid, string sector = "Корпоративные", decimal duration = 2m, int listLevel = 1) => new()
+    private static BondUniverseEntry Entry(string secid, string sector = "Корпоративные", decimal duration = 2m, int listLevel = 1, bool? isFloater = null) => new()
     {
         Secid = secid,
         Isin = $"ISIN{secid}",
@@ -32,6 +32,7 @@ public class RelativeValueSnapshotBuilderTests
         PricePercent = 99m,
         TurnoverRub = 1_000_000m,
         ListLevel = listLevel,
+        IsFloater = isFloater,
         MaturityDate = DateOnly.FromDateTime(DateTime.UtcNow.AddYears(3)),
         UpdatedAt = DateTime.UtcNow,
     };
@@ -159,5 +160,73 @@ public class RelativeValueSnapshotBuilderTests
 
         snapshot.AllMembers.Should().ContainSingle(m => m.Secid == "VISIBLE");
         snapshot.AllMembers.Should().NotContain(m => m.Secid == "HIDDEN");
+    }
+
+    /// <summary>
+    /// Задача 31 часть B.1/D.1 — эталон посчитан руками: 4 фикс-бумаги со спредами 0.01/0.02/0.03/
+    /// 0.04 (медиана 0.025 — среднее двух средних при чётном count) + один флоатер со спредом 0.99
+    /// (аномальный, если бы попал в статистику — утянул бы медиану далеко вверх). Флоатер должен
+    /// быть исключён из корпуса ДО построения BasketMember (тот же паттерн, что hygiene-hidden
+    /// бумага в тесте выше) — медиана считается только по 4 фикс-членам.
+    /// </summary>
+    [Fact]
+    public async Task GetSnapshotAsync_FloaterBond_ExcludedFromCorpus_MedianComputedWithoutIt()
+    {
+        var fixedBonds = new List<BondUniverseEntry>
+        {
+            Entry("FIX1"), Entry("FIX2"), Entry("FIX3"), Entry("FIX4"),
+        };
+        var floater = Entry("FLOAT1", isFloater: true);
+        var entries = fixedBonds.Concat([floater]).ToList();
+        _repo.Setup(r => r.GetAllAsync(It.IsAny<CancellationToken>())).ReturnsAsync(entries);
+
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var history = new List<BondUniverseHistoryPoint>
+        {
+            HistoryPoint(today, "FIX1", 0.01m),
+            HistoryPoint(today, "FIX2", 0.02m),
+            HistoryPoint(today, "FIX3", 0.03m),
+            HistoryPoint(today, "FIX4", 0.04m),
+            HistoryPoint(today, "FLOAT1", 0.99m), // аномальный спред флоатера — исказил бы медиану, если бы не был исключён
+        };
+        _repo.Setup(r => r.GetRecentHistoryAsync(It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync(history);
+
+        var sut = BuildSut();
+        var snapshot = await sut.GetSnapshotAsync();
+
+        snapshot.AllMembers.Should().HaveCount(4, "флоатер не должен стать членом корпуса RV-корзин");
+        snapshot.AllMembers.Should().NotContain(m => m.Secid == "FLOAT1");
+        snapshot.AllMembers.Should().OnlyContain(m => !m.IsFloater, "ни один выживший член корпуса не должен быть флоатером");
+
+        var key = new Bonds.Core.Analytics.RelativeValueService.BasketKey { Sector = "Корпоративные", DurationBucket = "1–3 года" };
+        snapshot.BasketStats.Should().ContainKey(key);
+        snapshot.BasketStats[key].Count.Should().Be(4);
+        snapshot.BasketStats[key].Median.Should().Be(0.025m, "медиана 4 фикс-членов (0.01/0.02/0.03/0.04), без флоатера 0.99");
+    }
+
+    /// <summary>
+    /// Задача 31 часть D.4 — краевой кейс: IsFloater == null (BONDTYPE не пришёл от MOEX) трактуется
+    /// как "не флоатер" — бумага НЕ исключается из корпуса (иначе теряли бы бумаги с неполным
+    /// справочником, см. doc-comment BasketMember.IsFloater).
+    /// </summary>
+    [Fact]
+    public async Task GetSnapshotAsync_NullIsFloater_TreatedAsNotFloater_NotExcluded()
+    {
+        var entries = new List<BondUniverseEntry>
+        {
+            Entry("UNKNOWN1", isFloater: null),
+            Entry("UNKNOWN2", isFloater: null),
+            Entry("UNKNOWN3", isFloater: null),
+            Entry("UNKNOWN4", isFloater: null),
+            Entry("UNKNOWN5", isFloater: null),
+        };
+        _repo.Setup(r => r.GetAllAsync(It.IsAny<CancellationToken>())).ReturnsAsync(entries);
+        _repo.Setup(r => r.GetRecentHistoryAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<BondUniverseHistoryPoint>());
+
+        var sut = BuildSut();
+        var snapshot = await sut.GetSnapshotAsync();
+
+        snapshot.AllMembers.Should().HaveCount(5, "IsFloater == null не исключается — трактуется как 'не флоатер'");
     }
 }

@@ -54,10 +54,33 @@ const SECTOR_OPTIONS = [
   { value: 'Корпоративные', label: 'Корпоративные' },
 ];
 
+const FLOATER_YIELD_TOOLTIP =
+  'YIELD флоатера — текущая доходность (по последнему известному купону), несравнима с YTM ' +
+  'фикс-купонных бумаг.';
+
 function maturityOrOfferLabel(row: UniverseRow): string {
   if (row.offerDate) return `${formatDate(row.offerDate)} (оферта)`;
   if (row.maturityDate) return formatDate(row.maturityDate);
   return '—';
+}
+
+/**
+ * Задача 32 часть B: YTM-ячейка скринера. Флоатер (`isFloater === true`) — YIELD флоатера не
+ * несравнима с YTM фикс-купона, поэтому вместо числа бейдж-предупреждение и прочерк.
+ * `isFloater == null` (эвристика по BONDTYPE не распознала бумагу) — трактуем как «не флоатер»,
+ * показываем доходность как обычно (контракт задачи 32: не прятать, не помечать неизвестное).
+ */
+function YieldOrFloaterBadge({ row }: { row: UniverseRow }) {
+  if (row.isFloater === true) {
+    return (
+      <Tooltip label={FLOATER_YIELD_TOOLTIP} multiline w={260} withArrow>
+        <Badge size="xs" color="yellow" variant="light" data-testid={`screener-floater-badge-${row.secid}`}>
+          плав. купон
+        </Badge>
+      </Tooltip>
+    );
+  }
+  return <>{formatPercent(row.yieldFraction)}</>;
 }
 
 /** Бейджи «в портфеле»/«в watchlist» — переиспользуются десктопной таблицей и мобильными карточками. */
@@ -122,6 +145,7 @@ function FilterPanel() {
   const filters = useScreenerStore((s) => s.filters);
   const setFilters = useScreenerStore((s) => s.setFilters);
   const resetFilters = useScreenerStore((s) => s.resetFilters);
+  const setFixedCouponOnly = useScreenerStore((s) => s.setFixedCouponOnly);
 
   const [searchInput, setSearchInput] = useState(filters.search);
   const [debouncedSearch] = useDebouncedValue(searchInput, 300);
@@ -140,7 +164,8 @@ function FilterPanel() {
     filters.minDurationYears === null &&
     filters.maxDurationYears === null &&
     filters.sector === null &&
-    !filters.includeHidden;
+    !filters.includeHidden &&
+    !filters.fixedCouponOnly;
 
   return (
     <Stack gap="sm" data-testid="screener-filter-panel">
@@ -193,6 +218,12 @@ function FilterPanel() {
         checked={filters.includeHidden}
         onChange={(e) => setFilters({ includeHidden: e.currentTarget.checked })}
         data-testid="screener-include-hidden-toggle"
+      />
+      <Switch
+        label="Только фикс-купон"
+        checked={filters.fixedCouponOnly}
+        onChange={(e) => setFixedCouponOnly(e.currentTarget.checked)}
+        data-testid="screener-fixed-coupon-toggle"
       />
       {!isDefault && (
         <Button
@@ -257,7 +288,7 @@ function ScreenerCard({ row }: { row: UniverseRow }) {
             </Text>
           </Stack>
           <Text fw={700} size="sm">
-            {formatPercent(row.yieldFraction)}
+            <YieldOrFloaterBadge row={row} />
           </Text>
         </Group>
 
@@ -361,7 +392,8 @@ function SortableHeader({ sortKey, label }: { sortKey: ScreenerSortBy; label: st
  * второй точки входа в сравнение (YAGNI, см. plan/28).
  */
 export function Screener() {
-  const { rows, total, disclaimer, isLoading, error, offset, load, loadStatus, setOffset } = useScreenerStore();
+  const { rows, total, disclaimer, isLoading, error, offset, load, loadStatus, setOffset, filters } =
+    useScreenerStore();
   const isMobile = useMediaQuery('(max-width: 48em)');
   const [filtersOpened, { toggle: toggleFilters }] = useDisclosure(false);
 
@@ -378,7 +410,11 @@ export function Screener() {
   const currentPage = Math.floor(offset / SCREENER_PAGE_SIZE) + 1;
   const totalPages = Math.max(1, Math.ceil(total / SCREENER_PAGE_SIZE));
 
-  const visibleRows = isMobile ? rows.slice(0, mobileVisibleCount) : rows;
+  // Задача 32 часть B: «только фикс-купон» — клиентский фильтр поверх уже загруженной страницы
+  // (сервер не принимает параметр типа купона); isFloater == null/undefined трактуется как «не
+  // флоатер» и не прячется (контракт задачи 32).
+  const displayedRows = filters.fixedCouponOnly ? rows.filter((row) => row.isFloater !== true) : rows;
+  const visibleRows = isMobile ? displayedRows.slice(0, mobileVisibleCount) : displayedRows;
 
   return (
     <Stack gap="md">
@@ -429,7 +465,7 @@ export function Screener() {
               {visibleRows.map((row) => (
                 <ScreenerCard key={row.secid} row={row} />
               ))}
-              {mobileVisibleCount < rows.length && (
+              {mobileVisibleCount < displayedRows.length && (
                 <Button
                   variant="light"
                   onClick={() => setMobileVisibleCount((c) => c + SCREENER_PAGE_SIZE)}
@@ -473,7 +509,7 @@ export function Screener() {
                     </Table.Tr>
                   </Table.Thead>
                   <Table.Tbody>
-                    {rows.map((row) => (
+                    {displayedRows.map((row) => (
                       <Table.Tr
                         key={row.secid}
                         data-testid={`screener-row-${row.secid}`}
@@ -500,7 +536,9 @@ export function Screener() {
                           </Tooltip>
                         </Table.Td>
                         <Table.Td>{row.sector ?? '—'}</Table.Td>
-                        <Table.Td>{formatPercent(row.yieldFraction)}</Table.Td>
+                        <Table.Td>
+                          <YieldOrFloaterBadge row={row} />
+                        </Table.Td>
                         <Table.Td>{row.durationYears !== null ? formatNumber(row.durationYears, 1) : '—'}</Table.Td>
                         <Table.Td>{row.pricePercent !== null ? formatNumber(row.pricePercent, 2) : '—'}</Table.Td>
                         <Table.Td>{formatBp(row.gspreadApproxFraction)}</Table.Td>

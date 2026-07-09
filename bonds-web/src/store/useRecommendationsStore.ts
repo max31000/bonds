@@ -20,7 +20,9 @@ const UPCOMING_HORIZON_DAYS = 90;
 
 /** Позиция несравнима по доходности «вне сравнения» (plan/17 §A.1: floater/indexed/dataIncomplete). */
 function isOutOfComparison(row: ComparisonRow): boolean {
-  return row.dataIncomplete || row.yieldKind === 'Current';
+  // Задача 32 часть A: `'CurrentYield'`, не `'Current'` — зеркалит сериализацию бэкенд-enum
+  // YieldKind.ToString() (было расхождение, из-за которого флоатеры протекали в sell-кандидаты).
+  return row.dataIncomplete || row.yieldKind === 'CurrentYield';
 }
 
 function median(values: number[]): number {

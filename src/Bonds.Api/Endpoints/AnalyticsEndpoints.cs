@@ -350,6 +350,21 @@ public static class AnalyticsEndpoints
             if (targetPosition is null) throw new NotFoundException($"Позиция {request.TargetPositionId} не найдена в портфеле");
         }
 
+        // Задача 31 часть B.4: цель-флоатер/индексируемая несравнима по доходности с фикс-купоном —
+        // её "спред" = CurrentYield(флоатер) − YtmEffective(фикс), бессмысленная величина. Фронт
+        // (задача 32) заранее исключит такие бумаги из выпадашки target'ов, это — защита контракта
+        // на случай прямого вызова API. DataIncomplete НЕ блокирует здесь (в отличие от полного
+        // ReplacementMatrixService.IsComparable) — та ветка уже штатно обслуживается через
+        // YieldDataIncomplete=true с 200 (см. PostReplacement_BetweenTwoPositions..., Stage08).
+        // HoldPosition намеренно не проверяется — план ограничивает 422 только целью (см. план
+        // задачи 31 часть B.4).
+        if (targetPosition.IsFloater || targetPosition.IsIndexed)
+        {
+            return ValidationError(
+                "Бумага с плавающим/индексируемым купоном несравнима по доходности с фикс-купонной " +
+                "бумагой — выберите фикс-купонную бумагу для сравнения.");
+        }
+
         if (request.HorizonYears <= 0m) throw new ValidationException("HorizonYears должен быть положительным");
 
         var holdCandidate = new SwitchCandidate
@@ -765,6 +780,15 @@ public static class AnalyticsEndpoints
                     CleanPriceRub = cleanPriceRub,
                     AccruedRub = accruedRub,
                     CommissionRub = commissionRub,
+                    // Задача 31 часть B.3: флоатер/индексируемая исключаются из аллокации через skip
+                    // (NotComparable), не ранжируются вместе с обычной бумагой по CurrentYield.
+                    // Намеренно НЕ полный ReplacementMatrixService.IsComparable (тот же, что PostReplacement/
+                    // GetRelativeValue используют) — DataIncomplete здесь сознательно не гейтится этим
+                    // флагом: бумага с неполными данными и без цены уже естественно получает
+                    // EffectiveYield=null и уходит в существующий скип NoYield (см. тест
+                    // GetAllocation_SeededPositionWithoutYield_Returns200_WithSkippedReason); заводить
+                    // для неё ещё и NotComparable — не предмет задачи 31 (только флоатер/индексируемая).
+                    IsComparable = !h.IsFloater && !h.IsIndexed,
                 };
             })
             // Одна позиция на инструмент — если счёт по ошибке содержит несколько записей на один
@@ -819,6 +843,8 @@ public static class AnalyticsEndpoints
                         CleanPriceRub = cleanPriceRub,
                         AccruedRub = accruedRub,
                         CommissionRub = commissionRub,
+                        // Задача 31 часть B.3: см. комментарий в портфельной ветке выше — тот же предикат.
+                        IsComparable = !h.IsFloater && !h.IsIndexed,
                     };
                 })
                 .ToList();
@@ -1180,6 +1206,12 @@ public static class AnalyticsEndpoints
     /// именем/доходностью/ликвидностью из текущего <c>bond_universe</c> (<c>CurrentEntriesBySecid</c>)
     /// — <see cref="RelativeValueService.BasketMember"/> сам по себе несёт только поля, нужные
     /// для статистики корзин.
+    /// <para>
+    /// Задача 31 часть B.2: флоатеры сюда попасть не могут — <c>snapshot.AllMembers</c> уже не
+    /// содержит их (исключены в <see cref="RelativeValueSnapshotBuilder"/> ДО конструирования
+    /// <see cref="RelativeValueService.BasketMember"/>, см. doc-comment билдера), поэтому здесь не
+    /// нужен ещё один фильтр — он был бы избыточен.
+    /// </para>
     /// </summary>
     private static List<RelativeValueCandidateDto> BuildCheapCandidates(
         BasketKey effectiveBasket, RelativeValueSnapshotBuilder.RelativeValueSnapshot snapshot, string? positionIsin)
