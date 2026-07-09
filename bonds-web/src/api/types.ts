@@ -580,8 +580,8 @@ export interface ReplacementMatrixResponse {
 
 // ---- GET /api/analytics/allocation (plan/17 §B) ----
 
-/** Причина, по которой кандидат не получил докупку. */
-export type AllocationSkipReason = 'NoYield' | 'ConcentrationLimit' | 'NoPrice';
+/** Причина, по которой кандидат не получил докупку. Зеркалит CashAllocationSkipReason бэкенда. */
+export type AllocationSkipReason = 'NoYield' | 'ConcentrationLimit' | 'NoPrice' | 'NotComparable';
 
 /** Одна строка распределения — сколько купить конкретной бумаги. */
 export interface AllocationLine {
