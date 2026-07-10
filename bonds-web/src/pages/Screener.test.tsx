@@ -34,6 +34,8 @@ const gazpromRow: UniverseRow = {
   hiddenReason: null,
   inPortfolio: false,
   inWatchlist: false,
+  reliability: 'Green',
+  reliabilityReason: 'Зелёный: оба риск-сигнала в норме, листинг 1-2, ликвидность с данными.',
 };
 
 const hiddenRow: UniverseRow = {
@@ -91,6 +93,7 @@ beforeEach(() => {
       sector: null,
       includeHidden: false,
       fixedCouponOnly: false,
+      reliability: 'all',
     },
     sortBy: 'yield',
     sortDir: 'desc',
@@ -150,6 +153,34 @@ describe('Screener', () => {
     await waitFor(() => {
       expect(lastUrl).toContain('minYield=0.1');
     });
+  });
+
+  it('renders the reliability dot column and sends reliability={green|yellow} to GET /api/universe (task 38)', async () => {
+    let lastUrl: string | null = null;
+    server.use(
+      http.get('*/api/universe', ({ request }) => {
+        lastUrl = request.url;
+        return HttpResponse.json(universeResponse([gazpromRow]));
+      }),
+    );
+    renderScreener();
+
+    await waitFor(() => expect(screen.getByTestId('screener-table')).toBeInTheDocument());
+    expect(screen.getByTestId(`reliability-dot-screener-${gazpromRow.secid}`)).toHaveAttribute('data-reliability', 'Green');
+
+    const reliabilityControl = screen.getByTestId('screener-reliability-filter');
+    fireEvent.click(within(reliabilityControl).getByText('🟢'));
+
+    await waitFor(() => expect(lastUrl).toContain('reliability=green'));
+
+    fireEvent.click(within(reliabilityControl).getByText('🟡'));
+
+    await waitFor(() => expect(lastUrl).toContain('reliability=yellow'));
+
+    // Возврат к «все» — параметр не отправляется вовсе (backend-дефолт "без фильтра").
+    fireEvent.click(within(reliabilityControl).getByText('все'));
+
+    await waitFor(() => expect(lastUrl).not.toContain('reliability='));
   });
 
   it('sends search text to GET /api/universe (debounced)', async () => {

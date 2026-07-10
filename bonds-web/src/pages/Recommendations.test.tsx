@@ -102,6 +102,23 @@ const goodSignals: RiskSignals = {
   spread: 'Neutral',
   gSpreadFraction: 0.03,
   spreadVsBasketMedianFraction: 0.001,
+  reliability: 'Green',
+  reliabilityReason: 'Зелёный: оба риск-сигнала в норме, листинг 1-2, ликвидность с данными.',
+};
+
+// Задача 38 часть D.3: MKT002=Yellow (листинг неизвестен), MKT003=Red (Caution по ликвидности) —
+// остальные (MKT001/MKT004) остаются Green (goodSignals) для фильтра «не хуже уровня».
+const yellowSignals: RiskSignals = {
+  ...goodSignals,
+  reliability: 'Yellow',
+  reliabilityReason: 'Жёлтый: листинг неизвестен (для зелёного нужен листинг 1 или 2).',
+};
+const redSignals: RiskSignals = {
+  ...goodSignals,
+  liquidity: 'Caution',
+  liquidityLabel: 'Низкий оборот, листинг 3',
+  reliability: 'Red',
+  reliabilityReason: 'Красный: ликвидность/листинг в зоне риска (сигнал Caution).',
 };
 
 // Задача 37 часть D: weakRow.modifiedDuration = 2 — окно фильтра «похожая дюрация» ±1.5 года даёт
@@ -133,7 +150,7 @@ const marketCandidatesResponse: ReplacementCandidatesResponse = {
       durationYears: 3.4,
       gSpreadFraction: 0.035,
       offerDate: '2027-05-01',
-      riskSignals: goodSignals,
+      riskSignals: yellowSignals,
     },
     {
       secid: 'MKT003',
@@ -145,7 +162,7 @@ const marketCandidatesResponse: ReplacementCandidatesResponse = {
       durationYears: 6,
       gSpreadFraction: 0.03,
       offerDate: null,
-      riskSignals: goodSignals,
+      riskSignals: redSignals,
     },
     {
       secid: 'MKT004',
@@ -617,6 +634,43 @@ describe('Recommendations', () => {
     await waitFor(() => expect(screen.getByTestId('replace-duration-filter-empty-1')).toBeInTheDocument());
     expect(screen.getByTestId('replace-duration-filter-empty-1').textContent).toMatch(/отключите фильтр/);
     expect(screen.queryByTestId('replace-candidate-MKT003')).not.toBeInTheDocument();
+  });
+
+  it('filters candidates by reliability (not worse than level) with an honest "N of M" count (task 38)', async () => {
+    renderRecommendations();
+
+    await waitFor(() => expect(screen.getByTestId('sell-candidate-1')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('replace-toggle-1'));
+    await waitFor(() => expect(screen.getByTestId('replace-candidate-MKT001')).toBeInTheDocument());
+
+    // Дефолт — 'все', весь список из 4 кандидатов виден (Green MKT001/MKT004, Yellow MKT002, Red MKT003).
+    expect(screen.getByTestId('replace-candidate-MKT002')).toBeInTheDocument();
+    expect(screen.getByTestId('replace-candidate-MKT003')).toBeInTheDocument();
+    expect(screen.queryByTestId('replace-duration-filter-count-1')).not.toBeInTheDocument();
+
+    const reliabilityControl = screen.getByTestId('replace-reliability-filter-1');
+    fireEvent.click(within(reliabilityControl).getByText('🟢'));
+
+    await waitFor(() => expect(screen.getByTestId('replace-duration-filter-count-1').textContent).toMatch(/2 из 4/));
+    expect(screen.getByTestId('replace-candidate-MKT001')).toBeInTheDocument();
+    expect(screen.getByTestId('replace-candidate-MKT004')).toBeInTheDocument();
+    expect(screen.queryByTestId('replace-candidate-MKT002')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('replace-candidate-MKT003')).not.toBeInTheDocument();
+
+    // yellow — «не хуже жёлтого»: Green+Yellow, Red остаётся исключённым.
+    fireEvent.click(within(reliabilityControl).getByText('🟡'));
+
+    await waitFor(() => expect(screen.getByTestId('replace-duration-filter-count-1').textContent).toMatch(/3 из 4/));
+    expect(screen.getByTestId('replace-candidate-MKT001')).toBeInTheDocument();
+    expect(screen.getByTestId('replace-candidate-MKT002')).toBeInTheDocument();
+    expect(screen.getByTestId('replace-candidate-MKT004')).toBeInTheDocument();
+    expect(screen.queryByTestId('replace-candidate-MKT003')).not.toBeInTheDocument();
+
+    // Возврат к 'все' — список снова полный, счётчик пропадает.
+    fireEvent.click(within(reliabilityControl).getByText('все'));
+
+    await waitFor(() => expect(screen.queryByTestId('replace-duration-filter-count-1')).not.toBeInTheDocument());
+    expect(screen.getByTestId('replace-candidate-MKT003')).toBeInTheDocument();
   });
 
   it('does not break the weak-position card when GET /api/analytics/replacement-candidates fails', async () => {

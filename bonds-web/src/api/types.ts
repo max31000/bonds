@@ -524,6 +524,14 @@ export interface ReplacementResponse {
 export type RiskSignalLevel = 'Good' | 'Neutral' | 'Caution';
 
 /**
+ * Задача 38 часть A — светофор надёжности: ОДИН агрегат поверх двух риск-сигналов (см.
+ * `RiskSignals`) + листинга + сектора. Зеркалит backend `ReliabilityLight`. <b>НЕ кредитный
+ * рейтинг</b> — сигнал по биржевой статистике MOEX, см. `RiskSignalsCaption`/тултип
+ * `RiskSignalBadges` для обязательного дисклеймера.
+ */
+export type ReliabilityLevel = 'Green' | 'Yellow' | 'Red';
+
+/**
  * Два ИНФОРМАЦИОННЫХ риск-сигнала кандидата-замены (ликвидность+листинг, отклонение спреда от
  * медианы его корзины) — зеркалит `RiskSignalsDto` (задача 33 часть A). Не ранжирует кандидатов
  * (ранжирование mode=market идёт по доходности) и НЕ является рейтингом агентств.
@@ -537,6 +545,10 @@ export interface RiskSignals {
   gSpreadFraction: number | null;
   /** ДОЛЯ; gSpreadFraction − медиана корзины кандидата. Положительное — спред выше медианы. */
   spreadVsBasketMedianFraction: number | null;
+  /** Задача 38 часть A.2: светофор надёжности — см. `ReliabilityLevel`. */
+  reliability: ReliabilityLevel;
+  /** Человекочитаемое обоснование `reliability` — задача 38 часть A.2. */
+  reliabilityReason: string;
 }
 
 /** Режим подбора кандидатов-замен для одной позиции портфеля (GET /replacement-candidates). */
@@ -861,6 +873,10 @@ export interface UniverseRow {
    * часть B): неизвестное значение считается «не флоатер» — НЕ прячется и НЕ помечается бейджем.
    */
   isFloater?: boolean | null;
+  /** Задача 38 часть B.2: светофор надёжности банк-записи — см. `ReliabilityLevel`. */
+  reliability: ReliabilityLevel;
+  /** Человекочитаемое обоснование `reliability`. */
+  reliabilityReason: string;
 }
 
 /** Ответ GET /api/universe. */
@@ -884,6 +900,8 @@ export interface UniverseQuery {
   maxDurationYears?: number;
   sector?: string;
   includeHidden?: boolean;
+  /** Задача 38 часть B.2: «не хуже уровня» — green = только Green; yellow = Green+Yellow; не задан/'red' = без фильтра. */
+  reliability?: 'green' | 'yellow' | 'red';
   sortBy?: 'yield' | 'duration' | 'turnover' | 'gspread';
   sortDir?: 'asc' | 'desc';
   limit?: number;

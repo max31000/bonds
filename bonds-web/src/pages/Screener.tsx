@@ -23,6 +23,8 @@ import {
 import { useDebouncedValue, useDisclosure, useMediaQuery } from '@mantine/hooks';
 import { ChartExplainIcon } from '../components/charts/ChartCard';
 import { Disclaimer } from '../components/Disclaimer';
+import { ReliabilityDot, RiskSignalsCaption } from '../components/RiskSignalBadges';
+import { ReliabilityFilterControl } from '../components/ReliabilityFilterControl';
 import { postWatchlistItem } from '../api/watchlist';
 import {
   useScreenerStore,
@@ -62,6 +64,19 @@ function maturityOrOfferLabel(row: UniverseRow): string {
   if (row.offerDate) return `${formatDate(row.offerDate)} (оферта)`;
   if (row.maturityDate) return formatDate(row.maturityDate);
   return '—';
+}
+
+/** Задача 38 часть C.2 — строки-детали тултипа светофора скринера: банк-запись не несёт полного
+ * `RiskSignals` (нет отдельного поля отклонения спреда от медианы — только сырой G-спред), поэтому
+ * тултип показывает то, что реально доступно: ликвидность (те же лейблы, что бейдж «Ликвидность») +
+ * приближённый G-спред. Детальные бейджи ликвидности/G-спреда УЖЕ есть отдельными колонками таблицы —
+ * тултип точки просто их резюмирует, не дублирует новый UI.
+ */
+function screenerReliabilityDetailLines(row: UniverseRow): string[] {
+  return [
+    `Ликвидность: ${liquidityLabel(row.liquidityScore)}${row.listLevel ? `, листинг ${row.listLevel}` : ''}`,
+    `G-спред (прибл.): ${formatBp(row.gspreadApproxFraction)}`,
+  ];
 }
 
 /**
@@ -165,7 +180,8 @@ function FilterPanel() {
     filters.maxDurationYears === null &&
     filters.sector === null &&
     !filters.includeHidden &&
-    !filters.fixedCouponOnly;
+    !filters.fixedCouponOnly &&
+    filters.reliability === 'all';
 
   return (
     <Stack gap="sm" data-testid="screener-filter-panel">
@@ -212,6 +228,11 @@ function FilterPanel() {
         onChange={(v) => setFilters({ sector: v })}
         clearable
         data-testid="screener-sector-select"
+      />
+      <ReliabilityFilterControl
+        value={filters.reliability}
+        onChange={(v) => setFilters({ reliability: v })}
+        testId="screener-reliability-filter"
       />
       <Switch
         label="Показать скрытые (гигиенический фильтр)"
@@ -292,7 +313,13 @@ function ScreenerCard({ row }: { row: UniverseRow }) {
           </Text>
         </Group>
 
-        <Group gap={4} wrap="wrap">
+        <Group gap={4} wrap="wrap" align="center">
+          <ReliabilityDot
+            reliability={row.reliability}
+            reliabilityReason={row.reliabilityReason}
+            detailLines={screenerReliabilityDetailLines(row)}
+            testIdSuffix={`screener-${row.secid}`}
+          />
           <Badge size="xs" color={liquidityColor(row.liquidityScore)} variant="light">
             {liquidityLabel(row.liquidityScore)}
           </Badge>
@@ -424,6 +451,7 @@ export function Screener() {
       </Group>
 
       <StatusBar />
+      <RiskSignalsCaption />
 
       {isMobile ? (
         <Stack gap="xs">
@@ -504,6 +532,7 @@ export function Screener() {
                         <SortableHeader sortKey="turnover" label="Оборот/день" />
                       </Table.Th>
                       <Table.Th>Ликвидность</Table.Th>
+                      <Table.Th>Надёжность</Table.Th>
                       <Table.Th>Погашение/оферта</Table.Th>
                       <Table.Th>Действия</Table.Th>
                     </Table.Tr>
@@ -547,6 +576,14 @@ export function Screener() {
                           <Badge size="sm" color={liquidityColor(row.liquidityScore)} variant="light">
                             {liquidityLabel(row.liquidityScore)}
                           </Badge>
+                        </Table.Td>
+                        <Table.Td>
+                          <ReliabilityDot
+                            reliability={row.reliability}
+                            reliabilityReason={row.reliabilityReason}
+                            detailLines={screenerReliabilityDetailLines(row)}
+                            testIdSuffix={`screener-${row.secid}`}
+                          />
                         </Table.Td>
                         <Table.Td>{maturityOrOfferLabel(row)}</Table.Td>
                         <Table.Td>
