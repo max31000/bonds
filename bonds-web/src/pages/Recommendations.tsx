@@ -162,6 +162,14 @@ function ReplacementPanel({
   // быть у нижнего края списка) — scrollIntoView с block:'nearest' не скроллит, если уже видна.
   const resultRef = useRef<HTMLDivElement>(null);
 
+  // T-37 fix (ревью): generation-токен гонки клика по кандидату — клик по строке A запускает
+  // postMaterialize/postReplacement, но клик по строке B до резолва A должен инвалидировать
+  // результат A: без токена более поздний resolve A перезаписывал бы materialized/replacement уже
+  // выбранной B (тот же класс бага, что cancelled-флаг в GET-эффекте кандидатов выше). Каждый вызов
+  // handleSelectCandidate (включая toggle-off повторным кликом) получает новый id; перед каждым
+  // set-ом результата проверяем, что id всё ещё актуален.
+  const selectRequestIdRef = useRef(0);
+
   useEffect(() => {
     if (mode === 'search') return;
     let cancelled = false;
@@ -204,12 +212,17 @@ function ReplacementPanel({
   const handleSelectCandidate = async (secid: string) => {
     if (selectedSecid === secid) {
       // Задача 37 часть B.1: повторный клик по уже выбранной строке сворачивает карточку выгоды.
+      // T-37 fix: инкремент токена инвалидирует уже летящий запрос выбора этой же строки — иначе
+      // его поздний resolve мог бы снова раскрыть только что свёрнутую карточку.
+      selectRequestIdRef.current += 1;
       setSelectedSecid(null);
       setMaterialized(null);
       setReplacement(null);
       setSelectError(null);
       return;
     }
+
+    const myRequestId = ++selectRequestIdRef.current;
 
     setSelectedSecid(secid);
     setMaterialized(null);
@@ -218,6 +231,7 @@ function ReplacementPanel({
     setIsSelecting(true);
     try {
       const materializeResult = await postMaterialize(secid);
+      if (selectRequestIdRef.current !== myRequestId) return;
       setMaterialized(materializeResult);
 
       const replacementResult = await postReplacement({
@@ -225,11 +239,13 @@ function ReplacementPanel({
         targetInstrumentId: materializeResult.instrumentId,
         horizonYears: REPLACEMENT_HORIZON_YEARS,
       });
+      if (selectRequestIdRef.current !== myRequestId) return;
       setReplacement(replacementResult);
     } catch (err) {
+      if (selectRequestIdRef.current !== myRequestId) return;
       setSelectError(err instanceof Error ? err.message : 'Не удалось сравнить с рынком');
     } finally {
-      setIsSelecting(false);
+      if (selectRequestIdRef.current === myRequestId) setIsSelecting(false);
     }
   };
 

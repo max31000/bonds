@@ -1,4 +1,4 @@
-import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, within, act } from '@testing-library/react';
 import { describe, it, expect, beforeEach } from 'vitest';
 import { MantineProvider } from '@mantine/core';
 import { http, HttpResponse } from 'msw';
@@ -410,5 +410,83 @@ describe('MarketComparator', () => {
     fireEvent.click(screen.getByTestId('market-comparator-watchlist-button-1'));
 
     await waitFor(() => expect(postedIsin).toBe(gazpromRow.isin));
+  });
+
+  // ─── T-37 fix (ревью): гонка запросов при быстром переключении выбора в выпадашке ───────────
+
+  /** Промис с внешним resolve — управляет моментом резолва materialize/replacement (тест гонки). */
+  function createDeferred<T = void>() {
+    let resolve!: (value: T | PromiseLike<T>) => void;
+    const promise = new Promise<T>((res) => {
+      resolve = res;
+    });
+    return { promise, resolve: () => resolve(undefined as T) };
+  }
+
+  it('does not let a stale response for the first-selected bond overwrite the card after a second bond was selected and resolved', async () => {
+    const otherSecid = top10Rows[1].secid; // 'RU000OTHER1' — «Другая бумага»
+    const materializeDeferreds: Record<string, ReturnType<typeof createDeferred>> = {
+      [gazpromRow.secid]: createDeferred(),
+      [otherSecid]: createDeferred(),
+    };
+    const replacementDeferreds: Record<number, ReturnType<typeof createDeferred>> = {
+      555: createDeferred(), // materialize возвращает instrumentId=555 для газпрома
+      777: createDeferred(), // и 777 для «Другая бумага»
+    };
+
+    server.use(
+      http.get('*/api/universe', () => HttpResponse.json({ rows: top10Rows, total: 2, hiddenCount: 0, disclaimer: '' })),
+      http.post('*/api/universe/:secid/materialize', async ({ params }) => {
+        const secid = params.secid as string;
+        const instrumentId = secid === gazpromRow.secid ? 555 : 777;
+        await materializeDeferreds[secid].promise;
+        return HttpResponse.json({
+          ...materializeResponse,
+          instrumentId,
+          secid,
+          isin: `RU000${secid}`,
+          metrics: { ...materializeResponse.metrics, name: `Материализовано ${secid}` },
+        });
+      }),
+      http.post('*/api/analytics/replacement', async ({ request }) => {
+        const body = (await request.json()) as Record<string, unknown>;
+        const targetInstrumentId = body.targetInstrumentId as number;
+        await replacementDeferreds[targetInstrumentId].promise;
+        return HttpResponse.json({ ...replacementResponse, targetInstrumentId, netBenefitRub: targetInstrumentId });
+      }),
+    );
+
+    renderComparator();
+
+    const input = screen.getByTestId('market-comparator-select-1');
+    fireEvent.click(input);
+    fireEvent.change(input, { target: { value: '' } });
+    await waitFor(() => expect(screen.getByText(gazpromRow.name!)).toBeInTheDocument());
+
+    // Выбор первой бумаги (газпром) — запрос стартует и зависает на deferred.
+    fireEvent.click(screen.getByText(gazpromRow.name!));
+
+    // До резолва первой — открываем выпадашку заново и выбираем другую бумагу.
+    fireEvent.click(input);
+    fireEvent.change(input, { target: { value: '' } });
+    await waitFor(() => expect(screen.getByText('Другая бумага')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('Другая бумага'));
+
+    // Вторая бумага резолвится первой — карточка должна показать именно её данные.
+    materializeDeferreds[otherSecid].resolve();
+    replacementDeferreds[777].resolve();
+    await waitFor(() => expect(screen.getByTestId('market-comparator-result-1')).toBeInTheDocument());
+    expect(screen.getByTestId('market-comparator-result-1').textContent).toMatch(`Материализовано ${otherSecid}`);
+
+    // Первая (газпром) резолвится позже — не должна перезаписать уже показанную карточку.
+    materializeDeferreds[gazpromRow.secid].resolve();
+    replacementDeferreds[555].resolve();
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    expect(screen.getByTestId('market-comparator-result-1').textContent).toMatch(`Материализовано ${otherSecid}`);
+    expect(screen.getByTestId('market-comparator-result-1').textContent).not.toMatch(`Материализовано ${gazpromRow.secid}`);
   });
 });

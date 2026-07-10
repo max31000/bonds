@@ -88,6 +88,13 @@ export function MarketComparator({ holdPositionId, initialSecid }: { holdPositio
   const [isAddingToWatchlist, setIsAddingToWatchlist] = useState(false);
   const [addedToWatchlist, setAddedToWatchlist] = useState(false);
 
+  // T-37 fix (ревью): тот же класс гонки, что в Recommendations.ReplacementPanel.handleSelectCandidate
+  // — выбор новой бумаги в выпадашке до резолва предыдущего сравнения не должен позволить более
+  // позднему resolve старого выбора перезаписать карточку уже выбранной бумаги. Генерация
+  // инкрементируется на каждый вызов handleSelect (включая очистку selectedSecid=null); перед
+  // каждым set-ом результата проверяем, что генерация всё ещё актуальна.
+  const selectRequestIdRef = useRef(0);
+
   useEffect(() => {
     let cancelled = false;
 
@@ -126,6 +133,8 @@ export function MarketComparator({ holdPositionId, initialSecid }: { holdPositio
   const selectedRow = rows.find((r) => r.secid === selectedSecid) ?? null;
 
   const handleSelect = async (secid: string | null) => {
+    const myRequestId = ++selectRequestIdRef.current;
+
     setSelectedSecid(secid);
     setMaterialized(null);
     setReplacement(null);
@@ -136,6 +145,7 @@ export function MarketComparator({ holdPositionId, initialSecid }: { holdPositio
     setIsCompareLoading(true);
     try {
       const materializeResult = await postMaterialize(secid);
+      if (selectRequestIdRef.current !== myRequestId) return;
       setMaterialized(materializeResult);
 
       const replacementResult = await postReplacement({
@@ -143,9 +153,11 @@ export function MarketComparator({ holdPositionId, initialSecid }: { holdPositio
         targetInstrumentId: materializeResult.instrumentId,
         horizonYears: REPLACEMENT_HORIZON_YEARS,
       });
+      if (selectRequestIdRef.current !== myRequestId) return;
       setReplacement(replacementResult);
       setIsCompareLoading(false);
     } catch (err) {
+      if (selectRequestIdRef.current !== myRequestId) return;
       setCompareError(err instanceof Error ? err.message : 'Не удалось сравнить с рынком');
       setIsCompareLoading(false);
     }

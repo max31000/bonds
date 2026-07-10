@@ -1,4 +1,4 @@
-import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, within, act } from '@testing-library/react';
 import { describe, it, expect, beforeEach } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
 import { MantineProvider } from '@mantine/core';
@@ -242,6 +242,71 @@ function mockReplacementFlow() {
       }),
     ),
   );
+}
+
+/** Промис с внешним resolve — управляет моментом резолва materialize/replacement в тестах гонки
+ * выбора кандидата (T-37 fix). */
+function createDeferred<T = void>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve: () => resolve(undefined as T) };
+}
+
+function materializeResponseFor(secid: string, instrumentId: number) {
+  return {
+    instrumentId,
+    secid,
+    isin: `RU000${secid}`,
+    metrics: {
+      name: `Материализовано ${secid}`,
+      issuer: 'Эмитент рынка',
+      sector: 'Корпоративные',
+      couponType: 'Fixed' as const,
+      maturityDate: '2029-01-01',
+      horizonDate: '2029-01-01',
+      calculatedToOffer: false,
+      modifiedDuration: 1.5,
+      macaulayDuration: 1.55,
+      ytmEffective: 0.22,
+      currentYield: 0.2,
+      effectiveYield: 0.22,
+      gSpread: 400,
+      isFloater: false,
+      isIndexed: false,
+      isEstimated: false,
+      dataIncomplete: false,
+    },
+    disclaimer: '',
+  };
+}
+
+function replacementResponseFor(targetInstrumentId: number) {
+  return {
+    holdPositionId: 1,
+    targetPositionId: 0,
+    targetInstrumentId,
+    horizonYears: 2,
+    sellCommissionRub: 30,
+    buyCommissionRub: 30,
+    totalSwitchCostRub: 60,
+    netBenefitRub: targetInstrumentId,
+    isSwitchFavorable: true,
+    breakEvenYears: 0.4,
+    yieldDataIncomplete: false,
+    disclaimer: '',
+    sellCommissionRateUsed: 0.003,
+    buyCommissionRateUsed: 0.003,
+    commissionRateSource: 'Default' as const,
+    spreadFraction: 0.09,
+    capitalRub: 1490,
+    grossGainRub: 1460,
+    annualizedBenefitFraction: 0.19,
+    sellTaxEstimateRub: null,
+    netBenefitAfterTaxRub: null,
+    targetRiskSignals: goodSignals,
+  };
 }
 
 describe('Recommendations', () => {
@@ -591,6 +656,126 @@ describe('Recommendations', () => {
     renderRecommendations();
 
     await waitFor(() => expect(screen.getAllByTestId('disclaimer').length).toBeGreaterThan(0));
+  });
+
+  // ─── T-37 fix (ревью): гонка запросов при быстром переключении выбранного кандидата ─────────
+
+  it('does not let a stale response for candidate A overwrite the card after candidate B was selected and resolved', async () => {
+    const materializeDeferreds: Record<string, ReturnType<typeof createDeferred>> = {
+      MKT001: createDeferred(),
+      MKT002: createDeferred(),
+    };
+    const replacementDeferreds: Record<number, ReturnType<typeof createDeferred>> = {
+      1001: createDeferred(),
+      1002: createDeferred(),
+    };
+
+    server.use(
+      http.post('*/api/universe/:secid/materialize', async ({ params }) => {
+        const secid = params.secid as string;
+        const instrumentId = secid === 'MKT001' ? 1001 : 1002;
+        await materializeDeferreds[secid].promise;
+        return HttpResponse.json(materializeResponseFor(secid, instrumentId));
+      }),
+      http.post('*/api/analytics/replacement', async ({ request }) => {
+        const body = (await request.json()) as Record<string, unknown>;
+        const targetInstrumentId = body.targetInstrumentId as number;
+        await replacementDeferreds[targetInstrumentId].promise;
+        return HttpResponse.json(replacementResponseFor(targetInstrumentId));
+      }),
+    );
+
+    renderRecommendations();
+
+    await waitFor(() => expect(screen.getByTestId('sell-candidate-1')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('replace-toggle-1'));
+    await waitFor(() => expect(screen.getByTestId('replace-candidate-MKT001')).toBeInTheDocument());
+
+    // Клик по A — запрос стартует и зависает на deferred (ещё не резолвится).
+    fireEvent.click(screen.getByTestId('replace-candidate-MKT001'));
+    // Клик по B до резолва A.
+    fireEvent.click(screen.getByTestId('replace-candidate-MKT002'));
+
+    // B резолвится первым — карточка должна показать данные B.
+    materializeDeferreds.MKT002.resolve();
+    replacementDeferreds[1002].resolve();
+    await waitFor(() => expect(screen.getByTestId('replace-result-1')).toBeInTheDocument());
+    expect(screen.getByTestId('replace-result-1').textContent).toMatch(/Материализовано MKT002/);
+
+    // A резолвится позже B — не должен перезаписать уже показанную карточку B.
+    materializeDeferreds.MKT001.resolve();
+    replacementDeferreds[1001].resolve();
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    expect(screen.getByTestId('replace-result-1').textContent).toMatch(/Материализовано MKT002/);
+    expect(screen.getByTestId('replace-result-1').textContent).not.toMatch(/MKT001/);
+  });
+
+  // Примечание: строка кандидата дизейблится на время СВОЕЙ загрузки (`disabled={isLoading}` в
+  // ReplacementCandidateRow), и React пропускает onClick для disabled-элемента по своим внутренним
+  // props (getListener в react-dom), а не по живому DOM-атрибуту — поэтому буквально "повторный
+  // клик по ТОЙ ЖЕ строке до её резолва" недостижим через реальный клик ни в браузере, ни в тесте.
+  // Токен всё равно инкрементируется и в toggle-ветке (страховка на будущее, см. handleSelectCandidate)
+  // — а вот сценарий ниже РЕАЛЬНО достижим через UI: выбор B прерывает ещё не резолвившийся A, B
+  // резолвится и рендерится, пользователь сворачивает B повторным кликом, и только потом
+  // сверхстарый ответ A наконец приходит — карточка не должна открыться заново.
+  it('does not reopen the benefit card via a very stale response after switching candidates and collapsing', async () => {
+    const materializeDeferreds: Record<string, ReturnType<typeof createDeferred>> = {
+      MKT001: createDeferred(),
+      MKT002: createDeferred(),
+    };
+    const replacementDeferreds: Record<number, ReturnType<typeof createDeferred>> = {
+      1001: createDeferred(),
+      1002: createDeferred(),
+    };
+
+    server.use(
+      http.post('*/api/universe/:secid/materialize', async ({ params }) => {
+        const secid = params.secid as string;
+        const instrumentId = secid === 'MKT001' ? 1001 : 1002;
+        await materializeDeferreds[secid].promise;
+        return HttpResponse.json(materializeResponseFor(secid, instrumentId));
+      }),
+      http.post('*/api/analytics/replacement', async ({ request }) => {
+        const body = (await request.json()) as Record<string, unknown>;
+        const targetInstrumentId = body.targetInstrumentId as number;
+        await replacementDeferreds[targetInstrumentId].promise;
+        return HttpResponse.json(replacementResponseFor(targetInstrumentId));
+      }),
+    );
+
+    renderRecommendations();
+
+    await waitFor(() => expect(screen.getByTestId('sell-candidate-1')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('replace-toggle-1'));
+    await waitFor(() => expect(screen.getByTestId('replace-candidate-MKT001')).toBeInTheDocument());
+
+    // A стартует и зависает.
+    fireEvent.click(screen.getByTestId('replace-candidate-MKT001'));
+    // B стартует до резолва A — токен инвалидирует A.
+    fireEvent.click(screen.getByTestId('replace-candidate-MKT002'));
+
+    // B резолвится и рендерится.
+    materializeDeferreds.MKT002.resolve();
+    replacementDeferreds[1002].resolve();
+    await waitFor(() => expect(screen.getByTestId('replace-result-1')).toBeInTheDocument());
+
+    // Повторный клик по B сворачивает карточку (токен снова инкрементируется в toggle-ветке).
+    fireEvent.click(screen.getByTestId('replace-candidate-MKT002'));
+    await waitFor(() => expect(screen.queryByTestId('replace-result-1')).not.toBeInTheDocument());
+
+    // Сверхстарый ответ A приходит только теперь — не должен ничего открыть заново.
+    materializeDeferreds.MKT001.resolve();
+    replacementDeferreds[1001].resolve();
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    expect(screen.queryByTestId('replace-result-1')).not.toBeInTheDocument();
   });
 
   // ─── Задача 30: RV-бейдж на карточке слабой позиции (переработан задачей 35, но переиспользуется) ──
