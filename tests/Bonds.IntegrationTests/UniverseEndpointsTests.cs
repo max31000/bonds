@@ -291,6 +291,101 @@ public class UniverseEndpointsTests
         row.GetProperty("inPortfolio").GetBoolean().Should().BeTrue();
     }
 
+    // ─── reliability (задача 38 часть B.2) ──────────────────────────────────────────────────────
+
+    /// <summary>Три записи по одной на уровень светофора — тот же приём, что
+    /// ReplacementCandidatesEndpointTests.ReliabilityProbeEntries (см. её doc-comment для того, почему
+    /// None-ликвидность здесь не используется: гигиенический фильтр прячет null-оборот). GspreadApproxFraction
+    /// не задаётся (остаётся null по умолчанию record-инициализатора) — спред-сигнал автоматически Neutral.</summary>
+    private static BondUniverseEntry[] ReliabilityProbeEntries(string marker, string sector, decimal baseYield) =>
+    [
+        new BondUniverseEntry
+        {
+            Secid = $"GRN{marker}", Isin = $"IGRN{marker}", ShortName = $"BOND GRN{marker}", SecName = $"Full name GRN{marker}",
+            FaceValue = 1000m, Sector = sector, YieldFraction = baseYield, DurationYears = 2m, PricePercent = 99.5m,
+            TurnoverRub = 10_000_000m, BidPercent = 99.9m, OfferPercent = 100m, NumTrades = 50, ListLevel = 1,
+            MaturityDate = DateOnly.FromDateTime(DateTime.UtcNow.AddYears(3)), UpdatedAt = DateTime.UtcNow,
+        },
+        new BondUniverseEntry
+        {
+            Secid = $"YLW{marker}", Isin = $"IYLW{marker}", ShortName = $"BOND YLW{marker}", SecName = $"Full name YLW{marker}",
+            FaceValue = 1000m, Sector = sector, YieldFraction = baseYield - 0.001m, DurationYears = 2m, PricePercent = 99.5m,
+            TurnoverRub = 10_000_000m, BidPercent = 99.9m, OfferPercent = 100m, NumTrades = 50, ListLevel = null,
+            MaturityDate = DateOnly.FromDateTime(DateTime.UtcNow.AddYears(3)), UpdatedAt = DateTime.UtcNow,
+        },
+        new BondUniverseEntry
+        {
+            Secid = $"RED{marker}", Isin = $"IRED{marker}", ShortName = $"BOND RED{marker}", SecName = $"Full name RED{marker}",
+            FaceValue = 1000m, Sector = sector, YieldFraction = baseYield - 0.002m, DurationYears = 2m, PricePercent = 99.5m,
+            TurnoverRub = 100_000m, BidPercent = 99m, OfferPercent = 100m, NumTrades = 5, ListLevel = 1,
+            MaturityDate = DateOnly.FromDateTime(DateTime.UtcNow.AddYears(3)), UpdatedAt = DateTime.UtcNow,
+        },
+    ];
+
+    [Fact]
+    public async Task GetUniverse_RowsCarryReliabilityAndReason_MatchingEachLevel()
+    {
+        var repo = new BondUniverseRepository(_factory.Database.ConnectionString);
+        var marker = Guid.NewGuid().ToString("N")[..6];
+        var sector = $"Sector{marker}";
+        await repo.UpsertSnapshotBatchAsync(ReliabilityProbeEntries(marker, sector, baseYield: 0.30m));
+
+        var client = await CreateAuthorizedClientAsync();
+        var response = await client.GetAsync($"/api/universe?search={marker}&limit=10");
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var rows = body.GetProperty("rows").EnumerateArray().ToList();
+
+        rows.Should().HaveCount(3);
+        foreach (var row in rows)
+        {
+            row.GetProperty("reliability").ValueKind.Should().Be(JsonValueKind.String);
+            row.GetProperty("reliabilityReason").GetString().Should().NotBeNullOrWhiteSpace();
+        }
+
+        rows.Single(r => r.GetProperty("secid").GetString() == $"GRN{marker}").GetProperty("reliability").GetString().Should().Be("Green");
+        rows.Single(r => r.GetProperty("secid").GetString() == $"YLW{marker}").GetProperty("reliability").GetString().Should().Be("Yellow");
+        rows.Single(r => r.GetProperty("secid").GetString() == $"RED{marker}").GetProperty("reliability").GetString().Should().Be("Red");
+    }
+
+    [Fact]
+    public async Task GetUniverse_ReliabilityFilter_FiltersNotWorseThanLevel()
+    {
+        var repo = new BondUniverseRepository(_factory.Database.ConnectionString);
+        var marker = Guid.NewGuid().ToString("N")[..6];
+        var sector = $"Sector{marker}";
+        await repo.UpsertSnapshotBatchAsync(ReliabilityProbeEntries(marker, sector, baseYield: 0.30m));
+
+        var client = await CreateAuthorizedClientAsync();
+
+        async Task<List<string>> SecidsAsync(string? reliability)
+        {
+            var query = $"/api/universe?search={marker}&limit=10";
+            if (reliability is not null) query += $"&reliability={reliability}";
+            var response = await client.GetAsync(query);
+            response.StatusCode.Should().Be(HttpStatusCode.OK);
+            var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+            return body.GetProperty("rows").EnumerateArray().Select(r => r.GetProperty("secid").GetString()!).ToList();
+        }
+
+        (await SecidsAsync(null)).Should().BeEquivalentTo([$"GRN{marker}", $"YLW{marker}", $"RED{marker}"], "без фильтра — все уровни");
+        (await SecidsAsync("green")).Should().BeEquivalentTo([$"GRN{marker}"], "green — только Green");
+        (await SecidsAsync("yellow")).Should().BeEquivalentTo([$"GRN{marker}", $"YLW{marker}"], "yellow — не хуже жёлтого (Green+Yellow)");
+        (await SecidsAsync("red")).Should().BeEquivalentTo([$"GRN{marker}", $"YLW{marker}", $"RED{marker}"], "red — не хуже красного = все уровни");
+    }
+
+    [Fact]
+    public async Task GetUniverse_InvalidReliability_Returns422()
+    {
+        var client = await CreateAuthorizedClientAsync();
+
+        var response = await client.GetAsync("/api/universe?reliability=bogus");
+
+        response.StatusCode.Should().Be((HttpStatusCode)422);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        body.GetProperty("type").GetString().Should().Be("ValidationException");
+    }
+
     [Fact]
     public async Task GetUniverseStatus_ReturnsTotalsAndLastRefresh()
     {

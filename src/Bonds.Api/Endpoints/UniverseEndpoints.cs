@@ -1,10 +1,12 @@
 using System.Security.Claims;
+using Bonds.Core.Analytics;
 using Bonds.Core.Interfaces.Repositories;
 using Bonds.Core.Models;
 using Bonds.Core.Time;
 using Bonds.Core.Universe;
 using Bonds.Infrastructure.Analytics;
 using Bonds.Infrastructure.Sync;
+using Bonds.Infrastructure.Universe;
 using Microsoft.Extensions.Options;
 
 namespace Bonds.Api.Endpoints;
@@ -38,6 +40,7 @@ public static class UniverseEndpoints
         IPositionRepository positionRepo,
         IInstrumentRepository instrumentRepo,
         IWatchlistItemRepository watchlistRepo,
+        RelativeValueSnapshotBuilder snapshotBuilder,
         IOptions<Bonds.Infrastructure.Universe.BondUniverseRefreshOptions> universeOptions,
         string? search,
         decimal? minDurationYears,
@@ -46,24 +49,46 @@ public static class UniverseEndpoints
         decimal? maxYield,
         string? sector,
         bool? includeHidden,
+        string? reliability,
         string? sortBy,
         string? sortDir,
         int? limit,
-        int? offset)
+        int? offset,
+        CancellationToken ct)
     {
+        if (!AnalyticsEndpoints.IsValidReliabilityFilterValue(reliability))
+        {
+            return Results.Json(
+                new { error = "reliability должен быть 'green', 'yellow' или 'red'", type = "ValidationException" },
+                statusCode: StatusCodes.Status422UnprocessableEntity);
+        }
+
         var all = await universeRepo.GetAllAsync();
         var hygieneOptions = universeOptions.Value.Hygiene;
         var today = BusinessClock.MoscowToday();
+        // Задача 38 часть B.2: снимок RV нужен для медианы корзины при агрегации светофора надёжности
+        // (см. AnalyticsEndpoints.AssessEntryRiskSignals) — singleton-кэш (см. doc-comment
+        // RelativeValueSnapshotBuilder), лишнего I/O на каждый вызов не добавляет.
+        var snapshot = await snapshotBuilder.GetSnapshotAsync(ct);
 
-        // Флаги причины скрытия считаются на ВСЕЙ вселенной (до текстового/числового фильтра) —
-        // hiddenCount в ответе должен отражать реальную гигиену банка, а не "скрыто среди
-        // отфильтрованных", иначе число прыгало бы вместе с поиском/фильтрами без видимой причины.
+        // Флаги причины скрытия И светофор надёжности считаются на ВСЕЙ вселенной (до текстового/
+        // числового фильтра) — hiddenCount в ответе должен отражать реальную гигиену банка, а не
+        // "скрыто среди отфильтрованных"; светофор надёжности должен фильтроваться ДО пагинации
+        // (тот же принцип, что остальные фильтры этого эндпоинта), поэтому считается для каждой
+        // записи заранее, а не только для итоговой страницы (тот же масштаб вычислений, что уже
+        // принят source=recommended аллокации — задача 34/38, банк ~3400 строк, только in-memory).
         var withHygiene = all
-            .Select(e => (Entry: e, HiddenReason: UniverseHygieneFilter.Evaluate(e, hygieneOptions, today)))
+            .Select(e =>
+            {
+                var hiddenReason = UniverseHygieneFilter.Evaluate(e, hygieneOptions, today);
+                var signals = AnalyticsEndpoints.AssessEntryRiskSignals(e, snapshot);
+                var (reliabilityLevel, reliabilityReason) = CandidateRiskSignalService.Aggregate(signals, e.ListLevel, e.Sector);
+                return (Entry: e, HiddenReason: hiddenReason, Reliability: reliabilityLevel, ReliabilityReason: reliabilityReason);
+            })
             .ToList();
         var hiddenCount = withHygiene.Count(x => x.HiddenReason != HygieneHiddenReason.None);
 
-        IEnumerable<(BondUniverseEntry Entry, HygieneHiddenReason HiddenReason)> query = withHygiene;
+        IEnumerable<(BondUniverseEntry Entry, HygieneHiddenReason HiddenReason, ReliabilityLight Reliability, string ReliabilityReason)> query = withHygiene;
         if (includeHidden != true)
         {
             query = query.Where(x => x.HiddenReason == HygieneHiddenReason.None);
@@ -84,6 +109,7 @@ public static class UniverseEndpoints
         if (minYield is { } minY) query = query.Where(x => x.Entry.YieldFraction is { } y && y >= minY);
         if (maxYield is { } maxY) query = query.Where(x => x.Entry.YieldFraction is { } y && y <= maxY);
         if (!string.IsNullOrWhiteSpace(sector)) query = query.Where(x => string.Equals(x.Entry.Sector, sector, StringComparison.OrdinalIgnoreCase));
+        if (!string.IsNullOrWhiteSpace(reliability)) query = query.Where(x => AnalyticsEndpoints.ReliabilityMeetsFilter(x.Reliability.ToString(), reliability));
 
         var materialized = query.ToList();
         var total = materialized.Count;
@@ -100,7 +126,7 @@ public static class UniverseEndpoints
         var portfolioIsins = await ResolvePortfolioIsinsAsync(accountRepo, positionRepo, instrumentRepo);
         var watchlistIsins = await ResolveWatchlistIsinsAsync(principal, watchlistRepo);
 
-        var rows = page.Select(x => ToRowDto(x.Entry, x.HiddenReason, portfolioIsins, watchlistIsins)).ToList();
+        var rows = page.Select(x => ToRowDto(x.Entry, x.HiddenReason, x.Reliability, x.ReliabilityReason, portfolioIsins, watchlistIsins)).ToList();
 
         return Results.Ok(new UniverseResponseDto
         {
@@ -114,12 +140,12 @@ public static class UniverseEndpoints
     private static bool Contains(string? haystack, string needle) =>
         haystack is not null && haystack.Contains(needle, StringComparison.OrdinalIgnoreCase);
 
-    private static List<(BondUniverseEntry Entry, HygieneHiddenReason HiddenReason)> SortRows(
-        List<(BondUniverseEntry Entry, HygieneHiddenReason HiddenReason)> rows, string? sortBy, string? sortDir)
+    private static List<(BondUniverseEntry Entry, HygieneHiddenReason HiddenReason, ReliabilityLight Reliability, string ReliabilityReason)> SortRows(
+        List<(BondUniverseEntry Entry, HygieneHiddenReason HiddenReason, ReliabilityLight Reliability, string ReliabilityReason)> rows, string? sortBy, string? sortDir)
     {
         var descending = string.Equals(sortDir, "desc", StringComparison.OrdinalIgnoreCase);
 
-        Func<(BondUniverseEntry Entry, HygieneHiddenReason HiddenReason), decimal?> keySelector = sortBy?.ToLowerInvariant() switch
+        Func<(BondUniverseEntry Entry, HygieneHiddenReason HiddenReason, ReliabilityLight Reliability, string ReliabilityReason), decimal?> keySelector = sortBy?.ToLowerInvariant() switch
         {
             "duration" => x => x.Entry.DurationYears,
             "turnover" => x => x.Entry.TurnoverRub,
@@ -130,7 +156,7 @@ public static class UniverseEndpoints
 
         // Null трактуется как "меньше всего" (нет данных — в конец списка при desc, в начало при asc)
         // через явную проекцию на (HasValue, Value), а не полагаемся на дефолтный Nullable-компаратор.
-        IOrderedEnumerable<(BondUniverseEntry Entry, HygieneHiddenReason HiddenReason)> ordered = descending
+        IOrderedEnumerable<(BondUniverseEntry Entry, HygieneHiddenReason HiddenReason, ReliabilityLight Reliability, string ReliabilityReason)> ordered = descending
             ? rows.OrderByDescending(x => keySelector(x).HasValue).ThenByDescending(x => keySelector(x) ?? decimal.MinValue)
             : rows.OrderByDescending(x => keySelector(x).HasValue).ThenBy(x => keySelector(x) ?? decimal.MaxValue);
 
@@ -168,7 +194,8 @@ public static class UniverseEndpoints
     }
 
     private static UniverseRowDto ToRowDto(
-        BondUniverseEntry entry, HygieneHiddenReason hiddenReason, HashSet<string> portfolioIsins, HashSet<string> watchlistIsins)
+        BondUniverseEntry entry, HygieneHiddenReason hiddenReason, ReliabilityLight reliability, string reliabilityReason,
+        HashSet<string> portfolioIsins, HashSet<string> watchlistIsins)
     {
         var liquidity = LiquidityScoreCalculator.Assess(entry.TurnoverRub, entry.BidPercent, entry.OfferPercent, entry.NumTrades);
         var isInPortfolio = entry.Isin is not null && portfolioIsins.Contains(entry.Isin);
@@ -197,6 +224,10 @@ public static class UniverseEndpoints
             // Задача 31 часть A: проброс признака флоатера для скринера (задача 32) — не скрываем и
             // не фильтруем здесь (владелец выбрал "пометка + фильтр на фронте", не hygiene-hide).
             IsFloater = entry.IsFloater,
+            // Задача 38 часть B.2: светофор надёжности банк-записи (по остальным осям, если G-спред
+            // отсутствует — см. doc-comment CandidateRiskSignalService.Aggregate/AssessSpread).
+            Reliability = reliability.ToString(),
+            ReliabilityReason = reliabilityReason,
         };
     }
 
@@ -363,6 +394,16 @@ public sealed record UniverseRowDto
     /// Null — BONDTYPE не пришёл от MOEX, трактуется фронтом как "не флоатер" (не скрывать/не помечать),
     /// тот же осознанный дефолт, что и в бэкенд-исключениях (задача 31 часть B).</summary>
     public bool? IsFloater { get; init; }
+
+    /// <summary>Задача 38 часть B.2 — светофор надёжности по банк-записи (см.
+    /// <see cref="Bonds.Core.Analytics.ReliabilityLight"/>/<see cref="Bonds.Core.Analytics.CandidateRiskSignalService.Aggregate"/>):
+    /// "Green"|"Yellow"|"Red". Для записей без G-спреда считается по остальным осям (листинг/
+    /// ликвидность) — см. doc-comment <see cref="Bonds.Core.Analytics.CandidateRiskSignalService.AssessSpread"/>.
+    /// <b>НЕ кредитный рейтинг.</b></summary>
+    public required string Reliability { get; init; }
+
+    /// <summary>Человекочитаемое обоснование <see cref="Reliability"/> — задача 38 часть B.2.</summary>
+    public required string ReliabilityReason { get; init; }
 }
 
 public sealed record UniverseStatusDto
