@@ -195,12 +195,27 @@ public class AllocationMarketEndpointTests
         // Контраст: тот же Caution-кандидат ПОЯВЛЯЕТСЯ в market (там риск-фильтра нет вообще).
         var marketResponse = await client.GetAsync("/api/analytics/allocation?amountRub=100000000&source=market");
         var marketBody = await marketResponse.Content.ReadFromJsonAsync<JsonElement>();
-        var marketSecids = marketBody.GetProperty("allocations").EnumerateArray()
+        var marketAllocations = marketBody.GetProperty("allocations").EnumerateArray().ToList();
+        var marketSecids = marketAllocations
             .Select(a => a.GetProperty("secid").GetString())
             .Concat(marketBody.GetProperty("skipped").EnumerateArray().Select(s => s.GetProperty("secid").GetString()))
             .ToList();
 
         marketSecids.Should().Contain(cautionSecid, "source=market не фильтрует по риск-сигналам — Caution-кандидат всё равно попадает в ответ");
+
+        // Задача 38 часть A.3: светофор надёжности доходит до RiskSignals строки аллокации market —
+        // спред нейтрализован (одинаковый GspreadApproxFraction выше), поэтому reliability детерминирован
+        // только ликвидностью: goodEntry (High, листинг 1) -> Green, cautionEntry (Low) -> Red.
+        var goodLine = marketAllocations.SingleOrDefault(a => a.GetProperty("secid").GetString() == goodSecid);
+        if (goodLine.ValueKind != JsonValueKind.Undefined)
+        {
+            goodLine.GetProperty("riskSignals").GetProperty("reliability").GetString().Should().Be("Green");
+        }
+        var cautionLine = marketAllocations.SingleOrDefault(a => a.GetProperty("secid").GetString() == cautionSecid);
+        if (cautionLine.ValueKind != JsonValueKind.Undefined)
+        {
+            cautionLine.GetProperty("riskSignals").GetProperty("reliability").GetString().Should().Be("Red");
+        }
     }
 
     // ─── source=portfolio (план часть D.7 — регресс дефолта) ────────────────────────────────

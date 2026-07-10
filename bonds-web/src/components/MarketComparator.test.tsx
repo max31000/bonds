@@ -34,6 +34,8 @@ const gazpromRow: UniverseRow = {
   hiddenReason: null,
   inPortfolio: false,
   inWatchlist: false,
+  reliability: 'Green',
+  reliabilityReason: 'Зелёный: оба риск-сигнала в норме, листинг 1-2, ликвидность с данными.',
 };
 
 // Задача 37 часть C.2: бумага с офертой — бейдж «оферта {дата}» должен появиться и в опции
@@ -345,6 +347,8 @@ describe('MarketComparator', () => {
             spread: 'Caution',
             gSpreadFraction: 0.05,
             spreadVsBasketMedianFraction: 0.012,
+            reliability: 'Red',
+            reliabilityReason: 'Красный: спред заметно выше медианы корзины (сигнал Caution).',
           },
         }),
       ),
@@ -362,6 +366,8 @@ describe('MarketComparator', () => {
     await waitFor(() => expect(screen.getByTestId('market-comparator-result-1')).toBeInTheDocument());
     expect(screen.getByTestId('risk-signal-liquidity-market-1')).toBeInTheDocument();
     expect(screen.getByTestId('risk-signal-spread-market-1')).toBeInTheDocument();
+    // Задача 38 часть C.2: светофор надёжности виден на карточке выгоды сравнивалки.
+    expect(screen.getByTestId('reliability-dot-market-1')).toHaveAttribute('data-reliability', 'Red');
   });
 
   it('does not render risk-signal badges when targetRiskSignals is absent (target not found in the bank)', async () => {

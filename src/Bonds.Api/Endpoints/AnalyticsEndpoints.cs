@@ -1000,7 +1000,10 @@ public static class AnalyticsEndpoints
             .ToList();
 
         var snapshot = await snapshotBuilder.GetSnapshotAsync(ct);
-        var signalsBySecid = new Dictionary<string, CandidateRiskSignals>(StringComparer.OrdinalIgnoreCase);
+        // Задача 38 часть A.3: словарь хранит уже готовый RiskSignalsDto (не "сырой" CandidateRiskSignals)
+        // — светофор надёжности (ToRiskSignalsDto→Aggregate) нуждается в ListLevel/Sector банк-записи,
+        // которые есть здесь (entry), но не были бы доступны в точке потребления ниже (a.Secid).
+        var signalsBySecid = new Dictionary<string, RiskSignalsDto>(StringComparer.OrdinalIgnoreCase);
 
         List<BondUniverseEntry> pool;
         int poolAvailable;
@@ -1014,7 +1017,7 @@ public static class AnalyticsEndpoints
 
             foreach (var (entry, signals) in withSignals)
             {
-                signalsBySecid[entry.Secid] = signals;
+                signalsBySecid[entry.Secid] = ToRiskSignalsDto(signals, entry.ListLevel, entry.Sector);
             }
 
             poolAvailable = withSignals.Count;
@@ -1034,7 +1037,7 @@ public static class AnalyticsEndpoints
 
             foreach (var entry in pool)
             {
-                signalsBySecid[entry.Secid] = AssessEntryRiskSignals(entry, snapshot);
+                signalsBySecid[entry.Secid] = ToRiskSignalsDto(AssessEntryRiskSignals(entry, snapshot), entry.ListLevel, entry.Sector);
             }
         }
 
@@ -1080,7 +1083,7 @@ public static class AnalyticsEndpoints
                 AccruedCostRub = a.AccruedCostRub,
                 CommissionCostRub = a.CommissionCostRub,
                 RiskSignals = a.Secid is not null && signalsBySecid.TryGetValue(a.Secid, out var lineSignals)
-                    ? ToRiskSignalsDto(lineSignals)
+                    ? lineSignals
                     : null,
             }).ToList(),
             Skipped = result.Skipped.Select(s => new AllocationSkipDto
@@ -1539,6 +1542,32 @@ public static class AnalyticsEndpoints
         "Риск-сигналы (ликвидность/листинг, спред к рынку) — по биржевой статистике MOEX, не рейтинг " +
         "рейтинговых агентств.";
 
+    /// <summary>Задача 38 часть B — валидирует значение query-параметра <c>reliability</c> (общий для
+    /// GET /api/analytics/replacement-candidates и GET /api/universe). Null/пусто — валиден (без
+    /// фильтра). <c>internal</c> — переиспользуется <c>UniverseEndpoints</c> (та же сборка).</summary>
+    internal static bool IsValidReliabilityFilterValue(string? value) =>
+        string.IsNullOrWhiteSpace(value) || value.Trim().ToLowerInvariant() is "green" or "yellow" or "red";
+
+    /// <summary>
+    /// Задача 38 часть B — «не хуже уровня»: green = только Green; yellow = Green+Yellow; red = все
+    /// уровни (Red — худший, значит "не хуже красного" ничего не отсекает — то же самое, что
+    /// отсутствие фильтра); null/пусто — без фильтра (все уровни). <paramref name="levelString"/> —
+    /// сериализованное значение <see cref="Bonds.Core.Analytics.ReliabilityLight"/>
+    /// (<c>RiskSignalsDto.Reliability</c>/<c>UniverseRowDto.Reliability</c>), сравнивается строкой,
+    /// чтобы не тянуть повторный парсинг enum на каждый вызов.
+    /// </summary>
+    internal static bool ReliabilityMeetsFilter(string levelString, string? filterValue)
+    {
+        if (string.IsNullOrWhiteSpace(filterValue)) return true;
+
+        return filterValue.Trim().ToLowerInvariant() switch
+        {
+            "green" => levelString == nameof(ReliabilityLight.Green),
+            "yellow" => levelString is nameof(ReliabilityLight.Green) or nameof(ReliabilityLight.Yellow),
+            _ => true, // "red" (или уже отфильтрованное валидатором прочее) — все уровни проходят.
+        };
+    }
+
     /// <summary>
     /// Задача 33 часть B — единый источник кандидатов-замен для ОДНОЙ позиции портфеля (блок 1
     /// переработки «Рекомендаций»): <c>mode=market</c> — вся фикс-купонная гигиенически-чистая
@@ -1561,11 +1590,17 @@ public static class AnalyticsEndpoints
         ulong positionId,
         string mode,
         int? limit,
+        string? reliability,
         CancellationToken ct)
     {
         if (mode != "market" && mode != "rv")
         {
             return ValidationError("mode должен быть 'market' или 'rv'");
+        }
+
+        if (!IsValidReliabilityFilterValue(reliability))
+        {
+            return ValidationError("reliability должен быть 'green', 'yellow' или 'red'");
         }
 
         var accountId = await PositionsEndpoints.ResolveAccountIdAsync(principal, accountRepo);
@@ -1580,8 +1615,8 @@ public static class AnalyticsEndpoints
         var snapshot = await snapshotBuilder.GetSnapshotAsync(ct);
 
         var candidates = mode == "market"
-            ? await BuildMarketCandidates(position, universeRepo, universeOptions.Value.Hygiene, asOf, snapshot, effectiveLimit)
-            : BuildRvModeCandidates(position, snapshot, effectiveLimit);
+            ? await BuildMarketCandidates(position, universeRepo, universeOptions.Value.Hygiene, asOf, snapshot, effectiveLimit, reliability)
+            : BuildRvModeCandidates(position, snapshot, effectiveLimit, reliability);
 
         return Results.Ok(new ReplacementCandidatesResponseDto
         {
@@ -1601,6 +1636,16 @@ public static class AnalyticsEndpoints
     /// топ-<paramref name="limit"/> по <see cref="BondUniverseEntry.YieldFraction"/> убыв. Точную
     /// выгоду каждого кандидата эта ручка НЕ считает — та задача существующего POST
     /// /api/analytics/replacement (см. doc-comment <see cref="GetReplacementCandidates"/>).
+    /// <para>
+    /// Задача 38 часть B.1: <paramref name="reliabilityFilter"/> ("не хуже уровня") применяется ДО
+    /// <c>Take(limit)</c>, иначе топ-N по доходности мог бы целиком не пройти фильтр и вернуть
+    /// меньше <paramref name="limit"/> кандидатов, хотя более доходные-но-дальше кандидаты бы
+    /// прошли. Без фильтра (null) поведение НЕ меняется — сигналы считаются только для уже
+    /// усечённого топ-N (дёшево); с фильтром — лениво для всей <c>eligible</c> (LINQ
+    /// Select→Where→Take не материализует лишнего — вычисление останавливается, как только
+    /// набрано <paramref name="limit"/> подходящих), тот же приём масштаба, что source=recommended
+    /// аллокации (задача 34).
+    /// </para>
     /// </summary>
     private static async Task<List<ReplacementCandidateDto>> BuildMarketCandidates(
         Core.Analytics.PortfolioHolding position,
@@ -1608,7 +1653,8 @@ public static class AnalyticsEndpoints
         UniverseHygieneOptions hygieneOptions,
         DateOnly asOf,
         RelativeValueSnapshotBuilder.RelativeValueSnapshot snapshot,
-        int limit)
+        int limit,
+        string? reliabilityFilter)
     {
         var all = await universeRepo.GetAllAsync();
 
@@ -1617,11 +1663,18 @@ public static class AnalyticsEndpoints
             .Where(e => e.IsFloater != true)
             .Where(e => e.YieldFraction is not null)
             .Where(e => position.Isin is null || !string.Equals(e.Isin, position.Isin, StringComparison.OrdinalIgnoreCase))
-            .OrderByDescending(e => e.YieldFraction!.Value)
+            .OrderByDescending(e => e.YieldFraction!.Value);
+
+        if (string.IsNullOrWhiteSpace(reliabilityFilter))
+        {
+            return eligible.Take(limit).Select(e => ToReplacementCandidateDto(e, snapshot)).ToList();
+        }
+
+        return eligible
+            .Select(e => ToReplacementCandidateDto(e, snapshot))
+            .Where(dto => ReliabilityMeetsFilter(dto.RiskSignals.Reliability, reliabilityFilter))
             .Take(limit)
             .ToList();
-
-        return eligible.Select(e => ToReplacementCandidateDto(e, snapshot)).ToList();
     }
 
     /// <summary>
@@ -1631,11 +1684,19 @@ public static class AnalyticsEndpoints
     /// floater/indexed, или G-спред/дюрация не посчитались движком) — пустой список, НЕ 500 (план
     /// явно требует понятный признак вместо ошибки; пустой список сам по себе — понятный признак
     /// "нет данных для RV-режима у этой позиции").
+    /// <para>
+    /// Задача 38 часть B.1: <paramref name="reliabilityFilter"/> — тот же принцип "фильтр ДО
+    /// усечения", что <see cref="BuildMarketCandidates"/>: с активным фильтром корзина резолвится
+    /// БЕЗ внутреннего лимита (<c>ResolveCheapBasketMembers</c> получает размер всей вселенной как
+    /// верхнюю границу — корзина сектор×дюрация обычно << всей вселенной, реального урезания не
+    /// происходит), фильтруется, и только потом урезается до <paramref name="limit"/>.
+    /// </para>
     /// </summary>
     private static List<ReplacementCandidateDto> BuildRvModeCandidates(
         Core.Analytics.PortfolioHolding position,
         RelativeValueSnapshotBuilder.RelativeValueSnapshot snapshot,
-        int limit)
+        int limit,
+        string? reliabilityFilter)
     {
         if (position.GSpread is not { } bondSpread || position.ModifiedDuration is null)
         {
@@ -1646,9 +1707,16 @@ public static class AnalyticsEndpoints
         var effectiveBasket = assessment.Basket.EffectiveBasket;
         var basketMedian = assessment.Basket.Stats.Median;
 
-        var basketMembers = ResolveCheapBasketMembers(effectiveBasket, basketMedian, snapshot, position.Isin, limit);
+        var take = string.IsNullOrWhiteSpace(reliabilityFilter) ? limit : snapshot.AllMembers.Count;
+        var basketMembers = ResolveCheapBasketMembers(effectiveBasket, basketMedian, snapshot, position.Isin, take);
 
-        return basketMembers.Select(m => ToReplacementCandidateDto(m, basketMedian, snapshot)).ToList();
+        var dtos = basketMembers.Select(m => ToReplacementCandidateDto(m, basketMedian, snapshot));
+        if (!string.IsNullOrWhiteSpace(reliabilityFilter))
+        {
+            dtos = dtos.Where(dto => ReliabilityMeetsFilter(dto.RiskSignals.Reliability, reliabilityFilter));
+        }
+
+        return dtos.Take(limit).ToList();
     }
 
     /// <summary>
@@ -1657,8 +1725,10 @@ public static class AnalyticsEndpoints
     /// чтобы не дублировать резолюцию корзины/ликвидности. Медиана корзины — СВОЯ у каждой записи
     /// (сектор × дюрация ЗАПИСИ, не позиции/другого кандидата), резолвится через
     /// <see cref="RelativeValueService.ResolveBasket"/> той же fallback-цепочкой, что RV-вердикт позиций.
+    /// Задача 38: <c>internal</c> (не <c>private</c>) — переиспользуется <c>UniverseEndpoints.GetUniverse</c>
+    /// (тот же сборка Bonds.Api) для светофора надёжности каждой строки скринера.
     /// </summary>
-    private static CandidateRiskSignals AssessEntryRiskSignals(
+    internal static CandidateRiskSignals AssessEntryRiskSignals(
         BondUniverseEntry entry, RelativeValueSnapshotBuilder.RelativeValueSnapshot snapshot)
     {
         var liquidity = LiquidityScoreCalculator.Assess(entry.TurnoverRub, entry.BidPercent, entry.OfferPercent, entry.NumTrades);
@@ -1696,7 +1766,7 @@ public static class AnalyticsEndpoints
             DurationYears = entry.DurationYears,
             GSpreadFraction = entry.GspreadApproxFraction,
             OfferDate = entry.OfferDate,
-            RiskSignals = ToRiskSignalsDto(signals),
+            RiskSignals = ToRiskSignalsDto(signals, entry.ListLevel, entry.Sector),
         };
     }
 
@@ -1722,18 +1792,33 @@ public static class AnalyticsEndpoints
             DurationYears = member.DurationYears,
             GSpreadFraction = member.GSpreadFraction,
             OfferDate = entry?.OfferDate,
-            RiskSignals = ToRiskSignalsDto(signals),
+            // Задача 38: светофор по листингу/сектору ЗАПИСИ банка (не сектору члена корзины —
+            // member.Sector может быть недоступен для гособлигаций-фоллбэка UnknownSector, entry —
+            // тот же банк-снимок, что несёт ListLevel; entry может быть null, если secid не резолвится
+            // в текущем снимке банка — тогда листинг/сектор неизвестны, Aggregate трактует как Yellow).
+            RiskSignals = ToRiskSignalsDto(signals, entry?.ListLevel, entry?.Sector ?? member.Sector),
         };
     }
 
-    private static RiskSignalsDto ToRiskSignalsDto(CandidateRiskSignals signals) => new()
+    /// <summary>Задача 38 часть A.2: собирает RiskSignalsDto из двух информационных сигналов +
+    /// агрегированного светофора надёжности (<see cref="CandidateRiskSignalService.Aggregate"/>).
+    /// <paramref name="listLevel"/>/<paramref name="sector"/> — те же входы, что уже использованы
+    /// для расчёта <paramref name="signals"/> (листинг банк-записи, сектор банк-записи).</summary>
+    private static RiskSignalsDto ToRiskSignalsDto(CandidateRiskSignals signals, int? listLevel, string? sector)
     {
-        Liquidity = signals.Liquidity.ToString(),
-        LiquidityLabel = signals.LiquidityLabel,
-        Spread = signals.Spread.ToString(),
-        GSpreadFraction = signals.GSpreadFraction,
-        SpreadVsBasketMedianFraction = signals.SpreadVsBasketMedianFraction,
-    };
+        var (reliability, reliabilityReason) = CandidateRiskSignalService.Aggregate(signals, listLevel, sector);
+
+        return new RiskSignalsDto
+        {
+            Liquidity = signals.Liquidity.ToString(),
+            LiquidityLabel = signals.LiquidityLabel,
+            Spread = signals.Spread.ToString(),
+            GSpreadFraction = signals.GSpreadFraction,
+            SpreadVsBasketMedianFraction = signals.SpreadVsBasketMedianFraction,
+            Reliability = reliability.ToString(),
+            ReliabilityReason = reliabilityReason,
+        };
+    }
 
     /// <summary>
     /// Задача 33 часть B.4: риск-сигналы бумаги по её банк-записи, найденной по ISIN среди ТЕКУЩЕГО
@@ -1882,6 +1967,20 @@ public sealed record RiskSignalsDto
     /// <summary>ДОЛЯ; GSpreadFraction − медиана корзины кандидата. Знак: положительное — спред
     /// выше медианы (рынок закладывает бОльшую премию/риск). Null вместе с GSpreadFraction.</summary>
     public decimal? SpreadVsBasketMedianFraction { get; init; }
+
+    /// <summary>
+    /// Задача 38 часть A.2 — светофор надёжности: "Green"|"Yellow"|"Red" (см.
+    /// <see cref="Bonds.Core.Analytics.ReliabilityLight"/>/<see cref="Bonds.Core.Analytics.CandidateRiskSignalService.Aggregate"/>
+    /// для точной матрицы). Аддитивное поле — существующие Liquidity/Spread не меняются.
+    /// <b>НЕ кредитный рейтинг</b> — сигнал по биржевой статистике, формулировка "рейтинг"
+    /// запрещена планом задачи 38 везде в UI/API.
+    /// </summary>
+    public required string Reliability { get; init; }
+
+    /// <summary>Человекочитаемое обоснование светофора (что притянуло уровень вниз) — задача 38
+    /// часть A.1. Дисклеймер "не кредитный рейтинг" сюда НЕ входит — он отдельный элемент UI
+    /// (тултип фронта, задача 38 часть C), не часть этой строки.</summary>
+    public required string ReliabilityReason { get; init; }
 }
 
 public sealed record XirrResponseDto

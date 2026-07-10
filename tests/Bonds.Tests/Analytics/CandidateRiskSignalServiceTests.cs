@@ -168,4 +168,93 @@ public class CandidateRiskSignalServiceTests
         signals.Liquidity.Should().Be(SignalLevel.Neutral);
         signals.Spread.Should().Be(SignalLevel.Neutral);
     }
+
+    // ─── Aggregate — светофор надёжности (задача 38 часть A.1) ─────────────────────────────────
+    //
+    // Матрица (см. doc-comment CandidateRiskSignalService.Aggregate): Red — любой Caution (спред
+    // Caution гос/муниципального сектора не считается, суверенный кредит); Green — обе оси
+    // Good/Neutral, ни одного Caution, листинг ∈ {1,2}, известная ликвидность (raw != None), ЛИБО
+    // гос/муниципальный сектор при любом непро-Caution состоянии спреда (спред игнорируется); Yellow
+    // — всё остальное (недостаточно данных по ликвидности, листинг вне {1,2}/неизвестен).
+
+    private static CandidateRiskSignals BuildSignals(
+        LiquidityScore liquidityScore, int? listLevel, decimal? gSpreadFraction, decimal? basketMedianGSpreadFraction) =>
+        CandidateRiskSignalService.Assess(liquidityScore, listLevel, gSpreadFraction, basketMedianGSpreadFraction);
+
+    [Theory]
+    // ── Green: чистые случаи (не суверен) ──
+    [InlineData(LiquidityScore.High, 1, 0.031, 0.03, null, ReliabilityLight.Green)]
+    [InlineData(LiquidityScore.High, 2, 0.01, 0.03, null, ReliabilityLight.Green)]
+    [InlineData(LiquidityScore.Medium, 1, 0.031, 0.03, null, ReliabilityLight.Green)] // Neutral+Neutral допустим для Green.
+    [InlineData(LiquidityScore.Medium, 2, 0.01, 0.03, null, ReliabilityLight.Green)]
+    [InlineData(LiquidityScore.High, 1, null, null, null, ReliabilityLight.Green)] // null-спред один (без null-ликвидности) не блокирует Green.
+    [InlineData(LiquidityScore.High, 1, 0.031, 0.03, "Корпоративные", ReliabilityLight.Green)]
+    // ── Red: любой Caution ──
+    [InlineData(LiquidityScore.Low, 1, 0.01, 0.03, null, ReliabilityLight.Red)] // ликвидность Caution.
+    [InlineData(LiquidityScore.Low, null, null, null, null, ReliabilityLight.Red)] // Caution даже без остальных данных.
+    [InlineData(LiquidityScore.High, 1, 0.05, 0.03, null, ReliabilityLight.Red)] // спред Caution, не суверен.
+    [InlineData(LiquidityScore.Medium, 3, 0.031, 0.03, null, ReliabilityLight.Red)] // Medium+листинг3 → Caution ликвидности.
+    [InlineData(LiquidityScore.Low, 1, 0.05, 0.03, null, ReliabilityLight.Red)] // оба Caution.
+    [InlineData(LiquidityScore.High, 1, 0.05, 0.03, "Корпоративные", ReliabilityLight.Red)] // некорректный "суверенный" ярлык не защищает — сектор не гос/муниц.
+    // ── Yellow: нехватка данных / листинг вне 1-2 ──
+    [InlineData(LiquidityScore.None, null, null, null, null, ReliabilityLight.Yellow)] // null-спред И null-ликвидность одновременно → Yellow, не Red.
+    [InlineData(LiquidityScore.None, 1, 0.031, 0.03, null, ReliabilityLight.Yellow)] // ликвидность неизвестна, остальное в норме.
+    [InlineData(LiquidityScore.High, 3, 0.031, 0.03, null, ReliabilityLight.Yellow)] // листинг 3 вне {1,2} (сигнал уже не Caution — High+листинг3=Neutral).
+    [InlineData(LiquidityScore.High, null, 0.031, 0.03, null, ReliabilityLight.Yellow)] // листинг неизвестен.
+    // ── Суверенный сектор — исключение только для спреда ──
+    [InlineData(LiquidityScore.High, 1, 0.05, 0.03, "Гособлигации", ReliabilityLight.Green)] // спред Caution проигнорирован — суверенный кредит.
+    [InlineData(LiquidityScore.High, 1, 0.05, 0.03, "Муниципальные", ReliabilityLight.Green)]
+    [InlineData(LiquidityScore.Low, 1, 0.05, 0.03, "Гособлигации", ReliabilityLight.Red)] // сектор НЕ спасает ликвидность.
+    [InlineData(LiquidityScore.High, 3, 0.05, 0.03, "Гособлигации", ReliabilityLight.Yellow)] // спред бесплатен, но листинг 3 всё ещё вне {1,2}.
+    [InlineData(LiquidityScore.None, 1, 0.05, 0.03, "Гособлигации", ReliabilityLight.Yellow)] // сектор НЕ спасает нехватку данных по ликвидности.
+    public void Aggregate_MatchesMatrix(
+        LiquidityScore liquidityScore, int? listLevel, double? gSpreadFraction, double? basketMedianGSpreadFraction,
+        string? sector, ReliabilityLight expected)
+    {
+        // xUnit [InlineData] не поддерживает decimal-константы атрибутов (не valid attribute
+        // argument type в C#) — Theory-параметры double, конвертация в decimal здесь на границе теста.
+        var signals = BuildSignals(liquidityScore, listLevel, (decimal?)gSpreadFraction, (decimal?)basketMedianGSpreadFraction);
+
+        var (level, reason) = CandidateRiskSignalService.Aggregate(signals, listLevel, sector);
+
+        level.Should().Be(expected);
+        reason.Should().NotBeNullOrWhiteSpace();
+    }
+
+    [Fact]
+    public void Aggregate_ReasonText_NeverClaimsCreditRating()
+    {
+        // Владелец явно запретил выдавать светофор за кредитный рейтинг — ни в одном исходе
+        // reason не должен содержать слово "рейтинг" (см. план: "НЕ называть светофор рейтингом").
+        var green = CandidateRiskSignalService.Aggregate(BuildSignals(LiquidityScore.High, 1, 0.01m, 0.03m), 1, null);
+        var yellow = CandidateRiskSignalService.Aggregate(BuildSignals(LiquidityScore.None, null, null, null), null, null);
+        var red = CandidateRiskSignalService.Aggregate(BuildSignals(LiquidityScore.Low, 1, 0.01m, 0.03m), 1, null);
+
+        foreach (var (_, reason) in new[] { green, yellow, red })
+        {
+            reason.Should().NotContainEquivalentOf("рейтинг");
+        }
+    }
+
+    [Fact]
+    public void Aggregate_RedReason_MentionsLiquidityWhenLiquidityCausesIt()
+    {
+        var signals = BuildSignals(LiquidityScore.Low, 1, 0.01m, 0.03m);
+
+        var (level, reason) = CandidateRiskSignalService.Aggregate(signals, 1, null);
+
+        level.Should().Be(ReliabilityLight.Red);
+        reason.Should().ContainEquivalentOf("ликвидн");
+    }
+
+    [Fact]
+    public void Aggregate_RedReason_MentionsSpreadWhenSpreadCausesIt()
+    {
+        var signals = BuildSignals(LiquidityScore.High, 1, 0.05m, 0.03m);
+
+        var (level, reason) = CandidateRiskSignalService.Aggregate(signals, 1, null);
+
+        level.Should().Be(ReliabilityLight.Red);
+        reason.Should().ContainEquivalentOf("спред");
+    }
 }

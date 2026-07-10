@@ -355,4 +355,130 @@ public class ReplacementCandidatesEndpointTests
         var body = await response.Content.ReadFromJsonAsync<JsonElement>();
         body.GetProperty("candidates").GetArrayLength().Should().Be(0);
     }
+
+    // ─── reliability filter (задача 38 часть B.1) ───────────────────────────────────────────────
+
+    [Fact]
+    public async Task GetReplacementCandidates_InvalidReliability_Returns422()
+    {
+        var (client, _, _) = await CreateAuthorizedClientAsync();
+
+        var response = await client.GetAsync("/api/analytics/replacement-candidates?positionId=1&mode=market&reliability=bogus");
+
+        response.StatusCode.Should().Be((HttpStatusCode)422);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        body.GetProperty("type").GetString().Should().Be("ValidationException");
+    }
+
+    /// <summary>Три банк-записи со специально подобранной ликвидностью/листингом и БЕЗ G-спреда
+    /// (GspreadApproxFraction=null — спред-сигнал автоматически Neutral, изолирует тест от резолюции
+    /// корзины) — по одной на каждый уровень светофора (задача 38 часть A.1 матрица, юнит-тестами
+    /// CandidateRiskSignalServiceTests уже закреплена целиком, здесь только плюмбинг фильтра).
+    /// <b>Важно:</b> None-ликвидность (все поля оборота/спреда/сделок null) намеренно НЕ используется
+    /// для Yellow-пробы — <c>UniverseHygieneFilter</c> трактует null-оборот как LowTurnover и прячет
+    /// такую запись из <c>bond_universe</c> целиком, а RV-корзина (<c>RelativeValueSnapshotBuilder</c>)
+    /// строится ТОЛЬКО из не скрытых гигиеной записей — прятание одной пробы уронило бы родную
+    /// корзину ниже <c>MinBasketSize</c> и увело fallback на "весь рынок" (пусто, т.к. там сектор
+    /// сравнивается буквально с меткой "Весь рынок"). Поэтому Yellow здесь — известная ликвидность
+    /// + НЕИЗВЕСТНЫЙ листинг (не 1/2), который гигиену не триггерит (только листинг==3 прячется).
+    /// <list type="bullet">
+    /// <item>Green: High-ликвидность (оборот 10 млн, узкий bid/offer), листинг 1.</item>
+    /// <item>Yellow: та же High-ликвидность, но листинг НЕ известен (null) — вне {1,2}.</item>
+    /// <item>Red: Low-ликвидность (оборот 100 тыс — ниже Medium-порога 300 тыс, но ≥ гигиенического
+    /// минимума 100 тыс, поэтому запись остаётся видимой) → Caution.</item>
+    /// </list>
+    /// </summary>
+    private static BondUniverseEntry[] ReliabilityProbeEntries(string marker, string sector, decimal baseYield) =>
+    [
+        new BondUniverseEntry
+        {
+            Secid = $"GRN{marker}", Isin = $"IGRN{marker}", ShortName = $"BOND GRN{marker}", SecName = $"Full name GRN{marker}",
+            FaceValue = 1000m, Sector = sector, YieldFraction = baseYield, DurationYears = 2m, PricePercent = 99.5m,
+            TurnoverRub = 10_000_000m, BidPercent = 99.9m, OfferPercent = 100m, NumTrades = 50, ListLevel = 1,
+            GspreadApproxFraction = null, MaturityDate = DateOnly.FromDateTime(DateTime.UtcNow.AddYears(3)), UpdatedAt = DateTime.UtcNow,
+        },
+        new BondUniverseEntry
+        {
+            Secid = $"YLW{marker}", Isin = $"IYLW{marker}", ShortName = $"BOND YLW{marker}", SecName = $"Full name YLW{marker}",
+            FaceValue = 1000m, Sector = sector, YieldFraction = baseYield - 0.001m, DurationYears = 2m, PricePercent = 99.5m,
+            TurnoverRub = 10_000_000m, BidPercent = 99.9m, OfferPercent = 100m, NumTrades = 50, ListLevel = null,
+            GspreadApproxFraction = null, MaturityDate = DateOnly.FromDateTime(DateTime.UtcNow.AddYears(3)), UpdatedAt = DateTime.UtcNow,
+        },
+        new BondUniverseEntry
+        {
+            Secid = $"RED{marker}", Isin = $"IRED{marker}", ShortName = $"BOND RED{marker}", SecName = $"Full name RED{marker}",
+            FaceValue = 1000m, Sector = sector, YieldFraction = baseYield - 0.002m, DurationYears = 2m, PricePercent = 99.5m,
+            TurnoverRub = 100_000m, BidPercent = 99m, OfferPercent = 100m, NumTrades = 5, ListLevel = 1,
+            GspreadApproxFraction = null, MaturityDate = DateOnly.FromDateTime(DateTime.UtcNow.AddYears(3)), UpdatedAt = DateTime.UtcNow,
+        },
+    ];
+
+    [Fact]
+    public async Task GetReplacementCandidates_Market_ReliabilityFilter_FiltersNotWorseThanLevel()
+    {
+        var (client, _, accountId) = await CreateAuthorizedClientAsync();
+        var marker = Guid.NewGuid().ToString("N")[..6];
+        var sector = $"Sector{marker}";
+
+        var (_, positionId, _) = await SeedYieldingPositionAsync(accountId, sector, cleanPrice: 1000m, couponValueRub: 20m);
+
+        var universeRepo = new BondUniverseRepository(_factory.Database.ConnectionString);
+        await universeRepo.UpsertSnapshotBatchAsync(ReliabilityProbeEntries(marker, sector, baseYield: 0.44m));
+
+        async Task<List<string>> OwnSecidsAsync(string? reliability)
+        {
+            var query = $"/api/analytics/replacement-candidates?positionId={positionId}&mode=market&limit=50";
+            if (reliability is not null) query += $"&reliability={reliability}";
+            var response = await client.GetAsync(query);
+            response.StatusCode.Should().Be(HttpStatusCode.OK);
+            var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+            return body.GetProperty("candidates").EnumerateArray()
+                .Select(c => c.GetProperty("secid").GetString()!)
+                .Where(s => s.EndsWith(marker, StringComparison.Ordinal))
+                .ToList();
+        }
+
+        (await OwnSecidsAsync(null)).Should().BeEquivalentTo([$"GRN{marker}", $"YLW{marker}", $"RED{marker}"], "без фильтра — все уровни");
+        (await OwnSecidsAsync("green")).Should().BeEquivalentTo([$"GRN{marker}"], "green — только Green");
+        (await OwnSecidsAsync("yellow")).Should().BeEquivalentTo([$"GRN{marker}", $"YLW{marker}"], "yellow — не хуже жёлтого (Green+Yellow)");
+        (await OwnSecidsAsync("red")).Should().BeEquivalentTo([$"GRN{marker}", $"YLW{marker}", $"RED{marker}"], "red — не хуже красного = все уровни");
+    }
+
+    [Fact]
+    public async Task GetReplacementCandidates_Rv_ReliabilityFilter_FiltersNotWorseThanLevel()
+    {
+        await SeedYieldCurveAsync();
+        var (client, _, accountId) = await CreateAuthorizedClientAsync();
+        var marker = Guid.NewGuid().ToString("N")[..6];
+        var sector = $"Sector{marker}";
+
+        var (_, positionId, _) = await SeedYieldingPositionAsync(accountId, sector, cleanPrice: 1000m, couponValueRub: 20m, maturityYears: 2);
+
+        // mode=rv требует непустой G-спред у каждого члена корзины (ResolveCheapBasketMembers) —
+        // в отличие от market-теста здесь GspreadApproxFraction ОДИНАКОВЫЙ у всех (равные yield),
+        // поэтому медиана корзины совпадает с каждым значением, отклонение = 0 (Neutral) у всех —
+        // спред-ось нейтрализована, светофор определяется только ликвидностью (та же матрица,
+        // что закреплена юнитами CandidateRiskSignalServiceTests, здесь — только плюмбинг фильтра).
+        var universeRepo = new BondUniverseRepository(_factory.Database.ConnectionString);
+        var probes = ReliabilityProbeEntries(marker, sector, baseYield: 0.30m).Select(e => { e.YieldFraction = 0.30m; e.GspreadApproxFraction = 0.20m; return e; }).ToArray();
+        var filler = Enumerable.Range(0, 2).Select(i => HealthyEntry($"F{i}{marker}", sector, 0.30m, 2m)).ToArray();
+        await universeRepo.UpsertSnapshotBatchAsync(probes.Concat(filler).ToArray());
+
+        async Task<List<string>> OwnSecidsAsync(string? reliability)
+        {
+            var query = $"/api/analytics/replacement-candidates?positionId={positionId}&mode=rv&limit=20";
+            if (reliability is not null) query += $"&reliability={reliability}";
+            var response = await client.GetAsync(query);
+            response.StatusCode.Should().Be(HttpStatusCode.OK);
+            var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+            return body.GetProperty("candidates").EnumerateArray()
+                .Select(c => c.GetProperty("secid").GetString()!)
+                .Where(s => s.EndsWith(marker, StringComparison.Ordinal) && (s.StartsWith("GRN") || s.StartsWith("YLW") || s.StartsWith("RED")))
+                .ToList();
+        }
+
+        (await OwnSecidsAsync(null)).Should().BeEquivalentTo([$"GRN{marker}", $"YLW{marker}", $"RED{marker}"], "без фильтра — все уровни");
+        (await OwnSecidsAsync("green")).Should().BeEquivalentTo([$"GRN{marker}"], "green — только Green");
+        (await OwnSecidsAsync("yellow")).Should().BeEquivalentTo([$"GRN{marker}", $"YLW{marker}"], "yellow — не хуже жёлтого (Green+Yellow)");
+    }
 }

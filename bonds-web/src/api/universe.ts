@@ -17,6 +17,7 @@ export function fetchUniverse(query: UniverseQuery): Promise<UniverseResponse> {
   if (query.maxDurationYears !== undefined) params.set('maxDurationYears', String(query.maxDurationYears));
   if (query.sector) params.set('sector', query.sector);
   if (query.includeHidden !== undefined) params.set('includeHidden', String(query.includeHidden));
+  if (query.reliability) params.set('reliability', query.reliability);
   params.set('sortBy', query.sortBy ?? 'yield');
   params.set('sortDir', query.sortDir ?? 'desc');
   params.set('limit', String(query.limit ?? 10));

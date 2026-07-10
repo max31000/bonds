@@ -27,6 +27,8 @@ import { MarketComparator } from '../components/MarketComparator';
 import { BasketConstructor } from '../components/BasketConstructor';
 import { RelativeValueBadge } from '../components/RelativeValueBadge';
 import { RiskSignalBadges, RiskSignalsCaption } from '../components/RiskSignalBadges';
+import { ReliabilityFilterControl } from '../components/ReliabilityFilterControl';
+import { meetsReliabilityFilter, type ReliabilityFilterValue } from '../utils/reliabilityFilter';
 import { fetchReplacementCandidates, postReplacement } from '../api/recommendations';
 import { postMaterialize } from '../api/universe';
 import { formatRub, formatPercent, formatNumber, formatDate, formatHorizon } from '../utils/format';
@@ -152,6 +154,11 @@ function ReplacementPanel({
   // дефолт ВЫКЛ (план: не усекать список неожиданно для пользователя, который его ещё не открывал).
   const [durationFilterEnabled, setDurationFilterEnabled] = useState(false);
 
+  // Задача 38 часть C.3: клиентский фильтр «надёжность не хуже уровня» — тот же приём, что фильтр
+  // дюрации выше (уже загруженный список, без похода на бэкенд); дефолт 'all' (план: не усекать
+  // список неожиданно).
+  const [reliabilityFilter, setReliabilityFilter] = useState<ReliabilityFilterValue>('all');
+
   const [selectedSecid, setSelectedSecid] = useState<string | null>(null);
   const [isSelecting, setIsSelecting] = useState(false);
   const [selectError, setSelectError] = useState<string | null>(null);
@@ -252,14 +259,18 @@ function ReplacementPanel({
   // Задача 37 часть C.3: окно ±ComparableDurationWindowYears вокруг дюрации заменяемой позиции;
   // кандидаты без дюрации ИЛИ позиция без дюрации (holdDurationYears===null, окно не определить) —
   // скрываются при включённом фильтре, честнее, чем показать их без критерия сравнения.
-  const filteredCandidates = durationFilterEnabled
-    ? candidates.filter(
-        (c) =>
-          c.durationYears !== null &&
+  // Задача 38 часть C.3: фильтр надёжности комбинируется (И) с фильтром дюрации — оба клиентские
+  // над уже загруженным списком, тот же приём.
+  const filteredCandidates = candidates
+    .filter(
+      (c) =>
+        !durationFilterEnabled ||
+        (c.durationYears !== null &&
           holdDurationYears !== null &&
-          Math.abs(c.durationYears - holdDurationYears) <= ComparableDurationWindowYears,
-      )
-    : candidates;
+          Math.abs(c.durationYears - holdDurationYears) <= ComparableDurationWindowYears),
+    )
+    .filter((c) => meetsReliabilityFilter(c.riskSignals.reliability, reliabilityFilter));
+  const isAnyClientFilterActive = durationFilterEnabled || reliabilityFilter !== 'all';
 
   /** Карточка выгоды выбранного кандидата (задача 37 часть B) — рендерится под строкой ниже. */
   const renderBenefitCard = () => (
@@ -361,16 +372,22 @@ function ReplacementPanel({
                   onChange={(e) => setDurationFilterEnabled(e.currentTarget.checked)}
                   data-testid={`replace-duration-filter-${holdPositionId}`}
                 />
-                {durationFilterEnabled && (
+                {isAnyClientFilterActive && (
                   <Text size="xs" c="dimmed" data-testid={`replace-duration-filter-count-${holdPositionId}`}>
                     осталось {filteredCandidates.length} из {candidates.length}
                   </Text>
                 )}
               </Group>
 
-              {durationFilterEnabled && filteredCandidates.length === 0 ? (
+              <ReliabilityFilterControl
+                value={reliabilityFilter}
+                onChange={setReliabilityFilter}
+                testId={`replace-reliability-filter-${holdPositionId}`}
+              />
+
+              {isAnyClientFilterActive && filteredCandidates.length === 0 ? (
                 <Text size="xs" c="dimmed" data-testid={`replace-duration-filter-empty-${holdPositionId}`}>
-                  Нет кандидатов с похожей дюрацией — отключите фильтр.
+                  Нет кандидатов по текущим фильтрам — отключите фильтр.
                 </Text>
               ) : (
                 <Stack gap="xs" data-testid={`replace-candidates-list-${holdPositionId}`}>

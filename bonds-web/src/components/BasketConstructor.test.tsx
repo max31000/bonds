@@ -17,6 +17,8 @@ const goodSignals: RiskSignals = {
   spread: 'Neutral',
   gSpreadFraction: 0.03,
   spreadVsBasketMedianFraction: 0.001,
+  reliability: 'Green',
+  reliabilityReason: 'Зелёный: оба риск-сигнала в норме, листинг 1-2, ликвидность с данными.',
 };
 
 function renderBasketConstructor() {
@@ -46,6 +48,8 @@ const strongBondRow: UniverseRow = {
   hiddenReason: null,
   inPortfolio: false,
   inWatchlist: false,
+  reliability: 'Green',
+  reliabilityReason: 'Зелёный: оба риск-сигнала в норме, листинг 1-2, ликвидность с данными.',
 };
 
 const basketResult: BasketResponse = {
@@ -251,6 +255,8 @@ describe('BasketConstructor', () => {
     // на резолвленный instrumentId=888, не на secid) — весовое поле по-прежнему ключуется instrumentId.
     expect(screen.getByTestId('basket-draft-weight-888')).toBeInTheDocument();
     expect(screen.getByTestId('risk-signal-liquidity-draft-MKT777')).toBeInTheDocument();
+    // Задача 38 часть C.2: светофор надёжности виден на строке аллокации блока 2 (агрегат goodSignals=Green).
+    expect(screen.getByTestId('reliability-dot-draft-MKT777')).toHaveAttribute('data-reliability', 'Green');
     expect(screen.getByTestId('basket-preset-disclaimer').textContent).toMatch(/не рейтинг агентств/);
   });
 

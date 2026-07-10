@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { fetchUniverse, fetchUniverseStatus } from '../api/universe';
 import type { UniverseRow, UniverseStatus } from '../api/types';
+import type { ReliabilityFilterValue } from '../utils/reliabilityFilter';
 
 export const SCREENER_PAGE_SIZE = 50;
 
@@ -21,6 +22,9 @@ export interface ScreenerFilters {
   sector: string | null;
   includeHidden: boolean;
   fixedCouponOnly: boolean;
+  /** Задача 38 часть B.2/C.3: серверный фильтр «не хуже уровня» — 'all' здесь ↔ параметр не
+   * отправляется (см. `load`). */
+  reliability: ReliabilityFilterValue;
 }
 
 export const DEFAULT_SCREENER_FILTERS: ScreenerFilters = {
@@ -32,6 +36,7 @@ export const DEFAULT_SCREENER_FILTERS: ScreenerFilters = {
   sector: null,
   includeHidden: false,
   fixedCouponOnly: false,
+  reliability: 'all',
 };
 
 interface ScreenerStore {
@@ -131,6 +136,7 @@ export const useScreenerStore = create<ScreenerStore>()((set, get) => ({
         maxDurationYears: filters.maxDurationYears ?? undefined,
         sector: filters.sector ?? undefined,
         includeHidden: filters.includeHidden || undefined,
+        reliability: filters.reliability === 'all' ? undefined : filters.reliability,
         sortBy,
         sortDir,
         limit: SCREENER_PAGE_SIZE,
