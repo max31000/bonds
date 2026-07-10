@@ -46,4 +46,33 @@ public static class OfferCutoffResolver
 
         return new Horizon(maturityDate, false, null);
     }
+
+    /// <summary>
+    /// Ближайшая будущая (или сегодняшняя) неисполненная оферта <b>по дате</b>, без отсечки
+    /// <see cref="MinDaysToOffer"/>. <see cref="Resolve"/> отфильтровывает оферты ближе
+    /// <see cref="MinDaysToOffer"/> дней — это конвенция для горизонта расчёта доходности/дюрации
+    /// (spec §7.3: "вырожденные" горизонты, слишком близкие к сегодня, не считаем релевантными для
+    /// метрик), она не годится для классификации типа купона. Ревью задачи 36
+    /// (plan/36-offer-bonds-not-floaters.md) нашло регрессию: в окне [оферта−14д, оферта]
+    /// <see cref="Resolve"/> считает оферту "слишком близкой" и возвращает горизонт погашения —
+    /// если классификация переиспользует <see cref="Resolve"/> напрямую, бумага с известными
+    /// купонами до оферты и обычным пересмотром ставки после неё (put-оферта, норма) снова ложно
+    /// определяется как флоатер за две недели до каждой оферты. Используй этот метод для вопроса
+    /// "когда ближайшая оферта по календарю" отдельно от вопроса "какой горизонт брать для YTM".
+    /// См. <c>BondSyncService.HasFloatingCoupon</c> (Bonds.Infrastructure.Sync).
+    /// </summary>
+    /// <param name="asOf">Дата, на которую ищем ближайшую оферту.</param>
+    /// <param name="offers">График оферт инструмента (может быть пустым/null).</param>
+    /// <returns>Дата ближайшей неисполненной оферты с датой &gt;= <paramref name="asOf"/>, или
+    /// <c>null</c>, если подходящих оферт нет (нет оферт вовсе, все исполнены, или все уже прошли).</returns>
+    public static DateOnly? ResolveNearestOfferDate(DateOnly asOf, IEnumerable<OfferSchedule>? offers)
+    {
+        var candidate = offers?
+            .Where(o => !o.IsExecuted)
+            .Where(o => o.Date >= asOf)
+            .OrderBy(o => o.Date)
+            .FirstOrDefault();
+
+        return candidate is { } offer ? offer.Date : null;
+    }
 }
