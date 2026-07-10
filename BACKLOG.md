@@ -67,6 +67,14 @@
 
 ## Техдолг (из ревью/аудитов, не блокирует)
 
+- `SignalsEngine.FloaterRateResetRule` (`SignalsEngine.cs:162-190`): ложный Info-сигнал
+  «пересчёт ставки купона флоатера» для фикс-бумаг с офертой — ищет ближайший `!IsKnown` купон
+  без проверки `CouponType` и без среза по горизонту оферты. Тот же класс бага, что T-36
+  (ревью T-36); применить правило `HasFloatingCoupon`/срез по оферте.
+- `BondSyncService`: 4 старых места `DateOnly.FromDateTime(DateTime.UtcNow)` → перевести на
+  `BusinessClock.MoscowToday()` (контракт `BusinessClock` — «все расчётные пути берут дату
+  отсюда»); новое место T-36 уже переведено (ревью T-36).
+
 - `GET /api/universe`: фильтрация/сортировка in-memory по ~3400 строк на каждый запрос + N+1
   по инструментам в `ResolvePortfolioIsinsAsync` — перенести в SQL при росте трафика/каталога.
 - Кэш отсортированных спредов корзин в `RelativeValueService` (сейчас O(n²) на портфель — при
