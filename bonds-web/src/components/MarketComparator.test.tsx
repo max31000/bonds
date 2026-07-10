@@ -36,6 +36,16 @@ const gazpromRow: UniverseRow = {
   inWatchlist: false,
 };
 
+// Задача 37 часть C.2: бумага с офертой — бейдж «оферта {дата}» должен появиться и в опции
+// выпадашки, и на карточке результата (доходность к оферте — другой горизонт, чем к погашению).
+const offerRow: UniverseRow = {
+  ...gazpromRow,
+  secid: 'RU000OFFER01',
+  isin: 'RU000OFFER001',
+  name: 'Бумага с офертой',
+  offerDate: '2027-09-15',
+};
+
 const lowLiquidityRow: UniverseRow = {
   ...gazpromRow,
   secid: 'RU000LOWLIQ',
@@ -270,6 +280,54 @@ describe('MarketComparator', () => {
 
     await waitFor(() => expect(screen.getByTestId('market-comparator-liquidity-warning-1')).toBeInTheDocument());
     expect(screen.getByTestId('market-comparator-liquidity-warning-1').textContent).toMatch(/Низкая ликвидность/);
+  });
+
+  // ─── Задача 37 часть C.2: бейдж «оферта {дата}» в опции и на карточке результата ────────────
+
+  it('shows the offer-date badge on the dropdown option and the result card when offerDate is present', async () => {
+    server.use(
+      http.get('*/api/universe', () => HttpResponse.json({ rows: [offerRow], total: 1, hiddenCount: 0, disclaimer: '' })),
+      http.post('*/api/universe/:secid/materialize', () =>
+        HttpResponse.json({ ...materializeResponse, secid: offerRow.secid, isin: offerRow.isin }),
+      ),
+      http.post('*/api/analytics/replacement', () => HttpResponse.json(replacementResponse)),
+    );
+
+    renderComparator();
+
+    const input = screen.getByTestId('market-comparator-select-1');
+    fireEvent.click(input);
+    fireEvent.change(input, { target: { value: '' } });
+
+    await waitFor(() => expect(screen.getByTestId(`market-comparator-option-offer-${offerRow.secid}`)).toBeInTheDocument());
+    expect(screen.getByTestId(`market-comparator-option-offer-${offerRow.secid}`).textContent).toMatch(/оферта 15\.09\.2027/);
+
+    fireEvent.click(screen.getByText(offerRow.name!));
+
+    await waitFor(() => expect(screen.getByTestId('market-comparator-result-1')).toBeInTheDocument());
+    expect(screen.getByTestId('market-comparator-result-offer-1').textContent).toMatch(/оферта 15\.09\.2027/);
+  });
+
+  it('does not show the offer-date badge when offerDate is null', async () => {
+    server.use(
+      http.get('*/api/universe', () => HttpResponse.json({ rows: [gazpromRow], total: 1, hiddenCount: 0, disclaimer: '' })),
+      http.post('*/api/universe/:secid/materialize', () => HttpResponse.json(materializeResponse)),
+      http.post('*/api/analytics/replacement', () => HttpResponse.json(replacementResponse)),
+    );
+
+    renderComparator();
+
+    const input = screen.getByTestId('market-comparator-select-1');
+    fireEvent.click(input);
+    fireEvent.change(input, { target: { value: '' } });
+
+    await waitFor(() => expect(screen.getByText(gazpromRow.name!)).toBeInTheDocument());
+    expect(screen.queryByTestId(`market-comparator-option-offer-${gazpromRow.secid}`)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByText(gazpromRow.name!));
+
+    await waitFor(() => expect(screen.getByTestId('market-comparator-result-1')).toBeInTheDocument());
+    expect(screen.queryByTestId('market-comparator-result-offer-1')).not.toBeInTheDocument();
   });
 
   // ─── Задача 33 часть A.4 / 35 §B.3: риск-сигналы таргета из ответа POST /replacement ──────────

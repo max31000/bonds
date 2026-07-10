@@ -6,7 +6,7 @@ import { postReplacement } from '../api/recommendations';
 import { postWatchlistItem } from '../api/watchlist';
 import { ReplacementBreakdown } from './ReplacementBreakdown';
 import { RiskSignalBadges } from './RiskSignalBadges';
-import { formatPercent, formatNumber, formatHorizon } from '../utils/format';
+import { formatPercent, formatNumber, formatHorizon, formatDate } from '../utils/format';
 // Задача 28: liquidityLabel/liquidityColor вынесены в utils/universeDisplay (переиспользуются Screener'ом).
 import { liquidityLabel, liquidityColor } from '../utils/universeDisplay';
 import type { UniverseRow, MaterializeResponse, ReplacementResponse } from '../api/types';
@@ -33,6 +33,13 @@ function UniverseOptionLabel({ row }: { row: UniverseRow }) {
         {row.inWatchlist && (
           <Badge size="xs" color="grape" variant="outline">
             в watchlist
+          </Badge>
+        )}
+        {/* Задача 37 часть C.2: дата оферты — доходность бумаги с офертой считается движком К
+            ОФЕРТЕ, не к погашению, горизонт другой, важно видеть уже в опции выпадашки. */}
+        {row.offerDate && (
+          <Badge size="xs" color="grape" variant="outline" data-testid={`market-comparator-option-offer-${row.secid}`}>
+            оферта {formatDate(row.offerDate)}
           </Badge>
         )}
       </Group>
@@ -178,6 +185,15 @@ export function MarketComparator({ holdPositionId, initialSecid }: { holdPositio
   const selectData = rows.map((row) => ({ value: row.secid, label: row.name ?? row.secid }));
   const lowLiquidity = materialized?.metrics && selectedRow?.liquidityScore === 'Low';
 
+  // Задача 37 часть B.3: карточка выгоды уже рендерится сразу под селектом — только докидываем
+  // scrollIntoView на случай, если она ниже вьюпорта (block:'nearest' не скроллит лишний раз).
+  const resultRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!isCompareLoading && !compareError && materialized && replacement) {
+      resultRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+  }, [isCompareLoading, compareError, materialized, replacement]);
+
   return (
     <Stack gap="sm" data-testid={`market-comparator-${holdPositionId}`}>
       <Select
@@ -219,10 +235,17 @@ export function MarketComparator({ holdPositionId, initialSecid }: { holdPositio
       )}
 
       {!isCompareLoading && !compareError && materialized && replacement && (
-        <Paper withBorder p="sm" radius="md" data-testid={`market-comparator-result-${holdPositionId}`}>
-          <Text fw={600} size="sm">
-            {materialized.metrics.name ?? materialized.metrics.issuer ?? materialized.secid}
-          </Text>
+        <Paper ref={resultRef} withBorder p="sm" radius="md" data-testid={`market-comparator-result-${holdPositionId}`}>
+          <Group gap={6} wrap="wrap">
+            <Text fw={600} size="sm">
+              {materialized.metrics.name ?? materialized.metrics.issuer ?? materialized.secid}
+            </Text>
+            {selectedRow?.offerDate && (
+              <Badge size="xs" color="grape" variant="outline" data-testid={`market-comparator-result-offer-${holdPositionId}`}>
+                оферта {formatDate(selectedRow.offerDate)}
+              </Badge>
+            )}
+          </Group>
           <Text size="sm" c="teal" fw={600} data-testid={`market-comparator-benefit-${holdPositionId}`}>
             выгода{replacement.netBenefitAfterTaxRub !== null ? ' после налога' : ''} ≈{' '}
             {(replacement.netBenefitAfterTaxRub ?? replacement.netBenefitRub).toLocaleString('ru-RU')} ₽

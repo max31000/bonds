@@ -557,6 +557,9 @@ export interface ReplacementCandidate {
   durationYears: number | null;
   /** ДОЛЯ; приближённый G-спред банка. */
   gSpreadFraction: number | null;
+  /** Задача 37 часть A: дата оферты (ISO "2028-01-01"), если есть — доходность к оферте считается
+   * движком на другом горизонте, чем к погашению. Null — оферты нет/не известна. */
+  offerDate: string | null;
   riskSignals: RiskSignals;
 }
 
