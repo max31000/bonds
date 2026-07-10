@@ -1,3 +1,4 @@
+using Bonds.Core.Calculation;
 using Bonds.Core.Interfaces.Repositories;
 using Bonds.Core.Models;
 using Bonds.Infrastructure.Connectors.Moex;
@@ -390,7 +391,12 @@ public sealed class BondSyncService
         // CouponType/HasAmortization/HasOffers выводятся из ФАКТИЧЕСКОГО графика bondization
         // (приоритетнее эвристики BONDTYPE из securities.json — последняя используется только
         // как fallback, если bondization не вернул купонов вовсе).
-        var hasFloatingCoupon = bondization.Coupons.Any(c => !c.IsKnown) || (info?.LooksLikeFloater ?? false);
+        var hasFloatingCoupon = HasFloatingCoupon(
+            bondization.Coupons,
+            bondization.Offers,
+            DateOnly.FromDateTime(DateTime.UtcNow),
+            instrument.MaturityDate,
+            info?.LooksLikeFloater ?? false);
         instrument.CouponType = hasFloatingCoupon ? CouponType.Floating : CouponType.Fixed;
         instrument.HasAmortization = bondization.Amortizations.Count > 1 || (info?.HasAmortizationHint ?? false);
         instrument.HasOffers = bondization.Offers.Count > 0;
@@ -412,6 +418,44 @@ public sealed class BondSyncService
         {
             await _offers.ReplaceForInstrumentAsync(instrumentId, bondization.Offers);
         }
+    }
+
+    /// <summary>
+    /// Задача 36: правило классификации <see cref="CouponType.Floating"/>. Баг в проде: Брус 2Р06
+    /// (RU000A10EC63) — фикс-купон 22.75% (BONDTYPE «Биржевая облигация», COUPONPERCENT задан),
+    /// put-оферта 2028-02-18. MOEX bondization отдаёт 24 известных купона до оферты и 12
+    /// неизвестных после (ставка пересматривается на оферте — стандарт для put-оферт, не
+    /// флоатер). Старое правило (<c>Coupons.Any(!IsKnown)</c>) считало флоатером любую фикс-бумагу
+    /// с офертой и пересмотром ставки после неё.
+    /// <para>
+    /// Правильное правило: неизвестный купон делает бумагу флоатером, только если его дата НЕ
+    /// ПОЗЖЕ ближайшей будущей оферты — купоны после оферты движок вообще не учитывает в расчёте
+    /// доходности (горизонт режется <see cref="OfferCutoffResolver.Resolve"/>, тот же резолв, что
+    /// использует <see cref="Bonds.Core.Calculation.BondMetricsCalculator"/> для "доходности к
+    /// оферте" — переиспользуем его здесь, чтобы не дублировать логику "ближайшей оферты" третий
+    /// раз). Если резолвер не нашёл релевантную будущую оферту (нет оферт вовсе, все оферты уже
+    /// прошли, или все офертами не удовлетворяют <see cref="OfferCutoffResolver.MinDaysToOffer"/>)
+    /// — он возвращает горизонт погашения (<c>Horizon.IsOffer == false</c>), и правило откатывается
+    /// к прежнему поведению: любой неизвестный купон = Floating.
+    /// </para>
+    /// <paramref name="looksLikeFloater"/> (BONDTYPE «Флоатер» / отсутствие COUPONPERCENT в
+    /// securities.json) остаётся в OR как был — единственный сигнал для настоящих флоатеров, у
+    /// которых ближайшие купоны ещё известны (ставка ещё не наступила к пересчёту).
+    /// </summary>
+    internal static bool HasFloatingCoupon(
+        IReadOnlyList<CouponSchedule> coupons,
+        IReadOnlyList<OfferSchedule> offers,
+        DateOnly asOf,
+        DateOnly maturityDate,
+        bool looksLikeFloater)
+    {
+        var horizon = OfferCutoffResolver.Resolve(asOf, maturityDate, offers);
+
+        var hasUnknownWithinHorizon = horizon.IsOffer
+            ? coupons.Any(c => !c.IsKnown && c.CouponDate <= horizon.Date)
+            : coupons.Any(c => !c.IsKnown);
+
+        return hasUnknownWithinHorizon || looksLikeFloater;
     }
 }
 
