@@ -1695,6 +1695,7 @@ public static class AnalyticsEndpoints
             YieldFraction = entry.YieldFraction,
             DurationYears = entry.DurationYears,
             GSpreadFraction = entry.GspreadApproxFraction,
+            OfferDate = entry.OfferDate,
             RiskSignals = ToRiskSignalsDto(signals),
         };
     }
@@ -1720,6 +1721,7 @@ public static class AnalyticsEndpoints
             YieldFraction = entry?.YieldFraction,
             DurationYears = member.DurationYears,
             GSpreadFraction = member.GSpreadFraction,
+            OfferDate = entry?.OfferDate,
             RiskSignals = ToRiskSignalsDto(signals),
         };
     }
@@ -1848,6 +1850,11 @@ public sealed record ReplacementCandidateDto
 
     /// <summary>ДОЛЯ; приближённый G-спред банка (<c>BondUniverseEntry.GspreadApproxFraction</c>).</summary>
     public decimal? GSpreadFraction { get; init; }
+
+    /// <summary>Задача 37 часть A: дата оферты банк-записи (<see cref="BondUniverseEntry.OfferDate"/>),
+    /// если она есть — доходность бумаги с офертой считается движком К ОФЕРТЕ, не к погашению,
+    /// горизонт другой (см. plan/37). Null — оферты нет/не известна.</summary>
+    public DateOnly? OfferDate { get; init; }
 
     public required RiskSignalsDto RiskSignals { get; init; }
 }

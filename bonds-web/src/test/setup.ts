@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom/vitest';
-import { beforeAll, afterEach, afterAll } from 'vitest';
+import { beforeAll, afterEach, afterAll, vi } from 'vitest';
 import { notifications } from '@mantine/notifications';
 import { server } from './msw-handlers';
 
@@ -28,6 +28,10 @@ Object.defineProperty(window, 'ResizeObserver', {
   writable: true,
   value: ResizeObserverStub,
 });
+
+// jsdom не реализует scrollIntoView — задача 37 использует его на карточке выгоды (Recommendations/
+// MarketComparator), чтобы карточка попадала во вьюпорт после раскрытия под строкой кандидата.
+window.HTMLElement.prototype.scrollIntoView = vi.fn();
 
 beforeAll(() => server.listen({ onUnhandledRequest: 'warn' }));
 afterEach(() => {

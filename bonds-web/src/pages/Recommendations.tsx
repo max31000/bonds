@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Title,
   Stack,
@@ -16,6 +16,7 @@ import {
   Collapse,
   UnstyledButton,
   SegmentedControl,
+  Switch,
 } from '@mantine/core';
 import { useRecommendationsStore } from '../store/useRecommendationsStore';
 import { useWatchlistStore } from '../store/useWatchlistStore';
@@ -38,6 +39,15 @@ import type {
 } from '../api/types';
 
 const REPLACEMENT_HORIZON_YEARS = 2;
+
+/**
+ * Задача 37 часть C.3: окно фильтра «похожая дюрация» на кандидатах — ТО ЖЕ значение, что бэкенд
+ * использует для «сравнимых» пар дюраций в матрице замен (см.
+ * `ReplacementMatrixService.ComparableDurationWindowYears`,
+ * src/Bonds.Core/Analytics/ReplacementMatrixService.cs:65). Продублировано константой здесь —
+ * фильтрация клиентская, по уже загруженному списку кандидатов, отдельного эндпоинта нет.
+ */
+const ComparableDurationWindowYears = 1.5;
 
 /** Строка «вне сравнения» — floater/indexed/dataIncomplete не участвуют в ранжировании доходности (spec §6). */
 function OutOfComparisonRow({ row }: { row: ComparisonRow }) {
@@ -86,9 +96,16 @@ function ReplacementCandidateRow({
             {formatPercent(candidate.yieldFraction)}
           </Text>
         </Group>
-        <Text size="xs" c="dimmed" mb={4}>
-          дюрация {candidate.durationYears !== null ? `${formatNumber(candidate.durationYears, 1)} лет` : '—'}
-        </Text>
+        <Group gap={6} wrap="wrap" mb={4}>
+          <Text size="xs" c="dimmed">
+            дюрация {candidate.durationYears !== null ? `${formatNumber(candidate.durationYears, 1)} лет` : '—'}
+          </Text>
+          {candidate.offerDate && (
+            <Badge size="xs" color="grape" variant="outline" data-testid={`replace-candidate-offer-${candidate.secid}`}>
+              оферта {formatDate(candidate.offerDate)}
+            </Badge>
+          )}
+        </Group>
         <RiskSignalBadges signals={candidate.riskSignals} testIdSuffix={candidate.secid} />
       </Paper>
     </UnstyledButton>
@@ -102,16 +119,26 @@ const MODE_OPTIONS: { label: string; value: ReplacementCandidatesMode | 'search'
 ];
 
 /**
- * Панель подбора замены на карточке слабой позиции (plan/35 §B) — три режима: «доходные рынка»/
- * «дешёвые соседи (RV)» читают банк-кандидатов через GET /replacement-candidates (задача 33) и
- * рендерят их с риск-сигналами; «поиск» переиспользует существующий <see>MarketComparator</see>
+ * Панель подбора замены на карточке слабой позиции (plan/35 §B, задача 37 переносит карточку
+ * выгоды под выбранную строку + добавляет фильтр «похожая дюрация») — три режима: «доходные
+ * рынка»/«дешёвые соседи (RV)» читают банк-кандидатов через GET /replacement-candidates (задача 33)
+ * и рендерят их с риск-сигналами; «поиск» переиспользует существующий <see>MarketComparator</see>
  * (задача 27) без изменений интерфейса. Клик по банк-кандидату материализует бумагу
  * (POST /universe/{secid}/materialize, тот же путь, что MarketComparator.handleSelect/ручное
  * добавление в BasketConstructor) и считает точную выгоду через POST /analytics/replacement —
- * результат рендерится тем же <see>ReplacementBreakdown</see>, что MarketComparator. Отказ
- * GET /replacement-candidates не роняет карточку/страницу — просто показывает ошибку в панели.
+ * результат рендерится тем же <see>ReplacementBreakdown</see>, что MarketComparator,
+ * непосредственно под строкой выбранного кандидата (задача 37 часть B, было — после всего списка).
+ * Отказ GET /replacement-candidates не роняет карточку/страницу — просто показывает ошибку в панели.
+ * <para><b>holdDurationYears</b> (задача 37 часть C) — дюрация заменяемой позиции
+ * (<c>ComparisonRow.modifiedDuration</c>), нужна фильтру «похожая дюрация» для окна вокруг неё.</para>
  */
-function ReplacementPanel({ holdPositionId }: { holdPositionId: number }) {
+function ReplacementPanel({
+  holdPositionId,
+  holdDurationYears,
+}: {
+  holdPositionId: number;
+  holdDurationYears: number | null;
+}) {
   const [mode, setMode] = useState<ReplacementCandidatesMode | 'search'>('market');
   const [candidates, setCandidates] = useState<ReplacementCandidate[]>([]);
   // Дефолт true — компонент всегда стартует с загрузки кандидатов дефолтного режима "market" (тот
@@ -121,11 +148,27 @@ function ReplacementPanel({ holdPositionId }: { holdPositionId: number }) {
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
+  // Задача 37 часть C.3: клиентский фильтр «похожая дюрация (±ComparableDurationWindowYears лет)» —
+  // дефолт ВЫКЛ (план: не усекать список неожиданно для пользователя, который его ещё не открывал).
+  const [durationFilterEnabled, setDurationFilterEnabled] = useState(false);
+
   const [selectedSecid, setSelectedSecid] = useState<string | null>(null);
   const [isSelecting, setIsSelecting] = useState(false);
   const [selectError, setSelectError] = useState<string | null>(null);
   const [materialized, setMaterialized] = useState<MaterializeResponse | null>(null);
   const [replacement, setReplacement] = useState<ReplacementResponse | null>(null);
+
+  // Задача 37 часть B.2: карточка выгоды должна попадать во вьюпорт после раскрытия (строка может
+  // быть у нижнего края списка) — scrollIntoView с block:'nearest' не скроллит, если уже видна.
+  const resultRef = useRef<HTMLDivElement>(null);
+
+  // T-37 fix (ревью): generation-токен гонки клика по кандидату — клик по строке A запускает
+  // postMaterialize/postReplacement, но клик по строке B до резолва A должен инвалидировать
+  // результат A: без токена более поздний resolve A перезаписывал бы materialized/replacement уже
+  // выбранной B (тот же класс бага, что cancelled-флаг в GET-эффекте кандидатов выше). Каждый вызов
+  // handleSelectCandidate (включая toggle-off повторным кликом) получает новый id; перед каждым
+  // set-ом результата проверяем, что id всё ещё актуален.
+  const selectRequestIdRef = useRef(0);
 
   useEffect(() => {
     if (mode === 'search') return;
@@ -148,6 +191,12 @@ function ReplacementPanel({ holdPositionId }: { holdPositionId: number }) {
     };
   }, [mode, holdPositionId]);
 
+  useEffect(() => {
+    if (!isSelecting && !selectError && materialized && replacement) {
+      resultRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+  }, [isSelecting, selectError, materialized, replacement]);
+
   const handleModeChange = (value: string) => {
     const nextMode = value as ReplacementCandidatesMode | 'search';
     setMode(nextMode);
@@ -161,6 +210,20 @@ function ReplacementPanel({ holdPositionId }: { holdPositionId: number }) {
   };
 
   const handleSelectCandidate = async (secid: string) => {
+    if (selectedSecid === secid) {
+      // Задача 37 часть B.1: повторный клик по уже выбранной строке сворачивает карточку выгоды.
+      // T-37 fix: инкремент токена инвалидирует уже летящий запрос выбора этой же строки — иначе
+      // его поздний resolve мог бы снова раскрыть только что свёрнутую карточку.
+      selectRequestIdRef.current += 1;
+      setSelectedSecid(null);
+      setMaterialized(null);
+      setReplacement(null);
+      setSelectError(null);
+      return;
+    }
+
+    const myRequestId = ++selectRequestIdRef.current;
+
     setSelectedSecid(secid);
     setMaterialized(null);
     setReplacement(null);
@@ -168,6 +231,7 @@ function ReplacementPanel({ holdPositionId }: { holdPositionId: number }) {
     setIsSelecting(true);
     try {
       const materializeResult = await postMaterialize(secid);
+      if (selectRequestIdRef.current !== myRequestId) return;
       setMaterialized(materializeResult);
 
       const replacementResult = await postReplacement({
@@ -175,13 +239,84 @@ function ReplacementPanel({ holdPositionId }: { holdPositionId: number }) {
         targetInstrumentId: materializeResult.instrumentId,
         horizonYears: REPLACEMENT_HORIZON_YEARS,
       });
+      if (selectRequestIdRef.current !== myRequestId) return;
       setReplacement(replacementResult);
     } catch (err) {
+      if (selectRequestIdRef.current !== myRequestId) return;
       setSelectError(err instanceof Error ? err.message : 'Не удалось сравнить с рынком');
     } finally {
-      setIsSelecting(false);
+      if (selectRequestIdRef.current === myRequestId) setIsSelecting(false);
     }
   };
+
+  // Задача 37 часть C.3: окно ±ComparableDurationWindowYears вокруг дюрации заменяемой позиции;
+  // кандидаты без дюрации ИЛИ позиция без дюрации (holdDurationYears===null, окно не определить) —
+  // скрываются при включённом фильтре, честнее, чем показать их без критерия сравнения.
+  const filteredCandidates = durationFilterEnabled
+    ? candidates.filter(
+        (c) =>
+          c.durationYears !== null &&
+          holdDurationYears !== null &&
+          Math.abs(c.durationYears - holdDurationYears) <= ComparableDurationWindowYears,
+      )
+    : candidates;
+
+  /** Карточка выгоды выбранного кандидата (задача 37 часть B) — рендерится под строкой ниже. */
+  const renderBenefitCard = () => (
+    <div style={{ marginTop: 8 }}>
+      {isSelecting && (
+        <Center py="sm">
+          <Loader size="sm" />
+        </Center>
+      )}
+
+      {!isSelecting && selectError && (
+        <Alert color="red" data-testid={`replace-select-error-${holdPositionId}`}>
+          {selectError}
+        </Alert>
+      )}
+
+      {!isSelecting && !selectError && materialized && replacement && (
+        <Paper ref={resultRef} withBorder p="sm" radius="md" data-testid={`replace-result-${holdPositionId}`}>
+          <Text fw={600} size="sm">
+            {materialized.metrics.name ?? materialized.metrics.issuer ?? materialized.secid}
+          </Text>
+          <Text size="sm" c="teal" fw={600} data-testid={`replace-benefit-${holdPositionId}`}>
+            выгода{replacement.netBenefitAfterTaxRub !== null ? ' после налога' : ''} ≈{' '}
+            {formatRub(replacement.netBenefitAfterTaxRub ?? replacement.netBenefitRub)}
+            {replacement.annualizedBenefitFraction !== null && (
+              <> (~{formatPercent(replacement.annualizedBenefitFraction)} годовых)</>
+            )}{' '}
+            за {formatHorizon(replacement.horizonYears)}
+          </Text>
+
+          {replacement.targetRiskSignals && (
+            <RiskSignalBadges signals={replacement.targetRiskSignals} testIdSuffix={`replace-${holdPositionId}`} />
+          )}
+
+          <ReplacementBreakdown
+            data={{
+              spreadFraction: replacement.spreadFraction,
+              capitalRub: replacement.capitalRub,
+              horizonYears: replacement.horizonYears,
+              grossGainRub: replacement.grossGainRub,
+              sellCommissionRub: replacement.sellCommissionRub,
+              buyCommissionRub: replacement.buyCommissionRub,
+              netBenefitRub: replacement.netBenefitRub,
+              annualizedBenefitFraction: replacement.annualizedBenefitFraction,
+              // ReplacementResponse несёт раздельные ставки продажи/покупки (обычно совпадают) —
+              // берём ставку продажи как представительную (тот же приём, что MarketComparator).
+              commissionRateUsed: replacement.sellCommissionRateUsed,
+              commissionRateSource: replacement.commissionRateSource,
+              sellTaxEstimateRub: replacement.sellTaxEstimateRub,
+              netBenefitAfterTaxRub: replacement.netBenefitAfterTaxRub,
+            }}
+            testIdSuffix={`candidate-${holdPositionId}`}
+          />
+        </Paper>
+      )}
+    </div>
+  );
 
   return (
     <Stack gap="sm" data-testid={`replace-panel-${holdPositionId}`}>
@@ -218,70 +353,44 @@ function ReplacementPanel({ holdPositionId }: { holdPositionId: number }) {
           )}
 
           {!isLoading && !loadError && candidates.length > 0 && (
-            <Stack gap="xs" data-testid={`replace-candidates-list-${holdPositionId}`}>
-              <RiskSignalsCaption />
-              {candidates.map((c) => (
-                <ReplacementCandidateRow
-                  key={c.secid}
-                  candidate={c}
-                  onSelect={handleSelectCandidate}
-                  isSelected={selectedSecid === c.secid}
-                  isLoading={isSelecting && selectedSecid === c.secid}
+            <>
+              <Group justify="space-between" wrap="wrap" gap="xs">
+                <Switch
+                  label={`Похожая дюрация (±${formatNumber(ComparableDurationWindowYears, 1)} года)`}
+                  checked={durationFilterEnabled}
+                  onChange={(e) => setDurationFilterEnabled(e.currentTarget.checked)}
+                  data-testid={`replace-duration-filter-${holdPositionId}`}
                 />
-              ))}
-            </Stack>
-          )}
+                {durationFilterEnabled && (
+                  <Text size="xs" c="dimmed" data-testid={`replace-duration-filter-count-${holdPositionId}`}>
+                    осталось {filteredCandidates.length} из {candidates.length}
+                  </Text>
+                )}
+              </Group>
 
-          {isSelecting && (
-            <Center py="sm">
-              <Loader size="sm" />
-            </Center>
-          )}
-
-          {!isSelecting && selectError && (
-            <Alert color="red" data-testid={`replace-select-error-${holdPositionId}`}>
-              {selectError}
-            </Alert>
-          )}
-
-          {!isSelecting && !selectError && materialized && replacement && (
-            <Paper withBorder p="sm" radius="md" data-testid={`replace-result-${holdPositionId}`}>
-              <Text fw={600} size="sm">
-                {materialized.metrics.name ?? materialized.metrics.issuer ?? materialized.secid}
-              </Text>
-              <Text size="sm" c="teal" fw={600} data-testid={`replace-benefit-${holdPositionId}`}>
-                выгода{replacement.netBenefitAfterTaxRub !== null ? ' после налога' : ''} ≈{' '}
-                {formatRub(replacement.netBenefitAfterTaxRub ?? replacement.netBenefitRub)}
-                {replacement.annualizedBenefitFraction !== null && (
-                  <> (~{formatPercent(replacement.annualizedBenefitFraction)} годовых)</>
-                )}{' '}
-                за {formatHorizon(replacement.horizonYears)}
-              </Text>
-
-              {replacement.targetRiskSignals && (
-                <RiskSignalBadges signals={replacement.targetRiskSignals} testIdSuffix={`replace-${holdPositionId}`} />
+              {durationFilterEnabled && filteredCandidates.length === 0 ? (
+                <Text size="xs" c="dimmed" data-testid={`replace-duration-filter-empty-${holdPositionId}`}>
+                  Нет кандидатов с похожей дюрацией — отключите фильтр.
+                </Text>
+              ) : (
+                <Stack gap="xs" data-testid={`replace-candidates-list-${holdPositionId}`}>
+                  <RiskSignalsCaption />
+                  {filteredCandidates.map((c) => (
+                    <div key={c.secid}>
+                      <ReplacementCandidateRow
+                        candidate={c}
+                        onSelect={handleSelectCandidate}
+                        isSelected={selectedSecid === c.secid}
+                        isLoading={isSelecting && selectedSecid === c.secid}
+                      />
+                      <Collapse expanded={selectedSecid === c.secid} data-testid={`replace-benefit-collapse-${c.secid}`}>
+                        {selectedSecid === c.secid && renderBenefitCard()}
+                      </Collapse>
+                    </div>
+                  ))}
+                </Stack>
               )}
-
-              <ReplacementBreakdown
-                data={{
-                  spreadFraction: replacement.spreadFraction,
-                  capitalRub: replacement.capitalRub,
-                  horizonYears: replacement.horizonYears,
-                  grossGainRub: replacement.grossGainRub,
-                  sellCommissionRub: replacement.sellCommissionRub,
-                  buyCommissionRub: replacement.buyCommissionRub,
-                  netBenefitRub: replacement.netBenefitRub,
-                  annualizedBenefitFraction: replacement.annualizedBenefitFraction,
-                  // ReplacementResponse несёт раздельные ставки продажи/покупки (обычно совпадают) —
-                  // берём ставку продажи как представительную (тот же приём, что MarketComparator).
-                  commissionRateUsed: replacement.sellCommissionRateUsed,
-                  commissionRateSource: replacement.commissionRateSource,
-                  sellTaxEstimateRub: replacement.sellTaxEstimateRub,
-                  netBenefitAfterTaxRub: replacement.netBenefitAfterTaxRub,
-                }}
-                testIdSuffix={`candidate-${holdPositionId}`}
-              />
-            </Paper>
+            </>
           )}
         </>
       )}
@@ -326,7 +435,9 @@ function WeakPositionCard({ row, reasons }: { row: ComparisonRow; reasons: { kin
         </Text>
       </UnstyledButton>
       <Collapse expanded={expanded}>
-        <div style={{ marginTop: 8 }}>{expanded && <ReplacementPanel holdPositionId={row.positionId} />}</div>
+        <div style={{ marginTop: 8 }}>
+          {expanded && <ReplacementPanel holdPositionId={row.positionId} holdDurationYears={row.modifiedDuration} />}
+        </div>
       </Collapse>
     </Paper>
   );

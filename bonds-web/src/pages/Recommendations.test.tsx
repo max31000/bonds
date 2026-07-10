@@ -1,4 +1,4 @@
-import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, within, act } from '@testing-library/react';
 import { describe, it, expect, beforeEach } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
 import { MantineProvider } from '@mantine/core';
@@ -104,6 +104,9 @@ const goodSignals: RiskSignals = {
   spreadVsBasketMedianFraction: 0.001,
 };
 
+// Задача 37 часть D: weakRow.modifiedDuration = 2 — окно фильтра «похожая дюрация» ±1.5 года даёт
+// [0.5, 3.5]. MKT001 (1.5) и MKT002 (3.4) — внутри окна, MKT003 (6) — вне, MKT004 (null) — без
+// дюрации (скрывается при включённом фильтре независимо от окна).
 const marketCandidatesResponse: ReplacementCandidatesResponse = {
   mode: 'market',
   positionIsin: 'RU000WEAK001',
@@ -117,6 +120,43 @@ const marketCandidatesResponse: ReplacementCandidatesResponse = {
       yieldFraction: 0.22,
       durationYears: 1.5,
       gSpreadFraction: 0.04,
+      offerDate: null,
+      riskSignals: goodSignals,
+    },
+    {
+      secid: 'MKT002',
+      isin: 'RU000MKT0002',
+      name: 'Рыночная бумага 2',
+      issuer: null,
+      sector: 'Корпоративные',
+      yieldFraction: 0.2,
+      durationYears: 3.4,
+      gSpreadFraction: 0.035,
+      offerDate: '2027-05-01',
+      riskSignals: goodSignals,
+    },
+    {
+      secid: 'MKT003',
+      isin: 'RU000MKT0003',
+      name: 'Рыночная бумага 3 (далёкая дюрация)',
+      issuer: null,
+      sector: 'Корпоративные',
+      yieldFraction: 0.19,
+      durationYears: 6,
+      gSpreadFraction: 0.03,
+      offerDate: null,
+      riskSignals: goodSignals,
+    },
+    {
+      secid: 'MKT004',
+      isin: 'RU000MKT0004',
+      name: 'Рыночная бумага 4 (без дюрации)',
+      issuer: null,
+      sector: 'Корпоративные',
+      yieldFraction: 0.18,
+      durationYears: null,
+      gSpreadFraction: 0.028,
+      offerDate: null,
       riskSignals: goodSignals,
     },
   ],
@@ -136,11 +176,138 @@ const rvCandidatesResponse: ReplacementCandidatesResponse = {
       yieldFraction: 0.2,
       durationYears: 1.8,
       gSpreadFraction: 0.045,
+      offerDate: null,
       riskSignals: { ...goodSignals, spread: 'Caution' },
     },
   ],
   disclaimer: marketCandidatesResponse.disclaimer,
 };
+
+/** Мок POST /universe/{secid}/materialize + POST /analytics/replacement для любого secid — используется
+ * тестами задачи 37, где выбирается не только MKT001. */
+function mockReplacementFlow() {
+  server.use(
+    http.post('*/api/universe/:secid/materialize', ({ params }) => {
+      const secid = params.secid as string;
+      return HttpResponse.json({
+        instrumentId: 777,
+        secid,
+        isin: `RU000${secid}`,
+        metrics: {
+          name: `Материализовано ${secid}`,
+          issuer: 'Эмитент рынка',
+          sector: 'Корпоративные',
+          couponType: 'Fixed',
+          maturityDate: '2029-01-01',
+          horizonDate: '2029-01-01',
+          calculatedToOffer: false,
+          modifiedDuration: 1.5,
+          macaulayDuration: 1.55,
+          ytmEffective: 0.22,
+          currentYield: 0.2,
+          effectiveYield: 0.22,
+          gSpread: 400,
+          isFloater: false,
+          isIndexed: false,
+          isEstimated: false,
+          dataIncomplete: false,
+        },
+        disclaimer: '',
+      });
+    }),
+    http.post('*/api/analytics/replacement', () =>
+      HttpResponse.json({
+        holdPositionId: 1,
+        targetPositionId: 0,
+        targetInstrumentId: 777,
+        horizonYears: 2,
+        sellCommissionRub: 30,
+        buyCommissionRub: 30,
+        totalSwitchCostRub: 60,
+        netBenefitRub: 1400,
+        isSwitchFavorable: true,
+        breakEvenYears: 0.4,
+        yieldDataIncomplete: false,
+        disclaimer: '',
+        sellCommissionRateUsed: 0.003,
+        buyCommissionRateUsed: 0.003,
+        commissionRateSource: 'Default',
+        spreadFraction: 0.09,
+        capitalRub: 1490,
+        grossGainRub: 1460,
+        annualizedBenefitFraction: 0.19,
+        sellTaxEstimateRub: null,
+        netBenefitAfterTaxRub: null,
+        targetRiskSignals: goodSignals,
+      }),
+    ),
+  );
+}
+
+/** Промис с внешним resolve — управляет моментом резолва materialize/replacement в тестах гонки
+ * выбора кандидата (T-37 fix). */
+function createDeferred<T = void>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve: () => resolve(undefined as T) };
+}
+
+function materializeResponseFor(secid: string, instrumentId: number) {
+  return {
+    instrumentId,
+    secid,
+    isin: `RU000${secid}`,
+    metrics: {
+      name: `Материализовано ${secid}`,
+      issuer: 'Эмитент рынка',
+      sector: 'Корпоративные',
+      couponType: 'Fixed' as const,
+      maturityDate: '2029-01-01',
+      horizonDate: '2029-01-01',
+      calculatedToOffer: false,
+      modifiedDuration: 1.5,
+      macaulayDuration: 1.55,
+      ytmEffective: 0.22,
+      currentYield: 0.2,
+      effectiveYield: 0.22,
+      gSpread: 400,
+      isFloater: false,
+      isIndexed: false,
+      isEstimated: false,
+      dataIncomplete: false,
+    },
+    disclaimer: '',
+  };
+}
+
+function replacementResponseFor(targetInstrumentId: number) {
+  return {
+    holdPositionId: 1,
+    targetPositionId: 0,
+    targetInstrumentId,
+    horizonYears: 2,
+    sellCommissionRub: 30,
+    buyCommissionRub: 30,
+    totalSwitchCostRub: 60,
+    netBenefitRub: targetInstrumentId,
+    isSwitchFavorable: true,
+    breakEvenYears: 0.4,
+    yieldDataIncomplete: false,
+    disclaimer: '',
+    sellCommissionRateUsed: 0.003,
+    buyCommissionRateUsed: 0.003,
+    commissionRateSource: 'Default' as const,
+    spreadFraction: 0.09,
+    capitalRub: 1490,
+    grossGainRub: 1460,
+    annualizedBenefitFraction: 0.19,
+    sellTaxEstimateRub: null,
+    netBenefitAfterTaxRub: null,
+    targetRiskSignals: goodSignals,
+  };
+}
 
 describe('Recommendations', () => {
   beforeEach(() => {
@@ -342,6 +509,116 @@ describe('Recommendations', () => {
     expect(within(result).getByTestId('risk-signal-liquidity-replace-1')).toBeInTheDocument();
   });
 
+  // ─── Задача 37: карточка выгоды под выбранной строкой + фильтр «похожая дюрация» + дата оферты ──
+
+  it('renders the benefit card directly under the selected row, not after the whole list', async () => {
+    mockReplacementFlow();
+    renderRecommendations();
+
+    await waitFor(() => expect(screen.getByTestId('sell-candidate-1')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('replace-toggle-1'));
+    await waitFor(() => expect(screen.getByTestId('replace-candidate-MKT002')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByTestId('replace-candidate-MKT002'));
+
+    await waitFor(() => expect(screen.getByTestId('replace-result-1')).toBeVisible());
+    const row = screen.getByTestId('replace-candidate-MKT002');
+    const wrapper = row.parentElement as HTMLElement;
+    expect(within(wrapper).getByTestId('replace-result-1')).toBeInTheDocument();
+  });
+
+  it('collapses the benefit card on a second click of the same row', async () => {
+    mockReplacementFlow();
+    renderRecommendations();
+
+    await waitFor(() => expect(screen.getByTestId('sell-candidate-1')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('replace-toggle-1'));
+    await waitFor(() => expect(screen.getByTestId('replace-candidate-MKT001')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByTestId('replace-candidate-MKT001'));
+    await waitFor(() => expect(screen.getByTestId('replace-result-1')).toBeVisible());
+
+    fireEvent.click(screen.getByTestId('replace-candidate-MKT001'));
+    await waitFor(() => expect(screen.queryByTestId('replace-result-1')).not.toBeInTheDocument());
+  });
+
+  it('moves the benefit card under a different row when a different candidate is clicked', async () => {
+    mockReplacementFlow();
+    renderRecommendations();
+
+    await waitFor(() => expect(screen.getByTestId('sell-candidate-1')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('replace-toggle-1'));
+    await waitFor(() => expect(screen.getByTestId('replace-candidate-MKT001')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByTestId('replace-candidate-MKT001'));
+    await waitFor(() => expect(screen.getByTestId('replace-result-1')).toBeVisible());
+    const firstWrapper = screen.getByTestId('replace-candidate-MKT001').parentElement as HTMLElement;
+    expect(within(firstWrapper).getByTestId('replace-result-1')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('replace-candidate-MKT002'));
+    await waitFor(() => expect(screen.getByTestId('replace-result-1')).toBeVisible());
+    const secondWrapper = screen.getByTestId('replace-candidate-MKT002').parentElement as HTMLElement;
+    expect(within(secondWrapper).getByTestId('replace-result-1')).toBeInTheDocument();
+    expect(within(firstWrapper).queryByTestId('replace-result-1')).not.toBeInTheDocument();
+  });
+
+  it('shows the offer-date badge when offerDate is present and hides it when null', async () => {
+    renderRecommendations();
+
+    await waitFor(() => expect(screen.getByTestId('sell-candidate-1')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('replace-toggle-1'));
+
+    await waitFor(() => expect(screen.getByTestId('replace-candidate-offer-MKT002')).toBeInTheDocument());
+    expect(screen.getByTestId('replace-candidate-offer-MKT002').textContent).toMatch(/оферта 01\.05\.2027/);
+    expect(screen.queryByTestId('replace-candidate-offer-MKT001')).not.toBeInTheDocument();
+  });
+
+  it('filters candidates to the ±1.5-year duration window around the position and shows an honest "N of M" count', async () => {
+    renderRecommendations();
+
+    await waitFor(() => expect(screen.getByTestId('sell-candidate-1')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('replace-toggle-1'));
+    await waitFor(() => expect(screen.getByTestId('replace-candidate-MKT001')).toBeInTheDocument());
+
+    // Дефолт — фильтр выключен, весь список из 4 кандидатов виден, счётчика нет.
+    expect(screen.getByTestId('replace-candidate-MKT003')).toBeInTheDocument();
+    expect(screen.getByTestId('replace-candidate-MKT004')).toBeInTheDocument();
+    expect(screen.queryByTestId('replace-duration-filter-count-1')).not.toBeInTheDocument();
+
+    // weakRow.modifiedDuration=2, окно ±1.5 -> [0.5, 3.5]: MKT001(1.5)/MKT002(3.4) внутри,
+    // MKT003(6) снаружи, MKT004(null) скрыт независимо от окна.
+    fireEvent.click(screen.getByTestId('replace-duration-filter-1'));
+
+    await waitFor(() => expect(screen.getByTestId('replace-duration-filter-count-1').textContent).toMatch(/2 из 4/));
+    expect(screen.getByTestId('replace-candidate-MKT001')).toBeInTheDocument();
+    expect(screen.getByTestId('replace-candidate-MKT002')).toBeInTheDocument();
+    expect(screen.queryByTestId('replace-candidate-MKT003')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('replace-candidate-MKT004')).not.toBeInTheDocument();
+  });
+
+  it('shows a friendly empty state when the duration filter leaves no candidates', async () => {
+    server.use(
+      http.get('*/api/analytics/replacement-candidates', ({ request }) => {
+        const mode = new URL(request.url).searchParams.get('mode');
+        if (mode === 'rv') return HttpResponse.json(rvCandidatesResponse);
+        // Только MKT003 (дюрация 6, далеко от позиции с дюрацией 2) — под фильтром список опустеет.
+        return HttpResponse.json({ ...marketCandidatesResponse, candidates: [marketCandidatesResponse.candidates[2]] });
+      }),
+    );
+
+    renderRecommendations();
+
+    await waitFor(() => expect(screen.getByTestId('sell-candidate-1')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('replace-toggle-1'));
+    await waitFor(() => expect(screen.getByTestId('replace-candidate-MKT003')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByTestId('replace-duration-filter-1'));
+
+    await waitFor(() => expect(screen.getByTestId('replace-duration-filter-empty-1')).toBeInTheDocument());
+    expect(screen.getByTestId('replace-duration-filter-empty-1').textContent).toMatch(/отключите фильтр/);
+    expect(screen.queryByTestId('replace-candidate-MKT003')).not.toBeInTheDocument();
+  });
+
   it('does not break the weak-position card when GET /api/analytics/replacement-candidates fails', async () => {
     server.use(http.get('*/api/analytics/replacement-candidates', () => HttpResponse.json({ error: 'boom' }, { status: 500 })));
 
@@ -379,6 +656,126 @@ describe('Recommendations', () => {
     renderRecommendations();
 
     await waitFor(() => expect(screen.getAllByTestId('disclaimer').length).toBeGreaterThan(0));
+  });
+
+  // ─── T-37 fix (ревью): гонка запросов при быстром переключении выбранного кандидата ─────────
+
+  it('does not let a stale response for candidate A overwrite the card after candidate B was selected and resolved', async () => {
+    const materializeDeferreds: Record<string, ReturnType<typeof createDeferred>> = {
+      MKT001: createDeferred(),
+      MKT002: createDeferred(),
+    };
+    const replacementDeferreds: Record<number, ReturnType<typeof createDeferred>> = {
+      1001: createDeferred(),
+      1002: createDeferred(),
+    };
+
+    server.use(
+      http.post('*/api/universe/:secid/materialize', async ({ params }) => {
+        const secid = params.secid as string;
+        const instrumentId = secid === 'MKT001' ? 1001 : 1002;
+        await materializeDeferreds[secid].promise;
+        return HttpResponse.json(materializeResponseFor(secid, instrumentId));
+      }),
+      http.post('*/api/analytics/replacement', async ({ request }) => {
+        const body = (await request.json()) as Record<string, unknown>;
+        const targetInstrumentId = body.targetInstrumentId as number;
+        await replacementDeferreds[targetInstrumentId].promise;
+        return HttpResponse.json(replacementResponseFor(targetInstrumentId));
+      }),
+    );
+
+    renderRecommendations();
+
+    await waitFor(() => expect(screen.getByTestId('sell-candidate-1')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('replace-toggle-1'));
+    await waitFor(() => expect(screen.getByTestId('replace-candidate-MKT001')).toBeInTheDocument());
+
+    // Клик по A — запрос стартует и зависает на deferred (ещё не резолвится).
+    fireEvent.click(screen.getByTestId('replace-candidate-MKT001'));
+    // Клик по B до резолва A.
+    fireEvent.click(screen.getByTestId('replace-candidate-MKT002'));
+
+    // B резолвится первым — карточка должна показать данные B.
+    materializeDeferreds.MKT002.resolve();
+    replacementDeferreds[1002].resolve();
+    await waitFor(() => expect(screen.getByTestId('replace-result-1')).toBeInTheDocument());
+    expect(screen.getByTestId('replace-result-1').textContent).toMatch(/Материализовано MKT002/);
+
+    // A резолвится позже B — не должен перезаписать уже показанную карточку B.
+    materializeDeferreds.MKT001.resolve();
+    replacementDeferreds[1001].resolve();
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    expect(screen.getByTestId('replace-result-1').textContent).toMatch(/Материализовано MKT002/);
+    expect(screen.getByTestId('replace-result-1').textContent).not.toMatch(/MKT001/);
+  });
+
+  // Примечание: строка кандидата дизейблится на время СВОЕЙ загрузки (`disabled={isLoading}` в
+  // ReplacementCandidateRow), и React пропускает onClick для disabled-элемента по своим внутренним
+  // props (getListener в react-dom), а не по живому DOM-атрибуту — поэтому буквально "повторный
+  // клик по ТОЙ ЖЕ строке до её резолва" недостижим через реальный клик ни в браузере, ни в тесте.
+  // Токен всё равно инкрементируется и в toggle-ветке (страховка на будущее, см. handleSelectCandidate)
+  // — а вот сценарий ниже РЕАЛЬНО достижим через UI: выбор B прерывает ещё не резолвившийся A, B
+  // резолвится и рендерится, пользователь сворачивает B повторным кликом, и только потом
+  // сверхстарый ответ A наконец приходит — карточка не должна открыться заново.
+  it('does not reopen the benefit card via a very stale response after switching candidates and collapsing', async () => {
+    const materializeDeferreds: Record<string, ReturnType<typeof createDeferred>> = {
+      MKT001: createDeferred(),
+      MKT002: createDeferred(),
+    };
+    const replacementDeferreds: Record<number, ReturnType<typeof createDeferred>> = {
+      1001: createDeferred(),
+      1002: createDeferred(),
+    };
+
+    server.use(
+      http.post('*/api/universe/:secid/materialize', async ({ params }) => {
+        const secid = params.secid as string;
+        const instrumentId = secid === 'MKT001' ? 1001 : 1002;
+        await materializeDeferreds[secid].promise;
+        return HttpResponse.json(materializeResponseFor(secid, instrumentId));
+      }),
+      http.post('*/api/analytics/replacement', async ({ request }) => {
+        const body = (await request.json()) as Record<string, unknown>;
+        const targetInstrumentId = body.targetInstrumentId as number;
+        await replacementDeferreds[targetInstrumentId].promise;
+        return HttpResponse.json(replacementResponseFor(targetInstrumentId));
+      }),
+    );
+
+    renderRecommendations();
+
+    await waitFor(() => expect(screen.getByTestId('sell-candidate-1')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('replace-toggle-1'));
+    await waitFor(() => expect(screen.getByTestId('replace-candidate-MKT001')).toBeInTheDocument());
+
+    // A стартует и зависает.
+    fireEvent.click(screen.getByTestId('replace-candidate-MKT001'));
+    // B стартует до резолва A — токен инвалидирует A.
+    fireEvent.click(screen.getByTestId('replace-candidate-MKT002'));
+
+    // B резолвится и рендерится.
+    materializeDeferreds.MKT002.resolve();
+    replacementDeferreds[1002].resolve();
+    await waitFor(() => expect(screen.getByTestId('replace-result-1')).toBeInTheDocument());
+
+    // Повторный клик по B сворачивает карточку (токен снова инкрементируется в toggle-ветке).
+    fireEvent.click(screen.getByTestId('replace-candidate-MKT002'));
+    await waitFor(() => expect(screen.queryByTestId('replace-result-1')).not.toBeInTheDocument());
+
+    // Сверхстарый ответ A приходит только теперь — не должен ничего открыть заново.
+    materializeDeferreds.MKT001.resolve();
+    replacementDeferreds[1001].resolve();
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    expect(screen.queryByTestId('replace-result-1')).not.toBeInTheDocument();
   });
 
   // ─── Задача 30: RV-бейдж на карточке слабой позиции (переработан задачей 35, но переиспользуется) ──
