@@ -113,7 +113,7 @@ public class ReplacementCandidatesEndpointTests
     private static BondUniverseEntry HealthyEntry(
         string secid, string sector, decimal yieldFraction, decimal durationYears,
         decimal turnover = 1_000_000m, bool? isFloater = null, int listLevel = 1,
-        decimal bidPercent = 99m, decimal offerPercent = 100m) => new()
+        decimal bidPercent = 99m, decimal offerPercent = 100m, DateOnly? offerDate = null) => new()
     {
         Secid = secid,
         Isin = $"ISIN{secid}",
@@ -132,6 +132,7 @@ public class ReplacementCandidatesEndpointTests
         GspreadApproxFraction = yieldFraction - 0.10m, // фиктивный спред для теста — не пересчитан по реальной кривой
         IsFloater = isFloater,
         MaturityDate = DateOnly.FromDateTime(DateTime.UtcNow.AddYears(3)),
+        OfferDate = offerDate,
         UpdatedAt = DateTime.UtcNow,
     };
 
@@ -203,13 +204,17 @@ public class ReplacementCandidatesEndpointTests
         var selfEntry = HealthyEntry($"SF{marker}", sector, 0.45m, 2m); // самый высокий yield в наборе — должен быть исключён по ISIN
         selfEntry.Isin = positionIsin;
 
+        // HI несёт оферту (задача 37 часть A) — проверяем, что она долетает до DTO кандидата.
+        // MD осознанно без оферты (null) — проверяем, что поле честно null, а не подставляется откуда-то.
+        var offerDate = DateOnly.FromDateTime(DateTime.UtcNow.AddYears(1));
+
         // ListLevel=3 сюда намеренно НЕ заводим — UniverseHygieneFilter.HideListLevelThree=true
         // прячет такие бумаги из mode=market целиком (задача 26 часть C.4), матрица
         // ликвидность×листинг уже покрыта юнит-тестами CandidateRiskSignalServiceTests.
         await universeRepo.UpsertSnapshotBatchAsync(new[]
         {
             selfEntry,
-            HealthyEntry($"HI{marker}", sector, 0.44m, 2m, listLevel: 1, turnover: 10_000_000m, bidPercent: 99.9m, offerPercent: 100m),
+            HealthyEntry($"HI{marker}", sector, 0.44m, 2m, listLevel: 1, turnover: 10_000_000m, bidPercent: 99.9m, offerPercent: 100m, offerDate: offerDate),
             HealthyEntry($"MD{marker}", sector, 0.43m, 2m, listLevel: 2),
             HealthyEntry($"LW{marker}", sector, 0.42m, 2m, listLevel: 2),
             HealthyEntry($"FL{marker}", sector, 0.441m, 2m, isFloater: true), // между HI и MD по yield, но флоатер
@@ -245,6 +250,11 @@ public class ReplacementCandidatesEndpointTests
         var high = candidates.Single(c => c.GetProperty("secid").GetString() == $"HI{marker}");
         high.GetProperty("riskSignals").GetProperty("liquidity").GetString().Should().Be("Good", "оборот/спред HealthyEntry попадают в порог High, листинг 1 не понижает уровень");
         high.GetProperty("riskSignals").GetProperty("liquidityLabel").GetString().Should().Be("Высокая ликвидность, листинг 1");
+
+        // Задача 37 часть A: OfferDate — аддитивное поле, доходит до DTO из банк-записи по secid.
+        high.GetProperty("offerDate").GetDateTime().Should().Be(offerDate.ToDateTime(TimeOnly.MinValue));
+        var medium = candidates.Single(c => c.GetProperty("secid").GetString() == $"MD{marker}");
+        medium.GetProperty("offerDate").ValueKind.Should().Be(JsonValueKind.Null, "MD без оферты — поле честно null, не подставляется");
     }
 
     [Fact]
@@ -286,10 +296,14 @@ public class ReplacementCandidatesEndpointTests
         // RelativeValueEndpointTests.GetRelativeValue_PositionWithSuppressedSpread...
         var (_, positionId, _) = await SeedYieldingPositionAsync(accountId, sector, cleanPrice: 1000m, couponValueRub: 20m, maturityYears: 2);
 
+        // A несёт оферту (задача 37 часть A) — mode=rv резолвит поле по secid из той же банк-записи,
+        // что yieldFraction/name (see ToReplacementCandidateDto(BasketMember, ...)).
+        var offerDate = DateOnly.FromDateTime(DateTime.UtcNow.AddMonths(9));
+
         var universeRepo = new BondUniverseRepository(_factory.Database.ConnectionString);
         await universeRepo.UpsertSnapshotBatchAsync(new[]
         {
-            HealthyEntry($"A{marker}", sector, 0.30m, 2m),
+            HealthyEntry($"A{marker}", sector, 0.30m, 2m, offerDate: offerDate),
             HealthyEntry($"B{marker}", sector, 0.32m, 2.1m),
             HealthyEntry($"C{marker}", sector, 0.34m, 1.9m),
             HealthyEntry($"D{marker}", sector, 0.36m, 2.2m),
@@ -297,7 +311,7 @@ public class ReplacementCandidatesEndpointTests
             HealthyEntry($"FL{marker}", sector, 0.60m, 2m, isFloater: true), // самый высокий спред корзины, но флоатер
         });
 
-        var response = await client.GetAsync($"/api/analytics/replacement-candidates?positionId={positionId}&mode=rv&limit=3");
+        var response = await client.GetAsync($"/api/analytics/replacement-candidates?positionId={positionId}&mode=rv&limit=5");
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         var body = await response.Content.ReadFromJsonAsync<JsonElement>();
@@ -305,7 +319,7 @@ public class ReplacementCandidatesEndpointTests
         body.GetProperty("mode").GetString().Should().Be("rv");
         var candidates = body.GetProperty("candidates").EnumerateArray().ToList();
         candidates.Should().NotBeEmpty("позиция с посчитанным G-спредом должна получить дешёвых соседей своей корзины");
-        candidates.Should().HaveCountLessOrEqualTo(3);
+        candidates.Should().HaveCountLessOrEqualTo(5);
 
         var secids = candidates.Select(c => c.GetProperty("secid").GetString()).ToList();
         secids.Should().NotContain($"FL{marker}", "флоатер не должен предлагаться как дешёвый сосед в mode=rv");
@@ -316,6 +330,10 @@ public class ReplacementCandidatesEndpointTests
             signals.GetProperty("spread").ValueKind.Should().Be(JsonValueKind.String);
             candidate.GetProperty("gSpreadFraction").ValueKind.Should().Be(JsonValueKind.Number);
         }
+
+        // limit=5 покрывает все 5 незаявленных-флоатерами кандидатов корзины -> A гарантированно в выдаче.
+        var candidateA = candidates.Single(c => c.GetProperty("secid").GetString() == $"A{marker}");
+        candidateA.GetProperty("offerDate").GetDateTime().Should().Be(offerDate.ToDateTime(TimeOnly.MinValue));
     }
 
     [Fact]
