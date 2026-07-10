@@ -82,4 +82,78 @@ public class OfferCutoffResolverTests
 
         horizon.Date.Should().Be(nearer.Date);
     }
+
+    // Ревью T-36: ResolveNearestOfferDate — "ближайшая оферта по календарю", без отсечки
+    // MinDaysToOffer (в отличие от Resolve, чья 14-дневная отсечка уместна для горизонта YTM, но
+    // не для классификации купонов). См. doc-comment OfferCutoffResolver.ResolveNearestOfferDate и
+    // BondSyncService.HasFloatingCoupon.
+
+    [Fact]
+    public void ResolveNearestOfferDate_NoOffers_ReturnsNull()
+    {
+        var result = OfferCutoffResolver.ResolveNearestOfferDate(AsOf, offers: null);
+
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public void ResolveNearestOfferDate_EmptyOffers_ReturnsNull()
+    {
+        var result = OfferCutoffResolver.ResolveNearestOfferDate(AsOf, offers: []);
+
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public void ResolveNearestOfferDate_PastOffer_IsIgnored_ReturnsNull()
+    {
+        var past = TestModelFactory.Offer(InstrumentId, AsOf.AddDays(-1), OfferType.Put);
+
+        var result = OfferCutoffResolver.ResolveNearestOfferDate(AsOf, new[] { past });
+
+        result.Should().BeNull("прошедшая оферта не должна учитываться — даже без 14-дневной отсечки Resolve");
+    }
+
+    [Fact]
+    public void ResolveNearestOfferDate_ExecutedOffer_IsIgnored()
+    {
+        var executed = TestModelFactory.Offer(InstrumentId, AsOf.AddDays(30), OfferType.Put, isExecuted: true);
+
+        var result = OfferCutoffResolver.ResolveNearestOfferDate(AsOf, new[] { executed });
+
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public void ResolveNearestOfferDate_OfferCloserThan14Days_IsStillReturned()
+    {
+        // Ключевое отличие от Resolve: оферта через 7 дней (< MinDaysToOffer) НЕ отбрасывается.
+        var close = TestModelFactory.Offer(InstrumentId, AsOf.AddDays(7), OfferType.Put);
+
+        var result = OfferCutoffResolver.ResolveNearestOfferDate(AsOf, new[] { close });
+
+        result.Should().Be(close.Date);
+    }
+
+    [Fact]
+    public void ResolveNearestOfferDate_OfferToday_IsIncluded()
+    {
+        var today = TestModelFactory.Offer(InstrumentId, AsOf, OfferType.Put);
+
+        var result = OfferCutoffResolver.ResolveNearestOfferDate(AsOf, new[] { today });
+
+        result.Should().Be(AsOf);
+    }
+
+    [Fact]
+    public void ResolveNearestOfferDate_MultipleOffers_PicksClosestFutureOne()
+    {
+        var past = TestModelFactory.Offer(InstrumentId, AsOf.AddDays(-10), OfferType.Put);
+        var nearer = TestModelFactory.Offer(InstrumentId, AsOf.AddDays(7), OfferType.Call);
+        var farther = TestModelFactory.Offer(InstrumentId, AsOf.AddDays(365), OfferType.Put);
+
+        var result = OfferCutoffResolver.ResolveNearestOfferDate(AsOf, new[] { farther, past, nearer });
+
+        result.Should().Be(nearer.Date);
+    }
 }

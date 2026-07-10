@@ -1,6 +1,7 @@
 using Bonds.Core.Calculation;
 using Bonds.Core.Interfaces.Repositories;
 using Bonds.Core.Models;
+using Bonds.Core.Time;
 using Bonds.Infrastructure.Connectors.Moex;
 using Bonds.Infrastructure.Connectors.TInvest;
 using Bonds.Infrastructure.Quotes;
@@ -394,8 +395,7 @@ public sealed class BondSyncService
         var hasFloatingCoupon = HasFloatingCoupon(
             bondization.Coupons,
             bondization.Offers,
-            DateOnly.FromDateTime(DateTime.UtcNow),
-            instrument.MaturityDate,
+            BusinessClock.MoscowToday(),
             info?.LooksLikeFloater ?? false);
         instrument.CouponType = hasFloatingCoupon ? CouponType.Floating : CouponType.Fixed;
         instrument.HasAmortization = bondization.Amortizations.Count > 1 || (info?.HasAmortizationHint ?? false);
@@ -429,14 +429,18 @@ public sealed class BondSyncService
     /// с офертой и пересмотром ставки после неё.
     /// <para>
     /// Правильное правило: неизвестный купон делает бумагу флоатером, только если его дата НЕ
-    /// ПОЗЖЕ ближайшей будущей оферты — купоны после оферты движок вообще не учитывает в расчёте
-    /// доходности (горизонт режется <see cref="OfferCutoffResolver.Resolve"/>, тот же резолв, что
-    /// использует <see cref="Bonds.Core.Calculation.BondMetricsCalculator"/> для "доходности к
-    /// оферте" — переиспользуем его здесь, чтобы не дублировать логику "ближайшей оферты" третий
-    /// раз). Если резолвер не нашёл релевантную будущую оферту (нет оферт вовсе, все оферты уже
-    /// прошли, или все офертами не удовлетворяют <see cref="OfferCutoffResolver.MinDaysToOffer"/>)
-    /// — он возвращает горизонт погашения (<c>Horizon.IsOffer == false</c>), и правило откатывается
-    /// к прежнему поведению: любой неизвестный купон = Floating.
+    /// ПОЗЖЕ ближайшей будущей оферты. Ближайшая оферта берётся через
+    /// <see cref="OfferCutoffResolver.ResolveNearestOfferDate"/> — <b>не</b> через
+    /// <see cref="OfferCutoffResolver.Resolve"/>. Первая версия этого фикса (T-36) переиспользовала
+    /// <c>Resolve</c>, который отфильтровывает оферты ближе
+    /// <see cref="OfferCutoffResolver.MinDaysToOffer"/> дней — конвенция, уместная для горизонта
+    /// расчёта доходности (spec §7.3), но не для классификации купонов: в окне
+    /// [оферта−14д, оферта] <c>Resolve</c> считал оферту "слишком близкой" и откатывался к
+    /// горизонту погашения, из-за чего баг Брус 2Р06 воспроизводился заново каждые две недели перед
+    /// офертой (см. ревью T-36, plan/36-offer-bonds-not-floaters.md). <c>ResolveNearestOfferDate</c>
+    /// ищет ближайшую будущую оферту исключительно по календарю, без этой отсечки.
+    /// Если релевантной будущей оферты нет (нет оферт вовсе или все уже прошли) — правило
+    /// откатывается к прежнему поведению: любой неизвестный купон = Floating.
     /// </para>
     /// <paramref name="looksLikeFloater"/> (BONDTYPE «Флоатер» / отсутствие COUPONPERCENT в
     /// securities.json) остаётся в OR как был — единственный сигнал для настоящих флоатеров, у
@@ -446,13 +450,12 @@ public sealed class BondSyncService
         IReadOnlyList<CouponSchedule> coupons,
         IReadOnlyList<OfferSchedule> offers,
         DateOnly asOf,
-        DateOnly maturityDate,
         bool looksLikeFloater)
     {
-        var horizon = OfferCutoffResolver.Resolve(asOf, maturityDate, offers);
+        var nearestOfferDate = OfferCutoffResolver.ResolveNearestOfferDate(asOf, offers);
 
-        var hasUnknownWithinHorizon = horizon.IsOffer
-            ? coupons.Any(c => !c.IsKnown && c.CouponDate <= horizon.Date)
+        var hasUnknownWithinHorizon = nearestOfferDate is { } offerDate
+            ? coupons.Any(c => !c.IsKnown && c.CouponDate <= offerDate)
             : coupons.Any(c => !c.IsKnown);
 
         return hasUnknownWithinHorizon || looksLikeFloater;
