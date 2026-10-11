@@ -10,7 +10,10 @@ public class JwtSecretGuardTests
     [InlineData("")]
     [InlineData("   ")]
     [InlineData("too-short-secret")]
-    [InlineData(JwtSecretGuard.CommittedDevSecret)]
+    [InlineData("dev-secret-change-in-production-min-32-chars!!")]
+    [InlineData("dev-secret-change-me-min-32-characters!!")]
+    [InlineData("dev-only-secret-key-do-not-use-in-prod-32chars")]
+    [InlineData("prod-but-still-a-DEV-SECRET-0123456789abcdef")]
     public void EnsureProductionSafe_RejectsUnsafeSecret(string? secret)
     {
         var ex = Assert.Throws<InvalidOperationException>(() => JwtSecretGuard.EnsureProductionSafe(secret));

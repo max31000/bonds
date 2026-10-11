@@ -90,6 +90,8 @@ jobs:
           envs: DB_CONNECTION_STRING,JWT_SECRET,TELEGRAM_BOT_TOKEN,OWNER_TELEGRAM_ID
           script: |
             set -e
+            # Pre-flight: refuse to replace the running container with one that will crash on start.
+            [ ${#JWT_SECRET} -ge 32 ] || { echo "JWT_SECRET missing or shorter than 32 chars - refusing to deploy"; exit 1; }
             mkdir -p /var/lib/bonds/dataprotection-keys
             docker pull ghcr.io/${{ github.repository_owner }}/bonds-api:latest
             docker stop bonds-api && docker rm bonds-api || true
