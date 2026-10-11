@@ -1,6 +1,6 @@
 /**
  * true, если страница открыта внутри iframe portal-shell, false — standalone.
- * См. portal-shell/docs/service-routing-integration.md.
+ * См. mvv42-infra/docs/specs/2026-10-11-platform-design.md.
  */
 export function useIsInsideShell(): boolean {
   try {
