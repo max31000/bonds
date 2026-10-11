@@ -49,7 +49,10 @@ public class MoexBondizationParserTests
 
         result.Coupons.Should().NotBeEmpty();
         // Флоатер: исторические купоны (ставка уже зафиксирована и выплачена/известна) — known.
-        result.Coupons.Where(c => c.CouponDate < DateOnly.FromDateTime(DateTime.UtcNow))
+        // Сравниваем с датой снимка фикстуры, а не с "сегодня": иначе со временем будущие (неизвестные
+        // на момент снимка) купоны уходят в прошлое и тест краснеет без изменения кода.
+        var fixtureSnapshotDate = new DateOnly(2026, 6, 24);
+        result.Coupons.Where(c => c.CouponDate < fixtureSnapshotDate)
             .Should().OnlyContain(c => c.IsKnown);
         // Ни один купон не должен быть "выдуман" — там, где значения нет, ValueRub остаётся null,
         // а не 0 (spec §4.4 "не подставлять нули молча").
