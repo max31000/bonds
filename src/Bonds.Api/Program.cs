@@ -2,6 +2,7 @@ using System.Text;
 using Bonds.Api.Endpoints;
 using Bonds.Api.Middleware;
 using Bonds.Infrastructure;
+using Bonds.Infrastructure.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.Options;
@@ -79,6 +80,12 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 });
 
 var app = builder.Build();
+
+// Вне Development/Testing не стартуем с пустым, коротким или закоммиченным dev-секретом JWT.
+if (!app.Environment.IsDevelopment() && !app.Environment.IsEnvironment("Testing"))
+{
+    JwtSecretGuard.EnsureProductionSafe(app.Configuration["Jwt:Secret"]);
+}
 
 // Единый формат ошибок (plan/08) — должен оборачивать весь остальной конвейер, иначе
 // необработанные исключения дальше по цепочке не попадут в этот middleware.
