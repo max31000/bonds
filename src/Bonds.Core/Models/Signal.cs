@@ -67,7 +67,7 @@ public class Signal
 }
 
 /// <summary>
-/// Типы событий (plan/40). Удалены: UpcomingCoupon (купоны — календарь на «Денежном потоке»),
+/// Типы событий. Удалены: UpcomingCoupon (купоны — календарь на «Денежном потоке»),
 /// YieldBelowAlternative (дублирует «слабые позиции» Рекомендаций), DurationDriftFromTarget
 /// (цели никто не задаёт), LowLiquidityWarning (заглушка).
 /// </summary>

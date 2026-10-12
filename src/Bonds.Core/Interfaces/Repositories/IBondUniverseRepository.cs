@@ -5,7 +5,7 @@ namespace Bonds.Core.Interfaces.Repositories;
 public interface IBondUniverseRepository
 {
     /// <summary>
-    /// Батчевый upsert всего снимка (задача 26 часть B.3) — одна multi-row INSERT ... ON DUPLICATE
+    /// Батчевый upsert всего снимка — одна multi-row INSERT... ON DUPLICATE
     /// KEY UPDATE команда (не N отдельных INSERT), чтобы полный refresh (~3000 строк) укладывался
     /// в единицы секунд. Бумаги, отсутствующие в новом снимке (погашены/выведены с торгов), НЕ
     /// удаляются — остаются с устаревшим <see cref="BondUniverseEntry.UpdatedAt"/> (простой дефолт:
@@ -44,7 +44,7 @@ public interface IBondUniverseRepository
     Task<int> GetHistoryDaysCountAsync(CancellationToken ct = default);
 
     /// <summary>
-    /// Задача 30 часть B — строки bond_universe_history за <paramref name="tradingDaysBack"/>
+    /// Строки bond_universe_history за <paramref name="tradingDaysBack"/>
     /// САМЫХ ПОСЛЕДНИХ отличных дат снимка (не календарных дней — если истории меньше, вернёт
     /// всё, что есть). Используется <c>RelativeValueSnapshotBuilder</c> для сглаживания медиан
     /// корзин по нескольким дням (защита от однодневных выбросов).

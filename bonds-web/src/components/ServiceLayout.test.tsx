@@ -37,7 +37,7 @@ describe('ServiceLayout', () => {
     // <Notifications> между тестами; без явной очистки уведомления предыдущего теста
     // остаются в DOM следующего рендера и ломают getByText (несколько совпадений).
     notifications.clean();
-    // Plan/16 часть B: автосинк-при-открытии сравнивает lastSuccessAtUtc с "сейчас" по порогу 12ч —
+    // Автосинк-при-открытии сравнивает lastSuccessAtUtc с "сейчас" по порогу 12ч —
     // фиксируем системное время, чтобы тесты не зависели от реальной даты запуска.
     vi.useFakeTimers({ shouldAdvanceTime: true });
     vi.setSystemTime(new Date('2026-07-03T12:00:00Z'));

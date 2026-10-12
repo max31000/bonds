@@ -6,7 +6,7 @@ using Microsoft.Extensions.Logging;
 namespace Bonds.Infrastructure.Analytics;
 
 /// <summary>
-/// Реализация <see cref="ICommissionRateProvider"/> (plan/22 часть C) — единая точка резолва
+/// Реализация <see cref="ICommissionRateProvider"/> — единая точка резолва
 /// эффективной ставки комиссии для счёта, приоритет описан в doc-comment интерфейса:
 /// override из настроек пользователя → оценка из журнала (<see cref="CommissionRateEstimator"/>) →
 /// <see cref="SwitchAnalysisService.DefaultCommissionRate"/>.

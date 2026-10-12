@@ -13,7 +13,7 @@ namespace Bonds.Api.Endpoints;
 
 /// <summary>
 /// GET/PUT /api/settings — пороги триггеров (Signals Engine, этап 07) и базовая валюта.
-/// PUT /api/settings/tinvest-token — ввод/замена read-only токена T-Invest (plan/08).
+/// PUT /api/settings/tinvest-token — ввод/замена read-only токена T-Invest.
 /// <para>
 /// <b>Безопасность токена (spec §11, plan/08 "Токен T-Invest через UI").</b> Токен шифруется
 /// через <see cref="IDataProtectionProvider"/> (встроенный механизм ASP.NET Core — не требует
@@ -25,7 +25,7 @@ namespace Bonds.Api.Endpoints;
 /// который логирует только <c>ex.Message</c>/тип исключения, не тела запросов).
 /// </para>
 /// <para>
-/// <b>Валидация перед сохранением (plan/13 часть C).</b> PUT делает пробный вызов T-Invest
+/// <b>Валидация перед сохранением.</b> PUT делает пробный вызов T-Invest
 /// (<see cref="ITInvestTokenValidator"/>) ДО шифрования/записи в БД — невалидный токен не
 /// сохраняется и отвечает 422 с человекочитаемым сообщением, чтобы пользователь узнавал об
 /// опечатке/протухшем токене сразу, а не по тихо деградировавшему синку.
@@ -40,7 +40,7 @@ public static class SettingsEndpoints
         app.MapPut("/api/settings/tinvest-token", PutTInvestToken);
     }
 
-    /// <summary>Валидация override (plan/22 часть D): null допустим (сброс), иначе строго 0 &lt; x &lt; 0.05 — ставка ≥5% явно опечатка (ввод в % на фронте, доля на бэкенде).</summary>
+    /// <summary>Валидация override: null допустим (сброс), иначе строго 0 &lt; x &lt; 0.05 — ставка ≥5% явно опечатка (ввод в % на фронте, доля на бэкенде).</summary>
     private const decimal MaxCommissionRateOverride = 0.05m;
 
     private static async Task<IResult> GetSettings(
@@ -118,7 +118,7 @@ public static class SettingsEndpoints
         return Results.Ok(BuildSettingsDto(user, existing, defaultSignalOptions.Value, context));
     }
 
-    /// <summary>Контекст комиссии для GET/PUT ответа (plan/22 часть D) — авто-оценка из журнала, тариф T-Invest, эффективная ставка+источник.</summary>
+    /// <summary>Контекст комиссии для GET/PUT ответа — авто-оценка из журнала, тариф T-Invest, эффективная ставка+источник.</summary>
     private sealed record CommissionContext(
         CommissionAutoEstimateDto? AutoEstimate,
         string? TInvestTariff,
@@ -144,7 +144,7 @@ public static class SettingsEndpoints
         }
         catch (Exception)
         {
-            // Проглатываем — тариф это необязательный контекст для UI (plan/22 часть B).
+            // Проглатываем — тариф это необязательный контекст для UI.
         }
 
         if (accountId is null)
@@ -205,7 +205,7 @@ public static class SettingsEndpoints
         var userId = await ResolveUserIdAsync(currentUser);
         var token = request.Token.Trim();
 
-        // Пробный вызов T-Invest ДО шифрования/записи (plan/13 часть C) — невалидный токен не
+        // Пробный вызов T-Invest ДО шифрования/записи — невалидный токен не
         // должен попадать в БД молча.
         var validation = await tokenValidator.ValidateAsync(token, ct);
         if (!validation.IsValid)
@@ -238,7 +238,7 @@ public static class SettingsEndpoints
         }
 
         // Намеренно НЕ возвращаем сам токен — только статус, маску и подтверждение счёта (spec §11,
-        // plan/13 часть C: "маскированный идентификатор счёта (последние 4 символа) как подтверждение").
+        // "маскированный идентификатор счёта (последние 4 символа) как подтверждение").
         var accountId = validation.AccountId ?? string.Empty;
         return Results.Ok(new TInvestTokenResponseDto
         {
@@ -278,7 +278,7 @@ public sealed record SettingsResponseDto
     public required decimal UninvestedCashThresholdRub { get; init; }
     public required decimal DefaultMaxConcentrationPercent { get; init; }
 
-    /// <summary>Plan/22 часть D: ручной override ставки комиссии — ДОЛЯ (0.0005 = 0.05%). Null — не задан.</summary>
+    /// <summary>Ручной override ставки комиссии — ДОЛЯ (0.0005 = 0.05%). Null — не задан.</summary>
     public decimal? CommissionRateOverride { get; init; }
 
     /// <summary>Read-only: авто-оценка ставки из журнала операций (часть A). Null — журнал не позволяет оценить (нет сделок/оборот 0).</summary>
@@ -294,7 +294,7 @@ public sealed record SettingsResponseDto
     public required string CommissionEffectiveSource { get; init; }
 }
 
-/// <summary>Read-only контекст авто-оценки ставки комиссии из журнала (plan/22 часть A/D) — см. <see cref="Bonds.Core.Analytics.CommissionEstimate"/>.</summary>
+/// <summary>Read-only контекст авто-оценки ставки комиссии из журнала — см. <see cref="Bonds.Core.Analytics.CommissionEstimate"/>.</summary>
 public sealed record CommissionAutoEstimateDto
 {
     /// <summary>Оценённая ставка — ДОЛЯ (0.00046 = 0.046%), не процент.</summary>
@@ -312,7 +312,7 @@ public sealed record SettingsUpdateRequestDto
     public decimal? UninvestedCashThresholdRub { get; init; }
     public decimal? DefaultMaxConcentrationPercent { get; init; }
 
-    /// <summary>Plan/22 часть D: override ставки комиссии — ДОЛЯ (не процент; конвертация из % на фронте). Null — убрать override. Валидация: 0 &lt; x &lt; 0.05, иначе 422.</summary>
+    /// <summary>override ставки комиссии — ДОЛЯ (не процент; конвертация из % на фронте). Null — убрать override. Валидация: 0 &lt; x &lt; 0.05, иначе 422.</summary>
     public decimal? CommissionRateOverride { get; init; }
 }
 
@@ -327,7 +327,7 @@ public sealed record TInvestTokenResponseDto
     public string? TInvestTokenMasked { get; init; }
 
     /// <summary>
-    /// Plan/13 часть C: маскированный (последние 4 символа) Id брокерского счёта, к которому
+    /// Маскированный (последние 4 символа) Id брокерского счёта, к которому
     /// привязан только что провалидированный токен — подтверждение для пользователя, что
     /// проверка реально прошла, без раскрытия полного Id счёта.
     /// </summary>

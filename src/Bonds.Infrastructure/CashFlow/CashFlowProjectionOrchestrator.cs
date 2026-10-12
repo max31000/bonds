@@ -6,12 +6,12 @@ using Microsoft.Extensions.Logging;
 namespace Bonds.Infrastructure.CashFlow;
 
 /// <summary>
-/// Оркестратор проекции денежного потока (plan/06 Часть A) — координирует репозитории,
+/// Оркестратор проекции денежного потока — координирует репозитории,
 /// собирает <see cref="PositionCashFlowInput"/> для каждой позиции счёта, вызывает чистый
 /// <see cref="CashFlowProjectionService"/> и персистирует результат через
 /// <see cref="IProjectedCashFlowRepository.ReplaceForPositionAsync"/>. Аналог
-/// <c>BondSyncService</c> (этап 04) по духу: координация в Infrastructure, расчёт — в Core.
-/// Не вызывается из HTTP (этап 08) и не планируется по расписанию (этап 07) — программный вызов.
+/// <c>BondSyncService</c> по духу: координация в Infrastructure, расчёт — в Core.
+/// Не вызывается из HTTP и не планируется по расписанию — программный вызов.
 /// </summary>
 public sealed class CashFlowProjectionOrchestrator
 {

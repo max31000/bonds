@@ -1,18 +1,18 @@
 namespace Bonds.Core.Analytics;
 
 /// <summary>
-/// What-if превью портфеля «до/после покупки корзины» (plan/29 §B) — недостающее звено перед
+/// What-if превью портфеля «до/после покупки корзины» — недостающее звено перед
 /// будущей кнопкой «Купить»: как изменится ВЕСЬ портфель (не только сама корзина), если купить
 /// строки, собранные <see cref="BasketBuilderService"/>. Вход — текущие holdings (стоимость,
 /// доходность, дюрация, эмитент) + строки корзины; выход — суммарная стоимость, средневзвешенные
 /// доходность/дюрация и топ-концентрации по эмитентам ДО и ПОСЛЕ, плюс предупреждения.
 /// <para>
 /// <b>Средневзвешенные метрики</b> — тот же принцип, что <see cref="BasketBuilderService"/>/
-/// positionsAggregation.ts (задача 21): вес — рыночная стоимость, флоатеры/индексируемые исключены
+/// positionsAggregation.ts: вес — рыночная стоимость, флоатеры/индексируемые исключены
 /// из доходности (сноска <see cref="WhatIfSnapshot.HasExcludedFloaters"/>), но не из дюрации.
 /// </para>
 /// <para>
-/// <b>Предупреждения</b> (plan/29 §B.1): (1) доля эмитента ПОСЛЕ покупки превышает
+/// <b>Предупреждения</b>: (1) доля эмитента ПОСЛЕ покупки превышает
 /// <c>maxConcentrationPercent</c> (дефолт — тот же, что у
 /// <c>UserSettings.DefaultMaxConcentrationPercent</c>/аллокации/сигналов — 25%); (2) эмитент,
 /// которого не было в портфеле (или была нулевая доля), после покупки превышает 25% — отдельная,
@@ -27,7 +27,7 @@ public static class PortfolioWhatIfService
     /// <summary>Дефолтный лимит доли эмитента — то же значение, что <see cref="CashAllocationService.DefaultMaxIssuerSharePercent"/>/<c>SignalEngineOptions.DefaultMaxConcentrationPercent</c>.</summary>
     public const decimal DefaultMaxConcentrationPercent = 25m;
 
-    /// <summary>Порог "новый крупный эмитент" (plan/29 §B.1) — намеренно фиксированная константа 25%, не настраиваемая, независимая от <paramref name="maxConcentrationPercent"/> (см. doc-comment класса).</summary>
+    /// <summary>Порог "новый крупный эмитент" — намеренно фиксированная константа 25%, не настраиваемая, независимая от <paramref name="maxConcentrationPercent"/> (см. doc-comment класса).</summary>
     private const decimal NewIssuerWarningThresholdPercent = 25m;
 
     public static PortfolioWhatIfResult Evaluate(

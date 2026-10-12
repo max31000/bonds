@@ -19,14 +19,14 @@ namespace Bonds.Api.Endpoints;
 /// <summary>Общие хелперы аналитических эндпоинтов (валидация, риск-сигналы кандидатов, фильтр надёжности).</summary>
 internal static class AnalyticsSupport
 {
-    /// <summary>Задача 38 часть B — валидирует значение query-параметра <c>reliability</c> (общий для
+    /// <summary>Валидирует значение query-параметра <c>reliability</c> (общий для
     /// GET /api/analytics/replacement-candidates и GET /api/universe). Null/пусто — валиден (без
     /// фильтра). <c>internal</c> — переиспользуется <c>UniverseEndpoints</c> (та же сборка).</summary>
     internal static bool IsValidReliabilityFilterValue(string? value) =>
         string.IsNullOrWhiteSpace(value) || value.Trim().ToLowerInvariant() is "green" or "yellow" or "red";
 
     /// <summary>
-    /// Задача 38 часть B — «не хуже уровня»: green = только Green; yellow = Green+Yellow; red = все
+    /// «не хуже уровня»: green = только Green; yellow = Green+Yellow; red = все
     /// уровни (Red — худший, значит "не хуже красного" ничего не отсекает — то же самое, что
     /// отсутствие фильтра); null/пусто — без фильтра (все уровни). <paramref name="levelString"/> —
     /// сериализованное значение <see cref="Bonds.Core.Analytics.ReliabilityLight"/>
@@ -52,7 +52,7 @@ internal static class AnalyticsSupport
     /// чтобы не дублировать резолюцию корзины/ликвидности. Медиана корзины — СВОЯ у каждой записи
     /// (сектор × дюрация ЗАПИСИ, не позиции/другого кандидата), резолвится через
     /// <see cref="RelativeValueService.ResolveBasket"/> той же fallback-цепочкой, что RV-вердикт позиций.
-    /// Задача 38: <c>internal</c> (не <c>private</c>) — переиспользуется <c>UniverseEndpoints.GetUniverse</c>
+    /// <c>internal</c> (не <c>private</c>) — переиспользуется <c>UniverseEndpoints.GetUniverse</c>
     /// (тот же сборка Bonds.Api) для светофора надёжности каждой строки скринера.
     /// </summary>
     internal static CandidateRiskSignals AssessEntryRiskSignals(
@@ -75,7 +75,7 @@ internal static class AnalyticsSupport
     }
 
 
-    /// <summary>Задача 38 часть A.2: собирает RiskSignalsDto из двух информационных сигналов +
+    /// <summary>Собирает RiskSignalsDto из двух информационных сигналов +
     /// агрегированного светофора надёжности (<see cref="CandidateRiskSignalService.Aggregate"/>).
     /// <paramref name="listLevel"/>/<paramref name="sector"/> — те же входы, что уже использованы
     /// для расчёта <paramref name="signals"/> (листинг банк-записи, сектор банк-записи).</summary>

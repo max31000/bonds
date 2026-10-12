@@ -3,7 +3,7 @@ using Bonds.Core.Universe;
 namespace Bonds.Infrastructure.Universe;
 
 /// <summary>
-/// Параметры хостед-сервиса банка облигаций (задача 26 часть C.1). Дефолты — та же эвристика
+/// Параметры хостед-сервиса банка облигаций. Дефолты — та же эвристика
 /// происхождения, что <see cref="Bonds.Infrastructure.Quotes.LiveQuotesOptions"/>: MOEX закрывает
 /// основную сессию ~19:00 МСК, дневной срез истории пишется первым тиком после этого времени.
 /// </summary>
@@ -36,7 +36,7 @@ public sealed class BondUniverseRefreshOptions
     public UniverseHygieneOptions Hygiene { get; set; } = new();
 
     /// <summary>
-    /// Задача 30 часть B.3 — как долго кэшировать сглаженный снимок relative value в памяти
+    /// Как долго кэшировать сглаженный снимок relative value в памяти
     /// (<c>RelativeValueSnapshotBuilder</c>). Дефолт ~1 час (план); вынесено в конфиг (не константа
     /// в коде), чтобы интеграционные тесты могли поставить 0 — иначе singleton-кэш пережил бы
     /// сидирование новых данных следующим тестом в той же коллекции (TestWebApplicationFactory

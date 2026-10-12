@@ -20,7 +20,7 @@ const UPCOMING_HORIZON_DAYS = 90;
 
 /** Позиция несравнима по доходности «вне сравнения» (plan/17 §A.1: floater/indexed/dataIncomplete). */
 function isOutOfComparison(row: ComparisonRow): boolean {
-  // Задача 32 часть A: `'CurrentYield'`, не `'Current'` — зеркалит сериализацию бэкенд-enum
+  // `'CurrentYield'`, не `'Current'` — зеркалит сериализацию бэкенд-enum
   // YieldKind.ToString() (было расхождение, из-за которого флоатеры протекали в sell-кандидаты).
   return row.dataIncomplete || row.yieldKind === 'CurrentYield';
 }
@@ -33,7 +33,7 @@ function median(values: number[]): number {
 }
 
 /**
- * Строит топ-3 sell-кандидатов из строк сравнения (plan/17 §A.1): позиции с наименьшей доходностью
+ * Строит топ-3 sell-кандидатов из строк сравнения: позиции с наименьшей доходностью
  * относительно медианы портфеля, с причинами-бейджами. Флоатеры/индексируемые/dataIncomplete не
  * ранжируются (несравнимы по доходности — см. PositionComparisonService.YieldDisclaimer) и
  * возвращаются отдельно как «вне сравнения».
@@ -90,7 +90,7 @@ interface RecommendationsStore {
 }
 
 /**
- * Стор экрана «Рекомендации» (plan/17). Задача 35 часть D.2 — переработка на два главных блока:
+ * Стор экрана «Рекомендации». Задача 35 часть D.2 — переработка на два главных блока:
  * секция «Замены» (GET /replacement-matrix) удалена со страницы (поглощена блоком 1 — подбор
  * замены на карточке слабой позиции через GET /replacement-candidates, задача 33), поэтому
  * `fetchReplacementMatrix`/`bestPairs`/`rejectedPairs`/`positionNamesById` здесь больше не нужны —

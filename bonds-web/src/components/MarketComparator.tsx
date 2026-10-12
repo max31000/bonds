@@ -7,7 +7,7 @@ import { postWatchlistItem } from '../api/watchlist';
 import { ReplacementBreakdown } from './ReplacementBreakdown';
 import { RiskSignalBadges } from './RiskSignalBadges';
 import { formatPercent, formatNumber, formatHorizon, formatDate } from '../utils/format';
-// Задача 28: liquidityLabel/liquidityColor вынесены в utils/universeDisplay (переиспользуются Screener'ом).
+// liquidityLabel/liquidityColor вынесены в utils/universeDisplay (переиспользуются Screener'ом).
 import { liquidityLabel, liquidityColor } from '../utils/universeDisplay';
 import type { UniverseRow, MaterializeResponse, ReplacementResponse } from '../api/types';
 
@@ -51,7 +51,7 @@ function UniverseOptionLabel({ row }: { row: UniverseRow }) {
 }
 
 /**
- * Задача 27 часть B — выпадашка-сравнивалка «слабая позиция vs весь рынок»: Combobox (Select с
+ * Выпадашка-сравнивалка «слабая позиция vs весь рынок»: Combobox (Select с
  * серверным поиском) → выбор бумаги банка → materialize (заводит Instrument+котировку) →
  * POST /api/analytics/replacement (targetInstrumentId) → карточка «держать vs переложиться» с той
  * же формулой-разбивкой, что матрица замен (см. ReplacementBreakdown).
@@ -60,7 +60,7 @@ function UniverseOptionLabel({ row }: { row: UniverseRow }) {
  * дефолт GET /api/universe); ввод текста → тот же запрос с search= (debounce ~300мс).
  * </para>
  * <para>
- * <b>initialSecid</b> (задача 30 часть D): предвыбранная бумага (например, клик по дешёвому
+ * <b>initialSecid</b>: предвыбранная бумага (например, клик по дешёвому
  * кандидату из секции «Дорогие бумаги — дешёвые соседи по корзине») — при монтировании компонент
  * ищет именно её (search=secid) и автоматически выбирает первую совпавшую строку, минимальная
  * интеграция без перестройки остального компонента (searchInput/handleSelect переиспользуются как есть).
@@ -103,7 +103,7 @@ export function MarketComparator({ holdPositionId, initialSecid }: { holdPositio
     // callback'ах (then/catch), тот же паттерн, что PortfolioIntradayChart/PositionDetail.
     // "Начало загрузки" сигнализируется синхронно из onSearchChange (реальный обработчик события),
     // не отсюда — см. handleSearchChange ниже.
-    // Задача 32 часть C: флоатер/индексируемая бумага несравнима по доходности с фикс-купоном
+    // Флоатер/индексируемая бумага несравнима по доходности с фикс-купоном
     // (после задачи 31 сервер даже вернёт 422 на такую цель) — не даём выбрать её целью. Берём
     // limit 20 вместо 10, чтобы после клиентского отсева обычно оставался полный топ-10.
     fetchUniverse({ search: debouncedSearch || undefined, sortBy: 'yield', sortDir: 'desc', limit: 20 })
@@ -164,7 +164,7 @@ export function MarketComparator({ holdPositionId, initialSecid }: { holdPositio
   };
 
   useEffect(() => {
-    // Задача 30: как только пришли строки по initialSecid, выбираем совпавшую автоматически — один
+    // Как только пришли строки по initialSecid, выбираем совпавшую автоматически — один
     // раз (ref гасится сразу, не setState — не триггерит доп. ререндер/лint), дальше обычный ручной
     // поиск/выбор пользователя не трогаем. Отдельный эффект (не внутри эффекта загрузки rows выше) —
     // там handleSelect ещё не объявлен по порядку кода компонента (react-hooks/immutability).
@@ -197,7 +197,7 @@ export function MarketComparator({ holdPositionId, initialSecid }: { holdPositio
   const selectData = rows.map((row) => ({ value: row.secid, label: row.name ?? row.secid }));
   const lowLiquidity = materialized?.metrics && selectedRow?.liquidityScore === 'Low';
 
-  // Задача 37 часть B.3: карточка выгоды уже рендерится сразу под селектом — только докидываем
+  // Карточка выгоды уже рендерится сразу под селектом — только докидываем
   // scrollIntoView на случай, если она ниже вьюпорта (block:'nearest' не скроллит лишний раз).
   const resultRef = useRef<HTMLDivElement>(null);
   useEffect(() => {

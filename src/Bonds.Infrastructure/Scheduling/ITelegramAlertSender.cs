@@ -1,7 +1,7 @@
 namespace Bonds.Infrastructure.Scheduling;
 
 /// <summary>
-/// Отправка алерта владельцу продукта через Telegram Bot API (plan/13 часть D) — переиспользует
+/// Отправка алерта владельцу продукта через Telegram Bot API — переиспользует
 /// того же бота (<c>Telegram:BotToken</c>), что и CI-алерты деплоя. Вынесен за
 /// интерфейс, чтобы <see cref="SyncSchedulerHostedService"/> не ходил в реальную сеть в тестах
 /// (repo-конвенция: без сети из тестов, мокай HttpMessageHandler/клиент — plan/13 преамбула).

@@ -58,7 +58,7 @@ public static class MoexSecuritiesParser
 
     /// <summary>
     /// Результат поиска <c>/iss/securities.json?q=...</c> по ISIN — резолвер ISIN→SECID
-    /// (plan/04 Часть A, задача 1). Возвращает первую бумагу из группы "stock_bonds" (отфильтровывая
+    ///. Возвращает первую бумагу из группы "stock_bonds" (отфильтровывая
     /// индексы/прочие инструменты, которые ISS иногда подмешивает в полнотекстовый поиск).
     /// </summary>
     public static string? ParseSecidFromSearch(string json, string isin)

@@ -37,7 +37,7 @@ const gazpromRow: UniverseRow = {
   reliabilityReason: 'Зелёный: оба риск-сигнала в норме, листинг 1-2, ликвидность с данными.',
 };
 
-// Задача 37 часть C.2: бумага с офертой — бейдж «оферта {дата}» должен появиться и в опции
+// Бумага с офертой — бейдж «оферта {дата}» должен появиться и в опции
 // выпадашки, и на карточке результата (доходность к оферте — другой горизонт, чем к погашению).
 const offerRow: UniverseRow = {
   ...gazpromRow,
@@ -139,7 +139,7 @@ describe('MarketComparator', () => {
     const url = new URL(requestedUrl!);
     expect(url.searchParams.get('sortBy')).toBe('yield');
     expect(url.searchParams.get('sortDir')).toBe('desc');
-    // Задача 32 часть C: 20, не 10 — запас на клиентский отсев флоатеров (см. MarketComparator.tsx).
+    // 20, не 10 — запас на клиентский отсев флоатеров (см. MarketComparator.tsx).
     expect(url.searchParams.get('limit')).toBe('20');
     expect(url.searchParams.get('search')).toBeNull();
   });
@@ -364,7 +364,7 @@ describe('MarketComparator', () => {
     await waitFor(() => expect(screen.getByTestId('market-comparator-result-1')).toBeInTheDocument());
     expect(screen.getByTestId('risk-signal-liquidity-market-1')).toBeInTheDocument();
     expect(screen.getByTestId('risk-signal-spread-market-1')).toBeInTheDocument();
-    // Задача 38 часть C.2: светофор надёжности виден на карточке выгоды сравнивалки.
+    // Светофор надёжности виден на карточке выгоды сравнивалки.
     expect(screen.getByTestId('reliability-dot-market-1')).toHaveAttribute('data-reliability', 'Red');
   });
 

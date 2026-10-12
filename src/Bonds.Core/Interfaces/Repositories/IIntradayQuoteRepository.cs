@@ -2,7 +2,7 @@ using Bonds.Core.Models;
 
 namespace Bonds.Core.Interfaces.Repositories;
 
-/// <summary>Хранилище тиков "лёгкого контура котировок" (plan/16 часть A). См. doc-comment IntradayQuote.</summary>
+/// <summary>Хранилище тиков "лёгкого контура котировок". См. doc-comment IntradayQuote.</summary>
 public interface IIntradayQuoteRepository
 {
     /// <summary>Пишет тик и в той же операции удаляет строки старше <paramref name="retentionCutoffUtc"/> (retention 8 дней, plan/16).</summary>

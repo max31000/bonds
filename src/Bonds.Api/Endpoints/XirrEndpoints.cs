@@ -64,7 +64,7 @@ public static class XirrEndpoints
     // ─── POST /api/analytics/xirr/backfill ──────────────────────────────────────────────────
 
     /// <summary>
-    /// Ретроспективный бэкфилл истории XIRR (plan/15 §B.4): восстанавливает недельный ряд
+    /// Ретроспективный бэкфилл истории XIRR: восстанавливает недельный ряд
     /// стоимости/XIRR из журнала операций + дневных исторических цен MOEX ISS и дозаполняет
     /// <c>portfolio_value_snapshots</c> (идемпотентно — не трогает уже существующие даты, живые
     /// или от предыдущего запуска, см. doc-comment <see cref="PortfolioHistoryBackfillService"/>).

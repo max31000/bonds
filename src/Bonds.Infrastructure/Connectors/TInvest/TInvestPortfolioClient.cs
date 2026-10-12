@@ -137,7 +137,7 @@ public sealed class TInvestPortfolioClient : ITInvestPortfolioClient
 
         // GetOperationsByCursor — пагинированный курсорный эндпоинт (предпочтительнее устаревшего
         // GetOperations без курсора, verified §12.2): поддерживает инкрементальный синк через
-        // параметр From и постраничный обход через Cursor/HasNext (plan/04 Часть B п.6).
+        // параметр From и постраничный обход через Cursor/HasNext.
         do
         {
             var request = new GetOperationsByCursorRequest

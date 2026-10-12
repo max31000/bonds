@@ -22,7 +22,7 @@ public static class PortfolioCompositionService
             ByIssuer = GroupByShare(holdings, totalMarketValue, h => h.Issuer ?? UnknownLabel),
             BySector = GroupByShare(holdings, totalMarketValue, h => h.Sector ?? UnknownLabel),
             ByCouponType = GroupByShare(holdings, totalMarketValue, h => h.CouponType.ToString()),
-            // Задача 30: границы корзин дюрации вынесены в общий DurationBucketClassifier (переиспользуется
+            // Границы корзин дюрации вынесены в общий DurationBucketClassifier (переиспользуется
             // RelativeValueService) — консистентность с разрезом композиции портфеля, не копипаста границ.
             ByDurationBucket = GroupByShare(holdings, totalMarketValue, h => DurationBucketClassifier.Label(h.ModifiedDuration)),
         };

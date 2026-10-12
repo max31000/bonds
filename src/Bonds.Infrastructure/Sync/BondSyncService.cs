@@ -10,13 +10,13 @@ using Microsoft.Extensions.Logging;
 namespace Bonds.Infrastructure.Sync;
 
 /// <summary>
-/// Оркестратор синка (plan/04 Часть C). Один вызов <see cref="SyncAsync"/>:
+/// Оркестратор синка. Один вызов <see cref="SyncAsync"/>:
 /// (1) синк позиций+операций T-Invest → upsert в positions/operations;
 /// (2) для каждого инструмента портфеля — догрузка расписаний/параметров из MOEX;
 /// (3) обновление котировок (T-Invest = "сейчас") и снимка безрисковой кривой (MOEX Gcurve);
 /// (4) пометки неполноты (DataIncomplete на Instrument/Position) — не падает на одном плохом
 ///     инструменте, остальной синк продолжается (устойчивость к частичным сбоям, см. SyncResult).
-/// Не вызывается из HTTP (этап 08) и не планируется по расписанию (этап 07) — чистый сервис,
+/// Не вызывается из HTTP и не планируется по расписанию — чистый сервис,
 /// вызываемый программно/из тестов на этом этапе.
 /// </summary>
 public sealed class BondSyncService
@@ -130,7 +130,7 @@ public sealed class BondSyncService
                 var mappedType = TInvestOperationMapper.Map(op.OperationType);
                 if (mappedType is null) continue; // нерелевантный тип операции (см. README коннектора) — пропускаем, не падаем
 
-                // plan/39 B3: журнал — облигационный. Операции по акциям/фондам/валюте (купил CNYRUB_TOM,
+                // Журнал — облигационный. Операции по акциям/фондам/валюте (купил CNYRUB_TOM,
                 // дивидендный налог по акции) без инструмента-облигации портили XIRR и InvestedRub.
                 // Тип неизвестен (null) — операция по счёту (комиссия/налог без бумаги) либо старый
                 // формат — не отбрасываем. Тип известен и это не облигация — пропускаем любую операцию.
@@ -202,7 +202,7 @@ public sealed class BondSyncService
                     AvgPurchasePrice = tip.AveragePositionPrice,
                     Accrued = tip.CurrentNkd ?? 0m,
                     // Позиция считается неполной, если T-Invest не отдал НКД по открытой позиции —
-                    // движок (этап 05) не должен молча считать НКД=0 как достоверный факт (spec §4.4).
+                    // движок не должен молча считать НКД=0 как достоверный факт (spec §4.4).
                     DataIncomplete = tip.CurrentNkd is null,
                 });
 
@@ -236,7 +236,7 @@ public sealed class BondSyncService
             }
             catch (Exception ex)
             {
-                // Устойчивость к частичному сбою (plan/04 Часть C): один упавший инструмент
+                // Устойчивость к частичному сбою: один упавший инструмент
                 // не должен ронять синк остальных позиций портфеля.
                 _logger.LogWarning(ex, "Failed to sync instrument for FIGI {Figi} — skipping, continuing with the rest", tip.Figi);
                 result.Errors.Add($"Инструмент FIGI {tip.Figi}: ошибка синка ({ex.GetType().Name})");
@@ -304,7 +304,7 @@ public sealed class BondSyncService
                     var instrument = await _instruments.GetByIdAsync(instrumentId);
                     if (instrument is null) continue;
 
-                    // plan/39 M8: по погашенной/делистингованной бумаге последняя сделка — давняя, а
+                    // По погашенной/делистингованной бумаге последняя сделка — давняя, а
                     // свежая котировка «сегодня» воскресила бы её в итогах.
                     if (instrument.MaturityDate < BusinessClock.MoscowToday()) continue;
 
@@ -320,7 +320,7 @@ public sealed class BondSyncService
                     // q.BestBid/q.BestAsk (стакан) намеренно НЕ пишутся здесь — это осознанное
                     // решение, не недосмотр. Спека §8 относит "предупреждение о низкой
                     // ликвидности по позиции (тонкий стакан)" явно к категории "на будущее, при
-                    // появлении планирования вывода" — вне MVP. MarketQuote (этап 03) не несёт
+                    // появлении планирования вывода" — вне MVP. MarketQuote не несёт
                     // полей под bid/ask: добавлять миграцию/колонки под данные, которые сейчас
                     // никто не читает, было бы преждевременным расширением схемы. Стакан всё
                     // равно ЗАПРАШИВАЕТСЯ у T-Invest (ITInvestPortfolioClient.GetQuotesAsync) —
@@ -564,7 +564,7 @@ public sealed class BondSyncService
     }
 
     /// <summary>
-    /// Задача 36: правило классификации <see cref="CouponType.Floating"/>. Баг в проде: Брус 2Р06
+    /// Правило классификации <see cref="CouponType.Floating"/>. Баг в проде: Брус 2Р06
     /// (RU000A10EC63) — фикс-купон 22.75% (BONDTYPE «Биржевая облигация», COUPONPERCENT задан),
     /// put-оферта 2028-02-18. MOEX bondization отдаёт 24 известных купона до оферты и 12
     /// неизвестных после (ставка пересматривается на оферте — стандарт для put-оферт, не
@@ -574,7 +574,7 @@ public sealed class BondSyncService
     /// Правильное правило: неизвестный купон делает бумагу флоатером, только если его дата НЕ
     /// ПОЗЖЕ ближайшей будущей оферты. Ближайшая оферта берётся через
     /// <see cref="OfferCutoffResolver.ResolveNearestOfferDate"/> — <b>не</b> через
-    /// <see cref="OfferCutoffResolver.Resolve"/>. Первая версия этого фикса (T-36) переиспользовала
+    /// <see cref="OfferCutoffResolver.Resolve"/>. Первая версия этого фикса переиспользовала
     /// <c>Resolve</c>, который отфильтровывает оферты ближе
     /// <see cref="OfferCutoffResolver.MinDaysToOffer"/> дней — конвенция, уместная для горизонта
     /// расчёта доходности (spec §7.3), но не для классификации купонов: в окне

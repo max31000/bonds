@@ -2,7 +2,7 @@ import { apiClient } from './client';
 import type { MaterializeResponse, UniverseQuery, UniverseResponse, UniverseStatus } from './types';
 
 /**
- * GET /api/universe — банк облигаций MOEX (задача 26). Изначально (задача 27) использовалась
+ * GET /api/universe — банк облигаций MOEX. Изначально использовалась
  * только выпадашкой-сравнивалкой (search + сортировка + limit); задача 28 (страница «Скринер»)
  * расширяет тот же клиент остальными серверными фильтрами и пагинацией (offset) — параметры
  * зеркалят сигнатуру `UniverseEndpoints.GetUniverse`. Не задан — параметр не отправляется, бэкенд
@@ -33,7 +33,7 @@ export function fetchUniverseStatus(): Promise<UniverseStatus> {
 
 /**
  * POST /api/universe/{secid}/materialize — заводит/находит Instrument + котировку для бумаги банка
- * (задача 27 часть A), возвращает полные метрики движка. 422 — бумага не нашлась на MOEX/не
+ *, возвращает полные метрики движка. 422 — бумага не нашлась на MOEX/не
  * облигация/нет данных (текст причины — в error).
  */
 export function postMaterialize(secid: string): Promise<MaterializeResponse> {

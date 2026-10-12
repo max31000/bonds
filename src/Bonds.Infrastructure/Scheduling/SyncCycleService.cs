@@ -15,7 +15,7 @@ using Microsoft.Extensions.Options;
 namespace Bonds.Infrastructure.Scheduling;
 
 /// <summary>
-/// Полный цикл "синк → пересчёт → сигналы" (plan/07 Часть B): синк T-Invest/MOEX
+/// Полный цикл "синк → пересчёт → сигналы": синк T-Invest/MOEX
 /// (<see cref="BondSyncService"/>) → построение holdings с метриками inline (БЕЗ отдельной
 /// персистентности снимка метрик — см. plan/07 преамбула: "пересчитывай on-demand при каждом
 /// тике") → проекция денежного потока (<see cref="CashFlowProjectionOrchestrator"/>) → снимок
@@ -25,7 +25,7 @@ namespace Bonds.Infrastructure.Scheduling;
 /// <b>Lifetime: Singleton.</b> Должен переживать отдельные HTTP-запросы/тики хостед-сервиса,
 /// чтобы статус (<see cref="GetStatus"/>) и защита от параллельного запуска (семафор) были
 /// общими для вызовов из <see cref="SyncSchedulerHostedService"/> и будущего
-/// <c>POST /api/sync</c> (этап 08). Поэтому scoped-зависимости (репозитории, BondSyncService и
+/// <c>POST /api/sync</c>. Поэтому scoped-зависимости (репозитории, BondSyncService и
 /// другие Scoped-сервисы) резолвятся ВНУТРИ <see cref="RunCycleAsync"/> через
 /// <see cref="IServiceScopeFactory.CreateScope"/> — тот же паттерн, что у cashpulse
 /// ExchangeRateRefreshService (plan/00 "Эталон фоновых задач").
@@ -145,7 +145,7 @@ public sealed class SyncCycleService : ISyncCycleRunner
 
         var asOf = BusinessClock.MoscowToday();
 
-        // Диагностика токена (plan/13 часть B) — вычисляется отдельно от шага синка ниже, чтобы
+        // Диагностика токена — вычисляется отдельно от шага синка ниже, чтобы
         // здоровье синка (GET /api/sync/status) отражало причину сбоя явным флагом, а не требовало
         // от фронта парсить текст ошибки. Заведённый Account уже найден выше — "пользователь есть".
         var tokenProvider = sp.GetRequiredService<ITInvestTokenProvider>();
@@ -178,7 +178,7 @@ public sealed class SyncCycleService : ISyncCycleRunner
             result.Errors.Add($"Sync: непредвиденная ошибка ({ex.GetType().Name})");
         }
 
-        // --- 1a. Watchlist (задача 20 часть A): справочник/расписания/котировка бумаг без позиции.
+        // --- 1a. Watchlist: справочник/расписания/котировка бумаг без позиции.
         // Отдельный шаг, независимый от счёта/токена T-Invest — не влияет на позиции/сигналы ниже,
         // поэтому не должен блокировать остальной цикл при собственной ошибке.
         try
@@ -262,7 +262,7 @@ public sealed class SyncCycleService : ISyncCycleRunner
     }
 
     /// <summary>
-    /// Шаг «События» (plan/40): собирает <see cref="SignalEvaluationInput"/> (holdings — через
+    /// Шаг «События»: собирает <see cref="SignalEvaluationInput"/> (holdings — через
     /// <see cref="PortfolioHoldingsBuilder"/>, расписания открытых позиций — из репозиториев; пороги —
     /// <c>UserSettings</c> поверх дефолтов <see cref="SignalEngineOptions"/>; свободные деньги —
     /// <c>accounts.cash_rub</c>), прогоняет <see cref="SignalsEngine.Evaluate"/> (ПОЛНЫЙ набор активных

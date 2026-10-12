@@ -44,7 +44,7 @@ import type {
 const REPLACEMENT_HORIZON_YEARS = 2;
 
 /**
- * Задача 37 часть C.3: окно фильтра «похожая дюрация» на кандидатах — ТО ЖЕ значение, что бэкенд
+ * Окно фильтра «похожая дюрация» на кандидатах — ТО ЖЕ значение, что бэкенд
  * использует для «сравнимых» пар дюраций в матрице замен (см.
  * `ReplacementMatrixService.ComparableDurationWindowYears`,
  * src/Bonds.Core/Analytics/ReplacementMatrixService.cs:65). Продублировано константой здесь —
@@ -124,15 +124,15 @@ const MODE_OPTIONS: { label: string; value: ReplacementCandidatesMode | 'search'
 /**
  * Панель подбора замены на карточке слабой позиции (plan/35 §B, задача 37 переносит карточку
  * выгоды под выбранную строку + добавляет фильтр «похожая дюрация») — три режима: «доходные
- * рынка»/«дешёвые соседи (RV)» читают банк-кандидатов через GET /replacement-candidates (задача 33)
+ * рынка»/«дешёвые соседи (RV)» читают банк-кандидатов через GET /replacement-candidates
  * и рендерят их с риск-сигналами; «поиск» переиспользует существующий <see>MarketComparator</see>
- * (задача 27) без изменений интерфейса. Клик по банк-кандидату материализует бумагу
+ * без изменений интерфейса. Клик по банк-кандидату материализует бумагу
  * (POST /universe/{secid}/materialize, тот же путь, что MarketComparator.handleSelect/ручное
  * добавление в BasketConstructor) и считает точную выгоду через POST /analytics/replacement —
  * результат рендерится тем же <see>ReplacementBreakdown</see>, что MarketComparator,
  * непосредственно под строкой выбранного кандидата (задача 37 часть B, было — после всего списка).
  * Отказ GET /replacement-candidates не роняет карточку/страницу — просто показывает ошибку в панели.
- * <para><b>holdDurationYears</b> (задача 37 часть C) — дюрация заменяемой позиции
+ * <para><b>holdDurationYears</b> — дюрация заменяемой позиции
  * (<c>ComparisonRow.modifiedDuration</c>), нужна фильтру «похожая дюрация» для окна вокруг неё.</para>
  */
 function ReplacementPanel({
@@ -151,11 +151,11 @@ function ReplacementPanel({
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  // Задача 37 часть C.3: клиентский фильтр «похожая дюрация (±ComparableDurationWindowYears лет)» —
+  // Клиентский фильтр «похожая дюрация (±ComparableDurationWindowYears лет)» —
   // дефолт ВЫКЛ (план: не усекать список неожиданно для пользователя, который его ещё не открывал).
   const [durationFilterEnabled, setDurationFilterEnabled] = useState(false);
 
-  // Задача 38 часть C.3: клиентский фильтр «надёжность не хуже уровня» — тот же приём, что фильтр
+  // Клиентский фильтр «надёжность не хуже уровня» — тот же приём, что фильтр
   // дюрации выше (уже загруженный список, без похода на бэкенд); дефолт 'all' (план: не усекать
   // список неожиданно).
   const [reliabilityFilter, setReliabilityFilter] = useState<ReliabilityFilterValue>('all');
@@ -166,7 +166,7 @@ function ReplacementPanel({
   const [materialized, setMaterialized] = useState<MaterializeResponse | null>(null);
   const [replacement, setReplacement] = useState<ReplacementResponse | null>(null);
 
-  // Задача 37 часть B.2: карточка выгоды должна попадать во вьюпорт после раскрытия (строка может
+  // Карточка выгоды должна попадать во вьюпорт после раскрытия (строка может
   // быть у нижнего края списка) — scrollIntoView с block:'nearest' не скроллит, если уже видна.
   const resultRef = useRef<HTMLDivElement>(null);
 
@@ -219,7 +219,7 @@ function ReplacementPanel({
 
   const handleSelectCandidate = async (secid: string) => {
     if (selectedSecid === secid) {
-      // Задача 37 часть B.1: повторный клик по уже выбранной строке сворачивает карточку выгоды.
+      // Повторный клик по уже выбранной строке сворачивает карточку выгоды.
       // T-37 fix: инкремент токена инвалидирует уже летящий запрос выбора этой же строки — иначе
       // его поздний resolve мог бы снова раскрыть только что свёрнутую карточку.
       selectRequestIdRef.current += 1;
@@ -257,10 +257,10 @@ function ReplacementPanel({
     }
   };
 
-  // Задача 37 часть C.3: окно ±ComparableDurationWindowYears вокруг дюрации заменяемой позиции;
+  // Окно ±ComparableDurationWindowYears вокруг дюрации заменяемой позиции;
   // кандидаты без дюрации ИЛИ позиция без дюрации (holdDurationYears===null, окно не определить) —
   // скрываются при включённом фильтре, честнее, чем показать их без критерия сравнения.
-  // Задача 38 часть C.3: фильтр надёжности комбинируется (И) с фильтром дюрации — оба клиентские
+  // Фильтр надёжности комбинируется (И) с фильтром дюрации — оба клиентские
   // над уже загруженным списком, тот же приём.
   const filteredCandidates = candidates
     .filter(
@@ -273,7 +273,7 @@ function ReplacementPanel({
     .filter((c) => meetsReliabilityFilter(c.riskSignals.reliability, reliabilityFilter));
   const isAnyClientFilterActive = durationFilterEnabled || reliabilityFilter !== 'all';
 
-  /** Карточка выгоды выбранного кандидата (задача 37 часть B) — рендерится под строкой ниже. */
+  /** Карточка выгоды выбранного кандидата — рендерится под строкой ниже. */
   const renderBenefitCard = () => (
     <div style={{ marginTop: 8 }}>
       {isSelecting && (
@@ -462,7 +462,7 @@ function WeakPositionCard({ row, reasons }: { row: ComparisonRow; reasons: { kin
 }
 
 /**
- * Блок 1 «Слабые позиции → подобрать замену» (plan/35) — объединяет прежние «слабые звенья» +
+ * Блок 1 «Слабые позиции → подобрать замену» — объединяет прежние «слабые звенья» +
  * «матрица замен» + «RV-секцию дешёвых соседей» в один сценарий: список самых слабых по доходности
  * позиций, у каждой — раскрывашка режимов подбора замены (см. <see>ReplacementPanel</see>).
  */
@@ -521,7 +521,7 @@ function WeakLinksSection() {
   );
 }
 
-/** Секция «Watchlist» (plan/20 §B.1) — ручной список бумаг вне текущих позиций: ввод ISIN + заметка, таблица метрик, удаление. */
+/** Секция «Watchlist» — ручной список бумаг вне текущих позиций: ввод ISIN + заметка, таблица метрик, удаление. */
 function WatchlistSection() {
   const { items, disclaimer, isLoading, error, isAdding, addError, load, add, remove, clearAddError } =
     useWatchlistStore();
@@ -658,7 +658,7 @@ function WatchlistSection() {
  * один блок): Блок 1 «Слабые позиции → подобрать замену» (<see>WeakLinksSection</see>, поглощает
  * прежние «слабые звенья»+«матрица замен»+«RV дешёвые соседи») и Блок 2 «Куда вложить сумму»
  * (<see>BasketConstructor</see>, задача 35 добавила переключатель источника кандидатов). Watchlist —
- * вспомогательная секция внизу (задача 20), независимый стор/загрузка. Дисклеймер сверху страницы +
+ * вспомогательная секция внизу, независимый стор/загрузка. Дисклеймер сверху страницы +
  * дисклеймер каждого блока (текст бэкенда). Все формулировки — оценочные, не индивидуальные
  * инвестрекомендации.
  */
@@ -668,7 +668,7 @@ export function Recommendations() {
 
   useEffect(() => {
     load();
-    // Задача 30: RV грузится ОТДЕЛЬНЫМ вызовом (не Promise.all внутри useRecommendationsStore.load) —
+    // RV грузится ОТДЕЛЬНЫМ вызовом (не Promise.all внутри useRecommendationsStore.load) —
     // отказ GET /api/analytics/relative-value не должен блокировать/ронять остальную страницу.
     loadRelativeValue();
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -1,7 +1,7 @@
 namespace Bonds.Core.Models;
 
 /// <summary>
-/// Один дневной снимок кэша истории цены инструмента (plan/19 §A) — зеркалит поля
+/// Один дневной снимок кэша истории цены инструмента — зеркалит поля
 /// <c>Bonds.Infrastructure.Connectors.Moex.MoexHistoryPricePoint</c>, но персистентный (таблица
 /// <c>instrument_price_history</c>), чтобы график цены карточки позиции не ходил в MOEX ISS при
 /// каждом открытии. <see cref="ClosePricePercent"/> — null для дней без сделки (тот же смысл,

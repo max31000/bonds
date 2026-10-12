@@ -18,7 +18,7 @@ export function fetchComparison(): Promise<ComparisonResponse> {
 }
 
 /**
- * POST /api/analytics/replacement — «держать A vs переложиться в B» (plan/17 §A). Задача 35:
+ * POST /api/analytics/replacement — «держать A vs переложиться в B». Задача 35:
  * единый путь оценки выгоды выбранного кандидата — вызывается из блока 1 после materialize
  * выбранного кандидата (mode=market/rv/поиск), тот же путь, что раньше использовал MarketComparator.
  */

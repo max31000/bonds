@@ -9,7 +9,7 @@ using Microsoft.Extensions.Options;
 namespace Bonds.Infrastructure.Quotes;
 
 /// <summary>
-/// Лёгкий контур "только цены" (plan/16 часть A). Раз в <see cref="LiveQuotesOptions.PollingInterval"/>
+/// Лёгкий контур "только цены". Раз в <see cref="LiveQuotesOptions.PollingInterval"/>
 /// в торговые часы MOEX опрашивает текущие цены открытых позиций через существующий
 /// <see cref="ITInvestPortfolioClient.GetQuotesAsync"/> и пишет тики в intraday_quotes.
 /// <para>

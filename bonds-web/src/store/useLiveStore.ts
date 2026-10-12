@@ -10,7 +10,7 @@ interface LiveStore {
 }
 
 /**
- * Живое состояние позиций (plan/16 часть B) — держится отдельно от usePositionsStore (которое
+ * Живое состояние позиций — держится отдельно от usePositionsStore (которое
  * кэширует GET /api/positions с расчётными метриками), чтобы поллинг раз в 60 сек не перезаписывал
  * доходности/дюрации/G-спред и не гонял их пересчёт впустую. Positions.tsx мержит оба стора по
  * positionId при рендере (см. usePositionsStore + useLiveStore.positionsById).

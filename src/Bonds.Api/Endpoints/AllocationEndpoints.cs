@@ -35,7 +35,7 @@ public static class AllocationEndpoints
     /// comparison/replacement, лот берётся равным 1 (в модели <c>Instrument</c> нет поля размера
     /// лота — см. doc-comment плана: при отсутствии источника лота считаем 1 и помечаем
     /// <c>lotSizeAssumed</c>, а не падаем/выдумываем данные); <c>market</c>/<c>recommended</c>
-    /// (задача 34) строят кандидатов из ВСЕЙ фикс-купонной вселенной банка <c>bond_universe</c> —
+    /// строят кандидатов из ВСЕЙ фикс-купонной вселенной банка <c>bond_universe</c> —
     /// см. <see cref="BuildMarketAllocationResponseAsync"/>. <paramref name="includeWatchlist"/>
     /// осмыслен только для <c>portfolio</c> (для market/recommended игнорируется — вся вселенная и
     /// так шире watchlist).
@@ -77,7 +77,7 @@ public static class AllocationEndpoints
 
         var accountId = await PositionsEndpoints.ResolveAccountIdAsync(currentUser, accountRepo);
 
-        // Plan/22 часть E: ставка покупки для оценки грязной цены лота — через резолвер (override →
+        // Ставка покупки для оценки грязной цены лота — через резолвер (override →
         // оценка из журнала → дефолт), не захардкоженная константа. Задача 34: market/recommended не
         // зависят от портфеля, но тоже платят комиссию за покупку — резолвим ставку, если есть
         // привязанный счёт, иначе дефолт (тот же фолбэк, что раньше был только у "нет аккаунта").
@@ -122,7 +122,7 @@ public static class AllocationEndpoints
             .Select(h =>
             {
                 var pricePerUnitRub = h.MarketValueRub / h.Quantity;
-                // Задача 24: pricePerUnitRub — грязная цена (чистая + НКД на бумагу, см. doc-comment
+                // pricePerUnitRub — грязная цена (чистая + НКД на бумагу, см. doc-comment
                 // PortfolioHoldingsBuilder); раскладываем на компоненты для UI, не для расчёта.
                 var accruedRub = h.AccruedPerBondRub;
                 var cleanPriceRub = pricePerUnitRub - accruedRub;
@@ -144,7 +144,7 @@ public static class AllocationEndpoints
                     CleanPriceRub = cleanPriceRub,
                     AccruedRub = accruedRub,
                     CommissionRub = commissionRub,
-                    // Задача 31 часть B.3: флоатер/индексируемая исключаются из аллокации через skip
+                    // Флоатер/индексируемая исключаются из аллокации через skip
                     // (NotComparable), не ранжируются вместе с обычной бумагой по CurrentYield.
                     // Намеренно НЕ полный YieldComparability.IsComparable (тот же, что PostReplacement/
                     // GetRelativeValue используют) — DataIncomplete здесь сознательно не гейтится этим
@@ -184,7 +184,7 @@ public static class AllocationEndpoints
                 .Where(h => !h.IsOutOfScopeCurrency)
                 .Select(h =>
                 {
-                    // Задача 24: Quantity=1 у watchlist-holding (см. doc-comment BuildForInstrumentsAsync)
+                    // Quantity=1 у watchlist-holding (см. doc-comment BuildForInstrumentsAsync)
                     // — MarketValueRub уже цена одной бумаги (грязная).
                     var accruedRub = h.AccruedPerBondRub;
                     var cleanPriceRub = h.MarketValueRub - accruedRub;
@@ -206,7 +206,7 @@ public static class AllocationEndpoints
                         CleanPriceRub = cleanPriceRub,
                         AccruedRub = accruedRub,
                         CommissionRub = commissionRub,
-                        // Задача 31 часть B.3: см. комментарий в портфельной ветке выше — тот же предикат.
+                        // См. комментарий в портфельной ветке выше — тот же предикат.
                         IsComparable = !h.IsFloater && !h.IsIndexed,
                     };
                 })
@@ -233,7 +233,7 @@ public static class AllocationEndpoints
                 CleanCostRub = a.CleanCostRub,
                 AccruedCostRub = a.AccruedCostRub,
                 CommissionCostRub = a.CommissionCostRub,
-                // Задача 34 часть A.2: source=portfolio может тоже нести риск-сигналы, если бумага
+                // source=portfolio может тоже нести риск-сигналы, если бумага
                 // нашлась в банке по ISIN — план явно допускает более простую альтернативу (null),
                 // если не находится/не резолвится; здесь сознательно null (см. NEEDS DECISION в
                 // отчёте задачи — потребует resolve-по-ISIN на КАЖДУЮ строку портфеля, план это не
@@ -256,9 +256,9 @@ public static class AllocationEndpoints
         return Results.Ok(dto);
     }
 
-    // ─── GET /api/analytics/allocation?source=market|recommended (задача 34) ───────────────────
+    // ─── GET /api/analytics/allocation?source=market|recommended ───────────────────
 
-    /// <summary>Задача 34 часть B.4 — верхняя граница числа кандидатов вселенной банка (после
+    /// <summary>Верхняя граница числа кандидатов вселенной банка (после
     /// гигиенического + флоатер + [для recommended] риск-фильтра), реально участвующих в жадном
     /// проходе. Банк ~3400 строк — без потолка ответ разрастался бы; "не молча" — см.
     /// <see cref="AllocationResponseDto.CandidatePoolTruncated"/>/дисклеймер с фактическими числами.</summary>
@@ -278,7 +278,7 @@ public static class AllocationEndpoints
         "индивидуальной инвестиционной рекомендацией.";
 
     /// <summary>
-    /// Задача 34 часть B — source=market/recommended: кандидаты из ВСЕЙ гигиенически-чистой
+    /// source=market/recommended: кандидаты из ВСЕЙ гигиенически-чистой
     /// фикс-купонной вселенной банка (<c>bond_universe</c>, через <see cref="UniverseHygieneFilter"/>),
     /// НЕ holdings портфеля — точный движок здесь не вызывается, только банк-статистика (тот же
     /// принцип "двухъярусной архитектуры", что <see cref="GetReplacementCandidates"/> mode=market;
@@ -313,14 +313,14 @@ public static class AllocationEndpoints
             .Where(e => UniverseHygieneFilter.Evaluate(e, hygieneOptions, asOf) == HygieneHiddenReason.None)
             .Where(e => e.IsFloater != true)
             .Where(e => e.YieldFraction is not null && e.DurationYears is not null && e.PricePercent is not null)
-            // Задача 34 часть B.1: FaceValue не входит в перечень плана буквально, но без него нечем
+            // FaceValue не входит в перечень плана буквально, но без него нечем
             // перевести PricePercent в рубли (PricePercent/100 × FaceValue) — тот же принцип "нечем
             // оценить лот", что и для DurationYears/PricePercent.
             .Where(e => e.FaceValue is > 0m)
             .ToList();
 
         var snapshot = await snapshotBuilder.GetSnapshotAsync(ct);
-        // Задача 38 часть A.3: словарь хранит уже готовый RiskSignalsDto (не "сырой" CandidateRiskSignals)
+        // Словарь хранит уже готовый RiskSignalsDto (не "сырой" CandidateRiskSignals)
         // — светофор надёжности (ToRiskSignalsDto→Aggregate) нуждается в ListLevel/Sector банк-записи,
         // которые есть здесь (entry), но не были бы доступны в точке потребления ниже (a.Secid).
         var signalsBySecid = new Dictionary<string, RiskSignalsDto>(StringComparer.OrdinalIgnoreCase);
@@ -427,7 +427,7 @@ public static class AllocationEndpoints
     }
 
     /// <summary>
-    /// Задача 34 часть B.1: маппинг банк-записи в кандидата аллокации. Цена лота (рубли) =
+    /// Маппинг банк-записи в кандидата аллокации. Цена лота (рубли) =
     /// PricePercent/100 × FaceValue (контракт единиц — см. docs/CODEBASE-GUIDE.md) + комиссия
     /// покупки; банк НЕ хранит НКД отдельной строкой на бумагу (нет поля в <c>BondUniverseEntry</c>)
     /// — приближение "чистая цена без НКД" (AccruedRub=0), задокументировано, тот же уровень
@@ -466,7 +466,7 @@ public static class AllocationEndpoints
     // ─── POST /api/analytics/basket ─────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Конструктор портфеля (plan/29 §B.2) — «собрал корзину процентами → штуки + what-if». Вход —
+    /// Конструктор портфеля — «собрал корзину процентами → штуки + what-if». Вход —
     /// сумма + строки {instrumentId, weightFraction} (доля 0..1, Σ ≤ 1 — та же конвенция, что
     /// <see cref="BasketBuilderService"/>). Кандидаты собираются тем же путём, что
     /// <see cref="GetAllocation"/> (holdings портфеля через <see cref="PortfolioHoldingsBuilder.BuildForAccountAsync"/>,

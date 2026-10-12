@@ -1,7 +1,7 @@
 namespace Bonds.Infrastructure.Connectors.Moex;
 
 /// <summary>
-/// Одна строка снимка всей рыночной вселенной облигаций MOEX (задача 26 часть A) —
+/// Одна строка снимка всей рыночной вселенной облигаций MOEX —
 /// <c>/iss/engines/stock/markets/bonds/securities.json?iss.only=securities,marketdata</c>,
 /// слитые по (SECID, BOARDID) строки блоков <c>securities</c> (справочные параметры выпуска) и
 /// <c>marketdata</c> (текущие котировки/доходность/дюрация). Единицы — КАК ПРИШЛИ ОТ MOEX

@@ -1,7 +1,7 @@
 import { apiClient } from './client';
 import type { IntradayRange, LivePositionsResponse, PortfolioIntradayResponse } from './types';
 
-/** GET /api/live/positions — лёгкий поллинг цен/дневного изменения по открытым позициям (plan/16 часть A). */
+/** GET /api/live/positions — лёгкий поллинг цен/дневного изменения по открытым позициям. */
 export function fetchLivePositions(): Promise<LivePositionsResponse> {
   return apiClient.get<LivePositionsResponse>('/live/positions');
 }

@@ -1,7 +1,7 @@
 namespace Bonds.Core.Analytics;
 
 /// <summary>
-/// Задача 30 часть A: границы дюрационных корзин, вынесенные из <see cref="PortfolioCompositionService"/>
+/// Границы дюрационных корзин, вынесенные из <see cref="PortfolioCompositionService"/>
 /// в общий хелпер — переиспользуются композицией портфеля (ByDurationBucket) И relative-value
 /// корзинами (<see cref="RelativeValueService"/>), чтобы UI показывал бумагу в ТОЙ ЖЕ корзине, что
 /// и разрез композиции портфеля (план явно требует консистентность, не копипасту границ).

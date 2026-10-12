@@ -53,7 +53,7 @@ export const useSyncStore = create<SyncStore>()((set, get) => ({
         await sleep(POLL_INTERVAL_MS);
       }
 
-      // Статус после ручного синка (plan/13 часть B) — тот же снимок, что и refreshStatus,
+      // Статус после ручного синка — тот же снимок, что и refreshStatus,
       // чтобы бейдж «Ошибка синка/Токен не подключён» в шапке обновился без отдельного вызова.
       set({ isRunning: false, status: latestStatus ?? get().status });
       return result;

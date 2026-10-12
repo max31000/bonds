@@ -4,7 +4,7 @@ using Microsoft.Extensions.Logging;
 namespace Bonds.Infrastructure.Sync;
 
 /// <summary>
-/// Задача 20 (часть A): синк watchlist-бумаг (ISIN без позиции). Переиспользует
+/// Синк watchlist-бумаг (ISIN без позиции). Переиспользует
 /// <see cref="InstrumentEnrichmentService.EnrichByIsinAsync"/> — единый путь заведения в
 /// <c>instruments</c> + обогащения расписаниями/котировкой, вынесенный в задаче 27 (общий с
 /// материализацией бумаги из банка облигаций, <c>POST /api/universe/{secid}/materialize</c>), чтобы
@@ -64,8 +64,8 @@ public sealed class WatchlistSyncService
     /// Обогащает справочник + обновляет котировку для ОДНОГО ISIN — переиспользуется и циклом синка
     /// (<see cref="SyncAllAsync"/>), и синхронным добавлением из <c>POST /api/watchlist</c>
     /// (WatchlistEndpoints), чтобы бумага появлялась с метриками сразу после добавления, не
-    /// дожидаясь следующего тика планировщика (plan/20 §A.4). Тонкая обёртка над
-    /// <see cref="InstrumentEnrichmentService.EnrichByIsinAsync"/> (задача 27) — сохранена ради
+    /// дожидаясь следующего тика планировщика. Тонкая обёртка над
+    /// <see cref="InstrumentEnrichmentService.EnrichByIsinAsync"/> — сохранена ради
     /// обратной совместимости вызовов (WatchlistEndpoints, SyncCycleService).
     /// </summary>
     public Task<ulong?> SyncOneAsync(string isin, CancellationToken ct = default) =>

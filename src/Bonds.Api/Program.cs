@@ -44,7 +44,7 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 
 var app = builder.Build();
 
-// Единый формат ошибок (plan/08) — должен оборачивать весь остальной конвейер, иначе
+// Единый формат ошибок — должен оборачивать весь остальной конвейер, иначе
 // необработанные исключения дальше по цепочке не попадут в этот middleware.
 app.UseMiddleware<ErrorHandlingMiddleware>();
 
@@ -82,7 +82,7 @@ if (!app.Environment.IsEnvironment("Testing"))
     }
 }
 
-// Этап 08: контракты для фронта (plan/08) — все защищены FallbackPolicy по умолчанию.
+// Контракты для фронта — все защищены FallbackPolicy по умолчанию.
 app.MapPositionsEndpoints();
 app.MapCashFlowEndpoints();
 app.MapXirrEndpoints();

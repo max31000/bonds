@@ -42,7 +42,7 @@ function toDateParam(horizon: Horizon): string | undefined {
 
 /**
  * Экран денежного потока: календарь поступлений по месяцам (брутто/налог/нетто) +
- * даты освобождения тела долга (этап 09b §B.2).
+ * даты освобождения тела долга.
  */
 export function Cashflow() {
   const { byMonth, byPosition, principalReleases, nextPayments, disclaimer, isLoading, error, load } =

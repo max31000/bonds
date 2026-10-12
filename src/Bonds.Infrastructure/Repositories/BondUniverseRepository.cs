@@ -8,7 +8,7 @@ using MySqlConnector;
 namespace Bonds.Infrastructure.Repositories;
 
 /// <summary>
-/// Задача 26 часть B.3 — снимок вселенной облигаций MOEX + дневная история. Батчевый upsert
+/// Снимок вселенной облигаций MOEX + дневная история. Батчевый upsert
 /// собирает ОДНУ multi-row INSERT ... ON DUPLICATE KEY UPDATE команду на весь снимок (не N
 /// отдельных INSERT) — иначе ~3000 round-trip'ов к MySQL превращают refresh из секунд в десятки
 /// секунд/минуты (тот же принцип, что явно требует plan/26 часть B.3). Разбито на суб-батчи по

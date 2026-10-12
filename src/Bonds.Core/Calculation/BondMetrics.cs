@@ -48,7 +48,7 @@ public sealed class BondMetrics
     /// <summary>Горизонт, до которого фактически считались метрики (погашение либо оферта).</summary>
     public required DateOnly HorizonDate { get; init; }
 
-    // ─── Флаги качества/применимости (plan/05 Часть C) ────────────────────────
+    // ─── Флаги качества/применимости ────────────────────────
 
     /// <summary>Бумага с плавающим купоном — YTM не считается, см. <see cref="CurrentYield"/>.</summary>
     public required bool IsFloater { get; init; }

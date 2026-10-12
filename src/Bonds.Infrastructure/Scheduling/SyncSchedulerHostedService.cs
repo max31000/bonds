@@ -72,8 +72,8 @@ public sealed class SyncSchedulerHostedService : BackgroundService
         }
         catch (TimeZoneNotFoundException)
         {
-            // Windows-фолбэк (plan/07) — IANA ID недоступен только в редких Windows-окружениях
-            // без обновлённых данных часовых зон; деплой — Linux (plan/00 §5), сюда дойдёт редко.
+            // Windows-фолбэк — IANA ID недоступен только в редких Windows-окружениях
+            // без обновлённых данных часовых зон; деплой — Linux, сюда дойдёт редко.
             return TimeZoneInfo.FindSystemTimeZoneById("Russian Standard Time");
         }
     }
@@ -137,7 +137,7 @@ public sealed class SyncSchedulerHostedService : BackgroundService
     }
 
     /// <summary>
-    /// Plan/13 часть D: только для ПЛАНОВОГО (не ручного force-refresh — этот метод вызывается
+    /// Только для ПЛАНОВОГО (не ручного force-refresh — этот метод вызывается
     /// исключительно из <see cref="TickAsync"/>) цикла — если он завершился с ошибками или
     /// протухшим/отсутствующим токеном, шлём Telegram-алерт владельцу, не чаще одного раза в
     /// сутки на уникальный набор ошибок (<see cref="SyncAlertThrottle"/>). Сбой отправки не

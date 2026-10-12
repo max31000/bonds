@@ -19,7 +19,7 @@ import { DIRTY_PRICE_TOOLTIP_TEXT } from '../utils/positionsDisplay';
 import type { CompositionSlice, XirrResponse, CashflowResponse, LivePositionsResponse, PositionsResponse } from '../api/types';
 import { formatRub, formatPercent, formatSharePercent, formatDate } from '../utils/format';
 
-/** Задача 24: та же подсказка про «грязные» цены, что и у таблицы позиций (positionsDisplay.ts) — один источник текста. */
+/** Та же подсказка про «грязные» цены, что и у таблицы позиций (positionsDisplay.ts) — один источник текста. */
 const DIRTY_PRICE_EXPLANATION = DIRTY_PRICE_TOOLTIP_TEXT;
 
 const FLOW_TYPE_LABEL: Record<string, string> = {
@@ -33,7 +33,7 @@ const FLOW_TYPE_LABEL: Record<string, string> = {
 
 /**
  * KPI «Стоимость портфеля» — сумма из GET /api/positions (последний синк) с дельтой за день из
- * GET /api/live/positions, если live-контур (plan/16) уже накопил хотя бы один тик. Дельта
+ * GET /api/live/positions, если live-контур уже накопил хотя бы один тик. Дельта
  * скрывается, пока живых данных нет — план прямо требует не выдумывать значение.
  */
 function PortfolioValueKpi({ positions }: { positions: PositionsResponse | null }) {
@@ -142,7 +142,7 @@ function UnreadSignalsKpi() {
     loadSignals();
   }, [loadSignals]);
 
-  // Только активные непрочитанные Critical+Warning — Info и подтверждённые не шумят (plan/40).
+  // Только активные непрочитанные Critical+Warning — Info и подтверждённые не шумят.
   const unreadCount = countAttention(signals);
 
   return (
@@ -169,7 +169,7 @@ function UnreadSignalsKpi() {
   );
 }
 
-/** Мини-композиция по эмитентам: топ-5 + «прочие» (plan/18 часть B.3), компактный donut. */
+/** Мини-композиция по эмитентам: топ-5 + «прочие», компактный donut. */
 function MiniCompositionWidget() {
   const { data, isLoading, error } = useWidgetData(fetchComposition, []);
   const t = useChartTheme();
@@ -243,7 +243,7 @@ function MiniCompositionWidget() {
   );
 }
 
-/** Ближайшие 30 дней денежного потока — компактный список из GET /api/cashflow (plan/18 часть B.4). */
+/** Ближайшие 30 дней денежного потока — компактный список из GET /api/cashflow. */
 function UpcomingCashflowWidget() {
   const { data, isLoading, error } = useWidgetData(fetchCashflow, []);
 
@@ -297,7 +297,7 @@ function UpcomingCashflowWidget() {
 }
 
 /**
- * Главная страница-дашборд (plan/18 часть B) — «взгляд за 5 секунд»: сколько всего, что
+ * Главная страница-дашборд — «взгляд за 5 секунд»: сколько всего, что
  * изменилось, что требует внимания. Таблица позиций переехала на /positions.
  * <p>
  * Каждая карточка грузит свои данные независимо (useWidgetData/собственные сторы) — отказ

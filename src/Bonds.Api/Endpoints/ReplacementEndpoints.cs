@@ -72,7 +72,7 @@ public static class ReplacementEndpoints
     // ─── POST /api/analytics/replacement ────────────────────────────────────────────────────
 
     /// <summary>
-    /// «Держать A vs переложиться в B» (plan/17 §A.2). Target по умолчанию — позиция портфеля
+    /// «Держать A vs переложиться в B». Target по умолчанию — позиция портфеля
     /// (<see cref="ReplacementRequestDto.TargetPositionId"/>, контракт не изменён — существующие
     /// вызовы фронта продолжают работать без изменений).
     /// <para>
@@ -118,9 +118,9 @@ public static class ReplacementEndpoints
             if (targetPosition is null) throw new NotFoundException($"Позиция {request.TargetPositionId} не найдена в портфеле");
         }
 
-        // Задача 31 часть B.4: цель-флоатер/индексируемая несравнима по доходности с фикс-купоном —
+        // Цель-флоатер/индексируемая несравнима по доходности с фикс-купоном —
         // её "спред" = CurrentYield(флоатер) − YtmEffective(фикс), бессмысленная величина. Фронт
-        // (задача 32) заранее исключит такие бумаги из выпадашки target'ов, это — защита контракта
+        // заранее исключит такие бумаги из выпадашки target'ов, это — защита контракта
         // на случай прямого вызова API. DataIncomplete НЕ блокирует здесь (в отличие от полного
         // YieldComparability.IsComparable) — та ветка уже штатно обслуживается через
         // YieldDataIncomplete=true с 200 (см. PostReplacement_BetweenTwoPositions..., Stage08).
@@ -152,7 +152,7 @@ public static class ReplacementEndpoints
             EffectiveYield = (targetPosition.IsFloater || targetPosition.IsIndexed) ? targetPosition.CurrentYield : targetPosition.YtmEffective,
         };
 
-        // Plan/22 часть E: явные ставки в запросе по-прежнему побеждают резолвер (контракт не
+        // Явные ставки в запросе по-прежнему побеждают резолвер (контракт не
         // ломается) — резолвер вызывается, только если хотя бы одна из ставок не передана явно.
         ResolvedCommissionRate? resolved = null;
         if (request.SellCommissionRate is null || request.BuyCommissionRate is null)
@@ -185,7 +185,7 @@ public static class ReplacementEndpoints
         var sellTaxEstimateRub = sellTaxEstimate?.TaxRub;
         var netBenefitAfterTaxRub = sellTaxEstimateRub is decimal tax ? result.NetBenefitRub - tax : (decimal?)null;
 
-        // Задача 33 часть B.4: риск-сигналы для ВЫБРАННОЙ цели (не hold — план ограничивает объём
+        // Риск-сигналы для ВЫБРАННОЙ цели (не hold — план ограничивает объём
         // до "для выбранной цели") по её банк-записи (bond_universe), найденной по ISIN — снимок RV
         // уже загружен (singleton-кэш, ~раз в час), лишний I/O не добавляется. Null, если целевая
         // бумага не найдена в банке (не покрыта биржевой статистикой MOEX — например, только что
@@ -209,12 +209,12 @@ public static class ReplacementEndpoints
             BreakEvenYears = result.BreakEvenYears,
             YieldDataIncomplete = result.YieldDataIncomplete,
             Disclaimer = result.Disclaimer,
-            // Plan/22 часть E: ставка(и) и источник, который реально применился (явный запрос
+            // Ставка(и) и источник, который реально применился (явный запрос
             // выигрывает — тогда Source отражается как "явно передана запросом", см. doc-comment DTO).
             SellCommissionRateUsed = sellRate,
             BuyCommissionRateUsed = buyRate,
             CommissionRateSource = resolved?.Source.ToString() ?? "ExplicitRequest",
-            // Задача 27 часть B: формула-разбивка (см. doc-comment выше) — null, если доходность
+            // Формула-разбивка (см. doc-comment выше) — null, если доходность
             // одной из сторон не определена (YieldDataIncomplete=true).
             SpreadFraction = spreadFraction,
             CapitalRub = netProceedsAfterSale,
@@ -240,7 +240,7 @@ public static class ReplacementEndpoints
         "инвестиционная рекомендация.";
 
     /// <summary>
-    /// Задача 30 часть C — для каждой сравнимой позиции портфеля (не floater/indexed/dataIncomplete —
+    /// Для каждой сравнимой позиции портфеля (не floater/indexed/dataIncomplete —
     /// тот же предикат, что <see cref="YieldComparability.IsComparable"/>) считает отклонение
     /// точного G-спреда от сглаженной медианы её корзины (сектор × дюрационный бакет,
     /// <see cref="RelativeValueSnapshotBuilder"/>), верdict Cheap/Fair/Rich и для Rich-позиций —
@@ -322,7 +322,7 @@ public static class ReplacementEndpoints
     /// — <see cref="RelativeValueService.BasketMember"/> сам по себе несёт только поля, нужные
     /// для статистики корзин.
     /// <para>
-    /// Задача 31 часть B.2: флоатеры сюда попасть не могут — <c>snapshot.AllMembers</c> уже не
+    /// Флоатеры сюда попасть не могут — <c>snapshot.AllMembers</c> уже не
     /// содержит их (исключены в <see cref="RelativeValueSnapshotBuilder"/> ДО конструирования
     /// <see cref="RelativeValueService.BasketMember"/>, см. doc-comment билдера), поэтому здесь не
     /// нужен ещё один фильтр — он был бы избыточен.
@@ -354,9 +354,9 @@ public static class ReplacementEndpoints
     }
 
     /// <summary>
-    /// Задача 33 — общая выборка «дешёвых соседей» одной эффективной корзины (сектор × дюрация
-    /// после fallback), вынесена из <see cref="BuildCheapCandidates"/> (задача 30) для повторного
-    /// использования <see cref="BuildRvModeCandidates"/> (задача 33 часть B.3) — та же фильтрация
+    /// Общая выборка «дешёвых соседей» одной эффективной корзины (сектор × дюрация
+    /// после fallback), вынесена из <see cref="BuildCheapCandidates"/> для повторного
+    /// использования <see cref="BuildRvModeCandidates"/> — та же фильтрация
     /// (своя корзина, есть G-спред, self-exclusion по ISIN до Take) и сортировка по deviation убыв.,
     /// только с настраиваемым <paramref name="take"/> вместо константы
     /// <see cref="TopCheapCandidatesPerRichPosition"/>.
@@ -401,7 +401,7 @@ public static class ReplacementEndpoints
         "рейтинговых агентств.";
 
     /// <summary>
-    /// Задача 33 часть B — единый источник кандидатов-замен для ОДНОЙ позиции портфеля (блок 1
+    /// Единый источник кандидатов-замен для ОДНОЙ позиции портфеля (блок 1
     /// переработки «Рекомендаций»): <c>mode=market</c> — вся фикс-купонная гигиенически-чистая
     /// вселенная банка (<see cref="UniverseHygieneFilter"/>, БЕЗ флоатеров), отсортированная по
     /// доходности убыв.; <c>mode=rv</c> — дешёвые соседи по корзине сектор×дюрация ПОЗИЦИИ
@@ -469,14 +469,14 @@ public static class ReplacementEndpoints
     /// выгоду каждого кандидата эта ручка НЕ считает — та задача существующего POST
     /// /api/analytics/replacement (см. doc-comment <see cref="GetReplacementCandidates"/>).
     /// <para>
-    /// Задача 38 часть B.1: <paramref name="reliabilityFilter"/> ("не хуже уровня") применяется ДО
+    /// <paramref name="reliabilityFilter"/> ("не хуже уровня") применяется ДО
     /// <c>Take(limit)</c>, иначе топ-N по доходности мог бы целиком не пройти фильтр и вернуть
     /// меньше <paramref name="limit"/> кандидатов, хотя более доходные-но-дальше кандидаты бы
     /// прошли. Без фильтра (null) поведение НЕ меняется — сигналы считаются только для уже
     /// усечённого топ-N (дёшево); с фильтром — лениво для всей <c>eligible</c> (LINQ
     /// Select→Where→Take не материализует лишнего — вычисление останавливается, как только
     /// набрано <paramref name="limit"/> подходящих), тот же приём масштаба, что source=recommended
-    /// аллокации (задача 34).
+    /// аллокации.
     /// </para>
     /// </summary>
     private static async Task<List<ReplacementCandidateDto>> BuildMarketCandidates(
@@ -517,7 +517,7 @@ public static class ReplacementEndpoints
     /// явно требует понятный признак вместо ошибки; пустой список сам по себе — понятный признак
     /// "нет данных для RV-режима у этой позиции").
     /// <para>
-    /// Задача 38 часть B.1: <paramref name="reliabilityFilter"/> — тот же принцип "фильтр ДО
+    /// <paramref name="reliabilityFilter"/> — тот же принцип "фильтр ДО
     /// усечения", что <see cref="BuildMarketCandidates"/>: с активным фильтром корзина резолвится
     /// БЕЗ внутреннего лимита (<c>ResolveCheapBasketMembers</c> получает размер всей вселенной как
     /// верхнюю границу — корзина сектор×дюрация обычно << всей вселенной, реального урезания не
@@ -562,7 +562,7 @@ public static class ReplacementEndpoints
             Secid = entry.Secid,
             Isin = entry.Isin,
             Name = entry.ShortName ?? entry.SecName ?? entry.Secid,
-            // Задача 33 часть B.2: банк-слой (bond_universe) не хранит эмитента (issuer-поле —
+            // Банк-слой (bond_universe) не хранит эмитента (issuer-поле —
             // задача 34, НЕ заводить здесь) — null осознанно, не "не удалось определить".
             Issuer = null,
             Sector = entry.Sector,
@@ -596,7 +596,7 @@ public static class ReplacementEndpoints
             DurationYears = member.DurationYears,
             GSpreadFraction = member.GSpreadFraction,
             OfferDate = entry?.OfferDate,
-            // Задача 38: светофор по листингу/сектору ЗАПИСИ банка (не сектору члена корзины —
+            // Светофор по листингу/сектору ЗАПИСИ банка (не сектору члена корзины —
             // member.Sector может быть недоступен для гособлигаций-фоллбэка UnknownSector, entry —
             // тот же банк-снимок, что несёт ListLevel; entry может быть null, если secid не резолвится
             // в текущем снимке банка — тогда листинг/сектор неизвестны, Aggregate трактует как Yellow).
@@ -605,7 +605,7 @@ public static class ReplacementEndpoints
     }
 
     /// <summary>
-    /// Задача 33 часть B.4: риск-сигналы бумаги по её банк-записи, найденной по ISIN среди ТЕКУЩЕГО
+    /// Риск-сигналы бумаги по её банк-записи, найденной по ISIN среди ТЕКУЩЕГО
     /// снимка bond_universe (<see cref="RelativeValueSnapshotBuilder.RelativeValueSnapshot.CurrentEntriesBySecid"/>
     /// индексирован по secid, не по ISIN — банк маленький (~3400 строк), линейный поиск по значению
     /// один раз за запрос не оправдывает отдельный индекс/репозиторный метод ради единственного

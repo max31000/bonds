@@ -9,7 +9,7 @@ using Microsoft.Extensions.Options;
 namespace Bonds.Infrastructure.Universe;
 
 /// <summary>
-/// Задача 26 часть C.1 — банк облигаций MOEX: раз в час (в торговые часы) обновляет снимок ВСЕЙ
+/// Банк облигаций MOEX: раз в час (в торговые часы) обновляет снимок ВСЕЙ
 /// рыночной вселенной (не только позиций/watchlist), плюс раз в день (первый тик после закрытия
 /// торгов) пишет строку в дневную историю. Тот же паттерн устойчивости, что
 /// <see cref="Bonds.Infrastructure.Quotes.LiveQuotesPollingService"/>: try/catch вокруг тика,

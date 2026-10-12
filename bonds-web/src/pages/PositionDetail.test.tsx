@@ -194,7 +194,7 @@ describe('PositionDetail', () => {
     expect(screen.queryByTestId('if-sold-now-formula')).not.toBeInTheDocument();
   });
 
-  // Plan/22 часть E: подпись с применённой ставкой комиссии и её источником.
+  // Подпись с применённой ставкой комиссии и её источником.
   it('shows the commission rate source caption in the если-продать-сейчас card', async () => {
     server.use(
       http.get('*/api/positions/1', () =>

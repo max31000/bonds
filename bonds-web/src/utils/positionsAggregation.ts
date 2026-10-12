@@ -1,7 +1,7 @@
 import type { PositionRow } from '../api/types';
 
 /**
- * Итоговая строка таблицы позиций (plan/21 часть B.3) — суммарная стоимость портфеля и
+ * Итоговая строка таблицы позиций — суммарная стоимость портфеля и
  * средневзвешенные доходность/дюрация (веса — рыночная стоимость позиции).
  * <p>
  * Флоатеры/индексируемые бумаги исключены из средневзвешенной доходности: их «доходность»
@@ -17,7 +17,7 @@ import type { PositionRow } from '../api/types';
 export interface PositionsTotals {
   /** Сумма marketValueRub по всем позициям. */
   totalMarketValueRub: number;
-  /** Задача 24: сумма accruedTotalRub по всем позициям — уже включена в totalMarketValueRub, показывается как разложение. */
+  /** Сумма accruedTotalRub по всем позициям — уже включена в totalMarketValueRub, показывается как разложение. */
   totalAccruedRub: number;
   /**
    * Средневзвешенная доходность (YTM/currentYield для обычных бумаг), вес — рыночная стоимость.

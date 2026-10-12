@@ -224,7 +224,7 @@ public sealed class MoexIssClient : IMoexIssClient
         catch (Exception ex) { _logger.LogWarning(ex, "Failed to parse MOEX search for {Isin}", isin); return null; }
     }
 
-    /// <summary>Размер страницы ISS для блока history (дневные свечи) — 100 строк на страницу (plan/15 §A.1).</summary>
+    /// <summary>Размер страницы ISS для блока history (дневные свечи) — 100 строк на страницу.</summary>
     private const int IssHistoryPageSize = 100;
 
     /// <summary>Предохранитель от бесконечного цикла: 200 страниц × 100 = 20000 дневных строк —
@@ -290,7 +290,7 @@ public sealed class MoexIssClient : IMoexIssClient
         return points;
     }
 
-    /// <summary>Размер страницы для снимка вселенной облигаций (задача 26 часть A). ISS на этом
+    /// <summary>Размер страницы для снимка вселенной облигаций. ISS на этом
     /// эндпоинте эмпирически игнорирует start/limit и отдаёт весь рынок (~3000-3500 строк) одной
     /// страницей — 1000 запрошено "про запас", реальный размер страницы определяется ответом ISS
     /// (короткая страница = последняя, тот же критерий, что GetHistoryPricesAsync).</summary>

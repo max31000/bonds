@@ -26,7 +26,7 @@ public class IntradayQuoteRepository : IIntradayQuoteRepository
             new { quote.InstrumentId, quote.TsUtc, quote.DirtyPriceRub },
             tx);
 
-        // Retention (plan/16 часть A): удаляем строки старше 8 дней при каждой записи — не нужен
+        // Retention: удаляем строки старше 8 дней при каждой записи — не нужен
         // отдельный периодический job, таблица растёт ограниченно даже без него.
         await conn.ExecuteAsync(
             "DELETE FROM intraday_quotes WHERE ts_utc < @CutoffUtc",

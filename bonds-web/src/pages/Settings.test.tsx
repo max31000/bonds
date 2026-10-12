@@ -141,7 +141,7 @@ describe('Settings', () => {
     await waitFor(() => expect(screen.getByTestId('settings-error')).toBeInTheDocument());
   });
 
-  // Plan/22 часть D: блок «Комиссия брокера» — тариф T-Invest, авто-оценка из журнала, применённая ставка+источник.
+  // Блок «Комиссия брокера» — тариф T-Invest, авто-оценка из журнала, применённая ставка+источник.
   describe('commission section (plan/22)', () => {
     it('shows tariff, auto-estimate, and effective rate from the journal', async () => {
       server.use(

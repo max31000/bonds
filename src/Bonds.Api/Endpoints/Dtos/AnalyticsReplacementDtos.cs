@@ -77,7 +77,7 @@ public sealed record RelativeValueCandidateDto
 }
 
 /// <summary>
-/// Задача 33 часть B — ответ GET /api/analytics/replacement-candidates. Схема — контракт для
+/// Ответ GET /api/analytics/replacement-candidates. Схема — контракт для
 /// фронтовой задачи 35 (зеркалит буквально), не менять без согласования.
 /// </summary>
 public sealed record ReplacementCandidatesResponseDto
@@ -98,7 +98,7 @@ public sealed record ReplacementCandidateDto
     public string? Isin { get; init; }
     public required string Name { get; init; }
 
-    /// <summary>Задача 33 часть B.2: банк-слой не хранит эмитента — всегда null (issuer-поле — задача 34).</summary>
+    /// <summary>Банк-слой не хранит эмитента — всегда null (issuer-поле — задача 34).</summary>
     public string? Issuer { get; init; }
 
     public string? Sector { get; init; }
@@ -112,16 +112,16 @@ public sealed record ReplacementCandidateDto
     /// <summary>ДОЛЯ; приближённый G-спред банка (<c>BondUniverseEntry.GspreadApproxFraction</c>).</summary>
     public decimal? GSpreadFraction { get; init; }
 
-    /// <summary>Задача 37 часть A: дата оферты банк-записи (<see cref="BondUniverseEntry.OfferDate"/>),
+    /// <summary>Дата оферты банк-записи (<see cref="BondUniverseEntry.OfferDate"/>),
     /// если она есть — доходность бумаги с офертой считается движком К ОФЕРТЕ, не к погашению,
-    /// горизонт другой (см. plan/37). Null — оферты нет/не известна.</summary>
+    /// горизонт другой. Null — оферты нет/не известна.</summary>
     public DateOnly? OfferDate { get; init; }
 
     public required RiskSignalsDto RiskSignals { get; init; }
 }
 
 /// <summary>
-/// Задача 33 часть A — два ИНФОРМАЦИОННЫХ риск-сигнала кандидата (не рейтинг кредитного качества,
+/// Два ИНФОРМАЦИОННЫХ риск-сигнала кандидата (не рейтинг кредитного качества,
 /// не «надёжность» — см. doc-comment <see cref="Bonds.Core.Analytics.SignalLevel"/>): ликвидность+
 /// листинг и отклонение спреда от медианы корзины. Уровни не ранжируют кандидатов — ранжирование
 /// mode=market идёт по доходности.
@@ -145,7 +145,7 @@ public sealed record RiskSignalsDto
     public decimal? SpreadVsBasketMedianFraction { get; init; }
 
     /// <summary>
-    /// Задача 38 часть A.2 — светофор надёжности: "Green"|"Yellow"|"Red" (см.
+    /// Светофор надёжности: "Green"|"Yellow"|"Red" (см.
     /// <see cref="Bonds.Core.Analytics.ReliabilityLight"/>/<see cref="Bonds.Core.Analytics.CandidateRiskSignalService.Aggregate"/>
     /// для точной матрицы). Аддитивное поле — существующие Liquidity/Spread не меняются.
     /// <b>НЕ кредитный рейтинг</b> — сигнал по биржевой статистике, формулировка "рейтинг"
@@ -187,10 +187,10 @@ public sealed record ReplacementRequestDto
 {
     public required ulong HoldPositionId { get; init; }
 
-    /// <summary>Target — позиция портфеля (контракт не менялся). Игнорируется, если задан <see cref="TargetInstrumentId"/> (задача 20).</summary>
+    /// <summary>Target — позиция портфеля (контракт не менялся). Игнорируется, если задан <see cref="TargetInstrumentId"/>.</summary>
     public ulong TargetPositionId { get; init; }
 
-    /// <summary>Задача 20: target — бумага БЕЗ позиции (watchlist), ищется по InstrumentId. Взаимно исключим с TargetPositionId — если задан, он приоритетнее.</summary>
+    /// <summary>target — бумага БЕЗ позиции (watchlist), ищется по InstrumentId. Взаимно исключим с TargetPositionId — если задан, он приоритетнее.</summary>
     public ulong? TargetInstrumentId { get; init; }
     public required decimal HorizonYears { get; init; }
     public decimal? SellCommissionRate { get; init; }
@@ -204,7 +204,7 @@ public sealed record ReplacementResponseDto
     /// <summary>0 — target был найден по TargetInstrumentId (watchlist-holding без позиции, см. doc-comment BuildForInstrumentsAsync), не по позиции портфеля.</summary>
     public required ulong TargetPositionId { get; init; }
 
-    /// <summary>Эхо запроса — задан, только если target был watchlist-бумагой без позиции (задача 20).</summary>
+    /// <summary>Эхо запроса — задан, только если target был watchlist-бумагой без позиции.</summary>
     public ulong? TargetInstrumentId { get; init; }
     public required decimal HorizonYears { get; init; }
     public required decimal SellCommissionRub { get; init; }
@@ -216,35 +216,35 @@ public sealed record ReplacementResponseDto
     public required bool YieldDataIncomplete { get; init; }
     public required string Disclaimer { get; init; }
 
-    /// <summary>Plan/22 часть E: фактически применённая ставка продажи — ДОЛЯ (явная ставка запроса, если была передана, иначе резолвер части C).</summary>
+    /// <summary>Фактически применённая ставка продажи — ДОЛЯ (явная ставка запроса, если была передана, иначе резолвер части C).</summary>
     public required decimal SellCommissionRateUsed { get; init; }
 
-    /// <summary>Plan/22 часть E: фактически применённая ставка покупки — ДОЛЯ.</summary>
+    /// <summary>Фактически применённая ставка покупки — ДОЛЯ.</summary>
     public required decimal BuyCommissionRateUsed { get; init; }
 
-    /// <summary>Plan/22 часть E: источник ставки — строка <see cref="CommissionRateSource"/> либо "ExplicitRequest" (обе ставки заданы явно в запросе — резолвер не вызывался).</summary>
+    /// <summary>Источник ставки — строка <see cref="CommissionRateSource"/> либо "ExplicitRequest" (обе ставки заданы явно в запросе — резолвер не вызывался).</summary>
     public required string CommissionRateSource { get; init; }
 
-    /// <summary>Задача 27 часть B: спред эффективных доходностей (targetYield − holdYield) — ДОЛЯ. Null — YieldDataIncomplete.</summary>
+    /// <summary>Спред эффективных доходностей (targetYield − holdYield) — ДОЛЯ. Null — YieldDataIncomplete.</summary>
     public decimal? SpreadFraction { get; init; }
 
-    /// <summary>Задача 27 часть B: капитал, реально переходящий в target (MarketValueRub hold минус комиссия продажи), в рублях — та же величина, что MatrixPair.CapitalRub.</summary>
+    /// <summary>Капитал, реально переходящий в target (MarketValueRub hold минус комиссия продажи), в рублях — та же величина, что MatrixPair.CapitalRub.</summary>
     public required decimal CapitalRub { get; init; }
 
-    /// <summary>Задача 27 часть B: валовая выгода (спред × капитал × горизонт) ДО вычета комиссий, в рублях. Null — YieldDataIncomplete.</summary>
+    /// <summary>Валовая выгода (спред × капитал × горизонт) ДО вычета комиссий, в рублях. Null — YieldDataIncomplete.</summary>
     public decimal? GrossGainRub { get; init; }
 
-    /// <summary>Задача 27 часть B: NetBenefitRub / CapitalRub / HorizonYears — ДОЛЯ (не процент), та же формула, что MatrixPair.AnnualizedBenefitFraction.</summary>
+    /// <summary>NetBenefitRub / CapitalRub / HorizonYears — ДОЛЯ (не процент), та же формула, что MatrixPair.AnnualizedBenefitFraction.</summary>
     public decimal? AnnualizedBenefitFraction { get; init; }
 
-    /// <summary>Задача 27 часть B: оценка НДФЛ от продажи hold-позиции (13% с прибыли к средней цене входа) — null, если cost basis недоступен/журнал неполон.</summary>
+    /// <summary>Оценка НДФЛ от продажи hold-позиции (13% с прибыли к средней цене входа) — null, если cost basis недоступен/журнал неполон.</summary>
     public decimal? SellTaxEstimateRub { get; init; }
 
-    /// <summary>Задача 27 часть B: NetBenefitRub − SellTaxEstimateRub — выгода после налога. Null, если SellTaxEstimateRub недоступен.</summary>
+    /// <summary>NetBenefitRub − SellTaxEstimateRub — выгода после налога. Null, если SellTaxEstimateRub недоступен.</summary>
     public decimal? NetBenefitAfterTaxRub { get; init; }
 
     /// <summary>
-    /// Задача 33 часть B.4: информационные риск-сигналы (ликвидность+листинг, спред) для ЦЕЛИ
+    /// Информационные риск-сигналы (ликвидность+листинг, спред) для ЦЕЛИ
     /// сравнения — по её банк-записи (<c>bond_universe</c>, найдена по ISIN). Null, если целевая
     /// бумага не найдена в банке (не покрыта биржевой статистикой MOEX) — НЕ ошибка, фронт просто
     /// не показывает сигналы. См. doc-comment <see cref="RiskSignalsDto"/> — НЕ рейтинг агентств.

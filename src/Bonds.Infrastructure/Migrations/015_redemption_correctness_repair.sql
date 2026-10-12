@@ -1,4 +1,4 @@
--- plan/39: погашения и «редкие» события.
+-- Погашения и «редкие» события.
 -- 1) Переводы бумаг между счетами (T-Invest InputSecurities/OutputSecurities) — новые типы операций.
 ALTER TABLE operations
     MODIFY COLUMN type ENUM('Buy','Sell','Coupon','Amortization','Redemption','Tax','Fee','SecurityIn','SecurityOut') NOT NULL;

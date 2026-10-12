@@ -1,5 +1,5 @@
 /**
- * Форматтеры, используемые экраном таблицы позиций (этап 09a).
+ * Форматтеры, используемые экраном таблицы позиций.
  * Форматтеры для календаря/аналитики (09b) — добавляются отдельно в `utils/`.
  */
 
@@ -108,7 +108,7 @@ export function formatNumber(value: number | null | undefined, fractionDigits = 
 }
 
 /**
- * Человекочитаемый маппинг источника эффективной ставки комиссии (plan/22 части D/E) —
+ * Человекочитаемый маппинг источника эффективной ставки комиссии —
  * переиспользуется экраном настроек и подписями на карточках замен/аллокации/«если продать сейчас».
  */
 export function commissionSourceLabel(source: 'UserOverride' | 'EstimatedFromTrades' | 'Default' | 'ExplicitRequest'): string {
@@ -169,7 +169,7 @@ export function formatSharePercent(value: number | null | undefined): string {
 /**
  * Горизонт замены (min daysToHorizon пары, см. ReplacementMatrixService.HorizonYearsFor) —
  * показываем в месяцах до года, иначе в годах. Общая конвенция для карточки матрицы замен
- * (задача 23) и карточки market-сравнивалки (задача 27) — см. ReplacementBreakdown.
+ * и карточки market-сравнивалки — см. ReplacementBreakdown.
  */
 export function formatHorizon(years: number): string {
   if (years < 1) return `${Math.max(1, Math.round(years * 12))} мес`;

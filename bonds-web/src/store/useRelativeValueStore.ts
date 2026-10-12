@@ -16,7 +16,7 @@ interface RelativeValueStore {
 }
 
 /**
- * Задача 30 часть D — relative value (RV) держится в ОТДЕЛЬНОМ сторе от useRecommendationsStore/
+ * relative value (RV) держится в ОТДЕЛЬНОМ сторе от useRecommendationsStore/
  * usePositionsStore (тот же принцип, что useLiveStore для живых котировок): один bulk-запрос
  * GET /api/analytics/relative-value, результат кладётся в словарь по positionId, любой компонент
  * (бейджи на слабых звеньях, секция «дорогие/дешёвые», компактный индикатор в таблице позиций)

@@ -66,7 +66,7 @@ function maturityOrOfferLabel(row: UniverseRow): string {
   return '—';
 }
 
-/** Задача 38 часть C.2 — строки-детали тултипа светофора скринера: банк-запись не несёт полного
+/** Строки-детали тултипа светофора скринера: банк-запись не несёт полного
  * `RiskSignals` (нет отдельного поля отклонения спреда от медианы — только сырой G-спред), поэтому
  * тултип показывает то, что реально доступно: ликвидность (те же лейблы, что бейдж «Ликвидность») +
  * приближённый G-спред. Детальные бейджи ликвидности/G-спреда УЖЕ есть отдельными колонками таблицы —
@@ -80,7 +80,7 @@ function screenerReliabilityDetailLines(row: UniverseRow): string[] {
 }
 
 /**
- * Задача 32 часть B: YTM-ячейка скринера. Флоатер (`isFloater === true`) — YIELD флоатера не
+ * YTM-ячейка скринера. Флоатер (`isFloater === true`) — YIELD флоатера не
  * несравнима с YTM фикс-купона, поэтому вместо числа бейдж-предупреждение и прочерк.
  * `isFloater == null` (эвристика по BONDTYPE не распознала бумагу) — трактуем как «не флоатер»,
  * показываем доходность как обычно (контракт задачи 32: не прятать, не помечать неизвестное).
@@ -116,7 +116,7 @@ function OwnershipBadges({ row }: { row: UniverseRow }) {
   );
 }
 
-/** Кнопка «+ watchlist» — POST /api/watchlist по ISIN, оптимистичное обновление бейджа (plan/28 часть A.3). */
+/** Кнопка «+ watchlist» — POST /api/watchlist по ISIN, оптимистичное обновление бейджа. */
 function AddToWatchlistButton({ row }: { row: UniverseRow }) {
   const markInWatchlist = useScreenerStore((s) => s.markInWatchlist);
   const [isAdding, setIsAdding] = useState(false);
@@ -264,7 +264,7 @@ function FilterPanel() {
   );
 }
 
-/** Строка статуса банка — GET /api/universe/status + hiddenCount из последнего ответа таблицы (plan/28 часть A.3.1). */
+/** Строка статуса банка — GET /api/universe/status + hiddenCount из последнего ответа таблицы. */
 function StatusBar() {
   const status = useScreenerStore((s) => s.status);
   const total = useScreenerStore((s) => s.total);
@@ -411,7 +411,7 @@ function SortableHeader({ sortKey, label }: { sortKey: ScreenerSortBy; label: st
 }
 
 /**
- * Страница «Скринер» (plan/28) — весь банк облигаций MOEX таблицей: серверные фильтры/поиск/
+ * Страница «Скринер» — весь банк облигаций MOEX таблицей: серверные фильтры/поиск/
  * сортировка/пагинация по 50 (GET /api/universe, задача 26), статусная строка (GET
  * /api/universe/status), метки «в портфеле»/«в watchlist», действие «+ watchlist». Мобильная
  * версия — карточки (паттерн PositionCard из задачи 21) с накопительной пагинацией «показать
@@ -437,7 +437,7 @@ export function Screener() {
   const currentPage = Math.floor(offset / SCREENER_PAGE_SIZE) + 1;
   const totalPages = Math.max(1, Math.ceil(total / SCREENER_PAGE_SIZE));
 
-  // Задача 32 часть B: «только фикс-купон» — клиентский фильтр поверх уже загруженной страницы
+  // «только фикс-купон» — клиентский фильтр поверх уже загруженной страницы
   // (сервер не принимает параметр типа купона); isFloater == null/undefined трактуется как «не
   // флоатер» и не прячется (контракт задачи 32).
   const displayedRows = filters.fixedCouponOnly ? rows.filter((row) => row.isFloater !== true) : rows;

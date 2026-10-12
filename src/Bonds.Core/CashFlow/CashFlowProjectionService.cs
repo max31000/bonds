@@ -7,7 +7,7 @@ namespace Bonds.Core.CashFlow;
 /// Cash-Flow Projection (plan/06 Часть A, spec §7) — строит персональный календарь будущих
 /// поступлений по позиции: купоны × количество, амортизации, погашение тела, с НДФЛ 13% на
 /// купонный доход. Чистый сервис без I/O — переиспользует <see cref="BondCashFlowBuilder"/> и
-/// <see cref="OfferCutoffResolver"/> движка (этап 05), не дублирует их логику. Сборка входа из
+/// <see cref="OfferCutoffResolver"/> движка, не дублирует их логику. Сборка входа из
 /// репозиториев и персистентность результата (<see cref="Bonds.Core.Interfaces.Repositories.IProjectedCashFlowRepository"/>)
 /// — ответственность вызывающего слоя (Infrastructure/API), не этого класса.
 /// </summary>

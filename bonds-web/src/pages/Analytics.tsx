@@ -46,14 +46,14 @@ const COMPOSITION_LABEL: Record<CompositionView, string> = {
   byDurationBucket: 'Дюрация',
 };
 
-/** Полый маркер (только контур) для watchlist-точек (plan/20 §B.2) — визуально отличает "чужую" бумагу от своих позиций (сплошная заливка). */
+/** Полый маркер (только контур) для watchlist-точек — визуально отличает "чужую" бумагу от своих позиций (сплошная заливка). */
 function HollowDot(props: { cx?: number; cy?: number; fill?: string }) {
   const { cx, cy, fill } = props;
   if (cx == null || cy == null) return null;
   return <circle cx={cx} cy={cy} r={5} fill="var(--mvv-surface)" stroke={fill} strokeWidth={2} />;
 }
 
-/** Обрезает имя бумаги для подписи точки на графике (plan/18 часть C) — полное имя видно в тултипе. */
+/** Обрезает имя бумаги для подписи точки на графике — полное имя видно в тултипе. */
 function shortLabel(name: string | null | undefined): string {
   if (!name) return '';
   return name.length > 12 ? `${name.slice(0, 12)}…` : name;

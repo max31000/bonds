@@ -20,7 +20,7 @@ public interface ITInvestTokenProvider
     Task<string?> GetTokenAsync(CancellationToken ct = default);
 
     /// <summary>
-    /// Диагностический статус токена (plan/13 часть B) — отличает "токен вовсе не задан" от
+    /// Диагностический статус токена — отличает "токен вовсе не задан" от
     /// "задан, но не расшифровался" (протухшие ключи DataProtection после передеплоя без
     /// персиста — см. plan/13 "Проблема"), не выполняя расшифровку дважды.
     /// </summary>

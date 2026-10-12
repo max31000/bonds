@@ -65,7 +65,7 @@ public sealed record ScatterPointDto
     public required bool IsEstimated { get; init; }
     public required bool DataIncomplete { get; init; }
 
-    /// <summary>Задача 20: true — точка watchlist-бумаги без позиции (полый маркер, отдельная категория легенды на фронте).</summary>
+    /// <summary>true — точка watchlist-бумаги без позиции (полый маркер, отдельная категория легенды на фронте).</summary>
     public required bool IsWatchlist { get; init; }
 }
 

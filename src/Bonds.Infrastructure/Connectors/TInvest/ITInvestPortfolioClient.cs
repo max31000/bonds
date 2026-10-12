@@ -1,7 +1,7 @@
 namespace Bonds.Infrastructure.Connectors.TInvest;
 
 /// <summary>
-/// Обёртка над официальным gRPC SDK <c>Tinkoff.InvestApi</c> (plan/04 Часть B) — "истина про счёт"
+/// Обёртка над официальным gRPC SDK <c>Tinkoff.InvestApi</c> — "истина про счёт"
 /// (позиции, операции, текущие цены/НКД). Вынесена за интерфейс, чтобы:
 /// (1) тесты подставляли мок без реальных gRPC-вызовов (нет токена в этой среде, и в CI его
 ///     не будет — plan/04 Часть B п.7 "безопасность токена"); (2) <see cref="Bonds.Core.Sync.BondSyncService"/>
@@ -45,7 +45,7 @@ public interface ITInvestPortfolioClient
     Task<TInvestTariffInfo?> GetUserTariffAsync(CancellationToken ct = default);
 }
 
-/// <summary>Тариф пользователя T-Invest (plan/22 часть B) — только контекст для UI, не влияет на расчёты.</summary>
+/// <summary>Тариф пользователя T-Invest — только контекст для UI, не влияет на расчёты.</summary>
 public sealed record TInvestTariffInfo
 {
     /// <summary>Имя тарифа (например, "Инвестор", "Трейдер") — как отдаёт GetInfoResponse.Tariff.</summary>

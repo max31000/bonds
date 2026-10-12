@@ -15,9 +15,9 @@ export interface PositionRow {
   sector: string | null;
   quantity: number;
   marketValueRub: number;
-  /** Задача 24: НКД на одну бумагу — уже включён в marketValueRub, показывается как разложение. */
+  /** НКД на одну бумагу — уже включён в marketValueRub, показывается как разложение. */
   accruedPerBondRub: number;
-  /** Задача 24: НКД на всю позицию = accruedPerBondRub × quantity. */
+  /** НКД на всю позицию = accruedPerBondRub × quantity. */
   accruedTotalRub: number;
   currencyRub: 'RUB';
   couponType: CouponType;
@@ -35,7 +35,7 @@ export interface PositionRow {
   /** §11: номинал в иностранной валюте — вне рублёвого контура MVP. */
   isOutOfScopeCurrency: boolean;
 
-  // ---- Цена входа / P&L "от цены входа" (plan/14) — null, если по журналу операций не посчитать. ----
+  // ---- Цена входа / P&L "от цены входа" — null, если по журналу операций не посчитать. ----
 
   /** Средняя цена входа за бумагу (average cost). */
   averageCostRub: number | null;
@@ -59,7 +59,7 @@ export interface PositionsResponse {
   disclaimer: string;
 }
 
-// ---- GET /api/positions/{id} (см. plan/19 §A) — карточка позиции/drill-down ----
+// ---- GET /api/positions/{id} — карточка позиции/drill-down ----
 
 /** Диапазон графика цены карточки позиции. */
 export type PriceHistoryRange = '1m' | '6m' | '1y' | 'all';
@@ -114,13 +114,13 @@ export interface OperationItem {
 /** «Если продать сейчас» — GET /api/positions/{id} → ifSoldNow. */
 export interface IfSoldNow {
   marketValueRub: number;
-  /** Задача 24: marketValueRub − accruedTotalRub — «чистая» стоимость остатка без НКД. */
+  /** marketValueRub − accruedTotalRub — «чистая» стоимость остатка без НКД. */
   cleanValueRub: number;
-  /** Задача 24: НКД на всю позицию, уже включённый в marketValueRub (разложение). */
+  /** НКД на всю позицию, уже включённый в marketValueRub (разложение). */
   accruedTotalRub: number;
   commissionRub: number;
   commissionRate: number;
-  /** Plan/22 часть E: источник commissionRate (override/оценка из журнала/дефолт). */
+  /** Источник commissionRate (override/оценка из журнала/дефолт). */
   commissionRateSource: CommissionRateSource;
   netProceedsRub: number;
   realizedPnlRub: number | null;
@@ -128,9 +128,9 @@ export interface IfSoldNow {
   couponsReceivedRub: number | null;
   totalReturnWithCouponsRub: number | null;
   pnlAvailable: boolean;
-  /** Задача 25: оценка НДФЛ с продажи (13% с прибыли к средней цене входа) — null, если журнал операций неполон/cost basis недоступен. */
+  /** Оценка НДФЛ с продажи (13% с прибыли к средней цене входа) — null, если журнал операций неполон/cost basis недоступен. */
   taxEstimateRub: number | null;
-  /** Задача 25: totalReturnWithCouponsRub − taxEstimateRub — итог после налога. Null, если taxEstimateRub недоступен. */
+  /** totalReturnWithCouponsRub − taxEstimateRub — итог после налога. Null, если taxEstimateRub недоступен. */
   netAfterTaxRub: number | null;
   disclaimer: string;
 }
@@ -156,7 +156,7 @@ export interface PositionDetail {
   cleanPrice: number;
   /** НКД на одну бумагу. */
   accruedInterest: number;
-  /** Задача 24: НКД на всю позицию = accruedInterest × quantity. */
+  /** НКД на всю позицию = accruedInterest × quantity. */
   accruedTotalRub: number;
   dirtyPrice: number;
   marketValueRub: number;
@@ -195,7 +195,7 @@ export interface PositionDetail {
   disclaimer: string;
 }
 
-// ---- GET /api/cashflow (см. plan/09b §B.2) ----
+// ---- GET /api/cashflow ----
 
 /** Тип денежного потока, освобождающего тело долга. */
 export type PrincipalFlowType = 'Amortization' | 'Maturity' | 'Offer' | 'Call';
@@ -265,7 +265,7 @@ export interface CashflowResponse {
   disclaimer: string;
 }
 
-// ---- GET /api/analytics/scatter (см. plan/09b §B.3) ----
+// ---- GET /api/analytics/scatter ----
 
 /**
  * Вид доходности, использованной для точки на scatter-графике/сравнении. Зеркалит
@@ -291,7 +291,7 @@ export interface ScatterPoint {
   isIndexed: boolean;
   isEstimated: boolean;
   dataIncomplete: boolean;
-  /** Задача 20: true — точка watchlist-бумаги без позиции (полый маркер на графике). */
+  /** true — точка watchlist-бумаги без позиции (полый маркер на графике). */
   isWatchlist: boolean;
 }
 
@@ -309,7 +309,7 @@ export interface ScatterResponse {
   disclaimer: string;
 }
 
-// ---- GET /api/analytics/composition (см. plan/09b §B.4) ----
+// ---- GET /api/analytics/composition ----
 
 /** Доля в общей композиции портфеля по одному из разрезов. */
 export interface CompositionSlice {
@@ -328,7 +328,7 @@ export interface CompositionResponse {
   disclaimer: string;
 }
 
-// ---- GET /api/analytics/xirr (см. plan/09b §B.5) ----
+// ---- GET /api/analytics/xirr ----
 
 /** Точка истории доходности портфеля (XIRR) во времени. */
 export interface XirrHistoryPoint {
@@ -345,7 +345,7 @@ export interface XirrResponse {
   disclaimer: string;
 }
 
-/** Ответ POST /api/analytics/xirr/backfill (plan/15 §B.4) — сколько новых точек истории записано. */
+/** Ответ POST /api/analytics/xirr/backfill — сколько новых точек истории записано. */
 export interface XirrBackfillResponse {
   pointsWritten: number;
 }
@@ -402,7 +402,7 @@ export interface SignalsReadAllResponse {
   acknowledged: number;
 }
 
-// ---- POST /api/sync, GET /api/sync/status (см. plan/09c §B.7) ----
+// ---- POST /api/sync, GET /api/sync/status ----
 
 /** Ответ POST /api/sync — результат единичного цикла форс-синхронизации. */
 export interface SyncRunResult {
@@ -465,7 +465,7 @@ export interface TrajectoryResponse {
   disclaimer: string;
 }
 
-// ---- GET /api/analytics/comparison, POST /api/analytics/replacement (plan/17 §A) ----
+// ---- GET /api/analytics/comparison, POST /api/analytics/replacement ----
 
 /** Строка таблицы сравнения позиций — GET /api/analytics/comparison. */
 export interface ComparisonRow {
@@ -494,9 +494,9 @@ export interface ComparisonResponse {
 /** Тело POST /api/analytics/replacement. */
 export interface ReplacementRequest {
   holdPositionId: number;
-  /** Target — позиция портфеля. Игнорируется на бэке, если задан targetInstrumentId (задача 20). */
+  /** Target — позиция портфеля. Игнорируется на бэке, если задан targetInstrumentId. */
   targetPositionId?: number;
-  /** Задача 20: target — watchlist-бумага без позиции, по InstrumentId. */
+  /** target — watchlist-бумага без позиции, по InstrumentId. */
   targetInstrumentId?: number;
   horizonYears: number;
   sellCommissionRate?: number;
@@ -507,7 +507,7 @@ export interface ReplacementRequest {
 export interface ReplacementResponse {
   holdPositionId: number;
   targetPositionId: number;
-  /** Задача 20: эхо запроса — задан, только если target был watchlist-бумагой без позиции. */
+  /** Эхо запроса — задан, только если target был watchlist-бумагой без позиции. */
   targetInstrumentId?: number | null;
   horizonYears: number;
   sellCommissionRub: number;
@@ -519,25 +519,25 @@ export interface ReplacementResponse {
   yieldDataIncomplete: boolean;
   disclaimer: string;
 
-  /** Plan/22 часть E: фактически применённая ставка продажи/покупки — ДОЛЯ. */
+  /** Фактически применённая ставка продажи/покупки — ДОЛЯ. */
   sellCommissionRateUsed: number;
   buyCommissionRateUsed: number;
-  /** Plan/22 часть E: источник ставки — CommissionRateSource либо "ExplicitRequest" (обе ставки заданы явно в запросе). */
+  /** Источник ставки — CommissionRateSource либо "ExplicitRequest" (обе ставки заданы явно в запросе). */
   commissionRateSource: CommissionRateSource | 'ExplicitRequest';
 
-  /** Задача 27 часть B: та же формула-разбивка, что MatrixPair — спред эффективных доходностей (targetYield − holdYield), ДОЛЯ. Null — yieldDataIncomplete. */
+  /** Та же формула-разбивка, что MatrixPair — спред эффективных доходностей (targetYield − holdYield), ДОЛЯ. Null — yieldDataIncomplete. */
   spreadFraction: number | null;
-  /** Задача 27 часть B: капитал, реально переходящий в target (marketValueRub hold минус комиссия продажи), в рублях. */
+  /** Капитал, реально переходящий в target (marketValueRub hold минус комиссия продажи), в рублях. */
   capitalRub: number;
-  /** Задача 27 часть B: валовая выгода (спред × капитал × горизонт) ДО вычета комиссий, в рублях. Null — yieldDataIncomplete. */
+  /** Валовая выгода (спред × капитал × горизонт) ДО вычета комиссий, в рублях. Null — yieldDataIncomplete. */
   grossGainRub: number | null;
-  /** Задача 27 часть B: netBenefitRub / capitalRub / horizonYears — ДОЛЯ (не процент). */
+  /** netBenefitRub / capitalRub / horizonYears — ДОЛЯ (не процент). */
   annualizedBenefitFraction: number | null;
-  /** Задача 27 часть B: оценка НДФЛ от продажи hold-позиции — null, если cost basis недоступен/журнал неполон. */
+  /** Оценка НДФЛ от продажи hold-позиции — null, если cost basis недоступен/журнал неполон. */
   sellTaxEstimateRub: number | null;
-  /** Задача 27 часть B: netBenefitRub − sellTaxEstimateRub. Null, если sellTaxEstimateRub недоступен. */
+  /** netBenefitRub − sellTaxEstimateRub. Null, если sellTaxEstimateRub недоступен. */
   netBenefitAfterTaxRub: number | null;
-  /** Задача 33 часть A.4/35: риск-сигналы таргета (см. <see>RiskSignals</see>) — только если таргет
+  /** Риск-сигналы таргета (см. <see>RiskSignals</see>) — только если таргет
    * найден в банке (bond_universe) по ISIN, иначе null (бумага вне биржевой статистики MOEX). */
   targetRiskSignals?: RiskSignals | null;
 }
@@ -548,7 +548,7 @@ export interface ReplacementResponse {
 export type RiskSignalLevel = 'Good' | 'Neutral' | 'Caution';
 
 /**
- * Задача 38 часть A — светофор надёжности: ОДИН агрегат поверх двух риск-сигналов (см.
+ * Светофор надёжности: ОДИН агрегат поверх двух риск-сигналов (см.
  * `RiskSignals`) + листинга + сектора. Зеркалит backend `ReliabilityLight`. <b>НЕ кредитный
  * рейтинг</b> — сигнал по биржевой статистике MOEX, см. `RiskSignalsCaption`/тултип
  * `RiskSignalBadges` для обязательного дисклеймера.
@@ -557,7 +557,7 @@ export type ReliabilityLevel = 'Green' | 'Yellow' | 'Red';
 
 /**
  * Два ИНФОРМАЦИОННЫХ риск-сигнала кандидата-замены (ликвидность+листинг, отклонение спреда от
- * медианы его корзины) — зеркалит `RiskSignalsDto` (задача 33 часть A). Не ранжирует кандидатов
+ * медианы его корзины) — зеркалит `RiskSignalsDto`. Не ранжирует кандидатов
  * (ранжирование mode=market идёт по доходности) и НЕ является рейтингом агентств.
  */
 export interface RiskSignals {
@@ -569,7 +569,7 @@ export interface RiskSignals {
   gSpreadFraction: number | null;
   /** ДОЛЯ; gSpreadFraction − медиана корзины кандидата. Положительное — спред выше медианы. */
   spreadVsBasketMedianFraction: number | null;
-  /** Задача 38 часть A.2: светофор надёжности — см. `ReliabilityLevel`. */
+  /** Светофор надёжности — см. `ReliabilityLevel`. */
   reliability: ReliabilityLevel;
   /** Человекочитаемое обоснование `reliability` — задача 38 часть A.2. */
   reliabilityReason: string;
@@ -584,7 +584,7 @@ export interface ReplacementCandidate {
   secid: string;
   isin: string | null;
   name: string;
-  /** Задача 33 часть B.2: банк-слой не хранит эмитента — всегда null. */
+  /** Банк-слой не хранит эмитента — всегда null. */
   issuer: string | null;
   sector: string | null;
   /** ДОЛЯ. */
@@ -593,7 +593,7 @@ export interface ReplacementCandidate {
   durationYears: number | null;
   /** ДОЛЯ; приближённый G-спред банка. */
   gSpreadFraction: number | null;
-  /** Задача 37 часть A: дата оферты (ISO "2028-01-01"), если есть — доходность к оферте считается
+  /** Дата оферты (ISO "2028-01-01"), если есть — доходность к оферте считается
    * движком на другом горизонте, чем к погашению. Null — оферты нет/не известна. */
   offerDate: string | null;
   riskSignals: RiskSignals;
@@ -613,31 +613,31 @@ export interface ReplacementCandidatesResponse {
 /** Причина, по которой кандидат не получил докупку. Зеркалит CashAllocationSkipReason бэкенда. */
 export type AllocationSkipReason = 'NoYield' | 'ConcentrationLimit' | 'NoPrice' | 'NotComparable' | 'InsufficientFunds';
 
-/** Источник кандидатов аллокации (задача 34) — эхо запроса/выбор пользователя. */
+/** Источник кандидатов аллокации — эхо запроса/выбор пользователя. */
 export type AllocationSource = 'portfolio' | 'market' | 'recommended';
 
 /** Одна строка распределения — сколько купить конкретной бумаги. */
 export interface AllocationLine {
-  /** Задача 34: null для Source=market/recommended (банк-кандидат не связан с Instrument) —
+  /** null для Source=market/recommended (банк-кандидат не связан с Instrument) —
    * идентификатор таких строк — {@link AllocationLine.secid}. */
   instrumentId: number | null;
-  /** Задача 34: биржевой SECID — только для Source=market/recommended. Null для Source=portfolio. */
+  /** Биржевой SECID — только для Source=market/recommended. Null для Source=portfolio. */
   secid: string | null;
   name: string | null;
   issuer: string | null;
-  /** Задача 34: грубая секторная классификация банка — заполнена для Source=market/recommended. */
+  /** Грубая секторная классификация банка — заполнена для Source=market/recommended. */
   sector: string | null;
   quantity: number;
   estimatedCostRub: number;
   effectiveYield: number;
   lotSizeAssumed: boolean;
-  /** Задача 24: разложение estimatedCostRub — чистая цена всей докупки (без НКД/комиссии). cleanCostRub + accruedCostRub + commissionCostRub = estimatedCostRub. */
+  /** Разложение estimatedCostRub — чистая цена всей докупки (без НКД/комиссии). cleanCostRub + accruedCostRub + commissionCostRub = estimatedCostRub. */
   cleanCostRub: number;
-  /** Задача 24: НКД в составе estimatedCostRub. */
+  /** НКД в составе estimatedCostRub. */
   accruedCostRub: number;
-  /** Задача 24: комиссия покупки в составе estimatedCostRub. */
+  /** Комиссия покупки в составе estimatedCostRub. */
   commissionCostRub: number;
-  /** Задача 34 часть A.2: риск-сигналы — заполнены для Source=market/recommended, null для Source=portfolio. */
+  /** Риск-сигналы — заполнены для Source=market/recommended, null для Source=portfolio. */
   riskSignals: RiskSignals | null;
 }
 
@@ -645,7 +645,7 @@ export interface AllocationLine {
 export interface AllocationSkip {
   /** Null для Source=market/recommended — см. doc-comment {@link AllocationLine.instrumentId}. */
   instrumentId: number | null;
-  /** Задача 34: см. {@link AllocationLine.secid}. */
+  /** См. {@link AllocationLine.secid}. */
   secid: string | null;
   name: string | null;
   issuer: string | null;
@@ -655,27 +655,27 @@ export interface AllocationSkip {
 /** Ответ GET /api/analytics/allocation. */
 export interface AllocationResponse {
   amountRub: number;
-  /** Задача 34: эхо запрошенного источника кандидатов. */
+  /** Эхо запрошенного источника кандидатов. */
   source: string;
   allocations: AllocationLine[];
   skipped: AllocationSkip[];
   leftoverRub: number;
   disclaimer: string;
 
-  /** Plan/22 часть E: ставка комиссии покупки, применённая к цене лота — ДОЛЯ. */
+  /** Ставка комиссии покупки, применённая к цене лота — ДОЛЯ. */
   commissionRateUsed: number;
   commissionRateSource: CommissionRateSource;
 
-  /** Задача 34 часть B.4: только для Source=market/recommended — сколько кандидатов реально
+  /** Только для Source=market/recommended — сколько кандидатов реально
    * подходило до отсечения потолком. Null для Source=portfolio. */
   candidatePoolAvailable: number | null;
-  /** Задача 34 часть B.4: верхняя граница числа кандидатов, участвовавших в жадном проходе. Null для Source=portfolio. */
+  /** Верхняя граница числа кандидатов, участвовавших в жадном проходе. Null для Source=portfolio. */
   candidatePoolLimit: number | null;
-  /** Задача 34 часть B.4: true — потолок реально обрезал часть подходящих кандидатов. Null для Source=portfolio. */
+  /** true — потолок реально обрезал часть подходящих кандидатов. Null для Source=portfolio. */
   candidatePoolTruncated: boolean | null;
 }
 
-// ---- POST /api/analytics/basket (plan/29 §B) ----
+// ---- POST /api/analytics/basket ----
 
 /** Тело запроса POST /api/analytics/basket. */
 export interface BasketRequest {
@@ -760,7 +760,7 @@ export interface BasketResponse {
   disclaimer: string;
 }
 
-// ---- GET/POST /api/watchlist, DELETE /api/watchlist/{id} (plan/20 §A) ----
+// ---- GET/POST /api/watchlist, DELETE /api/watchlist/{id} ----
 
 /** Строка watchlist — бумага вне текущих позиций, отслеживаемая по ISIN. Метрики — тот же расчётный путь, что у позиций. */
 export interface WatchlistItem {
@@ -811,9 +811,9 @@ export interface WatchlistCreateResponse {
   addedAtUtc: string;
 }
 
-// ---- GET/PUT /api/settings, PUT /api/settings/tinvest-token (см. plan/09c §B.8) ----
+// ---- GET/PUT /api/settings, PUT /api/settings/tinvest-token ----
 
-/** Read-only авто-оценка ставки комиссии из журнала операций (plan/22 часть A/D). Null — журнал не позволяет оценить (нет сделок/оборот 0). */
+/** Read-only авто-оценка ставки комиссии из журнала операций. Null — журнал не позволяет оценить (нет сделок/оборот 0). */
 export interface CommissionAutoEstimate {
   /** Оценённая ставка — ДОЛЯ (0.00046 = 0.046%), не процент. */
   rate: number;
@@ -823,7 +823,7 @@ export interface CommissionAutoEstimate {
   windowMonths: number;
 }
 
-/** Источник эффективной ставки комиссии (plan/22 часть C). */
+/** Источник эффективной ставки комиссии. */
 export type CommissionRateSource = 'UserOverride' | 'EstimatedFromTrades' | 'Default';
 
 /** Настройки пользователя — пороги правил событий и базовая валюта. */
@@ -835,7 +835,7 @@ export interface SettingsResponse {
   uninvestedCashThresholdRub: number;
   defaultMaxConcentrationPercent: number;
 
-  /** Plan/22 часть D: ручной override ставки комиссии — ДОЛЯ (0.0005 = 0.05%). Null — не задан. UI вводит в %, конвертация на границе API. */
+  /** Ручной override ставки комиссии — ДОЛЯ (0.0005 = 0.05%). Null — не задан. UI вводит в %, конвертация на границе API. */
   commissionRateOverride: number | null;
   /** Read-only: авто-оценка ставки из журнала операций (часть A). Null — журнал не позволяет оценить. */
   commissionAutoEstimate: CommissionAutoEstimate | null;
@@ -847,7 +847,7 @@ export interface SettingsResponse {
   commissionEffectiveSource: CommissionRateSource;
 }
 
-// ---- GET /api/universe, GET /api/universe/status, POST /api/universe/{secid}/materialize (plan/26, plan/27) ----
+// ---- GET /api/universe, GET /api/universe/status, POST /api/universe/{secid}/materialize ----
 
 /** Скор ликвидности бумаги банка (см. LiquidityScoreCalculator) — приблизительная оценка по обороту/спреду/числу
  *  сделок. Зеркалит бэкенд-enum: «нет данных» сериализуется как 'None' (не 'Unknown'). */
@@ -857,7 +857,7 @@ export type LiquidityScore = 'High' | 'Medium' | 'Low' | 'None';
  * Причина, по которой гигиенический фильтр скрыл бумагу из выдачи по умолчанию (plan/26 часть
  * D) — значения зеркалят backend enum `HygieneHiddenReason` (см.
  * `src/Bonds.Core/Universe/UniverseHygieneFilter.cs`), сериализуемый как строка (`.ToString()`).
- * Задача 28: исправлены на фактические значения enum — было `MissingYield` (никогда не
+ * Исправлены на фактические значения enum — было `MissingYield` (никогда не
  * отправляется backend'ом), не хватало `ListLevelThree`/`ImplausibleYield`.
  */
 export type UniverseHiddenReason =
@@ -893,7 +893,7 @@ export interface UniverseRow {
    * часть B): неизвестное значение считается «не флоатер» — НЕ прячется и НЕ помечается бейджем.
    */
   isFloater?: boolean | null;
-  /** Задача 38 часть B.2: светофор надёжности банк-записи — см. `ReliabilityLevel`. */
+  /** Светофор надёжности банк-записи — см. `ReliabilityLevel`. */
   reliability: ReliabilityLevel;
   /** Человекочитаемое обоснование `reliability`. */
   reliabilityReason: string;
@@ -920,7 +920,7 @@ export interface UniverseQuery {
   maxDurationYears?: number;
   sector?: string;
   includeHidden?: boolean;
-  /** Задача 38 часть B.2: «не хуже уровня» — green = только Green; yellow = Green+Yellow; не задан/'red' = без фильтра. */
+  /** «не хуже уровня» — green = только Green; yellow = Green+Yellow; не задан/'red' = без фильтра. */
   reliability?: 'green' | 'yellow' | 'red';
   sortBy?: 'yield' | 'duration' | 'turnover' | 'gspread';
   sortDir?: 'asc' | 'desc';
@@ -928,7 +928,7 @@ export interface UniverseQuery {
   offset?: number;
 }
 
-/** Ответ GET /api/universe/status (задача 28) — сводка по банку облигаций для статусной строки скринера. */
+/** Ответ GET /api/universe/status — сводка по банку облигаций для статусной строки скринера. */
 export interface UniverseStatus {
   lastRefreshUtc: string | null;
   totalBonds: number;
@@ -936,7 +936,7 @@ export interface UniverseStatus {
   historyDays: number;
 }
 
-/** Полные метрики движка для материализованной бумаги — POST /api/universe/{secid}/materialize (задача 27). Те же поля, что WatchlistItem (тот же расчётный путь). */
+/** Полные метрики движка для материализованной бумаги — POST /api/universe/{secid}/materialize. Те же поля, что WatchlistItem (тот же расчётный путь). */
 export interface MaterializeMetrics {
   name: string | null;
   issuer: string | null;
@@ -986,7 +986,7 @@ export interface TInvestTokenResponse {
   validatedAccountIdMasked: string | null;
 }
 
-// ---- GET /api/live/positions, GET /api/live/portfolio-intraday (plan/16 часть A) ----
+// ---- GET /api/live/positions, GET /api/live/portfolio-intraday ----
 
 /** Строка живых котировок одной позиции — GET /api/live/positions. */
 export interface LivePositionRow {
@@ -1022,7 +1022,7 @@ export interface IntradaySeriesPoint {
   totalMarketValueRub: number;
 }
 
-// ---- GET /api/analytics/relative-value (задача 30) ----
+// ---- GET /api/analytics/relative-value ----
 
 /** Насколько надёжна статистика корзины (RelativeValueService.RelativeValueConfidence):
  * High — родная корзина сектор×дюрация набрала ≥5 бумаг, Medium — откат на весь сектор,

@@ -7,7 +7,7 @@ namespace Bonds.Core.Models;
 /// <c>Microsoft.AspNetCore.DataProtection.IDataProtectionProvider</c> (см.
 /// <c>Bonds.Infrastructure.Services.TInvestTokenProtector</c>) — никогда не отдаётся на фронт
 /// в открытом виде (spec §11). Поля порогов Signals Engine — null означает "использовать
-/// дефолт <see cref="Bonds.Core.Signals.SignalEngineOptions"/>" (этап 07).
+/// дефолт <see cref="Bonds.Core.Signals.SignalEngineOptions"/>".
 /// </summary>
 public class UserSettings
 {
@@ -25,7 +25,7 @@ public class UserSettings
     public decimal? DefaultMaxConcentrationPercent { get; set; }
 
     /// <summary>
-    /// Plan/22 часть D: ручной override ставки комиссии брокера — ДОЛЯ (0.0005 = 0.05%), не процент
+    /// Ручной override ставки комиссии брокера — ДОЛЯ (0.0005 = 0.05%), не процент
     /// (конвенция бэкенда). Null — override не задан, <see cref="Bonds.Core.Interfaces.ICommissionRateProvider"/>
     /// переходит к автооценке из журнала/дефолту. Валидация диапазона (0, 0.05) — на границе API
     /// (SettingsEndpoints), не здесь — модель хранит уже провалидированное значение.

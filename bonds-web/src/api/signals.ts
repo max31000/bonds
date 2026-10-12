@@ -3,7 +3,7 @@ import type { SignalReadResponse, SignalsReadAllResponse, SignalsResponse } from
 
 /**
  * GET /api/signals — АКТИВНЫЕ события (по умолчанию) либо, с `includeResolved`, вместе с закрытыми
- * (история). Маршрут исторически /signals; в UI это «События» (plan/40).
+ * (история). Маршрут исторически /signals; в UI это «События».
  */
 export function fetchSignals(params?: { includeResolved?: boolean }): Promise<SignalsResponse> {
   const query = new URLSearchParams();

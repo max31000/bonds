@@ -105,7 +105,7 @@ const goodSignals: RiskSignals = {
   reliabilityReason: 'Зелёный: оба риск-сигнала в норме, листинг 1-2, ликвидность с данными.',
 };
 
-// Задача 38 часть D.3: MKT002=Yellow (листинг неизвестен), MKT003=Red (Caution по ликвидности) —
+// MKT002=Yellow (листинг неизвестен), MKT003=Red (Caution по ликвидности) —
 // остальные (MKT001/MKT004) остаются Green (goodSignals) для фильтра «не хуже уровня».
 const yellowSignals: RiskSignals = {
   ...goodSignals,
@@ -120,7 +120,7 @@ const redSignals: RiskSignals = {
   reliabilityReason: 'Красный: ликвидность/листинг в зоне риска (сигнал Caution).',
 };
 
-// Задача 37 часть D: weakRow.modifiedDuration = 2 — окно фильтра «похожая дюрация» ±1.5 года даёт
+// weakRow.modifiedDuration = 2 — окно фильтра «похожая дюрация» ±1.5 года даёт
 // [0.5, 3.5]. MKT001 (1.5) и MKT002 (3.4) — внутри окна, MKT003 (6) — вне, MKT004 (null) — без
 // дюрации (скрывается при включённом фильтре независимо от окна).
 const marketCandidatesResponse: ReplacementCandidatesResponse = {

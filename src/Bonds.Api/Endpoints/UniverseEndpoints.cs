@@ -12,7 +12,7 @@ using Microsoft.Extensions.Options;
 namespace Bonds.Api.Endpoints;
 
 /// <summary>
-/// Задача 26 часть D — банк облигаций MOEX: контракт API для задач 27-30 (выпадашка-сравнивалка,
+/// Банк облигаций MOEX: контракт API для задач 27-30 (выпадашка-сравнивалка,
 /// скринер, конструктор, relative value). GET /api/universe отдаёт дешёвую биржевую статистику
 /// (YIELD/DURATION/обороты/листинг), НЕ прогоняя банк через точный движок BondMetricsCalculator
 /// (двухъярусная архитектура, см. doc-comment plan/26). Оба эндпоинта — под общей FallbackPolicy
@@ -66,7 +66,7 @@ public static class UniverseEndpoints
         var all = await universeRepo.GetAllAsync();
         var hygieneOptions = universeOptions.Value.Hygiene;
         var today = BusinessClock.MoscowToday();
-        // Задача 38 часть B.2: снимок RV нужен для медианы корзины при агрегации светофора надёжности
+        // Снимок RV нужен для медианы корзины при агрегации светофора надёжности
         // (см. AnalyticsSupport.AssessEntryRiskSignals) — singleton-кэш (см. doc-comment
         // RelativeValueSnapshotBuilder), лишнего I/O на каждый вызов не добавляет.
         var snapshot = await snapshotBuilder.GetSnapshotAsync(ct);
@@ -220,10 +220,10 @@ public static class UniverseEndpoints
             HiddenReason = hiddenReason == HygieneHiddenReason.None ? null : hiddenReason.ToString(),
             InPortfolio = isInPortfolio,
             InWatchlist = isInWatchlist,
-            // Задача 31 часть A: проброс признака флоатера для скринера (задача 32) — не скрываем и
+            // Проброс признака флоатера для скринера — не скрываем и
             // не фильтруем здесь (владелец выбрал "пометка + фильтр на фронте", не hygiene-hide).
             IsFloater = entry.IsFloater,
-            // Задача 38 часть B.2: светофор надёжности банк-записи (по остальным осям, если G-спред
+            // Светофор надёжности банк-записи (по остальным осям, если G-спред
             // отсутствует — см. doc-comment CandidateRiskSignalService.Aggregate/AssessSpread).
             Reliability = reliability.ToString(),
             ReliabilityReason = reliabilityReason,
@@ -257,7 +257,7 @@ public static class UniverseEndpoints
     // ─── POST /api/universe/{secid}/materialize ────────────────────────────────────────────────
 
     /// <summary>
-    /// Задача 27 часть A: превращает биржевую статистику банка (GET /api/universe, дешёвое) в
+    /// Превращает биржевую статистику банка (GET /api/universe, дешёвое) в
     /// точную бумагу нашего движка — резолвит ISIN из <c>bond_universe</c> по <paramref name="secid"/>,
     /// заводит/находит <see cref="Instrument"/> + котировку через
     /// <see cref="InstrumentEnrichmentService.EnrichByIsinAsync"/> (ОДИН путь с watchlist, см.
@@ -389,12 +389,12 @@ public sealed record UniverseRowDto
     public required bool InPortfolio { get; init; }
     public required bool InWatchlist { get; init; }
 
-    /// <summary>Задача 31 часть A: эвристика по BONDTYPE MOEX (см. <see cref="BondUniverseEntry.IsFloater"/>).
+    /// <summary>Эвристика по BONDTYPE MOEX (см. <see cref="BondUniverseEntry.IsFloater"/>).
     /// Null — BONDTYPE не пришёл от MOEX, трактуется фронтом как "не флоатер" (не скрывать/не помечать),
-    /// тот же осознанный дефолт, что и в бэкенд-исключениях (задача 31 часть B).</summary>
+    /// тот же осознанный дефолт, что и в бэкенд-исключениях.</summary>
     public bool? IsFloater { get; init; }
 
-    /// <summary>Задача 38 часть B.2 — светофор надёжности по банк-записи (см.
+    /// <summary>Светофор надёжности по банк-записи (см.
     /// <see cref="Bonds.Core.Analytics.ReliabilityLight"/>/<see cref="Bonds.Core.Analytics.CandidateRiskSignalService.Aggregate"/>):
     /// "Green"|"Yellow"|"Red". Для записей без G-спреда считается по остальным осям (листинг/
     /// ликвидность) — см. doc-comment <see cref="Bonds.Core.Analytics.CandidateRiskSignalService.AssessSpread"/>.
@@ -413,7 +413,7 @@ public sealed record UniverseStatusDto
     public required int HistoryDays { get; init; }
 }
 
-/// <summary>Задача 27 часть A — ответ POST /api/universe/{secid}/materialize.</summary>
+/// <summary>Ответ POST /api/universe/{secid}/materialize.</summary>
 public sealed record MaterializeResponseDto
 {
     public required ulong InstrumentId { get; init; }

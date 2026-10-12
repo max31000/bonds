@@ -3,7 +3,7 @@ using Bonds.Core.Models;
 namespace Bonds.Core.Analytics;
 
 /// <summary>
-/// Ретроспективное восстановление истории стоимости/XIRR портфеля (plan/15 §B) — чистый Core-сервис,
+/// Ретроспективное восстановление истории стоимости/XIRR портфеля — чистый Core-сервис,
 /// без I/O. Вход: полный журнал <see cref="Operation"/> счёта + карта дневных грязных цен за бумагу
 /// в рублях (<c>instrumentId → (date → dirtyPriceRub)</c>), собранная вызывающим слоем (Infrastructure)
 /// из MOEX ISS history + номиналов инструментов. Выход — ряд <see cref="PortfolioHistoryPoint"/> с
@@ -20,7 +20,7 @@ namespace Bonds.Core.Analytics;
 /// </summary>
 public static class PortfolioHistoryRebuildService
 {
-    /// <summary>Шаг ряда — неделя (plan/15 §B.1). Обратимый дефолт: даёт ~52 точки/год — достаточно
+    /// <summary>Шаг ряда — неделя. Обратимый дефолт: даёт ~52 точки/год — достаточно
     /// плотно для графика, не перегружая бэкфилл ежедневным пересчётом XIRR по всему журналу.</summary>
     public static readonly int StepDays = 7;
 
@@ -126,7 +126,7 @@ public static class PortfolioHistoryRebuildService
                 if (!lastKnownPrice.TryGetValue(instrumentId, out var price) || price is null)
                 {
                     // Цены нет вообще (ни на checkpoint, ни раньше) — бумагу пропускаем из суммы,
-                    // точку помечаем приближённой, но не падаем (plan/15 §B.1).
+                    // точку помечаем приближённой, но не падаем.
                     approximate = true;
                     continue;
                 }
@@ -196,7 +196,7 @@ public static class PortfolioHistoryRebuildService
     }
 }
 
-/// <summary>Одна точка ретроспективного ряда стоимости/XIRR портфеля (plan/15 §B.1).</summary>
+/// <summary>Одна точка ретроспективного ряда стоимости/XIRR портфеля.</summary>
 public sealed record PortfolioHistoryPoint
 {
     public required DateOnly Date { get; init; }

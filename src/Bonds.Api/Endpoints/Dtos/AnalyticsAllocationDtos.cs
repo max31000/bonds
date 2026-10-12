@@ -20,7 +20,7 @@ public sealed record AllocationResponseDto
 {
     public required decimal AmountRub { get; init; }
 
-    /// <summary>Задача 34: эхо запрошенного источника кандидатов — "portfolio"|"market"|"recommended".</summary>
+    /// <summary>Эхо запрошенного источника кандидатов — "portfolio"|"market"|"recommended".</summary>
     public required string Source { get; init; }
 
     public required IReadOnlyList<AllocationLineDto> Allocations { get; init; }
@@ -28,24 +28,24 @@ public sealed record AllocationResponseDto
     public required decimal LeftoverRub { get; init; }
     public required string Disclaimer { get; init; }
 
-    /// <summary>Plan/22 часть E: ставка комиссии покупки, применённая к цене лота — ДОЛЯ (резолвер части C).</summary>
+    /// <summary>Ставка комиссии покупки, применённая к цене лота — ДОЛЯ (резолвер части C).</summary>
     public required decimal CommissionRateUsed { get; init; }
 
-    /// <summary>Plan/22 часть E: источник ставки — строка <see cref="CommissionRateSource"/>.</summary>
+    /// <summary>Источник ставки — строка <see cref="CommissionRateSource"/>.</summary>
     public required string CommissionRateSource { get; init; }
 
-    /// <summary>Задача 34 часть B.4: только для Source=market/recommended — сколько кандидатов
+    /// <summary>Только для Source=market/recommended — сколько кандидатов
     /// реально ПОДХОДИЛО (после гигиенического + [для recommended] риск-фильтра) ДО отсечения
     /// потолком <see cref="AllocationEndpoints.MarketAllocationCandidatePoolLimit"/>. Null для
     /// Source=portfolio.</summary>
     public int? CandidatePoolAvailable { get; init; }
 
-    /// <summary>Задача 34 часть B.4: только для Source=market/recommended — верхняя граница числа
+    /// <summary>Только для Source=market/recommended — верхняя граница числа
     /// кандидатов, реально участвовавших в жадном проходе
     /// (<see cref="AllocationEndpoints.MarketAllocationCandidatePoolLimit"/>). Null для Source=portfolio.</summary>
     public int? CandidatePoolLimit { get; init; }
 
-    /// <summary>Задача 34 часть B.4: true — <see cref="CandidatePoolAvailable"/> &gt;
+    /// <summary>true — <see cref="CandidatePoolAvailable"/> &gt;
     /// <see cref="CandidatePoolLimit"/>, потолок реально обрезал часть подходящих кандидатов ДО
     /// жадного прохода (план требует "не молча" — см. также текст <see cref="Disclaimer"/>, который
     /// в этом случае дописывает фактические числа). Null для Source=portfolio.</summary>
@@ -54,18 +54,18 @@ public sealed record AllocationResponseDto
 
 public sealed record AllocationLineDto
 {
-    /// <summary>Null для Source=market/recommended (задача 34) — банк-кандидат не связан с таблицей
+    /// <summary>Null для Source=market/recommended — банк-кандидат не связан с таблицей
     /// Instrument, см. doc-comment <c>CashAllocationCandidate.InstrumentId</c>. Идентификатор для
     /// таких строк — <see cref="Secid"/>.</summary>
     public required ulong? InstrumentId { get; init; }
 
-    /// <summary>Задача 34: биржевой SECID — только для Source=market/recommended. Null для Source=portfolio.</summary>
+    /// <summary>Биржевой SECID — только для Source=market/recommended. Null для Source=portfolio.</summary>
     public string? Secid { get; init; }
 
     public string? Name { get; init; }
     public string? Issuer { get; init; }
 
-    /// <summary>Задача 34: грубая секторная классификация банка ("Гособлигации"/"Муниципальные"/
+    /// <summary>Грубая секторная классификация банка ("Гособлигации"/"Муниципальные"/
     /// "Корпоративные") — заполнена для Source=market/recommended, null для Source=portfolio.</summary>
     public string? Sector { get; init; }
 
@@ -74,16 +74,16 @@ public sealed record AllocationLineDto
     public required decimal EffectiveYield { get; init; }
     public required bool LotSizeAssumed { get; init; }
 
-    /// <summary>Задача 24: разложение EstimatedCostRub — чистая цена всей докупки (без НКД/комиссии). CleanCostRub + AccruedCostRub + CommissionCostRub = EstimatedCostRub.</summary>
+    /// <summary>Разложение EstimatedCostRub — чистая цена всей докупки (без НКД/комиссии). CleanCostRub + AccruedCostRub + CommissionCostRub = EstimatedCostRub.</summary>
     public decimal CleanCostRub { get; init; }
 
-    /// <summary>Задача 24: НКД в составе EstimatedCostRub.</summary>
+    /// <summary>НКД в составе EstimatedCostRub.</summary>
     public decimal AccruedCostRub { get; init; }
 
-    /// <summary>Задача 24: комиссия покупки в составе EstimatedCostRub.</summary>
+    /// <summary>Комиссия покупки в составе EstimatedCostRub.</summary>
     public decimal CommissionCostRub { get; init; }
 
-    /// <summary>Задача 34 часть A.2: риск-сигналы (см. <see cref="RiskSignalsDto"/>, задача 33) —
+    /// <summary>Риск-сигналы (см. <see cref="RiskSignalsDto"/>, задача 33) —
     /// заполнены для Source=market/recommended, null для Source=portfolio (план допускает эту
     /// более простую альтернативу вместо resolve-по-ISIN на каждую строку портфеля).</summary>
     public RiskSignalsDto? RiskSignals { get; init; }
@@ -94,7 +94,7 @@ public sealed record AllocationSkipDto
     /// <summary>Null для Source=market/recommended — см. doc-comment <see cref="AllocationLineDto.InstrumentId"/>.</summary>
     public required ulong? InstrumentId { get; init; }
 
-    /// <summary>Задача 34: см. <see cref="AllocationLineDto.Secid"/>.</summary>
+    /// <summary>См. <see cref="AllocationLineDto.Secid"/>.</summary>
     public string? Secid { get; init; }
 
     public string? Name { get; init; }
@@ -102,7 +102,7 @@ public sealed record AllocationSkipDto
     public required string Reason { get; init; }
 }
 
-// ─── POST /api/analytics/basket (plan/29 §B) ───────────────────────────────────────────────
+// ─── POST /api/analytics/basket ───────────────────────────────────────────────
 
 /// <summary>Тело запроса POST /api/analytics/basket — сумма + строки корзины (доля, НЕ проценты — конвенция репо).</summary>
 public sealed record BasketRequestDto

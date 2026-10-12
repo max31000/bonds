@@ -16,7 +16,7 @@ import type { IntradayRange, IntradaySeriesPoint } from '../api/types';
 import { formatRub, formatRubCompactRange, formatDateTime } from '../utils/format';
 
 /**
- * Интрадей-виджет «Стоимость портфеля сегодня» (plan/16 часть B) — area-график ряда
+ * Интрадей-виджет «Стоимость портфеля сегодня» — area-график ряда
  * GET /api/live/portfolio-intraday, переключатель 1д/5д. Переиспускается задачей 18 (дашборд).
  * <p>
  * Ось Y НЕ от нуля (план явно предупреждает: "иначе линия будет плоской" — суточные колебания
@@ -38,7 +38,7 @@ export function PortfolioIntradayChart({ explanation }: { explanation?: ReactNod
   const [state, setState] = useState<IntradayFetchState>({ points: [], isLoading: true, error: null });
   const { points, isLoading, error } = state;
 
-  // Тик поллинга (plan/16 часть B) — новый asOfUtc сигнализирует, что стоит перезапросить ряд,
+  // Тик поллинга — новый asOfUtc сигнализирует, что стоит перезапросить ряд,
   // чтобы график рос по мере поступления новых тиков без отдельного таймера.
   const liveAsOfUtc = useLiveStore((s) => s.asOfUtc);
 

@@ -1,4 +1,4 @@
--- Этап 01: проверочная миграция — фундамент для MigrationRunner.
+-- Проверочная миграция — фундамент для MigrationRunner.
 -- Доменные таблицы (instruments, positions, operations, ...) добавляются в этапе 03.
 
 CREATE TABLE IF NOT EXISTS schema_version (

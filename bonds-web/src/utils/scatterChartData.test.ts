@@ -23,7 +23,7 @@ function makePoint(overrides: Partial<ScatterPoint> = {}): ScatterPoint {
 
 describe('pointCategory', () => {
   it('categorizes a watchlist point as "Watchlist" — takes priority over other flags', () => {
-    // Задача 20: watchlist-точка должна попадать в свою категорию, даже если она одновременно
+    // watchlist-точка должна попадать в свою категорию, даже если она одновременно
     // floater/dataIncomplete — иначе она смешалась бы с категориями своего портфеля на графике.
     const point = makePoint({ isWatchlist: true, isFloater: true, dataIncomplete: true });
     expect(pointCategory(point)).toBe('Watchlist');

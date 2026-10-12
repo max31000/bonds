@@ -6,7 +6,7 @@ using Bonds.Core.Models;
 namespace Bonds.Api.Endpoints;
 
 /// <summary>
-/// Лёгкий контур "только цены" (plan/16 часть A) — намеренно НЕ переиспользует
+/// Лёгкий контур "только цены" — намеренно НЕ переиспользует
 /// <see cref="Bonds.Infrastructure.Analytics.PortfolioHoldingsBuilder"/> (тот тянет купоны/
 /// амортизации/оферты/движок метрик на каждую позицию — тяжело для поллинга раз в 60 сек с
 /// фронта). Здесь только Position + Instrument + последний тик <see cref="IntradayQuote"/> (с

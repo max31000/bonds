@@ -4,7 +4,7 @@ namespace Bonds.Infrastructure.Connectors.Moex;
 
 /// <summary>
 /// Разбор одной страницы ISS-ответа <c>/iss/engines/stock/markets/bonds/securities.json?iss.only=securities,marketdata</c>
-/// (задача 26 часть A) — снимок всей рыночной вселенной облигаций одним-двумя запросами. Сливает
+/// — снимок всей рыночной вселенной облигаций одним-двумя запросами. Сливает
 /// строки блоков <c>securities</c> и <c>marketdata</c> по ключу (SECID, BOARDID) — они возвращаются
 /// как отдельные параллельные таблицы, не вложенные структуры (то же семейство ответов ISS, что
 /// <see cref="MoexSecuritiesParser"/>, но без выбора "лучшего" board — то делает вызывающий код

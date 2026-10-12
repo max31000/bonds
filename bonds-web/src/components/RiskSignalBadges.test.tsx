@@ -5,7 +5,7 @@ import { MantineProvider } from '@mantine/core';
 import { RiskSignalBadges, RiskSignalsCaption, RELIABILITY_DISCLAIMER } from './RiskSignalBadges';
 import type { RiskSignals } from '../api/types';
 
-/** Задача 38 часть D.3 — рендер светофора + тултип (reliabilityReason + оба детальных сигнала +
+/** Рендер светофора + тултип (reliabilityReason + оба детальных сигнала +
  * обязательный дисклеймер) + существующие бейджи ликвидности/спреда не сломаны (аддитивность). */
 function renderBadges(signals: RiskSignals, testIdSuffix = 'x') {
   return render(

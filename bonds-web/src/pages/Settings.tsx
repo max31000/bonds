@@ -48,7 +48,7 @@ export function Settings() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings]);
 
-  // Plan/22 часть D: override вводится в ПРОЦЕНТАХ (UI-конвенция), конвертация в долю — на границе
+  // override вводится в ПРОЦЕНТАХ (UI-конвенция), конвертация в долю — на границе
   // API (handleSaveCommission ниже), бэкенд хранит и резолвит только доли (см. CLAUDE.md). Отдельная
   // mantine-форма (не useState) — синхронизация из settings через form.setValues, как у thresholds
   // выше, избегает прямого вызова setState в эффекте.
