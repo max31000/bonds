@@ -4,19 +4,17 @@ using Bonds.Core.Models;
 namespace Bonds.Core.Signals;
 
 /// <summary>
-/// Координатор Signals Engine (plan/07 Часть A, spec §8) — чистый, без I/O. Прогоняет все
-/// правила-триггеры над <see cref="SignalEvaluationInput"/> и возвращает финальный список сигналов
-/// "к вставке" (кандидаты уже дедуплицированы против <see cref="SignalEvaluationInput.ExistingUnreadSignals"/>
-/// через <see cref="SignalDeduplicator"/> — координатор делает это сам, чтобы вызывающий код
-/// (Infrastructure) мог просто взять результат и вызвать <c>ISignalRepository.CreateAsync</c> для
-/// каждого элемента без дополнительной логики).
+/// Движок событий (plan/40, spec §8) — чистый, без I/O. Каждый вызов возвращает ПОЛНЫЙ набор
+/// активных событий на дату <see cref="SignalEvaluationInput.AsOf"/> («текущее состояние»), а не
+/// «новые к вставке»: что вставить/обновить/закрыть решает <see cref="SignalSetSynchronizer"/>,
+/// сравнивая этот набор с таблицей по ключу <see cref="Signal.EventKey"/>.
 /// <para>
-/// Стиль организации — один файл-координатор + приватные методы-правила (а не отдельный файл на
-/// правило): восемь правил §8 умеренного размера каждое, разделение на 8+ файлов добавило бы
-/// навигационных накладных расходов без выигрыша в тестируемости (правила тестируются по
-/// отдельности через unit-тесты на <see cref="Evaluate"/> с разным входом независимо от того,
-/// в скольких файлах лежит реализация).
+/// Правила смотрят только на ОТКРЫТЫЕ позиции (Quantity &gt; 0) и только на будущие/текущие даты.
+/// Удалены относительно прежнего движка: UpcomingCoupon (календарь выплат уже на «Денежном
+/// потоке»), YieldBelowAlternative (дублировал «слабые позиции» Рекомендаций и сравнивал
+/// несравнимое), DurationDriftFromTarget (цели никто не задаёт), LowLiquidityWarning (заглушка).
 /// </para>
+/// Формулировки — «оценка/кандидат», не «купите/продайте» (продуктовая константа репо).
 /// </summary>
 public static class SignalsEngine
 {
@@ -24,287 +22,131 @@ public static class SignalsEngine
     {
         var candidates = new List<Signal>();
 
-        candidates.AddRange(UpcomingCouponRule(input));
-        candidates.AddRange(UpcomingAmortizationRule(input));
-        candidates.AddRange(UpcomingRedemptionRule(input));
         candidates.AddRange(UpcomingOfferRule(input));
+        candidates.AddRange(UpcomingRedemptionRule(input));
+        candidates.AddRange(UpcomingAmortizationRule(input));
         candidates.AddRange(FloaterRateResetRule(input));
-        candidates.AddRange(UninvestedCashRule(input));
-        candidates.AddRange(YieldBelowAlternativeRule(input));
         candidates.AddRange(ConcentrationLimitRule(input));
-        candidates.AddRange(DurationDriftRule(input));
-        // LowLiquidityWarning — намеренно НЕ включено в candidates здесь; см. LowLiquidityWarningRule
-        // doc-comment ниже — заглушка вызывается отдельно вызывающим кодом по желанию, всегда пустая.
+        candidates.AddRange(UninvestedCashRule(input));
 
-        return SignalDeduplicator.FilterNew(candidates, input.ExistingUnreadSignals);
+        // Ключ уникален в БД: если два правила дали один ключ (put и call одной даты по одной бумаге),
+        // оставляем более важное событие.
+        return candidates
+            .GroupBy(s => s.EventKey)
+            .Select(g => g.OrderByDescending(s => s.Severity).First())
+            .ToList();
     }
 
-    // ─── Правило 1a: приближается купон (spec §8) ──────────────────────────────────────────
+    private static string Name(SignalPositionContext p) => p.Name ?? p.Issuer ?? $"Бумага #{p.InstrumentId}";
 
-    private static IEnumerable<Signal> UpcomingCouponRule(SignalEvaluationInput input)
+    private static IEnumerable<SignalPositionContext> OpenPositions(SignalEvaluationInput input) =>
+        input.Positions.Where(p => p.Quantity > 0m);
+
+    private static bool InWindow(SignalEvaluationInput input, DateOnly date) =>
+        date >= input.AsOf && date <= input.AsOf.AddDays(input.Options.UpcomingEventDaysThreshold);
+
+    private static Signal ForInstrument(
+        SignalEvaluationInput input, SignalPositionContext position, SignalType type,
+        SignalSeverity severity, DateOnly date, string action) => new()
     {
-        var thresholdDate = input.AsOf.AddDays(input.Options.UpcomingEventDaysThreshold);
+        AccountId = input.AccountId,
+        EventKey = Signal.BuildKey(type, position.InstrumentId.ToString(), date),
+        Type = type,
+        Severity = severity,
+        InstrumentId = position.InstrumentId,
+        Subject = Name(position),
+        EventDate = date,
+        SuggestedAction = action,
+    };
 
-        foreach (var position in input.Positions)
-        {
-            foreach (var coupon in position.Coupons)
-            {
-                if (coupon.CouponDate < input.AsOf || coupon.CouponDate > thresholdDate) continue;
-
-                yield return new Signal
-                {
-                    AccountId = input.AccountId,
-                    Type = SignalType.UpcomingCoupon,
-                    Severity = SignalSeverity.Info,
-                    PositionId = position.PositionId,
-                    InstrumentId = position.InstrumentId,
-                    Date = coupon.CouponDate,
-                    SuggestedAction = coupon.IsKnown
-                        ? $"Купон {coupon.ValueRub:F2} руб. по позиции {position.Name ?? position.Issuer ?? position.InstrumentId.ToString()} ожидается {coupon.CouponDate:yyyy-MM-dd}"
-                        : $"Купон по позиции {position.Name ?? position.Issuer ?? position.InstrumentId.ToString()} ожидается {coupon.CouponDate:yyyy-MM-dd} (точная сумма не известна — флоатер)",
-                };
-            }
-        }
-    }
-
-    // ─── Правило 1b: приближается амортизация (spec §8) ────────────────────────────────────
-
-    private static IEnumerable<Signal> UpcomingAmortizationRule(SignalEvaluationInput input)
-    {
-        var thresholdDate = input.AsOf.AddDays(input.Options.UpcomingEventDaysThreshold);
-
-        foreach (var position in input.Positions)
-        {
-            foreach (var amortization in position.Amortizations)
-            {
-                if (amortization.Date < input.AsOf || amortization.Date > thresholdDate) continue;
-
-                yield return new Signal
-                {
-                    AccountId = input.AccountId,
-                    Type = SignalType.UpcomingAmortization,
-                    Severity = SignalSeverity.Info,
-                    PositionId = position.PositionId,
-                    InstrumentId = position.InstrumentId,
-                    Date = amortization.Date,
-                    // Audit(engine) E-1: сумма может быть неизвестна (MBS/ипотечный агент, MOEX
-                    // value_rub=null) — та же деградация текста, что и для купона флоатера выше,
-                    // не показываем 0.00 руб. как будто это реальная (нулевая) сумма (spec §4.4).
-                    SuggestedAction = amortization.IsKnown
-                        ? $"Частичное погашение номинала {amortization.AmountRub:F2} руб. по позиции {position.Name ?? position.Issuer ?? position.InstrumentId.ToString()} ожидается {amortization.Date:yyyy-MM-dd}"
-                        : $"Частичное погашение номинала по позиции {position.Name ?? position.Issuer ?? position.InstrumentId.ToString()} ожидается {amortization.Date:yyyy-MM-dd} (точная сумма не известна)",
-                };
-            }
-        }
-    }
-
-    // ─── Правило 1c: приближается погашение (spec §8) ──────────────────────────────────────
-
-    private static IEnumerable<Signal> UpcomingRedemptionRule(SignalEvaluationInput input)
-    {
-        var thresholdDate = input.AsOf.AddDays(input.Options.UpcomingEventDaysThreshold);
-
-        foreach (var position in input.Positions)
-        {
-            if (position.MaturityDate < input.AsOf || position.MaturityDate > thresholdDate) continue;
-
-            yield return new Signal
-            {
-                AccountId = input.AccountId,
-                Type = SignalType.UpcomingRedemption,
-                Severity = SignalSeverity.Info,
-                PositionId = position.PositionId,
-                InstrumentId = position.InstrumentId,
-                Date = position.MaturityDate,
-                SuggestedAction = $"Погашение позиции {position.Name ?? position.Issuer ?? position.InstrumentId.ToString()} ожидается {position.MaturityDate:yyyy-MM-dd}",
-            };
-        }
-    }
-
-    // ─── Правило 2: приближается оферта put/call — приоритетный, Critical (spec §8) ────────
+    // ─── Оферты: put — Critical (требует решения владельца), call — Warning ────────────────
 
     private static IEnumerable<Signal> UpcomingOfferRule(SignalEvaluationInput input)
     {
-        var thresholdDate = input.AsOf.AddDays(input.Options.UpcomingEventDaysThreshold);
-
-        foreach (var position in input.Positions)
+        foreach (var position in OpenPositions(input))
         {
             foreach (var offer in position.Offers)
             {
-                if (offer.IsExecuted) continue;
-                if (offer.Date < input.AsOf || offer.Date > thresholdDate) continue;
+                if (offer.IsExecuted || !InWindow(input, offer.Date)) continue;
 
-                // Put требует активного действия через брокера (легко пропустить, высокая ценность,
-                // spec §8) — Critical для обоих типов оферты по заданию ("Приближается оферта
-                // put/call — высокая (приоритетный)"), не только put: задание явно не разделяет
-                // важность put/call в перечне триггеров, поэтому оба получают Critical, а текст
-                // SuggestedAction отдельно подчёркивает, что именно put требует действия.
-                var actionText = offer.OfferType == OfferType.Put
-                    ? $"Put-оферта по позиции {position.Name ?? position.Issuer ?? position.InstrumentId.ToString()} {offer.Date:yyyy-MM-dd} — требуется активно подать заявку через брокера, иначе бумага останется в портфеле"
-                    : $"Call-оферта по позиции {position.Name ?? position.Issuer ?? position.InstrumentId.ToString()} {offer.Date:yyyy-MM-dd} — эмитент может отозвать бумагу";
-
-                yield return new Signal
+                if (offer.OfferType == OfferType.Put)
                 {
-                    AccountId = input.AccountId,
-                    Type = SignalType.UpcomingOffer,
-                    Severity = SignalSeverity.Critical,
-                    PositionId = position.PositionId,
-                    InstrumentId = position.InstrumentId,
-                    Date = offer.Date,
-                    SuggestedAction = actionText,
-                };
+                    yield return ForInstrument(input, position, SignalType.UpcomingOffer, SignalSeverity.Critical, offer.Date,
+                        $"Put-оферта {offer.Date:dd.MM.yyyy}: решите до этой даты, предъявлять ли бумагу к выкупу. " +
+                        "Заявку нужно подать через брокера — иначе бумага останется в портфеле.");
+                }
+                else
+                {
+                    yield return ForInstrument(input, position, SignalType.UpcomingOffer, SignalSeverity.Warning, offer.Date,
+                        $"Call-оферта {offer.Date:dd.MM.yyyy}: эмитент может досрочно выкупить бумагу — " +
+                        "доходность «к погашению» в этом случае не реализуется (оценка).");
+                }
             }
         }
     }
 
-    // ─── Правило 3: пересчёт купона флоатера (spec §8) ─────────────────────────────────────
+    // ─── Погашение и амортизация — Info ───────────────────────────────────────────────────
+
+    private static IEnumerable<Signal> UpcomingRedemptionRule(SignalEvaluationInput input)
+    {
+        foreach (var position in OpenPositions(input))
+        {
+            if (!InWindow(input, position.MaturityDate)) continue;
+
+            yield return ForInstrument(input, position, SignalType.UpcomingRedemption, SignalSeverity.Info, position.MaturityDate,
+                $"Погашение {position.MaturityDate:dd.MM.yyyy}: номинал и последний купон поступят на счёт — " +
+                "кандидат на реинвестирование освободившихся денег.");
+        }
+    }
+
+    private static IEnumerable<Signal> UpcomingAmortizationRule(SignalEvaluationInput input)
+    {
+        foreach (var position in OpenPositions(input))
+        {
+            foreach (var amortization in position.Amortizations)
+            {
+                if (!InWindow(input, amortization.Date)) continue;
+
+                // Сумма может быть неизвестна (MBS/ипотечный агент) — не показываем 0.00 как реальную.
+                var action = amortization.IsKnown
+                    ? $"Частичное погашение номинала {amortization.Date:dd.MM.yyyy}: ≈ {amortization.AmountRub:F2} руб. на бумагу."
+                    : $"Частичное погашение номинала {amortization.Date:dd.MM.yyyy} (точная сумма не известна).";
+
+                yield return ForInstrument(input, position, SignalType.UpcomingAmortization, SignalSeverity.Info, amortization.Date, action);
+            }
+        }
+    }
+
+    // ─── Пересчёт ставки — ТОЛЬКО настоящие флоатеры ──────────────────────────────────────
 
     private static IEnumerable<Signal> FloaterRateResetRule(SignalEvaluationInput input)
     {
-        var thresholdDate = input.AsOf.AddDays(input.Options.UpcomingEventDaysThreshold);
-
-        foreach (var position in input.Positions)
+        foreach (var position in OpenPositions(input))
         {
-            // "Дата пересчёта" — ближайший CouponSchedule с IsKnown == false (значение ставки ещё
-            // не зафиксировано MOEX на эту дату, см. doc-comment CouponSchedule.IsKnown).
+            // Фикс с офертой/неизвестной суммой купона флоатером не является (BACKLOG-техдолг).
+            if (position.CouponType != CouponType.Floating) continue;
+
+            // Ближайшая дата с ещё не зафиксированной ставкой (CouponSchedule.IsKnown == false).
             var nextReset = position.Coupons
-                .Where(c => !c.IsKnown)
-                .Where(c => c.CouponDate >= input.AsOf)
+                .Where(c => !c.IsKnown && c.CouponDate >= input.AsOf)
                 .OrderBy(c => c.CouponDate)
                 .FirstOrDefault();
 
-            if (nextReset is null) continue;
-            if (nextReset.CouponDate > thresholdDate) continue;
+            if (nextReset is null || !InWindow(input, nextReset.CouponDate)) continue;
 
-            yield return new Signal
-            {
-                AccountId = input.AccountId,
-                Type = SignalType.FloaterRateReset,
-                Severity = SignalSeverity.Info,
-                PositionId = position.PositionId,
-                InstrumentId = position.InstrumentId,
-                Date = nextReset.CouponDate,
-                SuggestedAction = $"Пересчёт ставки купона флоатера по позиции {position.Name ?? position.Issuer ?? position.InstrumentId.ToString()} ожидается {nextReset.CouponDate:yyyy-MM-dd}",
-            };
+            yield return ForInstrument(input, position, SignalType.FloaterRateReset, SignalSeverity.Info, nextReset.CouponDate,
+                $"Пересчёт ставки купона {nextReset.CouponDate:dd.MM.yyyy}: размер следующего купона станет известен после даты.");
         }
     }
 
-    // ─── Правило 4: незаинвестированный кэш выше порога (spec §8) ──────────────────────────
-
-    /// <summary>
-    /// Эвристика расчёта незаинвестированного кэша (самостоятельное решение, задание явно
-    /// допускает выбор разумной эвристики): за скользящее окно
-    /// <see cref="SignalEngineOptions.UninvestedCashLookbackDays"/> дней суммируются поступления
-    /// типа Coupon/Amortization/Redemption (положительный денежный поток, см. doc-comment
-    /// <see cref="Operation.AmountRub"/> — эти типы у брокера всегда положительны) минус сумма
-    /// покупок (Buy, у брокера отрицательный — поэтому здесь складываем с минусом, чтобы получить
-    /// положительный расход). Если результат положителен и превышает порог — деньги поступили, но
-    /// не были реинвестированы в той же мере, что и поступили: вероятный кэш "застрял" на счёте.
-    /// Скользящее окно (а не "с начала истории") — иначе сигнал никогда не угасал бы после
-    /// фактического реинвеста старых поступлений новой покупкой, совершённой давно за пределами
-    /// окна. Один кандидат на счёт, привязанный к дате <see cref="SignalEvaluationInput.AsOf"/> —
-    /// при повторном прогоне в тот же день с тем же входом ключ дедупликации (Type+Date, без
-    /// Position/InstrumentId — здесь оба null) не меняется, что и обеспечивает отсутствие дублей
-    /// внутри одного дня; на следующий день естественно появится новый кандидат с новой датой,
-    /// что ожидаемо (это ежедневный батч, spec §11).
-    /// </summary>
-    private static IEnumerable<Signal> UninvestedCashRule(SignalEvaluationInput input)
-    {
-        var lookbackFrom = input.AsOf.AddDays(-input.Options.UninvestedCashLookbackDays);
-
-        decimal inflow = 0m;
-        decimal buys = 0m;
-
-        foreach (var op in input.Operations)
-        {
-            var opDate = DateOnly.FromDateTime(op.Date);
-            if (opDate < lookbackFrom || opDate > input.AsOf) continue;
-
-            switch (op.Type)
-            {
-                case OperationType.Coupon or OperationType.Amortization or OperationType.Redemption:
-                    inflow += op.AmountRub;
-                    break;
-                case OperationType.Buy:
-                    buys += -op.AmountRub; // Buy хранится отрицательным — переводим в положительный расход
-                    break;
-            }
-        }
-
-        var uninvested = inflow - buys;
-        if (uninvested <= input.Options.UninvestedCashThresholdRub) yield break;
-
-        yield return new Signal
-        {
-            AccountId = input.AccountId,
-            Type = SignalType.UninvestedCashThreshold,
-            Severity = SignalSeverity.Info,
-            PositionId = null,
-            InstrumentId = null,
-            Date = input.AsOf,
-            SuggestedAction = $"Незаинвестированный остаток за последние {input.Options.UninvestedCashLookbackDays} дн. ≈ {uninvested:F2} руб. — рассмотрите реинвестирование",
-        };
-    }
-
-    // ─── Правило 5: доходность ниже сопоставимой по сроку альтернативы (spec §8) ───────────
-
-    /// <summary>
-    /// "Сопоставимая по сроку альтернатива" — другой holding в портфеле, чей HorizonDate попадает
-    /// в окно ±<see cref="SignalEngineOptions.MaturityWindowDaysForAlternativeComparison"/> дней от
-    /// HorizonDate рассматриваемой позиции (самостоятельное решение — задание прямо предлагает
-    /// "выбери разумное окно... как параметр"). Сравниваются эффективные доходности
-    /// (YtmEffective, либо CurrentYield для флоатера/индексируемой бумаги — те же приоритеты, что
-    /// и в остальной аналитике, см. PortfolioHolding); holding без посчитанной доходности
-    /// (оба null) пропускается — сравнивать нечего. Если у альтернативы доходность выше текущей
-    /// позиции более чем на порог б.п. — сигнал на ХУЖУЮ (текущую) позицию, не на альтернативу.
-    /// </summary>
-    private static IEnumerable<Signal> YieldBelowAlternativeRule(SignalEvaluationInput input)
-    {
-        var windowDays = input.Options.MaturityWindowDaysForAlternativeComparison;
-        var thresholdFraction = input.Options.YieldBelowAlternativeBpsThreshold / 10_000m; // б.п. → доля
-
-        foreach (var holding in input.Holdings)
-        {
-            var ownYield = EffectiveYield(holding);
-            if (ownYield is null) continue;
-
-            var bestAlternative = input.Holdings
-                .Where(other => other.PositionId != holding.PositionId)
-                .Where(other => Math.Abs((other.HorizonDate.ToDateTime(TimeOnly.MinValue) - holding.HorizonDate.ToDateTime(TimeOnly.MinValue)).Days) <= windowDays)
-                .Select(other => (Holding: other, Yield: EffectiveYield(other)))
-                .Where(x => x.Yield is not null)
-                .OrderByDescending(x => x.Yield)
-                .FirstOrDefault();
-
-            if (bestAlternative.Holding is null || bestAlternative.Yield is null) continue;
-
-            var gap = bestAlternative.Yield.Value - ownYield.Value;
-            if (gap <= thresholdFraction) continue;
-
-            yield return new Signal
-            {
-                AccountId = input.AccountId,
-                Type = SignalType.YieldBelowAlternative,
-                Severity = SignalSeverity.Info,
-                PositionId = holding.PositionId,
-                InstrumentId = holding.InstrumentId,
-                Date = input.AsOf,
-                SuggestedAction = $"Доходность позиции {holding.Name ?? holding.Issuer ?? holding.InstrumentId.ToString()} ({ownYield:P2}) ниже сопоставимой по сроку альтернативы в портфеле ({bestAlternative.Yield:P2}) на {gap * 10_000m:F0} б.п.",
-            };
-        }
-    }
-
-    /// <summary>YTM эффективная, либо текущая доходность для флоатера/индексируемой бумаги (та же конвенция, что в spec §6/§9).</summary>
-    private static decimal? EffectiveYield(PortfolioHolding holding) =>
-        holding.YtmEffective ?? holding.CurrentYield;
-
-    // ─── Правило 6: нарушение лимита концентрации по эмитенту — Critical (spec §8) ─────────
+    // ─── Концентрация по эмитенту — Warning, состояние ────────────────────────────────────
 
     private static IEnumerable<Signal> ConcentrationLimitRule(SignalEvaluationInput input)
     {
-        if (input.Holdings.Count == 0) yield break;
+        var holdings = input.Holdings.Where(h => h.Quantity > 0m).ToList();
+        if (holdings.Count == 0) yield break;
 
-        var composition = PortfolioCompositionService.Calculate(input.Holdings);
+        var composition = PortfolioCompositionService.Calculate(holdings);
         if (composition.TotalMarketValueRub <= 0m) yield break;
 
         foreach (var share in composition.ByIssuer)
@@ -313,111 +155,41 @@ public static class SignalsEngine
                 .FirstOrDefault(ta => ta.Issuer is not null && string.Equals(ta.Issuer, share.Key, StringComparison.OrdinalIgnoreCase))
                 ?.MaxConcentrationPercent;
 
+            // Проценты (0..100) с обеих сторон: SharePercent — исключение из «долей», см. CODEBASE-GUIDE.
             var limit = specificLimit ?? input.Options.DefaultMaxConcentrationPercent;
             if (share.SharePercent <= limit) continue;
-
-            // Привязываем сигнал к одной из позиций этого эмитента (первой найденной) — Signal не
-            // несёт поля "эмитент" напрямую, только PositionId/InstrumentId; имя эмитента уходит
-            // только в SuggestedAction (человекочитаемый текст для UI).
-            var representativeHolding = input.Holdings.FirstOrDefault(h => (h.Issuer ?? "Не определено") == share.Key);
 
             yield return new Signal
             {
                 AccountId = input.AccountId,
+                EventKey = Signal.BuildKey(SignalType.ConcentrationLimitBreached, share.Key, null),
                 Type = SignalType.ConcentrationLimitBreached,
-                Severity = SignalSeverity.Critical,
-                PositionId = representativeHolding?.PositionId,
-                InstrumentId = representativeHolding?.InstrumentId,
-                Date = input.AsOf,
-                SuggestedAction = $"Доля эмитента «{share.Key}» в портфеле {share.SharePercent:F2}% превышает лимит {limit:F2}%",
+                Severity = SignalSeverity.Warning,
+                Subject = share.Key,
+                EventDate = null,
+                SuggestedAction = $"Доля эмитента «{share.Key}» в портфеле {share.SharePercent:F1}% при лимите {limit:F1}% — " +
+                                  "рассмотрите диверсификацию (оценка).",
             };
         }
     }
 
-    // ─── Правило 7: дрейф дюрации портфеля от целевой — только если задан TargetAllocation (spec §8) ─
+    // ─── Свободные деньги выше порога — Info, состояние (по accounts.cash_rub) ────────────
 
-    private static IEnumerable<Signal> DurationDriftRule(SignalEvaluationInput input)
+    private static IEnumerable<Signal> UninvestedCashRule(SignalEvaluationInput input)
     {
-        // Без записи TargetAllocation с непустым TargetDurationYears — сигнал не генерируется,
-        // без exception (задание явно требует этого как негативный кейс).
-        var targetDuration = input.TargetAllocations
-            .Where(ta => ta.Issuer is null) // null = лимит/цель по портфелю в целом, см. doc-comment TargetAllocation.Issuer
-            .Select(ta => ta.TargetDurationYears)
-            .FirstOrDefault(d => d is not null);
-
-        if (targetDuration is null) yield break;
-
-        var weighted = input.Holdings
-            .Where(h => h.ModifiedDuration is not null && h.MarketValueRub > 0m)
-            .ToList();
-
-        if (weighted.Count == 0) yield break; // ни одной позиции с посчитанной дюрацией — не делим на 0, не генерируем сигнал
-
-        var totalMarketValue = weighted.Sum(h => h.MarketValueRub);
-        if (totalMarketValue <= 0m) yield break;
-
-        var portfolioDuration = weighted.Sum(h => h.MarketValueRub * h.ModifiedDuration!.Value) / totalMarketValue;
-        var drift = Math.Abs(portfolioDuration - targetDuration.Value);
-
-        if (drift <= input.Options.DurationDriftToleranceYears) yield break;
+        if (input.CashRub is not { } cash) yield break;
+        if (cash <= input.Options.UninvestedCashThresholdRub) yield break;
 
         yield return new Signal
         {
             AccountId = input.AccountId,
-            Type = SignalType.DurationDriftFromTarget,
+            EventKey = Signal.BuildKey(SignalType.UninvestedCashThreshold, null, null),
+            Type = SignalType.UninvestedCashThreshold,
             Severity = SignalSeverity.Info,
-            PositionId = null,
-            InstrumentId = null,
-            Date = input.AsOf,
-            SuggestedAction = $"Модифицированная дюрация портфеля {portfolioDuration:F2} лет отклонилась от целевой {targetDuration.Value:F2} лет на {drift:F2} лет",
+            Subject = "Свободные деньги",
+            EventDate = null,
+            SuggestedAction = $"На счёте ≈ {cash:F0} руб. свободных денег (порог {input.Options.UninvestedCashThresholdRub:F0} руб.) — " +
+                              "кандидат на реинвестирование.",
         };
-    }
-
-    // ─── Правило 8: низкая ликвидность — заглушка, см. doc-comment ─────────────────────────
-
-    /// <summary>
-    /// Низкая ликвидность по позиции (тонкий стакан, spec §8) — явно вне функциональной готовности
-    /// MVP (см. doc-comment <see cref="Bonds.Core.Models.MarketQuote"/> и комментарий в
-    /// <c>BondSyncService</c> рядом с местом, где стакан запрашивается у T-Invest, но не
-    /// персистируется: bid/ask существуют только как мгновенный результат живого вызова
-    /// <c>ITInvestPortfolioClient.GetQuotesAsync</c>, который Signals Engine как чистый слой не
-    /// может сделать сам). Метод принимает опциональные bid/ask по позиции — на сегодняшний день
-    /// вызывающий код (Infrastructure) не имеет источника для них на момент прогона цикла сигналов
-    /// (они доступны только в момент синка, а не позже), поэтому всегда передаётся null и метод
-    /// всегда возвращает пустой список. Сохранён в движке (не удалён), чтобы при появлении
-    /// персистентности стакана (этап вне MVP, см. ссылку в MarketQuote) реализация дополнилась
-    /// прямо здесь без изменения сигнатуры вызова со стороны Infrastructure.
-    /// </summary>
-    public static IReadOnlyList<Signal> LowLiquidityWarningRule(
-        ulong accountId,
-        DateOnly asOf,
-        IReadOnlyList<(ulong PositionId, ulong InstrumentId, decimal? BestBid, decimal? BestAsk)> positionsWithOrderBook)
-    {
-        // Bid/Ask сейчас всегда null на входе (нет персистентности стакана, см. doc-comment выше) —
-        // условие ниже намеренно никогда не дополняет результат на MVP, но оставлено явным (а не
-        // удалённым/закомментированным), чтобы при появлении реальных bid/ask заработало без правок.
-        var signals = new List<Signal>();
-        foreach (var (positionId, instrumentId, bestBid, bestAsk) in positionsWithOrderBook)
-        {
-            if (bestBid is null || bestAsk is null || bestBid <= 0m) continue;
-
-            var spreadFraction = (bestAsk.Value - bestBid.Value) / bestBid.Value;
-            const decimal wideSpreadThreshold = 0.02m; // 2% спред — эвристический порог "тонкого стакана", не калиброван
-
-            if (spreadFraction < wideSpreadThreshold) continue;
-
-            signals.Add(new Signal
-            {
-                AccountId = accountId,
-                Type = SignalType.LowLiquidityWarning,
-                Severity = SignalSeverity.Info,
-                PositionId = positionId,
-                InstrumentId = instrumentId,
-                Date = asOf,
-                SuggestedAction = $"Широкий спред bid/ask ({spreadFraction:P2}) — низкая ликвидность по позиции",
-            });
-        }
-
-        return signals;
     }
 }

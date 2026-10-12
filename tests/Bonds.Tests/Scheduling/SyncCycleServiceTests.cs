@@ -47,6 +47,8 @@ public class SyncCycleServiceTests
     private readonly Mock<IPortfolioValueSnapshotRepository> _snapshots = new();
     private readonly Mock<ISignalRepository> _signals = new();
     private readonly Mock<ITargetAllocationRepository> _targetAllocations = new();
+    private readonly Mock<IUserSettingsRepository> _userSettings = new();
+    private readonly Mock<ITelegramAlertSender> _alertSender = new();
     private readonly Mock<ITInvestTokenProvider> _tokenProvider = new();
     private readonly Mock<IWatchlistItemRepository> _watchlistItems = new();
 
@@ -69,7 +71,8 @@ public class SyncCycleServiceTests
         _positions.Setup(p => p.GetByAccountIdAsync(AccountId)).ReturnsAsync(new List<Position>());
         _operations.Setup(o => o.GetByAccountIdAsync(AccountId, null, null)).ReturnsAsync(new List<Operation>());
         _targetAllocations.Setup(t => t.GetByAccountIdAsync(AccountId)).ReturnsAsync(new List<TargetAllocation>());
-        _signals.Setup(s => s.GetByAccountIdAsync(AccountId, false)).ReturnsAsync(new List<Signal>());
+        _signals.Setup(s => s.GetByAccountIdAsync(AccountId, true)).ReturnsAsync(new List<Signal>());
+        _signals.Setup(s => s.InsertAsync(It.IsAny<Signal>())).ReturnsAsync(1ul);
         _yieldCurve.Setup(y => y.GetLatestAsync()).ReturnsAsync((YieldCurveSnapshot?)null);
 
         _snapshots.Setup(s => s.UpsertAsync(It.IsAny<PortfolioValueSnapshot>())).Returns(Task.CompletedTask);
@@ -98,12 +101,15 @@ public class SyncCycleServiceTests
         services.AddSingleton(_snapshots.Object);
         services.AddSingleton(_signals.Object);
         services.AddSingleton(_targetAllocations.Object);
+        services.AddSingleton(_userSettings.Object);
+        services.AddSingleton(_alertSender.Object);
         services.AddSingleton(_watchlistItems.Object);
 
         services.AddSingleton(NullLoggerFactory.Instance);
         services.AddSingleton(typeof(Microsoft.Extensions.Logging.ILogger<>), typeof(NullLogger<>));
 
         services.AddScoped<BondSyncService>();
+        services.AddScoped<PortfolioHoldingsBuilder>();
         services.AddScoped<CashFlowProjectionOrchestrator>();
         services.AddScoped<PortfolioSnapshotService>();
         services.AddScoped<InstrumentEnrichmentService>();
@@ -230,7 +236,7 @@ public class SyncCycleServiceTests
         _quotes.Setup(q => q.GetLatestAsync(5)).ReturnsAsync((MarketQuote?)null);
 
         ulong? createdSignalAccountId = null;
-        _signals.Setup(s => s.CreateAsync(It.IsAny<Signal>()))
+        _signals.Setup(s => s.InsertAsync(It.IsAny<Signal>()))
             .Callback<Signal>(sig => createdSignalAccountId = sig.AccountId)
             .ReturnsAsync(1ul);
 
@@ -241,7 +247,86 @@ public class SyncCycleServiceTests
 
         result.SignalsCreated.Should().BeGreaterThan(0, "погашение в ближайшие 14 дней должно сгенерировать UpcomingRedemption");
         createdSignalAccountId.Should().Be(AccountId);
-        _signals.Verify(s => s.CreateAsync(It.Is<Signal>(sig => sig.Type == SignalType.UpcomingRedemption)), Times.Once);
+        _signals.Verify(s => s.InsertAsync(It.Is<Signal>(sig => sig.Type == SignalType.UpcomingRedemption && sig.Subject == "Тест-Эмитент")), Times.Once);
+    }
+
+    private void SetupOpenPosition(DateOnly maturity, IReadOnlyList<OfferSchedule>? offers = null, CouponType couponType = CouponType.Fixed)
+    {
+        var position = new Position { Id = 10, AccountId = AccountId, InstrumentId = 5, Quantity = 1, Accrued = 0m };
+        _positions.Setup(p => p.GetByAccountIdAsync(AccountId)).ReturnsAsync(new[] { position });
+        _instruments.Setup(i => i.GetByIdAsync(5)).ReturnsAsync(new Instrument
+        {
+            Id = 5, Isin = "RU000TEST001", Name = "Тест-Бумага", Issuer = "Тест-Эмитент", FaceValue = 1000m,
+            MaturityDate = maturity, CouponType = couponType,
+        });
+        _coupons.Setup(c => c.GetByInstrumentIdAsync(5)).ReturnsAsync(new List<CouponSchedule>());
+        _amortizations.Setup(a => a.GetByInstrumentIdAsync(5)).ReturnsAsync(new List<AmortizationSchedule>());
+        _offers.Setup(o => o.GetByInstrumentIdAsync(5)).ReturnsAsync((offers ?? []).ToList());
+        _quotes.Setup(q => q.GetLatestAsync(5)).ReturnsAsync((MarketQuote?)null);
+    }
+
+    [Fact]
+    public async Task RunCycleAsync_Events_SecondRunWithSameState_DoesNotInsertAgain_AndResolvesDisappeared()
+    {
+        SetupNoPositionsHappyPath();
+        var today = BusinessClock.MoscowToday();
+        SetupOpenPosition(today.AddDays(7));
+
+        var redemptionKey = Signal.BuildKey(SignalType.UpcomingRedemption, "5", today.AddDays(7));
+        var staleKey = Signal.BuildKey(SignalType.UpcomingRedemption, "99", today.AddDays(3));
+        _signals.Setup(s => s.GetByAccountIdAsync(AccountId, true)).ReturnsAsync(new List<Signal>
+        {
+            new() { Id = 1, AccountId = AccountId, EventKey = redemptionKey, Type = SignalType.UpcomingRedemption, AcknowledgedAt = DateTime.UtcNow.AddHours(-2) },
+            new() { Id = 2, AccountId = AccountId, EventKey = staleKey, Type = SignalType.UpcomingRedemption },
+        });
+
+        var runner = BuildServiceProvider().GetRequiredService<ISyncCycleRunner>();
+        var result = await runner.RunCycleAsync();
+
+        result.SignalsCreated.Should().Be(0, "событие с тем же ключом уже есть (даже подтверждённое) — дубля нет");
+        _signals.Verify(s => s.InsertAsync(It.IsAny<Signal>()), Times.Never);
+        _signals.Verify(s => s.RefreshAsync(1ul, It.IsAny<SignalSeverity>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<DateTime>()), Times.Once);
+        _signals.Verify(s => s.ResolveAsync(It.Is<IReadOnlyCollection<ulong>>(ids => ids.Single() == 2ul), It.IsAny<DateTime>()), Times.Once);
+        _signals.Verify(s => s.PurgeResolvedBeforeAsync(AccountId, It.IsAny<DateTime>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task RunCycleAsync_NewPutOffer_SendsSingleTelegramAlert_ButInfoDoesNot()
+    {
+        SetupNoPositionsHappyPath();
+        var today = BusinessClock.MoscowToday();
+        SetupOpenPosition(today.AddYears(3), [new OfferSchedule { InstrumentId = 5, Date = today.AddDays(5), OfferType = OfferType.Put }]);
+
+        var runner = BuildServiceProvider().GetRequiredService<ISyncCycleRunner>();
+        await runner.RunCycleAsync();
+
+        _alertSender.Verify(a => a.SendAsync(It.Is<string>(m => m.Contains("Тест-Бумага")), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task RunCycleAsync_Events_RedemptionOnly_NoTelegramAlert()
+    {
+        SetupNoPositionsHappyPath();
+        SetupOpenPosition(BusinessClock.MoscowToday().AddDays(7));
+
+        await BuildServiceProvider().GetRequiredService<ISyncCycleRunner>().RunCycleAsync();
+
+        _alertSender.Verify(a => a.SendAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task RunCycleAsync_Events_UserSettingsThresholdsOverrideDefaults()
+    {
+        SetupNoPositionsHappyPath();
+        var today = BusinessClock.MoscowToday();
+        SetupOpenPosition(today.AddDays(40)); // вне дефолтного окна 14 дней
+        _accounts.Setup(a => a.GetByIdAsync(AccountId)).ReturnsAsync(new Account { Id = AccountId, UserId = 3, CashRub = 50_000m });
+        _userSettings.Setup(u => u.GetByUserIdAsync(3)).ReturnsAsync(new UserSettings { UserId = 3, UpcomingEventDaysThreshold = 60, UninvestedCashThresholdRub = 40_000m });
+
+        await BuildServiceProvider().GetRequiredService<ISyncCycleRunner>().RunCycleAsync();
+
+        _signals.Verify(s => s.InsertAsync(It.Is<Signal>(x => x.Type == SignalType.UpcomingRedemption)), Times.Once);
+        _signals.Verify(s => s.InsertAsync(It.Is<Signal>(x => x.Type == SignalType.UninvestedCashThreshold)), Times.Once);
     }
 
     [Fact]

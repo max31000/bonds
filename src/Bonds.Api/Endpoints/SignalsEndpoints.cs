@@ -1,18 +1,22 @@
 using Bonds.Api.Auth;
 using Bonds.Api.Middleware;
 using Bonds.Core.Interfaces.Repositories;
+using Bonds.Core.Models;
 
 namespace Bonds.Api.Endpoints;
 
 /// <summary>
-/// GET /api/signals — активные (непрочитанные) сигналы счёта (plan/08, spec §8).
-/// POST /api/signals/{id}/read — помечает сигнал прочитанным/закрытым.
+/// «События» портфеля (plan/40, spec §8; маршрут исторически /api/signals):
+/// GET /api/signals — АКТИВНЫЕ события счёта (по умолчанию), <c>?include=resolved</c> — вместе с историей;
+/// POST /api/signals/{id}/read — подтвердить («прочитано») событие;
+/// POST /api/signals/read-all — подтвердить все активные.
 /// </summary>
 public static class SignalsEndpoints
 {
     public static void MapSignalsEndpoints(this WebApplication app)
     {
         app.MapGet("/api/signals", GetSignals);
+        app.MapPost("/api/signals/read-all", MarkAllRead);
         app.MapPost("/api/signals/{id}/read", MarkRead);
     }
 
@@ -20,33 +24,23 @@ public static class SignalsEndpoints
         ICurrentUser currentUser,
         IAccountRepository accountRepo,
         ISignalRepository signalRepo,
-        bool? unreadOnly)
+        string? include)
     {
         var accountId = await PositionsEndpoints.ResolveAccountIdAsync(currentUser, accountRepo);
         if (accountId is null) return Results.Ok(new SignalsResponseDto { Signals = [] });
 
-        // unreadOnly=false (по умолчанию не задан) -> показываем все; unreadOnly=true -> только непрочитанные.
-        var isReadFilter = (unreadOnly == true) ? (bool?)false : null;
-        var signals = (await signalRepo.GetByAccountIdAsync(accountId.Value, isReadFilter))
-            .OrderByDescending(s => s.Date)
-            .ToList();
+        var includeResolved = string.Equals(include, "resolved", StringComparison.OrdinalIgnoreCase);
+        var signals = await signalRepo.GetByAccountIdAsync(accountId.Value, includeResolved);
 
-        var dto = new SignalsResponseDto
-        {
-            Signals = signals.Select(s => new SignalDto
-            {
-                Id = s.Id,
-                Type = s.Type.ToString(),
-                Severity = s.Severity.ToString(),
-                PositionId = s.PositionId,
-                InstrumentId = s.InstrumentId,
-                SuggestedAction = s.SuggestedAction,
-                Date = s.Date,
-                IsRead = s.IsRead,
-            }).ToList(),
-        };
+        // Сначала самое важное (Critical → Info), внутри — ближайшая дата события; «состояния» (без даты) в конце группы.
+        var ordered = signals
+            .OrderBy(s => s.IsResolved)
+            .ThenByDescending(s => s.Severity)
+            .ThenBy(s => s.EventDate is null)
+            .ThenBy(s => s.EventDate)
+            .ThenBy(s => s.Id);
 
-        return Results.Ok(dto);
+        return Results.Ok(new SignalsResponseDto { Signals = ordered.Select(ToDto).ToList() });
     }
 
     private static async Task<IResult> MarkRead(
@@ -56,11 +50,40 @@ public static class SignalsEndpoints
         ISignalRepository signalRepo)
     {
         var accountId = await PositionsEndpoints.ResolveAccountIdAsync(currentUser, accountRepo);
-        if (accountId is null) throw new NotFoundException("Сигнал не найден");
+        if (accountId is null) throw new NotFoundException("Событие не найдено");
 
-        await signalRepo.MarkReadAsync(id, accountId.Value);
+        var found = await signalRepo.AcknowledgeAsync(id, accountId.Value, DateTime.UtcNow);
+        if (!found) throw new NotFoundException("Событие не найдено");
+
         return Results.Ok(new { id, isRead = true });
     }
+
+    private static async Task<IResult> MarkAllRead(
+        ICurrentUser currentUser,
+        IAccountRepository accountRepo,
+        ISignalRepository signalRepo)
+    {
+        var accountId = await PositionsEndpoints.ResolveAccountIdAsync(currentUser, accountRepo);
+        if (accountId is null) return Results.Ok(new { acknowledged = 0 });
+
+        var count = await signalRepo.AcknowledgeAllAsync(accountId.Value, DateTime.UtcNow);
+        return Results.Ok(new { acknowledged = count });
+    }
+
+    private static SignalDto ToDto(Signal s) => new()
+    {
+        Id = s.Id,
+        Type = s.Type.ToString(),
+        Severity = s.Severity.ToString(),
+        InstrumentId = s.InstrumentId,
+        Subject = s.Subject,
+        SuggestedAction = s.SuggestedAction,
+        EventDate = s.EventDate,
+        FirstSeenAt = s.FirstSeenAt,
+        IsRead = s.IsAcknowledged,
+        IsResolved = s.IsResolved,
+        ResolvedAt = s.ResolvedAt,
+    };
 }
 
 public sealed record SignalsResponseDto
@@ -68,14 +91,22 @@ public sealed record SignalsResponseDto
     public required IReadOnlyList<SignalDto> Signals { get; init; }
 }
 
+/// <summary>
+/// Событие портфеля. <c>Type</c>/<c>Severity</c> — строки enum бэка (<c>SignalType</c>/<c>SignalSeverity</c>:
+/// Info|Warning|Critical). <c>EventDate</c> — null для «состояний» (концентрация, свободные деньги).
+/// Даты-время — UTC.
+/// </summary>
 public sealed record SignalDto
 {
     public required ulong Id { get; init; }
     public required string Type { get; init; }
     public required string Severity { get; init; }
-    public ulong? PositionId { get; init; }
     public ulong? InstrumentId { get; init; }
+    public string? Subject { get; init; }
     public string? SuggestedAction { get; init; }
-    public required DateOnly Date { get; init; }
+    public DateOnly? EventDate { get; init; }
+    public required DateTime FirstSeenAt { get; init; }
     public required bool IsRead { get; init; }
+    public required bool IsResolved { get; init; }
+    public DateTime? ResolvedAt { get; init; }
 }

@@ -114,6 +114,7 @@ public class Stage08EndpointsTests
     [InlineData("GET", "/api/analytics/allocation?amountRub=1000")]
     [InlineData("GET", "/api/signals")]
     [InlineData("POST", "/api/signals/1/read")]
+    [InlineData("POST", "/api/signals/read-all")]
     [InlineData("POST", "/api/sync")]
     [InlineData("GET", "/api/sync/status")]
     [InlineData("GET", "/api/settings")]
@@ -585,30 +586,88 @@ public class Stage08EndpointsTests
     }
 
     [Fact]
-    public async Task MarkSignalRead_ExistingSignal_MarksAsRead()
+    public async Task MarkSignalRead_ExistingSignal_AcknowledgesIt_AndKeepsItActive()
     {
         var (client, _, accountId) = await CreateAuthorizedClientAsync();
-        var (instrumentId, positionId) = await SeedPositionAsync(accountId);
+        var (instrumentId, _) = await SeedPositionAsync(accountId);
 
         var signalRepo = new SignalRepository(_factory.Database.ConnectionString);
-        var signalId = await signalRepo.CreateAsync(new Signal
-        {
-            AccountId = accountId,
-            Type = SignalType.UpcomingCoupon,
-            Severity = SignalSeverity.Info,
-            PositionId = positionId,
-            InstrumentId = instrumentId,
-            Date = DateOnly.FromDateTime(DateTime.UtcNow),
-            IsRead = false,
-        });
+        var signalId = await signalRepo.InsertAsync(NewEvent(accountId, instrumentId, "Бумага-1", SignalSeverity.Critical, DateOnly.FromDateTime(DateTime.UtcNow).AddDays(3)));
 
         var response = await client.PostAsync($"/api/signals/{signalId}/read", null);
-
         response.StatusCode.Should().Be(HttpStatusCode.OK);
 
-        var unread = await signalRepo.GetByAccountIdAsync(accountId, isRead: false);
-        unread.Should().BeEmpty();
+        var list = await (await client.GetAsync("/api/signals")).Content.ReadFromJsonAsync<JsonElement>();
+        var item = list.GetProperty("signals").EnumerateArray().Single(e => e.GetProperty("id").GetUInt64() == signalId);
+        item.GetProperty("isRead").GetBoolean().Should().BeTrue();
+        item.GetProperty("severity").GetString().Should().Be("Critical", "строки enum бэка: Info|Warning|Critical");
+        item.GetProperty("subject").GetString().Should().Be("Бумага-1");
+        item.GetProperty("isResolved").GetBoolean().Should().BeFalse();
     }
+
+    [Fact]
+    public async Task MarkSignalRead_UnknownId_Returns404()
+    {
+        var (client, _, _) = await CreateAuthorizedClientAsync();
+
+        var response = await client.PostAsync("/api/signals/999999999/read", null);
+
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task GetSignals_DefaultsToActive_IncludeResolvedAddsHistory_OrderedBySeverityThenDate()
+    {
+        var (client, _, accountId) = await CreateAuthorizedClientAsync();
+        var (instrumentId, _) = await SeedPositionAsync(accountId);
+        var repo = new SignalRepository(_factory.Database.ConnectionString);
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+
+        await repo.InsertAsync(NewEvent(accountId, instrumentId, "Инфо", SignalSeverity.Info, today.AddDays(1)));
+        await repo.InsertAsync(NewEvent(accountId, instrumentId, "Крит-позже", SignalSeverity.Critical, today.AddDays(9)));
+        await repo.InsertAsync(NewEvent(accountId, instrumentId, "Крит-раньше", SignalSeverity.Critical, today.AddDays(2)));
+        var closedId = await repo.InsertAsync(NewEvent(accountId, instrumentId, "Закрыто", SignalSeverity.Warning, today.AddDays(4)));
+        await repo.ResolveAsync([closedId], DateTime.UtcNow);
+
+        var active = await (await client.GetAsync("/api/signals")).Content.ReadFromJsonAsync<JsonElement>();
+        active.GetProperty("signals").EnumerateArray().Select(e => e.GetProperty("subject").GetString())
+            .Should().Equal("Крит-раньше", "Крит-позже", "Инфо");
+
+        var all = await (await client.GetAsync("/api/signals?include=resolved")).Content.ReadFromJsonAsync<JsonElement>();
+        var subjects = all.GetProperty("signals").EnumerateArray().Select(e => e.GetProperty("subject").GetString()).ToList();
+        subjects.Should().HaveCount(4);
+        subjects.Last().Should().Be("Закрыто");
+    }
+
+    [Fact]
+    public async Task MarkAllSignalsRead_AcknowledgesAllActive()
+    {
+        var (client, _, accountId) = await CreateAuthorizedClientAsync();
+        var (instrumentId, _) = await SeedPositionAsync(accountId);
+        var repo = new SignalRepository(_factory.Database.ConnectionString);
+        await repo.InsertAsync(NewEvent(accountId, instrumentId, "А", SignalSeverity.Warning, null));
+        await repo.InsertAsync(NewEvent(accountId, instrumentId, "Б", SignalSeverity.Info, null));
+
+        var response = await client.PostAsync("/api/signals/read-all", null);
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var list = await (await client.GetAsync("/api/signals")).Content.ReadFromJsonAsync<JsonElement>();
+        list.GetProperty("signals").EnumerateArray().Should().OnlyContain(e => e.GetProperty("isRead").GetBoolean());
+    }
+
+    private static Signal NewEvent(ulong accountId, ulong instrumentId, string subject, SignalSeverity severity, DateOnly? date) => new()
+    {
+        AccountId = accountId,
+        EventKey = Signal.BuildKey(SignalType.UpcomingOffer, $"{subject}-{Guid.NewGuid():N}", date),
+        Type = SignalType.UpcomingOffer,
+        Severity = severity,
+        InstrumentId = instrumentId,
+        Subject = subject,
+        SuggestedAction = "Решите до даты",
+        EventDate = date,
+        FirstSeenAt = DateTime.UtcNow,
+        LastSeenAt = DateTime.UtcNow,
+    };
 
     // ─── /api/sync, /api/sync/status ────────────────────────────────────────────────────────
 

@@ -103,11 +103,7 @@ public static class SettingsEndpoints
 
         existing.UpcomingEventDaysThreshold = request.UpcomingEventDaysThreshold ?? existing.UpcomingEventDaysThreshold;
         existing.UninvestedCashThresholdRub = request.UninvestedCashThresholdRub ?? existing.UninvestedCashThresholdRub;
-        existing.UninvestedCashLookbackDays = request.UninvestedCashLookbackDays ?? existing.UninvestedCashLookbackDays;
-        existing.YieldBelowAlternativeBpsThreshold = request.YieldBelowAlternativeBpsThreshold ?? existing.YieldBelowAlternativeBpsThreshold;
-        existing.MaturityWindowDaysForAlternativeComparison = request.MaturityWindowDaysForAlternativeComparison ?? existing.MaturityWindowDaysForAlternativeComparison;
         existing.DefaultMaxConcentrationPercent = request.DefaultMaxConcentrationPercent ?? existing.DefaultMaxConcentrationPercent;
-        existing.DurationDriftToleranceYears = request.DurationDriftToleranceYears ?? existing.DurationDriftToleranceYears;
 
         // CommissionRateOverride — фронт всегда шлёт текущее значение поля формы целиком (как и
         // остальные пороги ниже в Settings.tsx), поэтому null здесь означает "убрать override",
@@ -184,11 +180,7 @@ public static class SettingsEndpoints
         TInvestTokenMasked = MaskToken(settings?.TInvestTokenLast4),
         UpcomingEventDaysThreshold = settings?.UpcomingEventDaysThreshold ?? defaults.UpcomingEventDaysThreshold,
         UninvestedCashThresholdRub = settings?.UninvestedCashThresholdRub ?? defaults.UninvestedCashThresholdRub,
-        UninvestedCashLookbackDays = settings?.UninvestedCashLookbackDays ?? defaults.UninvestedCashLookbackDays,
-        YieldBelowAlternativeBpsThreshold = settings?.YieldBelowAlternativeBpsThreshold ?? defaults.YieldBelowAlternativeBpsThreshold,
-        MaturityWindowDaysForAlternativeComparison = settings?.MaturityWindowDaysForAlternativeComparison ?? defaults.MaturityWindowDaysForAlternativeComparison,
         DefaultMaxConcentrationPercent = settings?.DefaultMaxConcentrationPercent ?? defaults.DefaultMaxConcentrationPercent,
-        DurationDriftToleranceYears = settings?.DurationDriftToleranceYears ?? defaults.DurationDriftToleranceYears,
         CommissionRateOverride = settings?.CommissionRateOverride,
         CommissionAutoEstimate = commission.AutoEstimate,
         TInvestTariff = commission.TInvestTariff,
@@ -268,11 +260,7 @@ public sealed record SettingsResponseDto
     public string? TInvestTokenMasked { get; init; }
     public required int UpcomingEventDaysThreshold { get; init; }
     public required decimal UninvestedCashThresholdRub { get; init; }
-    public required int UninvestedCashLookbackDays { get; init; }
-    public required int YieldBelowAlternativeBpsThreshold { get; init; }
-    public required int MaturityWindowDaysForAlternativeComparison { get; init; }
     public required decimal DefaultMaxConcentrationPercent { get; init; }
-    public required decimal DurationDriftToleranceYears { get; init; }
 
     /// <summary>Plan/22 часть D: ручной override ставки комиссии — ДОЛЯ (0.0005 = 0.05%). Null — не задан.</summary>
     public decimal? CommissionRateOverride { get; init; }
@@ -306,11 +294,7 @@ public sealed record SettingsUpdateRequestDto
     public string? BaseCurrency { get; init; }
     public int? UpcomingEventDaysThreshold { get; init; }
     public decimal? UninvestedCashThresholdRub { get; init; }
-    public int? UninvestedCashLookbackDays { get; init; }
-    public int? YieldBelowAlternativeBpsThreshold { get; init; }
-    public int? MaturityWindowDaysForAlternativeComparison { get; init; }
     public decimal? DefaultMaxConcentrationPercent { get; init; }
-    public decimal? DurationDriftToleranceYears { get; init; }
 
     /// <summary>Plan/22 часть D: override ставки комиссии — ДОЛЯ (не процент; конвертация из % на фронте). Null — убрать override. Валидация: 0 &lt; x &lt; 0.05, иначе 422.</summary>
     public decimal? CommissionRateOverride { get; init; }

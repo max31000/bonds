@@ -96,33 +96,53 @@ public class CashFlowSnapshotSignalRepositoriesTests
     }
 
     [Fact]
-    public async Task Signal_Create_Then_GetByAccount_And_MarkRead_RoundTrips()
+    public async Task Signal_Insert_Refresh_Resolve_Acknowledge_Purge_RoundTrips()
     {
-        var (accountId, instrumentId, positionId) = await SeedPositionAsync();
+        var (accountId, instrumentId, _) = await SeedPositionAsync();
         var repo = new SignalRepository(_factory.Database.ConnectionString);
+        var now = DateTime.UtcNow;
+        var key = Signal.BuildKey(SignalType.UpcomingOffer, instrumentId.ToString(), new DateOnly(2026, 6, 1));
 
-        var id = await repo.CreateAsync(new Signal
+        Signal NewEvent(DateTime at) => new()
         {
             AccountId = accountId,
+            EventKey = key,
             Type = SignalType.UpcomingOffer,
             Severity = SignalSeverity.Critical,
-            PositionId = positionId,
             InstrumentId = instrumentId,
-            SuggestedAction = "Подать put-оферту через брокера до 2026-06-01",
-            Date = new DateOnly(2026, 5, 1),
-            IsRead = false,
-        });
+            Subject = "Тест-бумага",
+            SuggestedAction = "Решите до даты оферты",
+            EventDate = new DateOnly(2026, 6, 1),
+            FirstSeenAt = at,
+            LastSeenAt = at,
+        };
 
-        var unread = await repo.GetByAccountIdAsync(accountId, isRead: false);
-        unread.Should().ContainSingle(s => s.Id == id);
+        var id = await repo.InsertAsync(NewEvent(now));
 
-        await repo.MarkReadAsync(id, accountId);
+        var active = await repo.GetByAccountIdAsync(accountId);
+        active.Should().ContainSingle(s => s.Id == id && s.Severity == SignalSeverity.Critical && s.EventDate == new DateOnly(2026, 6, 1));
 
-        var stillUnread = await repo.GetByAccountIdAsync(accountId, isRead: false);
-        stillUnread.Should().BeEmpty();
+        // Повторная вставка того же ключа не создаёт дубль (UNIQUE account_id+event_key).
+        var again = await repo.InsertAsync(NewEvent(now.AddMinutes(1)));
+        again.Should().Be(id);
+        (await repo.GetByAccountIdAsync(accountId)).Count(s => s.EventKey == key).Should().Be(1);
 
-        var read = await repo.GetByAccountIdAsync(accountId, isRead: true);
-        read.Should().ContainSingle(s => s.Id == id);
+        // Ack, затем refresh/resolve: метка подтверждения не сбрасывается.
+        (await repo.AcknowledgeAsync(id, accountId, now)).Should().BeTrue();
+        await repo.RefreshAsync(id, SignalSeverity.Warning, "Новое имя", "Новый текст", now.AddHours(1));
+        await repo.ResolveAsync([id], now.AddHours(2));
+
+        (await repo.GetByAccountIdAsync(accountId)).Should().NotContain(s => s.Id == id, "закрытое скрыто из активных");
+        var history = await repo.GetByAccountIdAsync(accountId, includeResolved: true);
+        var row = history.Single(s => s.Id == id);
+        row.ResolvedAt.Should().NotBeNull();
+        row.AcknowledgedAt.Should().NotBeNull();
+        row.Severity.Should().Be(SignalSeverity.Warning);
+
+        // Чистка закрытых по cutoff.
+        (await repo.PurgeResolvedBeforeAsync(accountId, now.AddDays(-1))).Should().Be(0);
+        (await repo.PurgeResolvedBeforeAsync(accountId, now.AddDays(1))).Should().BeGreaterThanOrEqualTo(1);
+        (await repo.GetByAccountIdAsync(accountId, includeResolved: true)).Should().NotContain(s => s.Id == id);
     }
 
     [Fact]

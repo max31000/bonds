@@ -22,11 +22,7 @@ public class UserSettings
 
     public int? UpcomingEventDaysThreshold { get; set; }
     public decimal? UninvestedCashThresholdRub { get; set; }
-    public int? UninvestedCashLookbackDays { get; set; }
-    public int? YieldBelowAlternativeBpsThreshold { get; set; }
-    public int? MaturityWindowDaysForAlternativeComparison { get; set; }
     public decimal? DefaultMaxConcentrationPercent { get; set; }
-    public decimal? DurationDriftToleranceYears { get; set; }
 
     /// <summary>
     /// Plan/22 часть D: ручной override ставки комиссии брокера — ДОЛЯ (0.0005 = 0.05%), не процент

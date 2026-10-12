@@ -1,59 +1,56 @@
 using Bonds.Core.Analytics;
 using Bonds.Core.Models;
 using Bonds.Core.Signals;
+using Bonds.Core.Time;
 using FluentAssertions;
 using Xunit;
 
 namespace Bonds.Tests.Signals;
 
 /// <summary>
-/// Тесты Signals Engine (plan/07 Часть A, spec §8) — каждое правило: позитивный кейс (триггер
-/// срабатывает) и негативный (не срабатывает), плюс приоритет put-оферты (Critical), Critical для
-/// концентрации, дедупликация и поведение без TargetAllocation. Чистые входы — никаких репозиториев/БД.
+/// Тесты правил событий (plan/40): каждое правило — позитив/негатив; только открытые позиции;
+/// ресет ставки только у настоящих флоатеров; кэш — по accounts.cash_rub; детерминированные ключи.
+/// Даты — относительно «сегодня» (никаких абсолютных дат).
 /// </summary>
 public class SignalsEngineTests
 {
-    private static readonly DateOnly AsOf = new(2026, 6, 25);
+    private static readonly DateOnly AsOf = BusinessClock.MoscowToday();
 
     private static SignalPositionContext Position(
-        ulong positionId = 1,
         ulong instrumentId = 1,
         string issuer = "Эмитент А",
+        string? name = "Бумага А",
         DateOnly? maturityDate = null,
+        decimal quantity = 10m,
+        CouponType couponType = CouponType.Fixed,
         IReadOnlyList<CouponSchedule>? coupons = null,
         IReadOnlyList<AmortizationSchedule>? amortizations = null,
         IReadOnlyList<OfferSchedule>? offers = null) => new()
     {
-        PositionId = positionId,
+        PositionId = instrumentId,
         InstrumentId = instrumentId,
         Issuer = issuer,
-        MaturityDate = maturityDate ?? new DateOnly(2030, 1, 1),
+        Name = name,
+        MaturityDate = maturityDate ?? AsOf.AddYears(5),
+        Quantity = quantity,
+        CouponType = couponType,
         Coupons = coupons ?? Array.Empty<CouponSchedule>(),
         Amortizations = amortizations ?? Array.Empty<AmortizationSchedule>(),
         Offers = offers ?? Array.Empty<OfferSchedule>(),
     };
 
-    private static PortfolioHolding Holding(
-        ulong positionId = 1,
-        ulong instrumentId = 1,
-        decimal marketValue = 100_000m,
-        string issuer = "Эмитент А",
-        decimal? duration = 2m,
-        decimal? ytm = 0.15m,
-        DateOnly? horizonDate = null) => new()
+    private static PortfolioHolding Holding(ulong instrumentId, decimal marketValue, string issuer, decimal quantity = 1m) => new()
     {
-        PositionId = positionId,
+        PositionId = instrumentId,
         InstrumentId = instrumentId,
-        Quantity = 1,
+        Quantity = quantity,
         MarketValueRub = marketValue,
         Issuer = issuer,
         Sector = "Финансы",
         CouponType = CouponType.Fixed,
-        MaturityDate = horizonDate ?? new DateOnly(2030, 1, 1),
-        HorizonDate = horizonDate ?? new DateOnly(2030, 1, 1),
+        MaturityDate = AsOf.AddYears(5),
+        HorizonDate = AsOf.AddYears(5),
         IsCalculatedToOffer = false,
-        ModifiedDuration = duration,
-        YtmEffective = ytm,
         IsFloater = false,
         IsIndexed = false,
         IsEstimated = false,
@@ -63,468 +60,246 @@ public class SignalsEngineTests
     private static SignalEvaluationInput Input(
         IReadOnlyList<SignalPositionContext>? positions = null,
         IReadOnlyList<PortfolioHolding>? holdings = null,
-        IReadOnlyList<Operation>? operations = null,
+        decimal? cashRub = null,
         IReadOnlyList<TargetAllocation>? targetAllocations = null,
-        IReadOnlyList<Signal>? existingUnreadSignals = null,
         SignalEngineOptions? options = null) => new()
     {
         AccountId = 1,
         AsOf = AsOf,
         Positions = positions ?? Array.Empty<SignalPositionContext>(),
         Holdings = holdings ?? Array.Empty<PortfolioHolding>(),
-        Operations = operations ?? Array.Empty<Operation>(),
+        CashRub = cashRub,
         TargetAllocations = targetAllocations ?? Array.Empty<TargetAllocation>(),
-        ExistingUnreadSignals = existingUnreadSignals ?? Array.Empty<Signal>(),
         Options = options ?? new SignalEngineOptions(),
     };
 
-    // ─── 1a. Приближается купон ──────────────────────────────────────────────────────────
+    // ─── Оферты ────────────────────────────────────────────────────────────────────────────
 
     [Fact]
-    public void UpcomingCoupon_WithinThreshold_GeneratesSignal()
+    public void PutOffer_InWindow_IsCritical_WithBondNameAndEventDate()
     {
-        var coupon = new CouponSchedule { CouponDate = AsOf.AddDays(7), ValueRub = 35m, IsKnown = true };
-        var input = Input(positions: [Position(coupons: [coupon])]);
+        var date = AsOf.AddDays(5);
+        var offers = new[] { new OfferSchedule { InstrumentId = 1, Date = date, OfferType = OfferType.Put } };
 
-        var signals = SignalsEngine.Evaluate(input);
+        var signals = SignalsEngine.Evaluate(Input(positions: [Position(offers: offers)]));
 
-        signals.Should().ContainSingle(s => s.Type == SignalType.UpcomingCoupon && s.Date == coupon.CouponDate);
+        var s = signals.Should().ContainSingle(x => x.Type == SignalType.UpcomingOffer).Subject;
+        s.Severity.Should().Be(SignalSeverity.Critical);
+        s.Subject.Should().Be("Бумага А");
+        s.EventDate.Should().Be(date);
+        s.InstrumentId.Should().Be(1ul);
+        s.SuggestedAction.Should().Contain("решите до");
     }
 
     [Fact]
-    public void UpcomingCoupon_BeyondThreshold_NoSignal()
+    public void CallOffer_InWindow_IsWarning()
     {
-        var coupon = new CouponSchedule { CouponDate = AsOf.AddDays(30), ValueRub = 35m, IsKnown = true };
-        var input = Input(positions: [Position(coupons: [coupon])]);
+        var offers = new[] { new OfferSchedule { InstrumentId = 1, Date = AsOf.AddDays(5), OfferType = OfferType.Call } };
 
-        var signals = SignalsEngine.Evaluate(input);
+        var signals = SignalsEngine.Evaluate(Input(positions: [Position(offers: offers)]));
 
-        signals.Should().NotContain(s => s.Type == SignalType.UpcomingCoupon);
-    }
-
-    // ─── 1b. Приближается амортизация ────────────────────────────────────────────────────
-
-    [Fact]
-    public void UpcomingAmortization_WithinThreshold_GeneratesSignal()
-    {
-        var amortization = new AmortizationSchedule { Date = AsOf.AddDays(5), AmountRub = 250m };
-        var input = Input(positions: [Position(amortizations: [amortization])]);
-
-        var signals = SignalsEngine.Evaluate(input);
-
-        signals.Should().ContainSingle(s => s.Type == SignalType.UpcomingAmortization && s.Date == amortization.Date);
+        signals.Should().ContainSingle(x => x.Type == SignalType.UpcomingOffer)
+            .Which.Severity.Should().Be(SignalSeverity.Warning);
     }
 
     [Fact]
-    public void UpcomingAmortization_BeyondThreshold_NoSignal()
+    public void Offer_ExecutedOrOutsideWindow_NoEvent()
     {
-        var amortization = new AmortizationSchedule { Date = AsOf.AddDays(60), AmountRub = 250m };
-        var input = Input(positions: [Position(amortizations: [amortization])]);
-
-        var signals = SignalsEngine.Evaluate(input);
-
-        signals.Should().NotContain(s => s.Type == SignalType.UpcomingAmortization);
-    }
-
-    // ─── 1c. Приближается погашение ──────────────────────────────────────────────────────
-
-    [Fact]
-    public void UpcomingRedemption_WithinThreshold_GeneratesSignal()
-    {
-        var maturity = AsOf.AddDays(10);
-        var input = Input(positions: [Position(maturityDate: maturity)]);
-
-        var signals = SignalsEngine.Evaluate(input);
-
-        signals.Should().ContainSingle(s => s.Type == SignalType.UpcomingRedemption && s.Date == maturity);
-    }
-
-    [Fact]
-    public void UpcomingRedemption_FarInFuture_NoSignal()
-    {
-        var input = Input(positions: [Position(maturityDate: AsOf.AddYears(5))]);
-
-        var signals = SignalsEngine.Evaluate(input);
-
-        signals.Should().NotContain(s => s.Type == SignalType.UpcomingRedemption);
-    }
-
-    // ─── 2. Приближается оферта put/call — приоритетный, Critical ───────────────────────
-
-    [Fact]
-    public void UpcomingPutOffer_WithinThreshold_GeneratesCriticalSignal()
-    {
-        var offer = new OfferSchedule { Date = AsOf.AddDays(10), OfferType = OfferType.Put, IsExecuted = false };
-        var input = Input(positions: [Position(offers: [offer])]);
-
-        var signals = SignalsEngine.Evaluate(input);
-
-        var signal = signals.Should().ContainSingle(s => s.Type == SignalType.UpcomingOffer).Subject;
-        signal.Severity.Should().Be(SignalSeverity.Critical);
-    }
-
-    [Fact]
-    public void UpcomingCallOffer_WithinThreshold_GeneratesCriticalSignal()
-    {
-        var offer = new OfferSchedule { Date = AsOf.AddDays(10), OfferType = OfferType.Call, IsExecuted = false };
-        var input = Input(positions: [Position(offers: [offer])]);
-
-        var signals = SignalsEngine.Evaluate(input);
-
-        var signal = signals.Should().ContainSingle(s => s.Type == SignalType.UpcomingOffer).Subject;
-        signal.Severity.Should().Be(SignalSeverity.Critical);
-    }
-
-    [Fact]
-    public void UpcomingOffer_AlreadyExecuted_NoSignal()
-    {
-        var offer = new OfferSchedule { Date = AsOf.AddDays(10), OfferType = OfferType.Put, IsExecuted = true };
-        var input = Input(positions: [Position(offers: [offer])]);
-
-        var signals = SignalsEngine.Evaluate(input);
-
-        signals.Should().NotContain(s => s.Type == SignalType.UpcomingOffer);
-    }
-
-    [Fact]
-    public void UpcomingOffer_BeyondThreshold_NoSignal()
-    {
-        var offer = new OfferSchedule { Date = AsOf.AddDays(60), OfferType = OfferType.Put, IsExecuted = false };
-        var input = Input(positions: [Position(offers: [offer])]);
-
-        var signals = SignalsEngine.Evaluate(input);
-
-        signals.Should().NotContain(s => s.Type == SignalType.UpcomingOffer);
-    }
-
-    // ─── 3. Пересчёт купона флоатера ──────────────────────────────────────────────────────
-
-    [Fact]
-    public void FloaterRateReset_NextUnknownCouponWithinThreshold_GeneratesSignal()
-    {
-        var coupons = new List<CouponSchedule>
+        var offers = new[]
         {
-            new() { CouponDate = AsOf.AddDays(-5), ValueRub = 30m, IsKnown = true },
-            new() { CouponDate = AsOf.AddDays(8), ValueRub = null, IsKnown = false },
-        };
-        var input = Input(positions: [Position(coupons: coupons)]);
-
-        var signals = SignalsEngine.Evaluate(input);
-
-        signals.Should().ContainSingle(s => s.Type == SignalType.FloaterRateReset && s.Date == AsOf.AddDays(8));
-    }
-
-    [Fact]
-    public void FloaterRateReset_NoUnknownCoupon_NoSignal()
-    {
-        var coupons = new List<CouponSchedule>
-        {
-            new() { CouponDate = AsOf.AddDays(8), ValueRub = 30m, IsKnown = true },
-        };
-        var input = Input(positions: [Position(coupons: coupons)]);
-
-        var signals = SignalsEngine.Evaluate(input);
-
-        signals.Should().NotContain(s => s.Type == SignalType.FloaterRateReset);
-    }
-
-    // ─── 4. Незаинвестированный кэш выше порога ──────────────────────────────────────────
-
-    [Fact]
-    public void UninvestedCash_AboveThreshold_GeneratesSignal()
-    {
-        var operations = new List<Operation>
-        {
-            new() { Type = OperationType.Coupon, Date = AsOf.AddDays(-10).ToDateTime(TimeOnly.MinValue), AmountRub = 20_000m },
-        };
-        var options = new SignalEngineOptions { UninvestedCashThresholdRub = 10_000m };
-        var input = Input(operations: operations, options: options);
-
-        var signals = SignalsEngine.Evaluate(input);
-
-        signals.Should().ContainSingle(s => s.Type == SignalType.UninvestedCashThreshold);
-    }
-
-    [Fact]
-    public void UninvestedCash_ReinvestedByBuy_NoSignal()
-    {
-        var operations = new List<Operation>
-        {
-            new() { Type = OperationType.Coupon, Date = AsOf.AddDays(-10).ToDateTime(TimeOnly.MinValue), AmountRub = 20_000m },
-            new() { Type = OperationType.Buy, Date = AsOf.AddDays(-5).ToDateTime(TimeOnly.MinValue), AmountRub = -19_000m },
-        };
-        var options = new SignalEngineOptions { UninvestedCashThresholdRub = 10_000m };
-        var input = Input(operations: operations, options: options);
-
-        var signals = SignalsEngine.Evaluate(input);
-
-        signals.Should().NotContain(s => s.Type == SignalType.UninvestedCashThreshold);
-    }
-
-    [Fact]
-    public void UninvestedCash_BelowThreshold_NoSignal()
-    {
-        var operations = new List<Operation>
-        {
-            new() { Type = OperationType.Coupon, Date = AsOf.AddDays(-10).ToDateTime(TimeOnly.MinValue), AmountRub = 5_000m },
-        };
-        var options = new SignalEngineOptions { UninvestedCashThresholdRub = 10_000m };
-        var input = Input(operations: operations, options: options);
-
-        var signals = SignalsEngine.Evaluate(input);
-
-        signals.Should().NotContain(s => s.Type == SignalType.UninvestedCashThreshold);
-    }
-
-    // ─── 5. Доходность ниже сопоставимой по сроку альтернативы ──────────────────────────
-
-    [Fact]
-    public void YieldBelowAlternative_GapAboveThreshold_GeneratesSignal()
-    {
-        var horizon = new DateOnly(2030, 1, 1);
-        var holdings = new List<PortfolioHolding>
-        {
-            Holding(positionId: 1, instrumentId: 1, ytm: 0.10m, horizonDate: horizon),
-            Holding(positionId: 2, instrumentId: 2, ytm: 0.16m, horizonDate: horizon.AddDays(30)), // в окне ±180 дней, доходность выше на 600 б.п.
-        };
-        var options = new SignalEngineOptions { YieldBelowAlternativeBpsThreshold = 50 };
-        var input = Input(holdings: holdings, options: options);
-
-        var signals = SignalsEngine.Evaluate(input);
-
-        signals.Should().ContainSingle(s => s.Type == SignalType.YieldBelowAlternative && s.PositionId == 1);
-    }
-
-    [Fact]
-    public void YieldBelowAlternative_GapBelowThreshold_NoSignal()
-    {
-        var horizon = new DateOnly(2030, 1, 1);
-        var holdings = new List<PortfolioHolding>
-        {
-            Holding(positionId: 1, instrumentId: 1, ytm: 0.150m, horizonDate: horizon),
-            Holding(positionId: 2, instrumentId: 2, ytm: 0.151m, horizonDate: horizon.AddDays(30)), // разница 10 б.п. — ниже порога 50 б.п.
-        };
-        var options = new SignalEngineOptions { YieldBelowAlternativeBpsThreshold = 50 };
-        var input = Input(holdings: holdings, options: options);
-
-        var signals = SignalsEngine.Evaluate(input);
-
-        signals.Should().NotContain(s => s.Type == SignalType.YieldBelowAlternative);
-    }
-
-    [Fact]
-    public void YieldBelowAlternative_AlternativeOutsideMaturityWindow_NoSignal()
-    {
-        var horizon = new DateOnly(2030, 1, 1);
-        var holdings = new List<PortfolioHolding>
-        {
-            Holding(positionId: 1, instrumentId: 1, ytm: 0.05m, horizonDate: horizon),
-            Holding(positionId: 2, instrumentId: 2, ytm: 0.20m, horizonDate: horizon.AddYears(5)), // далеко за окном сопоставимости
-        };
-        var options = new SignalEngineOptions { MaturityWindowDaysForAlternativeComparison = 180 };
-        var input = Input(holdings: holdings, options: options);
-
-        var signals = SignalsEngine.Evaluate(input);
-
-        signals.Should().NotContain(s => s.Type == SignalType.YieldBelowAlternative);
-    }
-
-    // ─── 6. Нарушение лимита концентрации по эмитенту — Critical ─────────────────────────
-
-    [Fact]
-    public void ConcentrationLimit_DefaultThresholdBreached_GeneratesCriticalSignal()
-    {
-        var holdings = new List<PortfolioHolding>
-        {
-            Holding(positionId: 1, instrumentId: 1, marketValue: 80_000m, issuer: "Эмитент А"),
-            Holding(positionId: 2, instrumentId: 2, marketValue: 20_000m, issuer: "Эмитент Б"),
-        };
-        var options = new SignalEngineOptions { DefaultMaxConcentrationPercent = 25m };
-        var input = Input(holdings: holdings, options: options);
-
-        var signals = SignalsEngine.Evaluate(input);
-
-        var signal = signals.Should().ContainSingle(s => s.Type == SignalType.ConcentrationLimitBreached).Subject;
-        signal.Severity.Should().Be(SignalSeverity.Critical);
-    }
-
-    [Fact]
-    public void ConcentrationLimit_SpecificTargetAllocationOverridesDefault()
-    {
-        var holdings = new List<PortfolioHolding>
-        {
-            Holding(positionId: 1, instrumentId: 1, marketValue: 40_000m, issuer: "Эмитент А"),
-            Holding(positionId: 2, instrumentId: 2, marketValue: 60_000m, issuer: "Эмитент Б"),
-        };
-        // 40% доля у "Эмитент А" — выше дефолта 25%, но в рамках персонального лимита 50%.
-        var targetAllocations = new List<TargetAllocation> { new() { Issuer = "Эмитент А", MaxConcentrationPercent = 50m } };
-        var options = new SignalEngineOptions { DefaultMaxConcentrationPercent = 25m };
-        var input = Input(holdings: holdings, targetAllocations: targetAllocations, options: options);
-
-        var signals = SignalsEngine.Evaluate(input);
-
-        signals.Should().NotContain(s => s.Type == SignalType.ConcentrationLimitBreached && s.SuggestedAction!.Contains("Эмитент А"));
-    }
-
-    [Fact]
-    public void ConcentrationLimit_BelowThreshold_NoSignal()
-    {
-        var holdings = new List<PortfolioHolding>
-        {
-            Holding(positionId: 1, instrumentId: 1, marketValue: 50_000m, issuer: "Эмитент А"),
-            Holding(positionId: 2, instrumentId: 2, marketValue: 50_000m, issuer: "Эмитент Б"),
-        };
-        var options = new SignalEngineOptions { DefaultMaxConcentrationPercent = 60m };
-        var input = Input(holdings: holdings, options: options);
-
-        var signals = SignalsEngine.Evaluate(input);
-
-        signals.Should().NotContain(s => s.Type == SignalType.ConcentrationLimitBreached);
-    }
-
-    // ─── 7. Дрейф дюрации портфеля от целевой ─────────────────────────────────────────────
-
-    [Fact]
-    public void DurationDrift_AboveTolerance_WithTargetAllocation_GeneratesSignal()
-    {
-        var holdings = new List<PortfolioHolding>
-        {
-            Holding(positionId: 1, instrumentId: 1, marketValue: 100_000m, duration: 5m),
-        };
-        var targetAllocations = new List<TargetAllocation> { new() { Issuer = null, TargetDurationYears = 2m } };
-        var options = new SignalEngineOptions { DurationDriftToleranceYears = 1.0m };
-        var input = Input(holdings: holdings, targetAllocations: targetAllocations, options: options);
-
-        var signals = SignalsEngine.Evaluate(input);
-
-        signals.Should().ContainSingle(s => s.Type == SignalType.DurationDriftFromTarget);
-    }
-
-    [Fact]
-    public void DurationDrift_NoTargetAllocation_NoSignal_DoesNotThrow()
-    {
-        var holdings = new List<PortfolioHolding>
-        {
-            Holding(positionId: 1, instrumentId: 1, marketValue: 100_000m, duration: 5m),
-        };
-        var input = Input(holdings: holdings); // нет ни одной TargetAllocation
-
-        var act = () => SignalsEngine.Evaluate(input);
-
-        act.Should().NotThrow();
-        act().Should().NotContain(s => s.Type == SignalType.DurationDriftFromTarget);
-    }
-
-    [Fact]
-    public void DurationDrift_NoHoldingsWithDuration_NoSignal_DoesNotThrow()
-    {
-        var holdings = new List<PortfolioHolding>
-        {
-            Holding(positionId: 1, instrumentId: 1, marketValue: 100_000m, duration: null),
-        };
-        var targetAllocations = new List<TargetAllocation> { new() { Issuer = null, TargetDurationYears = 2m } };
-        var input = Input(holdings: holdings, targetAllocations: targetAllocations);
-
-        var act = () => SignalsEngine.Evaluate(input);
-
-        act.Should().NotThrow();
-        act().Should().NotContain(s => s.Type == SignalType.DurationDriftFromTarget);
-    }
-
-    [Fact]
-    public void DurationDrift_WithinTolerance_NoSignal()
-    {
-        var holdings = new List<PortfolioHolding>
-        {
-            Holding(positionId: 1, instrumentId: 1, marketValue: 100_000m, duration: 2.5m),
-        };
-        var targetAllocations = new List<TargetAllocation> { new() { Issuer = null, TargetDurationYears = 2m } };
-        var options = new SignalEngineOptions { DurationDriftToleranceYears = 1.0m };
-        var input = Input(holdings: holdings, targetAllocations: targetAllocations, options: options);
-
-        var signals = SignalsEngine.Evaluate(input);
-
-        signals.Should().NotContain(s => s.Type == SignalType.DurationDriftFromTarget);
-    }
-
-    // ─── 8. Низкая ликвидность — заглушка ────────────────────────────────────────────────
-
-    [Fact]
-    public void LowLiquidityWarning_NullBidAsk_ReturnsEmptyAndDoesNotThrow()
-    {
-        var positions = new List<(ulong PositionId, ulong InstrumentId, decimal? BestBid, decimal? BestAsk)>
-        {
-            (1, 1, null, null),
+            new OfferSchedule { InstrumentId = 1, Date = AsOf.AddDays(3), OfferType = OfferType.Put, IsExecuted = true },
+            new OfferSchedule { InstrumentId = 1, Date = AsOf.AddDays(60), OfferType = OfferType.Put },
+            new OfferSchedule { InstrumentId = 1, Date = AsOf.AddDays(-2), OfferType = OfferType.Put },
         };
 
-        var act = () => SignalsEngine.LowLiquidityWarningRule(1, AsOf, positions);
-
-        act.Should().NotThrow();
-        act().Should().BeEmpty();
+        SignalsEngine.Evaluate(Input(positions: [Position(offers: offers)])).Should().BeEmpty();
     }
 
     [Fact]
-    public void LowLiquidityWarning_WideSpreadProvided_GeneratesSignal()
+    public void PutAndCallOnSameDate_Collapse_ToSingleMoreSevereEvent()
     {
-        // Документирует, что заглушка готова к расширению, если bid/ask когда-нибудь появятся на входе.
-        var positions = new List<(ulong PositionId, ulong InstrumentId, decimal? BestBid, decimal? BestAsk)>
+        var date = AsOf.AddDays(4);
+        var offers = new[]
         {
-            (1, 1, 100m, 110m), // 10% спред — широкий
+            new OfferSchedule { InstrumentId = 1, Date = date, OfferType = OfferType.Call },
+            new OfferSchedule { InstrumentId = 1, Date = date, OfferType = OfferType.Put },
         };
 
-        var signals = SignalsEngine.LowLiquidityWarningRule(1, AsOf, positions);
+        var signals = SignalsEngine.Evaluate(Input(positions: [Position(offers: offers)]));
 
-        signals.Should().ContainSingle(s => s.Type == SignalType.LowLiquidityWarning);
+        signals.Should().ContainSingle().Which.Severity.Should().Be(SignalSeverity.Critical);
     }
 
-    // ─── Дедупликация ─────────────────────────────────────────────────────────────────────
+    // ─── Погашение / амортизация ───────────────────────────────────────────────────────────
 
     [Fact]
-    public void Evaluate_ExistingUnreadSignalWithSameKey_DoesNotCreateDuplicate()
+    public void Redemption_InWindow_IsInfo()
     {
-        var coupon = new CouponSchedule { CouponDate = AsOf.AddDays(7), ValueRub = 35m, IsKnown = true };
-        var existing = new Signal
+        var maturity = AsOf.AddDays(7);
+        var signals = SignalsEngine.Evaluate(Input(positions: [Position(maturityDate: maturity)]));
+
+        var s = signals.Should().ContainSingle(x => x.Type == SignalType.UpcomingRedemption).Subject;
+        s.Severity.Should().Be(SignalSeverity.Info);
+        s.EventDate.Should().Be(maturity);
+    }
+
+    [Fact]
+    public void Redemption_AlreadyMatured_NoEvent()
+    {
+        SignalsEngine.Evaluate(Input(positions: [Position(maturityDate: AsOf.AddDays(-1))])).Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ClosedPosition_QuantityZero_ProducesNothing()
+    {
+        var offers = new[] { new OfferSchedule { InstrumentId = 1, Date = AsOf.AddDays(3), OfferType = OfferType.Put } };
+        var signals = SignalsEngine.Evaluate(Input(positions: [Position(maturityDate: AsOf.AddDays(2), quantity: 0m, offers: offers)]));
+        signals.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Amortization_InWindow_Info_UnknownAmountHasNoFakeZero()
+    {
+        var amort = new[]
         {
-            Type = SignalType.UpcomingCoupon,
-            PositionId = 1,
-            InstrumentId = 1,
-            Date = coupon.CouponDate,
-            IsRead = false,
+            new AmortizationSchedule { InstrumentId = 1, Date = AsOf.AddDays(6), AmountRub = 0m, IsKnown = false },
         };
-        var input = Input(positions: [Position(coupons: [coupon])], existingUnreadSignals: [existing]);
 
-        var signals = SignalsEngine.Evaluate(input);
+        var signals = SignalsEngine.Evaluate(Input(positions: [Position(amortizations: amort)]));
 
-        signals.Should().NotContain(s => s.Type == SignalType.UpcomingCoupon);
+        var s = signals.Should().ContainSingle(x => x.Type == SignalType.UpcomingAmortization).Subject;
+        s.Severity.Should().Be(SignalSeverity.Info);
+        s.SuggestedAction.Should().NotContain("0.00").And.Contain("не известна");
     }
 
     [Fact]
-    public void Evaluate_ExistingSignalWithDifferentDate_StillCreatesNewSignal()
+    public void Coupons_AreNotEvents()
     {
-        var coupon = new CouponSchedule { CouponDate = AsOf.AddDays(7), ValueRub = 35m, IsKnown = true };
-        var existing = new Signal
-        {
-            Type = SignalType.UpcomingCoupon,
-            PositionId = 1,
-            InstrumentId = 1,
-            Date = coupon.CouponDate.AddDays(-100), // другая дата — другое событие
-            IsRead = false,
-        };
-        var input = Input(positions: [Position(coupons: [coupon])], existingUnreadSignals: [existing]);
+        var coupons = new[] { new CouponSchedule { InstrumentId = 1, CouponDate = AsOf.AddDays(3), ValueRub = 40m, IsKnown = true } };
+        SignalsEngine.Evaluate(Input(positions: [Position(coupons: coupons)])).Should().BeEmpty();
+    }
 
-        var signals = SignalsEngine.Evaluate(input);
+    // ─── Пересчёт ставки: только настоящие флоатеры ────────────────────────────────────────
 
-        signals.Should().ContainSingle(s => s.Type == SignalType.UpcomingCoupon && s.Date == coupon.CouponDate);
+    [Fact]
+    public void FloaterRateReset_RealFloater_WithUnknownCouponInWindow_Info()
+    {
+        var reset = AsOf.AddDays(8);
+        var coupons = new[] { new CouponSchedule { InstrumentId = 1, CouponDate = reset, IsKnown = false } };
+
+        var signals = SignalsEngine.Evaluate(Input(positions: [Position(couponType: CouponType.Floating, coupons: coupons)]));
+
+        signals.Should().ContainSingle(x => x.Type == SignalType.FloaterRateReset)
+            .Which.EventDate.Should().Be(reset);
+    }
+
+    [Theory]
+    [InlineData(CouponType.Fixed)]
+    [InlineData(CouponType.Indexed)]
+    public void FloaterRateReset_NotAFloater_FixedWithOfferOrUnknownCoupon_NoEvent(CouponType type)
+    {
+        var coupons = new[] { new CouponSchedule { InstrumentId = 1, CouponDate = AsOf.AddDays(8), IsKnown = false } };
+        SignalsEngine.Evaluate(Input(positions: [Position(couponType: type, coupons: coupons)]))
+            .Should().NotContain(s => s.Type == SignalType.FloaterRateReset);
+    }
+
+    // ─── Концентрация ──────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void Concentration_AboveDefaultLimit_Warning_StateWithoutDate()
+    {
+        var holdings = new[] { Holding(1, 800_000m, "Эмитент А"), Holding(2, 200_000m, "Эмитент Б") };
+
+        var signals = SignalsEngine.Evaluate(Input(holdings: holdings));
+
+        var s = signals.Should().ContainSingle(x => x.Type == SignalType.ConcentrationLimitBreached).Subject;
+        s.Severity.Should().Be(SignalSeverity.Warning);
+        s.Subject.Should().Be("Эмитент А");
+        s.EventDate.Should().BeNull();
     }
 
     [Fact]
-    public void Evaluate_NoExistingSignals_CreatesAllCandidates()
+    public void Concentration_UsesConfiguredLimit_FromOptions()
     {
-        var coupon = new CouponSchedule { CouponDate = AsOf.AddDays(7), ValueRub = 35m, IsKnown = true };
-        var input = Input(positions: [Position(coupons: [coupon])]);
+        var holdings = new[] { Holding(1, 300_000m, "А"), Holding(2, 300_000m, "Б"), Holding(3, 400_000m, "В") };
 
-        var signals = SignalsEngine.Evaluate(input);
+        SignalsEngine.Evaluate(Input(holdings: holdings, options: new SignalEngineOptions { DefaultMaxConcentrationPercent = 35m }))
+            .Should().ContainSingle(s => s.Subject == "В");
+        SignalsEngine.Evaluate(Input(holdings: holdings, options: new SignalEngineOptions { DefaultMaxConcentrationPercent = 45m }))
+            .Should().BeEmpty();
+    }
 
-        signals.Should().ContainSingle(s => s.Type == SignalType.UpcomingCoupon);
+    [Fact]
+    public void Concentration_ClosedHoldingsIgnored()
+    {
+        var holdings = new[] { Holding(1, 900_000m, "А", quantity: 0m), Holding(2, 100_000m, "Б") };
+        // Единственный открытый холдинг — 100% эмитента Б (над лимитом), а закрытый «А» не учитывается.
+        var signals = SignalsEngine.Evaluate(Input(holdings: holdings));
+        signals.Should().ContainSingle().Which.Subject.Should().Be("Б");
+    }
+
+    // ─── Свободные деньги (accounts.cash_rub) ──────────────────────────────────────────────
+
+    [Fact]
+    public void UninvestedCash_AboveThreshold_Info_State()
+    {
+        var signals = SignalsEngine.Evaluate(Input(cashRub: 50_000m));
+
+        var s = signals.Should().ContainSingle(x => x.Type == SignalType.UninvestedCashThreshold).Subject;
+        s.Severity.Should().Be(SignalSeverity.Info);
+        s.EventDate.Should().BeNull();
+        s.SuggestedAction.Should().Contain("50000");
+    }
+
+    [Fact]
+    public void UninvestedCash_BelowThresholdOrUnknownBalance_NoEvent()
+    {
+        SignalsEngine.Evaluate(Input(cashRub: 5_000m)).Should().BeEmpty();
+        SignalsEngine.Evaluate(Input(cashRub: null)).Should().BeEmpty();
+    }
+
+    [Fact]
+    public void UninvestedCash_ThresholdFromOptions_IsRespected()
+    {
+        SignalsEngine.Evaluate(Input(cashRub: 5_000m, options: new SignalEngineOptions { UninvestedCashThresholdRub = 1_000m }))
+            .Should().ContainSingle(s => s.Type == SignalType.UninvestedCashThreshold);
+    }
+
+    // ─── Окно дней и ключи ─────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void WindowDays_FromOptions_ControlsInclusion()
+    {
+        var position = Position(maturityDate: AsOf.AddDays(20));
+
+        SignalsEngine.Evaluate(Input(positions: [position])).Should().BeEmpty();
+        SignalsEngine.Evaluate(Input(positions: [position], options: new SignalEngineOptions { UpcomingEventDaysThreshold = 30 }))
+            .Should().ContainSingle(s => s.Type == SignalType.UpcomingRedemption);
+    }
+
+    [Fact]
+    public void EventKeys_AreStable_AcrossEvaluations_AndDistinctBetweenEvents()
+    {
+        var position = Position(maturityDate: AsOf.AddDays(5), offers:
+            [new OfferSchedule { InstrumentId = 1, Date = AsOf.AddDays(9), OfferType = OfferType.Put }]);
+        var input = Input(positions: [position], cashRub: 99_999m);
+
+        var first = SignalsEngine.Evaluate(input).Select(s => s.EventKey).ToList();
+        var second = SignalsEngine.Evaluate(input).Select(s => s.EventKey).ToList();
+
+        second.Should().BeEquivalentTo(first);
+        first.Should().OnlyHaveUniqueItems().And.HaveCount(3);
+    }
+
+    [Fact]
+    public void WithOverrides_NullKeepsDefault_ValueReplaces_AndDoesNotMutateSource()
+    {
+        var defaults = new SignalEngineOptions();
+        var merged = defaults.WithOverrides(upcomingEventDays: 30, uninvestedCashRub: null, maxConcentrationPercent: 40m);
+
+        merged.UpcomingEventDaysThreshold.Should().Be(30);
+        merged.UninvestedCashThresholdRub.Should().Be(defaults.UninvestedCashThresholdRub);
+        merged.DefaultMaxConcentrationPercent.Should().Be(40m);
+        defaults.UpcomingEventDaysThreshold.Should().Be(14);
     }
 }

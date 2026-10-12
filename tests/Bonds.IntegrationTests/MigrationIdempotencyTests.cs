@@ -65,6 +65,7 @@ public class MigrationIdempotencyTests : IAsyncLifetime
             "013_add_bond_universe.sql",
             "014_add_account_balance.sql",
             "015_redemption_correctness_repair.sql",
+            "016_signals_as_events.sql",
         });
 
         var expectedTables = new[]
@@ -99,7 +100,7 @@ public class MigrationIdempotencyTests : IAsyncLifetime
         await conn.OpenAsync();
 
         var migrationCount = await conn.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM _migrations");
-        migrationCount.Should().Be(15, "повторный запуск не должен заново применять уже применённые миграции");
+        migrationCount.Should().Be(16, "повторный запуск не должен заново применять уже применённые миграции");
 
         // users.base_currency существует ровно один раз (ALTER ... ADD COLUMN IF NOT EXISTS не падает повторно).
         var columnCount = await conn.ExecuteScalarAsync<long>(
@@ -122,6 +123,31 @@ public class MigrationIdempotencyTests : IAsyncLifetime
               WHERE table_schema = DATABASE() AND table_name = 'operations' AND column_name = 'type'");
         columnType.Should().Contain("'SecurityIn'").And.Contain("'SecurityOut'");
         columnType.Should().Contain("'Redemption'", "прежние значения enum не потеряны");
+    }
+
+    [Fact]
+    public async Task RunAsync_Migration016_SignalsBecomeEvents_AndDeadSettingsColumnsDropped()
+    {
+        var connectionString = _container.GetConnectionString();
+        await new MigrationRunner(connectionString, NullLogger<MigrationRunner>.Instance).RunAsync();
+
+        await using var conn = new MySqlConnection(connectionString);
+        await conn.OpenAsync();
+
+        async Task<long> ColumnCount(string table, string column) => await conn.ExecuteScalarAsync<long>(
+            @"SELECT COUNT(*) FROM information_schema.columns
+              WHERE table_schema = DATABASE() AND table_name = @Table AND column_name = @Column",
+            new { Table = table, Column = column });
+
+        (await ColumnCount("signals", "event_key")).Should().Be(1);
+        (await ColumnCount("signals", "resolved_at")).Should().Be(1);
+        (await ColumnCount("signals", "acknowledged_at")).Should().Be(1);
+        (await ColumnCount("signals", "is_read")).Should().Be(0, "старый append-only лог заменён");
+        (await ColumnCount("user_settings", "yield_below_alternative_bps")).Should().Be(0);
+        (await ColumnCount("user_settings", "duration_drift_tolerance_years")).Should().Be(0);
+        (await ColumnCount("user_settings", "default_max_concentration_pct")).Should().Be(1, "рабочие пороги остались");
+
+        (await conn.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM signals")).Should().Be(0);
     }
 
     [Fact]
