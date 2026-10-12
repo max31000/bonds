@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import {
-  Title,
   Stack,
   Table,
   Badge,
@@ -20,8 +19,9 @@ import {
   Collapse,
   Pagination,
 } from '@mantine/core';
+import { HelpHint, Page, Section } from '@mvv42/kit';
 import { useDebouncedValue, useDisclosure, useMediaQuery } from '@mantine/hooks';
-import { ChartExplainIcon } from '../components/charts/ChartCard';
+
 import { Disclaimer } from '../components/Disclaimer';
 import { ReliabilityDot, RiskSignalsCaption } from '../components/RiskSignalBadges';
 import { ReliabilityFilterControl } from '../components/ReliabilityFilterControl';
@@ -444,11 +444,16 @@ export function Screener() {
   const visibleRows = isMobile ? displayedRows.slice(0, mobileVisibleCount) : displayedRows;
 
   return (
-    <Stack gap="md">
-      <Group gap={6}>
-        <Title order={2}>Скринер</Title>
-        <ChartExplainIcon title="Скринер" explanation={PAGE_EXPLANATION} data-testid="screener-explain-icon" />
-      </Group>
+    <Page
+      width="wide"
+      title={
+        <Group gap={6} component="span" wrap="nowrap">
+          Скринер
+          <HelpHint label="Пояснение: Скринер" data-testid="screener-explain-icon">{PAGE_EXPLANATION}</HelpHint>
+        </Group>
+      }
+      description="Облигации MOEX: фильтры по доходности, сроку, ликвидности и надёжности"
+    >
 
       <StatusBar />
       <RiskSignalsCaption />
@@ -463,9 +468,9 @@ export function Screener() {
           </Collapse>
         </Stack>
       ) : (
-        <Paper withBorder p="md" radius="md">
+        <Section title="Фильтры">
           <FilterPanel />
-        </Paper>
+        </Section>
       )}
 
       {isLoading && (
@@ -612,6 +617,6 @@ export function Screener() {
       )}
 
       <Disclaimer text={disclaimer} />
-    </Stack>
+    </Page>
   );
 }

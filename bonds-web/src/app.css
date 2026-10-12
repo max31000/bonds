@@ -1,0 +1,199 @@
+/* Bonds-specific bits on top of @mvv42/kit/styles.css — only what the kit has no component for. */
+
+/* Healthy-sync dot next to «синк N назад». */
+.bonds-status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--mvv-r-full);
+  background: var(--mvv-success);
+  box-shadow: 0 0 0 3px var(--mvv-success-bg);
+}
+
+/* 403 from the API: centred «Нет доступа» in place of the screens. */
+.bonds-gate {
+  display: flex;
+  justify-content: center;
+  padding: var(--mvv-sp-16) var(--mvv-sp-4);
+}
+
+/* Muted footnote under a chart or table. */
+.bonds-note {
+  margin: 0;
+  font-size: var(--mvv-fs-12);
+  line-height: 1.5;
+  color: var(--mvv-text-3);
+}
+
+/* Two equal columns on desktop (dashboard widgets), one under 900px. */
+.bonds-grid-2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--mvv-sp-4);
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .bonds-grid-2 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.bonds-center {
+  display: flex;
+  justify-content: center;
+  padding: var(--mvv-sp-8) var(--mvv-sp-4);
+}
+
+/* A Metric that navigates: whole tile is the button, hover like a kit surface. */
+.bonds-metric-link {
+  display: block;
+  width: 100%;
+  border-radius: var(--mvv-r-md);
+  text-align: left;
+}
+.bonds-metric-link .mvv-metric {
+  height: 100%;
+  transition: background var(--mvv-dur-fast) var(--mvv-ease), border-color var(--mvv-dur-fast) var(--mvv-ease);
+}
+.bonds-metric-link:hover .mvv-metric {
+  background: var(--mvv-surface-hover);
+  border-color: var(--mvv-border-strong);
+}
+.bonds-metric-link:focus-visible {
+  outline: 2px solid var(--mvv-focus-ring);
+  outline-offset: 2px;
+}
+
+/* Mandatory «estimates, not advice» note: quiet, but always present. */
+.bonds-disclaimer {
+  display: flex;
+  gap: var(--mvv-sp-2);
+  align-items: flex-start;
+  padding: var(--mvv-sp-3) var(--mvv-sp-4);
+  border: 1px solid var(--mvv-border);
+  border-radius: var(--mvv-r-md);
+  background: var(--mvv-surface-2);
+  color: var(--mvv-text-3);
+}
+.bonds-disclaimer svg {
+  flex: none;
+  margin-top: 2px;
+}
+.bonds-disclaimer p {
+  margin: 0;
+  font-size: var(--mvv-fs-12);
+  line-height: 1.5;
+}
+
+/* Figures inside a Section (position header, «если продать сейчас»). */
+.bonds-eyebrow {
+  font-size: var(--mvv-fs-12);
+  line-height: 1.4;
+  color: var(--mvv-text-3);
+  margin-bottom: var(--mvv-sp-1);
+}
+.bonds-figure {
+  font-size: 28px;
+  line-height: 1.15;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--mvv-text);
+}
+.bonds-figure-sm {
+  font-size: var(--mvv-fs-17);
+  line-height: 1.3;
+  font-weight: 600;
+  color: var(--mvv-text);
+}
+.bonds-positive {
+  color: var(--mvv-success);
+}
+.bonds-negative {
+  color: var(--mvv-danger);
+}
+.bonds-position-head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--mvv-sp-4);
+}
+.bonds-position-head .bonds-note {
+  margin-top: var(--mvv-sp-1);
+}
+.bonds-figures {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: var(--mvv-sp-5) var(--mvv-sp-6);
+}
+@media (max-width: 900px) {
+  .bonds-figures {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+.bonds-footnotes {
+  display: grid;
+  gap: var(--mvv-sp-1);
+  margin-top: var(--mvv-sp-5);
+  padding-top: var(--mvv-sp-4);
+  border-top: 1px solid var(--mvv-border);
+}
+.bonds-row-past td {
+  color: var(--mvv-text-3);
+}
+
+/* Current value next to a chart title (XIRR «сейчас»). */
+.bonds-header-figure {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--mvv-sp-2);
+}
+.bonds-header-figure .bonds-eyebrow {
+  margin: 0;
+}
+.bonds-header-figure .bonds-figure-sm {
+  color: var(--mvv-accent);
+}
+
+
+/* Month drill-down under the cash-flow chart. */
+.bonds-drilldown {
+  margin-top: var(--mvv-sp-2);
+  border-top: 1px solid var(--mvv-border);
+  padding-top: var(--mvv-sp-3);
+}
+.bonds-drilldown-title {
+  font-size: var(--mvv-fs-13);
+  font-weight: 600;
+  color: var(--mvv-text);
+  margin-bottom: var(--mvv-sp-2);
+}
+.bonds-inline-badge {
+  margin-left: var(--mvv-sp-1);
+}
+
+/* Section title that toggles its body. */
+.bonds-disclosure {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--mvv-sp-2);
+  font: inherit;
+  color: inherit;
+  border-radius: var(--mvv-r-sm);
+}
+.bonds-disclosure:focus-visible {
+  outline: 2px solid var(--mvv-focus-ring);
+  outline-offset: 2px;
+}
+.bonds-disclosure-icon {
+  color: var(--mvv-text-3);
+  transition: transform var(--mvv-dur-fast) var(--mvv-ease);
+}
+.bonds-disclosure-icon[data-open] {
+  transform: rotate(180deg);
+}
+
+.bonds-mt {
+  margin-top: var(--mvv-sp-2);
+}
+

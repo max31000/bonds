@@ -22,7 +22,7 @@ import { fetchAllocation, postBasket } from '../api/recommendations';
 import { liquidityLabel, liquidityColor } from '../utils/universeDisplay';
 import { formatRub, formatPercent, formatNumber } from '../utils/format';
 import { Disclaimer } from './Disclaimer';
-import { ChartExplainIcon } from './charts/ChartCard';
+import { HelpHint } from '@mvv42/kit';
 import { RiskSignalBadges, RiskSignalsCaption } from './RiskSignalBadges';
 import type { AllocationLine, AllocationSource, BasketResponse, RiskSignals, UniverseRow, WhatIfWarning } from '../api/types';
 
@@ -397,11 +397,7 @@ export function BasketConstructor() {
         <Text size="xs" fw={600} c="dimmed">
           Источник кандидатов пресета
         </Text>
-        <ChartExplainIcon
-          title="Источник кандидатов"
-          explanation={SOURCE_EXPLANATION}
-          data-testid="basket-source-explain-icon"
-        />
+        <HelpHint label="Пояснение: Источник кандидатов" data-testid="basket-source-explain-icon">{SOURCE_EXPLANATION}</HelpHint>
       </Group>
       <SegmentedControl
         value={source}

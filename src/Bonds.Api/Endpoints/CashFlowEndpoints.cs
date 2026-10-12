@@ -1,4 +1,4 @@
-using System.Security.Claims;
+using Bonds.Api.Auth;
 using Bonds.Core.CashFlow;
 using Bonds.Core.Interfaces.Repositories;
 using Bonds.Core.Models;
@@ -23,14 +23,14 @@ public static class CashFlowEndpoints
     }
 
     private static async Task<IResult> GetCashFlow(
-        ClaimsPrincipal principal,
+        ICurrentUser currentUser,
         IAccountRepository accountRepo,
         IProjectedCashFlowRepository projectedCashFlows,
         IInstrumentRepository instrumentRepo,
         DateOnly? from,
         DateOnly? to)
     {
-        var accountId = await PositionsEndpoints.ResolveAccountIdAsync(principal, accountRepo);
+        var accountId = await PositionsEndpoints.ResolveAccountIdAsync(currentUser, accountRepo);
         if (accountId is null)
         {
             return Results.Ok(new CashFlowResponseDto

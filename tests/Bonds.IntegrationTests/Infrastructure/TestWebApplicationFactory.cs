@@ -1,3 +1,4 @@
+using Bonds.Api.Auth;
 using Bonds.Infrastructure.Connectors.TInvest;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -12,8 +13,10 @@ namespace Bonds.IntegrationTests.Infrastructure;
 
 /// <summary>
 /// WebApplicationFactory с подключённой Testcontainers MySQL-базой.
-/// Паттерн скопирован из cashpulse. Jwt:Secret/Issuer/Audience подменяются на значения
-/// из JwtTestHelper, чтобы тестовые токены проверялись тем же секретом, что и в Program.cs.
+/// Паттерн скопирован из cashpulse. Аутентификация — продовая схема mvv42 с тестовым ES256-ключом
+/// (<see cref="Mvv42TestAuth"/>); проверка владельца в этой фабрике разрешает любой tg, потому что
+/// тесты изолируются собственными пользователями со случайным Telegram id (контейнер общий).
+/// Сама проверка владельца покрыта <c>Mvv42AuthTests</c> (без БД) с продовым <see cref="IOwnerAccess"/>.
 /// </summary>
 public class TestWebApplicationFactory : WebApplicationFactory<Program>, IAsyncLifetime
 {
@@ -52,11 +55,7 @@ public class TestWebApplicationFactory : WebApplicationFactory<Program>, IAsyncL
             config.AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["ConnectionStrings:DefaultConnection"] = _dbFixture.ConnectionString,
-                ["Jwt:Secret"] = JwtTestHelper.TestSecret,
-                ["Jwt:Issuer"] = JwtTestHelper.TestIssuer,
-                ["Jwt:Audience"] = JwtTestHelper.TestAudience,
                 ["Telegram:BotToken"] = "test-bot-token-not-real",
-                ["Telegram:BotUsername"] = "test_bot",
                 ["Telegram:OwnerId"] = TestOwnerTelegramId.ToString(),
                 // Дефолт /app/dataprotection-keys (plan/13 часть A) не существует/не доступен на
                 // тестовом хосте — свой temp dir на процесс теста, чтобы PUT /api/settings/tinvest-token
@@ -91,6 +90,16 @@ public class TestWebApplicationFactory : WebApplicationFactory<Program>, IAsyncL
                 .Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync(TInvestTokenValidationResult.Valid("TEST-BROKER-ACCOUNT-1234"));
             services.AddScoped(_ => defaultValidator.Object);
+
+            Mvv42TestAuth.UseTestSigningKey(services);
+            services.RemoveAll<IOwnerAccess>();
+            services.AddSingleton<IOwnerAccess, AnyTelegramIdIsOwner>();
         });
     }
+}
+
+/// <summary>Per-test users (random Telegram ids) all pass the owner check; see the class comment above.</summary>
+public sealed class AnyTelegramIdIsOwner : IOwnerAccess
+{
+    public bool IsOwner(long telegramId) => true;
 }

@@ -1,4 +1,4 @@
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
 import { describe, it, expect, beforeEach } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
 import { MantineProvider } from '@mantine/core';
@@ -7,7 +7,6 @@ import { server } from '../test/msw-handlers';
 import { Analytics } from './Analytics';
 import { buildScatterChartData } from '../utils/scatterChartData';
 import { useAnalyticsStore } from '../store/useAnalyticsStore';
-import { useAuthStore } from '../store/useAuthStore';
 import type { CompositionResponse, RateScenarioResponse, ScatterResponse, TrajectoryResponse, XirrResponse } from '../api/types';
 
 function renderAnalytics() {
@@ -120,7 +119,6 @@ describe('Analytics', () => {
       error: null,
       isBackfilling: false,
     });
-    useAuthStore.setState({ token: 'test-token', user: { id: 1, telegramId: 1 } });
   });
 
   it('renders the scatter, composition, and xirr widgets with data', async () => {
@@ -181,10 +179,12 @@ describe('Analytics', () => {
 
     renderAnalytics();
 
-    await waitFor(() => expect(screen.getByTestId('scatter-widget-explain-icon')).toBeInTheDocument());
+    // «?» графика — кнопка ChartFrame кита («Как читать график») внутри виджета.
+    await waitFor(() => expect(screen.getByTestId('scatter-widget')).toBeInTheDocument());
+    const explain = within(screen.getByTestId('scatter-widget')).getByRole('button', { name: 'Как читать график' });
 
     const { default: userEvent } = await import('@testing-library/user-event');
-    await userEvent.click(screen.getByTestId('scatter-widget-explain-icon'), { pointerEventsCheck: 0 });
+    await userEvent.click(explain, { pointerEventsCheck: 0 });
 
     await waitFor(() => expect(screen.getByText(/Серая линия — безрисковая кривая ОФЗ/)).toBeInTheDocument());
   });

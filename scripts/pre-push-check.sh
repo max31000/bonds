@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# pre-push-check.sh — local mirror of the GitHub CI pipelines (backend.yml + frontend.yml)
+# pre-push-check.sh — local mirror of the GitHub CI pipelines (deploy.yml: backend + frontend jobs)
 # plus a few extra guards. Run this before pushing to origin/main so the pipeline goes green.
 #
 # It runs EVERY relevant check (it does not stop at the first failure), then prints a summary
@@ -78,8 +78,8 @@ skip() {
 have() { command -v "$1" >/dev/null 2>&1; }
 
 # ── Decide what changed (to mirror the CI path filters) ─────────────────────────────────────
-# Backend pipeline triggers on: src/**, tests/**, Bonds.sln, .github/workflows/backend.yml
-# Frontend pipeline triggers on: bonds-web/**, .github/workflows/frontend.yml
+# Backend job runs on: src/**, tests/**, Bonds.sln, .github/workflows/deploy.yml
+# Frontend job runs on: bonds-web/**, .github/workflows/deploy.yml
 detect_changes() {
   local files=""
   if git rev-parse --verify "$BASE_REF" >/dev/null 2>&1; then
@@ -94,10 +94,10 @@ detect_changes() {
 CHANGED="$(detect_changes)"
 
 backend_touched() {
-  printf '%s' "$CHANGED" | grep -Eq '^(src/|tests/|Bonds\.sln|\.github/workflows/backend\.yml)'
+  printf '%s' "$CHANGED" | grep -Eq '^(src/|tests/|Bonds\.sln|\.github/workflows/deploy\.yml)'
 }
 frontend_touched() {
-  printf '%s' "$CHANGED" | grep -Eq '^(bonds-web/|\.github/workflows/frontend\.yml)'
+  printf '%s' "$CHANGED" | grep -Eq '^(bonds-web/|\.github/workflows/deploy\.yml)'
 }
 
 DO_BACKEND=0; DO_FRONTEND=0
@@ -140,7 +140,7 @@ else
   echo "  ${GREEN}✔ yarn.lock / package.json in sync (no obvious drift)${RESET}"; RESULTS+=("PASS	yarn.lock in sync with package.json")
 fi
 
-# ── Backend (mirror backend.yml) ────────────────────────────────────────────────────────────
+# ── Backend (mirror deploy.yml → backend) ────────────────────────────────────────────────────────────
 if [ "$DO_BACKEND" = 1 ]; then
   if ! have dotnet; then
     skip "Backend checks" "dotnet SDK not on PATH"
@@ -157,14 +157,13 @@ if [ "$DO_BACKEND" = 1 ]; then
   fi
 fi
 
-# ── Frontend (mirror frontend.yml) ──────────────────────────────────────────────────────────
+# ── Frontend (mirror deploy.yml → frontend) ──────────────────────────────────────────────────────────
 if [ "$DO_FRONTEND" = 1 ]; then
   if ! have yarn; then
     skip "Frontend checks" "yarn not on PATH"
   else
     step "Frontend: install (--frozen-lockfile)" bash -c "cd '$WEB_DIR' && yarn install --frozen-lockfile"
     step "Frontend: typecheck"                   bash -c "cd '$WEB_DIR' && yarn typecheck"
-    # eslint is NOT in CI today, but a clean lint catches real bugs and keeps the bar high.
     step "Frontend: lint (eslint)"               bash -c "cd '$WEB_DIR' && yarn lint"
     step "Frontend: tests (vitest run)"          bash -c "cd '$WEB_DIR' && yarn test:run"
     step "Frontend: build (tsc -b && vite build)" bash -c "cd '$WEB_DIR' && yarn build"

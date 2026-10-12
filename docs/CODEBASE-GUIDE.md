@@ -55,7 +55,14 @@ HttpClient MOEX — именованный `MoexIssClient.HttpClientName`.
 FallbackPolicy (новый эндпоинт защищён по умолчанию; `.AllowAnonymous()` только осознанно).
 DTO — `sealed record` с `required`/nullable. Ошибки: кастомные исключения →
 `ErrorHandlingMiddleware`, либо 422 через `Results.Json(new { error, type = "ValidationException" },
-statusCode: 422)`. Юзер — `ResolveUserId(ClaimsPrincipal)`-хелперы по образцу соседей.
+statusCode: 422)`. Юзер — параметр `ICurrentUser currentUser` → `await currentUser.GetUserIdAsync()`
+(локальный `users.id`), счёт — `PositionsEndpoints.ResolveAccountIdAsync(currentUser, accountRepo)`.
+
+**Auth** (`Bonds.Api/Auth`): только общий mvv42-auth — `Mvv42Auth.cs` (copy-in SDK, не править),
+`BondsAuth.cs`: схема `mvv42` (JWT из cookie `__Host-mvv42_at`, ключи из JWKS `mvv42-auth:8080`),
+Fallback/Default policy = `mvv42:app` + владелец (`tg == Telegram:OwnerId`, иначе 403). Локальный
+пользователь ищется/создаётся ТОЛЬКО по claim `tg` (`UserProvisioning`, онбординг Account) — `sub`
+(id в auth) никогда не используется как локальный id. `ClaimTypes.NameIdentifier` не читать.
 
 **Миграции** (`Bonds.Infrastructure/Migrations/NNN_*.sql`, EmbeddedResource): следующий номер —
 `ls` каталога. MySQL-стиль: `ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
@@ -86,9 +93,11 @@ snake_case, выравнивание типов, `UNIQUE KEY uq_*` / `KEY idx_*`
 
 **Интеграционные** (`tests/Bonds.IntegrationTests`, плоско по эндпоинтам):
 `TestWebApplicationFactory` (env=Testing: миграции на старте пропускаются, hosted services
-вырезаны, JWT/DataProtection тестовые) + `DatabaseFixture` (Testcontainers MySQL 8, миграции
+вырезаны, тестовый ES256-ключ вместо JWKS, DataProtection тестовый) + `DatabaseFixture` (Testcontainers MySQL 8, миграции
 прогоняются фикстурой) + `[Collection("Integration")]` (общий контейнер). Авторизованный клиент —
-`JwtTestHelper.GenerateToken(userId)`. Внешние клиенты — `factory.WithWebHostBuilder(...
+`Mvv42TestAuth.Authorize(client, telegramId)` (cookie + Origin; пользователь резолвится по `tg`; в этой
+фабрике проверка владельца пропускает любой tg). Auth-края без БД (401 для всех эндпоинтов,
+владелец/403, Origin) — `NoDatabaseWebApplicationFactory` + `Mvv42AuthTests` (Docker не нужен). Внешние клиенты — `factory.WithWebHostBuilder(...
 RemoveAll<IMoexIssClient>() ...)`. 401-проверки — `[Theory]/[InlineData]` списком маршрутов.
 Тесты НЕ полагаются на порядок и на пустую БД (контейнер общий — маркируй сущности
 `Guid`-суффиксом).
@@ -103,11 +112,16 @@ RemoveAll<IMoexIssClient>() ...)`. 401-проверки — `[Theory]/[InlineDat
 Страницы — `pages/*`, сторы — Zustand `store/use*Store.ts` (загрузка виджетов страницы —
 независимая, отказ одного эндпоинта не роняет остальные), api-клиенты — `api/*.ts` + типы в
 `api/types.ts` (**зеркалят бэкенд-DTO буквально**, включая строковые enum-значения — сверяйся с
-сериализацией, был кейс `Unknown` vs `None`). Графики — chart-kit `components/charts/`
-(ChartCard/ChartTooltip/константы/ChartExplainIcon — у каждого графика «?»-объяснение).
-Форматтеры — `utils/format.ts`. Мобильная адаптация — карточки по паттерну `PositionCard` +
-`useMediaQuery`. Роуты — `App.tsx`, навигация — `AppLayout.tsx` (там же индикатор синка, burger,
-переключатель темы — не ломать).
+сериализацией, был кейс `Unknown` vs `None`). UI — **`@mvv42/kit`** (релизный tarball): экран =
+`Page` → `MetricGrid`/`Metric` + `Section` (таблицы — `padding="none"`), состояния — `EmptyState`/
+`ErrorState`; графики — `@mvv42/kit/charts` (`ChartFrame` с «?»-объяснением из
+`components/charts/explanations.ts`, `useChartTheme`, `ChartTooltip`, `chartColors` — без сырых hex и
+`--mantine-color-*`). Свои стили — только `src/app.css` (`bonds-*`, на токенах `--mvv-*`).
+API — `api/client.ts` поверх `apiJson` кита (cookie, refresh; финальный 401 → `requestLogin`,
+403 → экран «Нет доступа»). Форматтеры — `utils/format.ts`. Мобильная адаптация — карточки по
+паттерну `PositionCard` + `useMediaQuery`. Роуты — `App.tsx`, каркас — `components/ServiceLayout.tsx`
+(`AppLayout` кита, `LoginRequired`, индикатор синка + «Обновить данные», автосинк — не ломать).
+Тесты страниц рендерят их в `MantineProvider`; `/auth/api/me` владельца — `OWNER_ME` в MSW.
 
 ## Продуктовые константы
 

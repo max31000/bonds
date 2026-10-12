@@ -1,6 +1,5 @@
 using Bonds.Core.Interfaces;
 using Bonds.Core.Interfaces.Repositories;
-using Bonds.Core.Services;
 using Bonds.Core.Signals;
 using Bonds.Infrastructure.Analytics;
 using Bonds.Infrastructure.CashFlow;
@@ -44,7 +43,7 @@ public static class DependencyInjection
 
         // Auth (этап 02)
         services.AddScoped<IUserRepository>(sp => new UserRepository(GetConnStr(sp)));
-        services.AddScoped<ITelegramAuthService, TelegramAuthService>();
+        services.AddScoped<UserProvisioning>();
 
         // Storage (этап 03) — справочник, котировки, позиции/операции, сигналы.
         services.AddScoped<IInstrumentRepository>(sp => new InstrumentRepository(GetConnStr(sp)));
@@ -95,7 +94,7 @@ public static class DependencyInjection
         services.AddScoped<IMoexIssClient, MoexIssClient>();
 
         // Telegram Bot API — алерт владельцу при падении автосинка (plan/13 часть D). Тот же бот,
-        // что и авторизация/CI-алерты (Telegram:BotToken), base address без секрета в URL самого
+        // что и CI-алерты (Telegram:BotToken), base address без секрета в URL самого
         // клиента (токен подставляется в путь запроса на каждый вызов, см. TelegramAlertSender).
         services.AddHttpClient(TelegramAlertSender.HttpClientName, client =>
         {
@@ -159,7 +158,7 @@ public static class DependencyInjection
         // должна зависеть от имени бинарника/пути публикации.
         //
         // Путь читается ЛЕНИВО через IConfigureOptions<KeyManagementOptions> (а не сразу из
-        // параметра configuration выше — тот же паттерн, что GetConnStr/Jwt:Secret в Program.cs),
+        // параметра configuration выше — тот же паттерн, что GetConnStr),
         // потому что WebApplicationFactory.ConfigureWebHost в тестах подставляет DataProtection:KeysPath
         // ПОСЛЕ этого вызова AddInfrastructure — eager-чтение здесь всегда попадало бы на дефолт
         // "/app/dataprotection-keys" (в тестовом контейнере read-only FS) вместо тестового temp dir.

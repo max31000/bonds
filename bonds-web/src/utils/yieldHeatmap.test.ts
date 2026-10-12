@@ -22,7 +22,7 @@ describe('buildYieldHeatmapScale', () => {
     const scale = buildYieldHeatmapScale([0.1, 0.2]);
     const result = scale(0.2);
     expect(result).toContain('color-mix');
-    expect(result).toContain('var(--mantine-color-violet-6)');
+    expect(result).toContain('var(--mvv-accent)');
   });
 
   it('gives equal values the same color regardless of position in the array', () => {

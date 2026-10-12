@@ -1,3 +1,4 @@
+import { chartColors } from '@mvv42/kit/charts';
 import type { ScatterPoint } from '../api/types';
 
 /**
@@ -16,11 +17,11 @@ export function pointCategory(p: ScatterPoint): string {
 }
 
 export const CATEGORY_COLOR: Record<string, string> = {
-  'Обычная': 'var(--mantine-color-violet-6)',
-  'Флоатер': 'var(--mantine-color-blue-6)',
-  'Индексируемая': 'var(--mantine-color-teal-6)',
-  'Неполные данные': 'var(--mantine-color-red-5)',
-  'Watchlist': 'var(--mantine-color-orange-6)',
+  'Обычная': chartColors.accent,
+  'Флоатер': chartColors.series[0],
+  'Индексируемая': chartColors.series[2],
+  'Неполные данные': chartColors.negative,
+  'Watchlist': chartColors.series[1],
 };
 
 /**

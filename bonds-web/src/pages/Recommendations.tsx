@@ -18,6 +18,7 @@ import {
   SegmentedControl,
   Switch,
 } from '@mantine/core';
+import { Page } from '@mvv42/kit';
 import { useRecommendationsStore } from '../store/useRecommendationsStore';
 import { useWatchlistStore } from '../store/useWatchlistStore';
 import { useRelativeValueStore } from '../store/useRelativeValueStore';
@@ -88,7 +89,7 @@ function ReplacementCandidateRow({
         withBorder
         p="xs"
         radius="md"
-        style={isSelected ? { borderColor: 'var(--mantine-color-blue-5)' } : undefined}
+        style={isSelected ? { borderColor: 'var(--mvv-accent)' } : undefined}
       >
         <Group justify="space-between" wrap="wrap" gap={4}>
           <Text size="sm" fw={600}>
@@ -674,12 +675,11 @@ export function Recommendations() {
   }, []);
 
   return (
-    <Stack gap="md">
-      <Title order={2}>Рекомендации</Title>
-      <Text size="sm" c="dimmed">
-        Все оценки на этой странице — аналитические, основаны на текущих данных портфеля, не
-        индивидуальная инвестиционная рекомендация.
-      </Text>
+    <Page
+      title="Рекомендации"
+      description="Кандидаты на замену, корзина и watchlist. Все оценки — аналитические, основаны на текущих данных портфеля, не индивидуальная инвестиционная рекомендация."
+      width="wide"
+    >
       <div data-testid="page-disclaimer">
         <Disclaimer />
       </div>
@@ -687,6 +687,6 @@ export function Recommendations() {
       <WeakLinksSection />
       <BasketConstructor />
       <WatchlistSection />
-    </Stack>
+    </Page>
   );
 }

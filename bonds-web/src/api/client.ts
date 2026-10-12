@@ -1,51 +1,71 @@
-import { useAuthStore } from '../store/useAuthStore';
+import { ApiError, apiJson, requestLogin } from '@mvv42/kit/platform';
+import { useAccessStore } from '../store/useAccessStore';
 
-// nginx проксирует /bonds/api/ → :5001/api/ (см. plan/01, часть C3).
-// Фронт ходит на относительный путь, поэтому дефолт работает и standalone, и в iframe.
+// nginx проксирует /bonds/api/ → :5001/api/ (см. plan/01, часть C3). Относительный путь того же
+// origin: общий mvv42-auth кладёт access-cookie на mvv42.ru, браузер сам отправит её с запросом.
 const BASE_URL = import.meta.env.VITE_API_BASE ?? '/bonds/api';
 
-function getAuthHeaders(): Record<string, string> {
-  const token = useAuthStore.getState().token;
-  return token ? { Authorization: `Bearer ${token}` } : {};
+/** Идентификатор сервиса в реестре shell / mvv42-auth. */
+export const SERVICE_ID = 'bonds';
+
+let loginRequested = false;
+
+/**
+ * 403 уровня доступа к сервису (политика mvv42:app / владелец) — бэкенд отвечает `{ "error": "access_denied" }`
+ * (`BondsAuth`). Другие 403 — `origin_not_allowed` от CSRF-фильтра SDK и будущие бизнес-запреты — остаются
+ * локальными ошибками виджета, а не глобальным «Нет доступа».
+ */
+export const ACCESS_DENIED_CODE = 'access_denied';
+
+function isAccessDenied(err: ApiError): boolean {
+  return err.status === 403 && err.code === ACCESS_DENIED_CODE;
 }
 
-async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE_URL}${path}`, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...getAuthHeaders(),
-      ...(options?.headers ?? {}),
-    },
-  });
+/** Новая сессия (вошёл / сменился пользователь / AUTH_CHANGED): снова можно запросить вход и показать данные. */
+export function resetAuthState(): void {
+  loginRequested = false;
+  useAccessStore.getState().reset();
+}
 
-  if (res.status === 401) {
-    // Токен истёк или невалиден — разлогиниваем и уводим на экран входа
-    useAuthStore.getState().logout();
-    window.location.href = `${import.meta.env.BASE_URL ?? '/'}login`;
-    throw new Error('Требуется авторизация');
+/**
+ * JSON-запрос к API сервиса через `apiJson` кита: cookie, при 401 — один общий refresh сессии и
+ * повтор. Финальный 401 → вход через shell (`requestLogin`), 403 (не владелец) → глобальный
+ * экран «Нет доступа». Ошибка пробрасывается как `ApiError` (message = `error` из тела ответа),
+ * сторы показывают её текст как раньше.
+ */
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  try {
+    return await apiJson<T>(`${BASE_URL}${path}`, init);
+  } catch (err) {
+    if (err instanceof ApiError) {
+      if (err.status === 401 && !loginRequested) {
+        loginRequested = true;
+        requestLogin(SERVICE_ID);
+      } else if (isAccessDenied(err)) {
+        useAccessStore.getState().deny(err);
+      }
+    }
+    throw err;
   }
+}
 
-  if (!res.ok) {
-    const error = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error((error as { error?: string }).error ?? `HTTP ${res.status}`);
-  }
-
-  if (res.status === 204) return undefined as T;
-  return res.json() as Promise<T>;
+function withBody(method: string, body?: unknown): RequestInit {
+  return body === undefined ? { method } : { method, body: JSON.stringify(body) };
 }
 
 export const apiClient = {
   get: <T>(path: string) => request<T>(path),
-  post: <T>(path: string, body?: unknown) =>
-    request<T>(path, {
-      method: 'POST',
-      body: body ? JSON.stringify(body) : undefined,
-    }),
-  put: <T>(path: string, body?: unknown) =>
-    request<T>(path, {
-      method: 'PUT',
-      body: body ? JSON.stringify(body) : undefined,
-    }),
+  post: <T>(path: string, body?: unknown) => request<T>(path, withBody('POST', body)),
+  put: <T>(path: string, body?: unknown) => request<T>(path, withBody('PUT', body)),
   delete: <T>(path: string) => request<T>(path, { method: 'DELETE' }),
 };
+
+/** Тесты: сбросить флаг «вход уже запрошен». */
+export function __resetLoginRequestForTests(): void {
+  loginRequested = false;
+}
+
+/** Тесты: запрошен ли уже вход. */
+export function __loginRequestedForTests(): boolean {
+  return loginRequested;
+}

@@ -1,17 +1,15 @@
 import { useEffect, useState } from 'react';
 import {
-  Title,
   Stack,
   Paper,
   Text,
-  Alert,
   Loader,
-  Center,
   Badge,
   Group,
   Button,
   SegmentedControl,
 } from '@mantine/core';
+import { EmptyState, ErrorState, Page, Section } from '@mvv42/kit';
 import { useSignalsStore } from '../store/useSignalsStore';
 import { formatDate } from '../utils/format';
 import type { Signal, SignalSeverity } from '../api/types';
@@ -105,9 +103,10 @@ export function Signals() {
   });
 
   return (
-    <Stack gap="md">
-      <Group justify="space-between">
-        <Title order={2}>Сигналы</Title>
+    <Page
+      title="Сигналы"
+      description="Оферты, купоны, концентрация и другие события портфеля"
+      actions={
         <SegmentedControl
           size="xs"
           value={filter}
@@ -117,24 +116,28 @@ export function Signals() {
             { value: 'unread', label: 'Непрочитанные' },
           ]}
         />
-      </Group>
-
+      }
+    >
       {isLoading && (
-        <Center py="xl">
+        <div className="bonds-center">
           <Loader />
-        </Center>
+        </div>
       )}
 
       {!isLoading && error && (
-        <Alert color="red" title="Не удалось загрузить сигналы" data-testid="signals-error">
-          {error}
-        </Alert>
+        <Section>
+          <ErrorState title="Не удалось загрузить сигналы" error={error} data-testid="signals-error" />
+        </Section>
       )}
 
       {!isLoading && !error && sorted.length === 0 && (
-        <Alert color="gray" title="Нет сигналов" data-testid="signals-empty">
-          {filter === 'unread' ? 'Все сигналы прочитаны.' : 'Сигналов пока нет.'}
-        </Alert>
+        <Section>
+          <EmptyState
+            title="Нет сигналов"
+            description={filter === 'unread' ? 'Все сигналы прочитаны.' : 'Сигналов пока нет.'}
+            data-testid="signals-empty"
+          />
+        </Section>
       )}
 
       {!isLoading && !error && sorted.length > 0 && (
@@ -144,6 +147,6 @@ export function Signals() {
           ))}
         </Stack>
       )}
-    </Stack>
+    </Page>
   );
 }

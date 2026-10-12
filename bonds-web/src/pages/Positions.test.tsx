@@ -6,7 +6,6 @@ import { http, HttpResponse } from 'msw';
 import { server } from '../test/msw-handlers';
 import { Positions } from './Positions';
 import { usePositionsStore } from '../store/usePositionsStore';
-import { useAuthStore } from '../store/useAuthStore';
 import { useLiveStore } from '../store/useLiveStore';
 import { useRelativeValueStore } from '../store/useRelativeValueStore';
 import type { PositionRow } from '../api/types';
@@ -85,7 +84,6 @@ const basePosition: PositionRow = {
 describe('Positions', () => {
   beforeEach(() => {
     usePositionsStore.setState({ positions: [], disclaimer: '', isLoading: false, error: null });
-    useAuthStore.setState({ token: 'test-token', user: { id: 1, telegramId: 1 } });
     useLiveStore.setState({ positionsById: {}, totalMarketValueRub: null, asOfUtc: null });
     useRelativeValueStore.setState({ positionsById: {}, disclaimer: '', isLoading: false, error: null, hasLoaded: false });
   });
@@ -336,25 +334,6 @@ describe('Positions', () => {
     renderPositions();
 
     await waitFor(() => expect(screen.getByTestId('positions-error')).toBeInTheDocument());
-  });
-
-  it('logs out and would redirect to /login on a 401 response', async () => {
-    server.use(
-      http.get('*/api/positions', () => HttpResponse.json({ error: 'unauthorized' }, { status: 401 })),
-    );
-
-    const originalLocation = window.location;
-    Object.defineProperty(window, 'location', {
-      value: { ...originalLocation, href: '' },
-      writable: true,
-    });
-
-    renderPositions();
-
-    await waitFor(() => expect(useAuthStore.getState().token).toBeNull());
-    expect(window.location.href).toContain('/login');
-
-    Object.defineProperty(window, 'location', { value: originalLocation, writable: true });
   });
 
   // ─── T-16/B: live-merge рыночной стоимости поверх статичных данных GET /api/positions ────

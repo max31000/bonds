@@ -44,7 +44,7 @@ export function LiveMarketValueCell({ staticValueRub, positionId }: { staticValu
         fw={live ? 600 : 400}
         style={{
           transition: 'color 300ms ease, background-color 300ms ease',
-          backgroundColor: isHighlighted ? 'var(--mantine-color-yellow-1)' : 'transparent',
+          backgroundColor: isHighlighted ? 'var(--mvv-warning-bg)' : 'transparent',
         }}
       >
         {formatRub(displayValue)}

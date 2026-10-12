@@ -1,4 +1,4 @@
-using System.Security.Claims;
+using Bonds.Api.Auth;
 using Bonds.Api.Middleware;
 using Bonds.Core.Analytics;
 using Bonds.Core.Interfaces;
@@ -24,11 +24,11 @@ public static class PositionsEndpoints
     }
 
     private static async Task<IResult> GetPositions(
-        ClaimsPrincipal principal,
+        ICurrentUser currentUser,
         IAccountRepository accountRepo,
         PortfolioHoldingsBuilder holdingsBuilder)
     {
-        var accountId = await ResolveAccountIdAsync(principal, accountRepo);
+        var accountId = await ResolveAccountIdAsync(currentUser, accountRepo);
         if (accountId is null) return Results.Ok(new PositionsResponseDto { Positions = [], Disclaimer = Disclaimers.Metrics });
 
         var asOf = BusinessClock.MoscowToday();
@@ -46,7 +46,7 @@ public static class PositionsEndpoints
     private static async Task<IResult> GetPositionById(
         ulong id,
         string? range,
-        ClaimsPrincipal principal,
+        ICurrentUser currentUser,
         IAccountRepository accountRepo,
         IPositionRepository positionRepo,
         IInstrumentRepository instrumentRepo,
@@ -59,7 +59,7 @@ public static class PositionsEndpoints
         ICommissionRateProvider commissionRateProvider,
         CancellationToken ct)
     {
-        var accountId = await ResolveAccountIdAsync(principal, accountRepo);
+        var accountId = await ResolveAccountIdAsync(currentUser, accountRepo);
         if (accountId is null) throw new NotFoundException("Позиция не найдена");
 
         var position = await positionRepo.GetByIdAsync(id, accountId.Value);
@@ -269,15 +269,14 @@ public static class PositionsEndpoints
     };
 
     /// <summary>
-    /// Резолвит AccountId владельца запроса: UserId из JWT → IAccountRepository.GetByUserIdAsync
+    /// Резолвит AccountId владельца запроса: локальный UserId (ICurrentUser, по tg-claim) → IAccountRepository.GetByUserIdAsync
     /// (первый/единственный счёт, single-user продукт — spec §2). Null, если у пользователя ещё
     /// нет ни одного счёта (чистая инсталляция до первого синка) — вызывающий код должен
     /// деградировать на пустой ответ, не на 500.
     /// </summary>
-    internal static async Task<ulong?> ResolveAccountIdAsync(ClaimsPrincipal principal, IAccountRepository accountRepo)
+    internal static async Task<ulong?> ResolveAccountIdAsync(ICurrentUser currentUser, IAccountRepository accountRepo)
     {
-        var sub = principal.FindFirstValue(ClaimTypes.NameIdentifier);
-        if (!ulong.TryParse(sub, out var userId)) return null;
+        if (await currentUser.GetUserIdAsync() is not { } userId) return null;
 
         var accounts = await accountRepo.GetByUserIdAsync(userId);
         return accounts.Select(a => a.Id).OrderBy(id => id).FirstOrDefault();

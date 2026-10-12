@@ -42,7 +42,7 @@ describe('PortfolioIntradayChart', () => {
     renderChart();
 
     await waitFor(() => expect(screen.queryByTestId('intraday-chart-empty')).not.toBeInTheDocument());
-    expect(screen.queryByTestId('intraday-chart-error')).not.toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
   it('shows an error message when the request fails', async () => {
@@ -52,7 +52,7 @@ describe('PortfolioIntradayChart', () => {
 
     renderChart();
 
-    await waitFor(() => expect(screen.getByTestId('intraday-chart-error')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('boom'));
   });
 
   it('re-requests the series with the selected range when the toggle changes', async () => {

@@ -1,4 +1,4 @@
-using System.Security.Claims;
+using Bonds.Api.Auth;
 using Bonds.Api.Middleware;
 using Bonds.Core.Analytics;
 using Bonds.Core.Calculation;
@@ -43,13 +43,13 @@ public static class AnalyticsEndpoints
     // ─── GET /api/analytics/xirr ────────────────────────────────────────────────────────────
 
     private static async Task<IResult> GetXirr(
-        ClaimsPrincipal principal,
+        ICurrentUser currentUser,
         IAccountRepository accountRepo,
         IPortfolioValueSnapshotRepository snapshotRepo,
         DateOnly? from,
         DateOnly? to)
     {
-        var accountId = await PositionsEndpoints.ResolveAccountIdAsync(principal, accountRepo);
+        var accountId = await PositionsEndpoints.ResolveAccountIdAsync(currentUser, accountRepo);
         if (accountId is null)
         {
             return Results.Ok(new XirrResponseDto { CurrentXirr = null, History = [], Disclaimer = Disclaimers.Metrics });
@@ -87,11 +87,11 @@ public static class AnalyticsEndpoints
     /// вызывающий (фронт) ждёт ответа и сам решает, показывать ли индикатор загрузки.
     /// </summary>
     private static async Task<IResult> PostXirrBackfill(
-        ClaimsPrincipal principal,
+        ICurrentUser currentUser,
         IAccountRepository accountRepo,
         PortfolioHistoryBackfillService backfillService)
     {
-        var accountId = await PositionsEndpoints.ResolveAccountIdAsync(principal, accountRepo);
+        var accountId = await PositionsEndpoints.ResolveAccountIdAsync(currentUser, accountRepo);
         if (accountId is null)
         {
             return Results.Ok(new XirrBackfillResponseDto { PointsWritten = 0 });
@@ -106,11 +106,11 @@ public static class AnalyticsEndpoints
     // ─── GET /api/analytics/composition ─────────────────────────────────────────────────────
 
     private static async Task<IResult> GetComposition(
-        ClaimsPrincipal principal,
+        ICurrentUser currentUser,
         IAccountRepository accountRepo,
         PortfolioHoldingsBuilder holdingsBuilder)
     {
-        var accountId = await PositionsEndpoints.ResolveAccountIdAsync(principal, accountRepo);
+        var accountId = await PositionsEndpoints.ResolveAccountIdAsync(currentUser, accountRepo);
         if (accountId is null)
         {
             return Results.Ok(new CompositionResponseDto
@@ -162,14 +162,14 @@ public static class AnalyticsEndpoints
     /// </para>
     /// </summary>
     private static async Task<IResult> GetScatter(
-        ClaimsPrincipal principal,
+        ICurrentUser currentUser,
         IAccountRepository accountRepo,
         IYieldCurveRepository yieldCurveRepo,
         IWatchlistItemRepository watchlistRepo,
         IInstrumentRepository instrumentRepo,
         PortfolioHoldingsBuilder holdingsBuilder)
     {
-        var accountId = await PositionsEndpoints.ResolveAccountIdAsync(principal, accountRepo);
+        var accountId = await PositionsEndpoints.ResolveAccountIdAsync(currentUser, accountRepo);
         var curve = await yieldCurveRepo.GetLatestAsync();
 
         IReadOnlyList<Core.Analytics.PortfolioHolding> holdings = [];
@@ -199,8 +199,7 @@ public static class AnalyticsEndpoints
             })
             .ToList();
 
-        var userIdClaim = principal.FindFirstValue(ClaimTypes.NameIdentifier);
-        if (ulong.TryParse(userIdClaim, out var userId))
+        if (await currentUser.GetUserIdAsync() is { } userId)
         {
             var portfolioInstrumentIds = holdings.Select(h => h.InstrumentId).ToHashSet();
             var watchlistItems = (await watchlistRepo.GetByUserIdAsync(userId)).ToList();
@@ -266,11 +265,11 @@ public static class AnalyticsEndpoints
     // ─── GET /api/analytics/comparison ──────────────────────────────────────────────────────
 
     private static async Task<IResult> GetComparison(
-        ClaimsPrincipal principal,
+        ICurrentUser currentUser,
         IAccountRepository accountRepo,
         PortfolioHoldingsBuilder holdingsBuilder)
     {
-        var accountId = await PositionsEndpoints.ResolveAccountIdAsync(principal, accountRepo);
+        var accountId = await PositionsEndpoints.ResolveAccountIdAsync(currentUser, accountRepo);
         if (accountId is null)
         {
             return Results.Ok(new ComparisonResponseDto { Rows = [], Disclaimer = PositionComparisonService.YieldDisclaimer });
@@ -322,14 +321,14 @@ public static class AnalyticsEndpoints
     /// </summary>
     private static async Task<IResult> PostReplacement(
         ReplacementRequestDto request,
-        ClaimsPrincipal principal,
+        ICurrentUser currentUser,
         IAccountRepository accountRepo,
         PortfolioHoldingsBuilder holdingsBuilder,
         ICommissionRateProvider commissionRateProvider,
         RelativeValueSnapshotBuilder snapshotBuilder,
         CancellationToken ct)
     {
-        var accountId = await PositionsEndpoints.ResolveAccountIdAsync(principal, accountRepo);
+        var accountId = await PositionsEndpoints.ResolveAccountIdAsync(currentUser, accountRepo);
         if (accountId is null) throw new NotFoundException("Счёт не найден");
 
         var asOf = BusinessClock.MoscowToday();
@@ -479,7 +478,7 @@ public static class AnalyticsEndpoints
     /// Ставка комиссии — из <see cref="ICommissionRateProvider"/> (задача 22), НЕ константа.
     /// </summary>
     private static async Task<IResult> GetReplacementMatrix(
-        ClaimsPrincipal principal,
+        ICurrentUser currentUser,
         IAccountRepository accountRepo,
         PortfolioHoldingsBuilder holdingsBuilder,
         IWatchlistItemRepository watchlistRepo,
@@ -487,7 +486,7 @@ public static class AnalyticsEndpoints
         ICommissionRateProvider commissionRateProvider,
         CancellationToken ct)
     {
-        var accountId = await PositionsEndpoints.ResolveAccountIdAsync(principal, accountRepo);
+        var accountId = await PositionsEndpoints.ResolveAccountIdAsync(currentUser, accountRepo);
         if (accountId is null)
         {
             return Results.Ok(new ReplacementMatrixResponseDto
@@ -513,8 +512,7 @@ public static class AnalyticsEndpoints
 
         // Plan/23 п.1: watchlist-бумаги — только как target, тот же путь, что PostReplacement
         // с TargetInstrumentId/GetScatter/GetAllocation (BuildForInstrumentsAsync).
-        var userIdClaim = principal.FindFirstValue(ClaimTypes.NameIdentifier);
-        if (ulong.TryParse(userIdClaim, out var userId))
+        if (await currentUser.GetUserIdAsync() is { } userId)
         {
             var portfolioInstrumentIds = holdings.Select(h => h.InstrumentId).ToHashSet();
             var watchlistItems = (await watchlistRepo.GetByUserIdAsync(userId)).ToList();
@@ -608,12 +606,12 @@ public static class AnalyticsEndpoints
     // ─── GET /api/analytics/rate-scenario ───────────────────────────────────────────────────
 
     private static async Task<IResult> GetRateScenario(
-        ClaimsPrincipal principal,
+        ICurrentUser currentUser,
         IAccountRepository accountRepo,
         PortfolioHoldingsBuilder holdingsBuilder,
         string? shiftsBp)
     {
-        var accountId = await PositionsEndpoints.ResolveAccountIdAsync(principal, accountRepo);
+        var accountId = await PositionsEndpoints.ResolveAccountIdAsync(currentUser, accountRepo);
         if (accountId is null)
         {
             return Results.Ok(new RateScenarioResponseDto
@@ -652,14 +650,14 @@ public static class AnalyticsEndpoints
     // ─── GET /api/analytics/trajectory ──────────────────────────────────────────────────────
 
     private static async Task<IResult> GetTrajectory(
-        ClaimsPrincipal principal,
+        ICurrentUser currentUser,
         IAccountRepository accountRepo,
         PortfolioHoldingsBuilder holdingsBuilder,
         IProjectedCashFlowRepository projectedCashFlows,
         int? horizonMonths,
         decimal? reinvestRate)
     {
-        var accountId = await PositionsEndpoints.ResolveAccountIdAsync(principal, accountRepo);
+        var accountId = await PositionsEndpoints.ResolveAccountIdAsync(currentUser, accountRepo);
         if (accountId is null)
         {
             return Results.Ok(new TrajectoryResponseDto
@@ -728,7 +726,7 @@ public static class AnalyticsEndpoints
     /// </para>
     /// </summary>
     private static async Task<IResult> GetAllocation(
-        ClaimsPrincipal principal,
+        ICurrentUser currentUser,
         IAccountRepository accountRepo,
         PortfolioHoldingsBuilder holdingsBuilder,
         IWatchlistItemRepository watchlistRepo,
@@ -754,7 +752,7 @@ public static class AnalyticsEndpoints
             return ValidationError("source должен быть 'portfolio', 'market' или 'recommended'");
         }
 
-        var accountId = await PositionsEndpoints.ResolveAccountIdAsync(principal, accountRepo);
+        var accountId = await PositionsEndpoints.ResolveAccountIdAsync(currentUser, accountRepo);
 
         // Plan/22 часть E: ставка покупки для оценки грязной цены лота — через резолвер (override →
         // оценка из журнала → дефолт), не захардкоженная константа. Задача 34: market/recommended не
@@ -842,8 +840,7 @@ public static class AnalyticsEndpoints
         if (includeWatchlist)
         {
             var portfolioInstrumentIds = candidates.Select(c => c.InstrumentId).ToHashSet();
-            var userId = principal.FindFirstValue(ClaimTypes.NameIdentifier);
-            var watchlistItems = ulong.TryParse(userId, out var uid)
+            var watchlistItems = await currentUser.GetUserIdAsync() is { } uid
                 ? (await watchlistRepo.GetByUserIdAsync(uid)).ToList()
                 : [];
 
@@ -1162,7 +1159,7 @@ public static class AnalyticsEndpoints
     /// </para>
     /// </summary>
     private static async Task<IResult> PostBasket(
-        ClaimsPrincipal principal,
+        ICurrentUser currentUser,
         BasketRequestDto request,
         IAccountRepository accountRepo,
         IUserSettingsRepository userSettingsRepo,
@@ -1211,7 +1208,7 @@ public static class AnalyticsEndpoints
             }
         }
 
-        var accountId = await PositionsEndpoints.ResolveAccountIdAsync(principal, accountRepo);
+        var accountId = await PositionsEndpoints.ResolveAccountIdAsync(currentUser, accountRepo);
         var asOf = BusinessClock.MoscowToday();
 
         var resolvedRate = accountId is not null
@@ -1249,8 +1246,7 @@ public static class AnalyticsEndpoints
 
         var basketResult = BasketBuilderService.Build(request.AmountRub, basketLineInputs);
 
-        var userIdClaim = principal.FindFirstValue(ClaimTypes.NameIdentifier);
-        var userSettings = ulong.TryParse(userIdClaim, out var userId) ? await userSettingsRepo.GetByUserIdAsync(userId) : null;
+        var userSettings = await currentUser.GetUserIdAsync() is { } userId ? await userSettingsRepo.GetByUserIdAsync(userId) : null;
         var maxConcentrationPercent = userSettings?.DefaultMaxConcentrationPercent ?? defaultSignalOptions.Value.DefaultMaxConcentrationPercent;
 
         var whatIfHoldings = portfolioHoldings
@@ -1389,13 +1385,13 @@ public static class AnalyticsEndpoints
     /// топ-3 дешёвых кандидатов ИЗ ИХ ЖЕ корзины (не скрытых бумаг банка облигаций).
     /// </summary>
     private static async Task<IResult> GetRelativeValue(
-        ClaimsPrincipal principal,
+        ICurrentUser currentUser,
         IAccountRepository accountRepo,
         PortfolioHoldingsBuilder holdingsBuilder,
         RelativeValueSnapshotBuilder snapshotBuilder,
         CancellationToken ct)
     {
-        var accountId = await PositionsEndpoints.ResolveAccountIdAsync(principal, accountRepo);
+        var accountId = await PositionsEndpoints.ResolveAccountIdAsync(currentUser, accountRepo);
         if (accountId is null)
         {
             return Results.Ok(new RelativeValueResponseDto { Positions = [], Disclaimer = RelativeValueDisclaimer });
@@ -1581,7 +1577,7 @@ public static class AnalyticsEndpoints
     /// НЕ материализует вселенную через точный движок.
     /// </summary>
     private static async Task<IResult> GetReplacementCandidates(
-        ClaimsPrincipal principal,
+        ICurrentUser currentUser,
         IAccountRepository accountRepo,
         PortfolioHoldingsBuilder holdingsBuilder,
         IBondUniverseRepository universeRepo,
@@ -1603,7 +1599,7 @@ public static class AnalyticsEndpoints
             return ValidationError("reliability должен быть 'green', 'yellow' или 'red'");
         }
 
-        var accountId = await PositionsEndpoints.ResolveAccountIdAsync(principal, accountRepo);
+        var accountId = await PositionsEndpoints.ResolveAccountIdAsync(currentUser, accountRepo);
         if (accountId is null) throw new NotFoundException($"Позиция {positionId} не найдена в портфеле");
 
         var asOf = BusinessClock.MoscowToday();

@@ -6,10 +6,12 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Dapper" Version="2.1.35" />
-    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.0" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.11" />
+    <!-- One IdentityModel version across the solution (see Auth/Mvv42Auth.cs header): 8.4.0 = integration tests. -->
+    <PackageReference Include="Microsoft.IdentityModel.Protocols.OpenIdConnect" Version="8.4.0" />
     <PackageReference Include="MySqlConnector" Version="2.3.5" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="6.8.1" />
-    <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="7.6.3" />
+    <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.4.0" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Bonds.Core\Bonds.Core.csproj" />

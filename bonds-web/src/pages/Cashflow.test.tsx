@@ -6,7 +6,6 @@ import { http, HttpResponse } from 'msw';
 import { server } from '../test/msw-handlers';
 import { Cashflow } from './Cashflow';
 import { useCashflowStore } from '../store/useCashflowStore';
-import { useAuthStore } from '../store/useAuthStore';
 import type { CashflowResponse } from '../api/types';
 
 function renderCashflow() {
@@ -71,7 +70,6 @@ describe('Cashflow', () => {
       isLoading: false,
       error: null,
     });
-    useAuthStore.setState({ token: 'test-token', user: { id: 1, telegramId: 1 } });
   });
 
   it('renders the monthly chart and principal releases table', async () => {

@@ -4,7 +4,6 @@ import { MantineProvider } from '@mantine/core';
 import { http, HttpResponse } from 'msw';
 import { server } from '../test/msw-handlers';
 import { MarketComparator } from './MarketComparator';
-import { useAuthStore } from '../store/useAuthStore';
 import type { UniverseRow, MaterializeResponse, ReplacementResponse } from '../api/types';
 
 function renderComparator(holdPositionId = 1) {
@@ -123,7 +122,6 @@ const replacementResponse: ReplacementResponse = {
 
 describe('MarketComparator', () => {
   beforeEach(() => {
-    useAuthStore.setState({ token: 'test-token', user: { id: 1, telegramId: 1 } });
   });
 
   it('shows top-10 by yield by default when the search input is empty', async () => {

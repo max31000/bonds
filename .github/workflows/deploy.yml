@@ -1,0 +1,246 @@
+# Bonds CI/CD: backend (tests → image → deploy → health), then frontend (checks → build → deploy).
+# One workflow so that a change touching both halves deploys the API first: the frontend job waits for the
+# backend job and runs when it succeeded or was skipped (only the frontend changed).
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  # PRs run the test/check steps only; every build-push/deploy/notify step is gated on event != pull_request.
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  # A superseded PR run can be cancelled; a deploy on main never is.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      # workflow_dispatch forces both halves (a PR is filtered against its base like a push).
+      backend: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.backend == 'true' }}
+      frontend: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.frontend == 'true' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Detect changed paths
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            backend:
+              - 'src/**'
+              - 'tests/**'
+              - 'Bonds.sln'
+              - '.github/workflows/deploy.yml'
+            frontend:
+              - 'bonds-web/**'
+              - '.github/workflows/deploy.yml'
+
+  backend:
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', '**/*.sln') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+
+      - name: Restore
+        run: dotnet restore Bonds.sln
+
+      - name: Build
+        run: dotnet build Bonds.sln --no-restore -c Release
+
+      - name: Unit tests
+        run: dotnet test tests/Bonds.Tests/Bonds.Tests.csproj --no-build -c Release --verbosity normal
+
+      - name: Integration tests
+        run: dotnet test tests/Bonds.IntegrationTests/Bonds.IntegrationTests.csproj --no-build -c Release --verbosity normal
+        env:
+          DOTNET_ENVIRONMENT: Testing
+
+      - name: Set up Docker Buildx
+        if: github.event_name != 'pull_request'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Only the immutable sha tag: the container runs exactly this image, and with the watchtower opt-out
+      # label below nothing re-pulls a moving tag behind CI's back.
+      - name: Build and push Docker image
+        if: github.event_name != 'pull_request'
+        uses: docker/build-push-action@v6
+        with:
+          push: true
+          context: .
+          file: src/Bonds.Api/Dockerfile
+          tags: ghcr.io/${{ github.repository_owner }}/bonds-api:sha-${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Auth is the shared mvv42-auth (cookie JWT, JWKS fetched from http://mvv42-auth:8080 over
+      # cashpulse-network) — no JWT secret of our own. Telegram__BotToken / Telegram__OwnerId stay: sync
+      # alerts go to the owner, and only the owner's Telegram id is admitted to the API.
+      - name: Deploy on VDS
+        if: github.event_name != 'pull_request'
+        uses: appleboy/ssh-action@v1
+        env:
+          DB_CONNECTION_STRING: ${{ secrets.DB_CONNECTION_STRING }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          OWNER_TELEGRAM_ID: ${{ secrets.OWNER_TELEGRAM_ID }}
+          IMAGE: ghcr.io/${{ github.repository_owner }}/bonds-api:sha-${{ github.sha }}
+        with:
+          host: ${{ secrets.VDS_HOST }}
+          username: ${{ secrets.VDS_USER }}
+          key: ${{ secrets.VDS_SSH_KEY }}
+          envs: DB_CONNECTION_STRING,TELEGRAM_BOT_TOKEN,OWNER_TELEGRAM_ID,IMAGE
+          script: |
+            set -e
+            # Pre-flight: without the owner id nobody can use the API.
+            [ -n "$OWNER_TELEGRAM_ID" ] || { echo "OWNER_TELEGRAM_ID is missing - refusing to deploy"; exit 1; }
+            mkdir -p /var/lib/bonds/dataprotection-keys
+            docker pull "$IMAGE"
+
+            # Image of the running container = rollback target (empty on the very first deploy).
+            PREV=$(docker inspect --format '{{.Config.Image}}' bonds-api 2>/dev/null || true)
+            echo "previous image: ${PREV:-<none>}"
+
+            run_api() {
+              docker run -d                 --name bonds-api                 --network cashpulse-network                 --restart unless-stopped                 --label com.centurylinklabs.watchtower.enable=false                 -p 127.0.0.1:5001:5001                 -v /var/lib/bonds/dataprotection-keys:/app/dataprotection-keys                 -e "ConnectionStrings__DefaultConnection=${DB_CONNECTION_STRING}"                 -e "Telegram__BotToken=${TELEGRAM_BOT_TOKEN}"                 -e "Telegram__OwnerId=${OWNER_TELEGRAM_ID}"                 "$1"
+            }
+
+            healthy() {
+              for i in $(seq 1 15); do
+                curl -sf http://localhost:5001/health > /dev/null && return 0
+                sleep 2
+              done
+              return 1
+            }
+
+            # The API validates every request against the shared auth's JWKS over cashpulse-network.
+            jwks_reachable() {
+              docker run --rm --network cashpulse-network curlimages/curl:8.10.1                 -sf http://mvv42-auth:8080/auth/.well-known/jwks.json > /dev/null
+            }
+
+            docker stop bonds-api && docker rm bonds-api || true
+            run_api "$IMAGE"
+
+            if ! healthy || ! jwks_reachable; then
+              echo "New bonds-api failed health or JWKS check - rolling back"
+              docker logs --tail 80 bonds-api || true
+              docker stop bonds-api || true
+              docker rm bonds-api || true
+              if [ -n "$PREV" ]; then
+                run_api "$PREV"
+                healthy && echo "Rolled back to $PREV" || echo "Rollback to $PREV is not healthy either"
+              fi
+              exit 1
+            fi
+
+            # Keep only the current and the previous image (the next rollback target).
+            docker images --format '{{.Repository}}:{{.Tag}}'               | grep "/bonds-api:"               | grep -vxF "$IMAGE"               | { if [ -n "$PREV" ]; then grep -vxF "$PREV"; else cat; fi; }               | xargs -r docker rmi || true
+            docker image prune -f
+
+      - name: Notify on failure
+        if: failure() && github.event_name != 'pull_request'
+        run: |
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+            -d chat_id=${{ secrets.TELEGRAM_CHAT_ID }} \
+            -d text="❌ Bonds API deploy failed: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+  frontend:
+    needs: [changes, backend]
+    if: ${{ !cancelled() && contains(fromJSON('["success","skipped"]'), needs.backend.result) && needs.changes.outputs.frontend == 'true' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'yarn'
+          cache-dependency-path: bonds-web/yarn.lock
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+        working-directory: bonds-web
+
+      - name: Type check
+        run: yarn typecheck
+        working-directory: bonds-web
+
+      - name: Lint
+        run: yarn lint
+        working-directory: bonds-web
+
+      - name: Run frontend tests
+        run: yarn test:run
+        working-directory: bonds-web
+
+      - name: Build
+        run: yarn build
+        working-directory: bonds-web
+        env:
+          VITE_API_BASE: ${{ vars.VITE_API_BASE || '/bonds/api' }}
+
+      - name: Deploy to VDS via SCP
+        if: github.event_name != 'pull_request'
+        uses: appleboy/scp-action@v1
+        with:
+          host: ${{ secrets.VDS_HOST }}
+          username: ${{ secrets.VDS_USER }}
+          key: ${{ secrets.VDS_SSH_KEY }}
+          source: bonds-web/dist/*
+          target: /var/www/bonds/
+          strip_components: 2
+          rm: true
+
+      - name: Verify deployment
+        if: github.event_name != 'pull_request'
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VDS_HOST }}
+          username: ${{ secrets.VDS_USER }}
+          key: ${{ secrets.VDS_SSH_KEY }}
+          script: |
+            curl -sf https://mvv42.ru/bonds/ > /dev/null
+
+      - name: Notify on failure
+        if: failure() && github.event_name != 'pull_request'
+        run: |
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+            -d chat_id=${{ secrets.TELEGRAM_CHAT_ID }} \
+            -d text="❌ Bonds Frontend deploy failed: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"

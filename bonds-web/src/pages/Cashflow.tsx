@@ -1,44 +1,25 @@
 import { useEffect, useState } from 'react';
-import {
-  Title,
-  Stack,
-  Paper,
-  Text,
-  Alert,
-  Loader,
-  Center,
-  Badge,
-  Group,
-  Table,
-  Collapse,
-  UnstyledButton,
-  Tooltip as MantineTooltip,
-  SegmentedControl,
-  SimpleGrid,
-} from '@mantine/core';
-import {
-  Bar,
-  BarChart,
-  CartesianGrid,
-  Legend,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from 'recharts';
+import { Badge, Collapse, Loader, SegmentedControl, Table, Tooltip as MantineTooltip, UnstyledButton } from '@mantine/core';
+import { EmptyState, ErrorState, Metric, MetricGrid, Page, Section } from '@mvv42/kit';
+import { ChartFrame, ChartTooltip, chartColors, pickAxisTicks, useChartTheme } from '@mvv42/kit/charts';
+import { IconChevronDown } from '@tabler/icons-react';
+import { Bar, BarChart, CartesianGrid, Legend, Tooltip, XAxis, YAxis } from 'recharts';
 import { useCashflowStore } from '../store/useCashflowStore';
 import { Disclaimer } from '../components/Disclaimer';
-import {
-  ChartCard,
-  ChartTooltip,
-  CHART_GRID_PROPS,
-  CHART_HEIGHT,
-  CHART_LEGEND_PROPS,
-  CHART_EXPLANATIONS,
-  useResponsiveChartSize,
-  pickAxisTicks,
-} from '../components/charts';
-import { formatRub, formatMonthLabel, formatDate } from '../utils/format';
+import { CHART_EXPLANATIONS } from '../components/charts';
+import { formatRub, formatRubCompact, formatMonthLabel, formatDate } from '../utils/format';
+
+const ESTIMATED_HINT = 'Оценка: будущий купон флоатера неизвестен, посчитан по текущей ставке';
+
+function EstimatedBadge({ size = 'sm', label = 'оценочно' }: { size?: 'xs' | 'sm'; label?: string }) {
+  return (
+    <MantineTooltip label={ESTIMATED_HINT} withArrow>
+      <Badge size={size} color="yellow">
+        {label}
+      </Badge>
+    </MantineTooltip>
+  );
+}
 
 const FLOW_TYPE_LABEL: Record<string, string> = {
   Coupon: 'Купон',
@@ -69,8 +50,7 @@ export function Cashflow() {
   const [byPositionOpen, setByPositionOpen] = useState(false);
   const [selectedMonth, setSelectedMonth] = useState<string | null>(null);
   const [horizon, setHorizon] = useState<Horizon>('12m');
-  // Plan/21 часть C.4: на узких экранах — меньше высота и меньше подписей оси X месяцев.
-  const chartSize = useResponsiveChartSize(CHART_HEIGHT);
+  const t = useChartTheme();
 
   useEffect(() => {
     load(toDateParam(horizon));
@@ -90,249 +70,234 @@ export function Cashflow() {
   const totalPrincipalGross = byMonth.reduce((s, m) => s + m.principalGrossRub, 0);
   const totalTaxRub = byMonth.reduce((s, m) => s + m.taxRub, 0);
 
-  return (
-    <Stack gap="md">
-      <Title order={2}>Денежный поток</Title>
+  const horizonControl = (
+    <SegmentedControl
+      value={horizon}
+      onChange={(v) => setHorizon(v as Horizon)}
+      data={[
+        { value: '6m', label: '6 мес' },
+        { value: '12m', label: '12 мес' },
+        { value: '24m', label: '24 мес' },
+        { value: 'all', label: 'Весь срок' },
+      ]}
+      size="xs"
+      aria-label="Горизонт"
+    />
+  );
 
+  const selectedMonthData = selectedMonth ? byMonth.find((m) => m.month === selectedMonth) : undefined;
+
+  return (
+    <Page
+      title="Денежный поток"
+      description="Купоны, погашения и налог по месяцам"
+      width="wide"
+      actions={!isLoading && !error ? horizonControl : undefined}
+    >
       {isLoading && (
-        <Center py="xl">
+        <div className="bonds-center">
           <Loader />
-        </Center>
+        </div>
       )}
 
       {!isLoading && error && (
-        <Alert color="red" title="Не удалось загрузить календарь поступлений" data-testid="cashflow-error">
-          {error}
-        </Alert>
+        <Section>
+          <ErrorState title="Не удалось загрузить календарь поступлений" error={error} data-testid="cashflow-error" />
+        </Section>
       )}
 
       {!isLoading && !error && (
         <>
-          <Group justify="flex-end" mb="md">
-            <SegmentedControl
-              value={horizon}
-              onChange={(v) => setHorizon(v as Horizon)}
-              data={[
-                { value: '6m', label: '6 мес' },
-                { value: '12m', label: '12 мес' },
-                { value: '24m', label: '24 мес' },
-                { value: 'all', label: 'Весь срок' },
-              ]}
-              size="xs"
-            />
-          </Group>
-
           {byMonth.length > 0 && (
-            <SimpleGrid cols={4} mb="md" data-testid="cashflow-kpi-cards">
-              <Paper withBorder p="sm" radius="md">
-                <Text size="xs" c="dimmed">Нетто за период</Text>
-                <Text fw={700} size="lg">{formatRub(totalNetRub)}</Text>
-              </Paper>
-              <Paper withBorder p="sm" radius="md">
-                <Text size="xs" c="dimmed">Купоны (брутто)</Text>
-                <Text fw={700} size="lg">{formatRub(totalCouponGross)}</Text>
-              </Paper>
-              <Paper withBorder p="sm" radius="md">
-                <Text size="xs" c="dimmed">Возврат тела</Text>
-                <Text fw={700} size="lg">{formatRub(totalPrincipalGross)}</Text>
-              </Paper>
-              <Paper withBorder p="sm" radius="md">
-                <Text size="xs" c="dimmed">Налог</Text>
-                <Text fw={700} size="lg">{formatRub(totalTaxRub)}</Text>
-              </Paper>
-            </SimpleGrid>
+            <MetricGrid data-testid="cashflow-kpi-cards">
+              <Metric label="Нетто за период" value={formatRub(totalNetRub)} hint="после НДФЛ" />
+              <Metric label="Купоны (брутто)" value={formatRub(totalCouponGross)} />
+              <Metric label="Возврат тела" value={formatRub(totalPrincipalGross)} hint="погашения, амортизации, оферты" />
+              <Metric label="Налог" value={formatRub(totalTaxRub)} hint="оценка НДФЛ" />
+            </MetricGrid>
           )}
 
           {byMonth.length === 0 ? (
-            <Alert color="gray" title="Нет данных" data-testid="cashflow-empty">
-              Календарь поступлений пуст — появится после синхронизации с брокерским счётом.
-            </Alert>
+            <Section>
+              <EmptyState
+                title="Нет данных"
+                description="Календарь поступлений пуст — появится после синхронизации с брокерским счётом."
+                data-testid="cashflow-empty"
+              />
+            </Section>
           ) : (
-            <ChartCard
+            <ChartFrame
               title="Поступления по месяцам"
+              description="Нажмите на столбец месяца, чтобы увидеть, какие бумаги формируют поступление."
               data-testid="cashflow-chart"
               explanation={CHART_EXPLANATIONS.cashflowByMonth}
-              headerExtra={
+              actions={
                 hasEstimatedAny && (
-                  <MantineTooltip label="Оценка: будущий купон флоатера неизвестен, посчитан по текущей ставке" withArrow>
-                    <Badge size="sm" color="yellow" variant="light" data-testid="estimated-flows-badge">
+                  <MantineTooltip label={ESTIMATED_HINT} withArrow>
+                    <Badge color="yellow" data-testid="estimated-flows-badge">
                       есть оценочные потоки
                     </Badge>
                   </MantineTooltip>
                 )
               }
-            >
-              <Text size="xs" c="dimmed" mb="xs">
-                Нажмите на столбец месяца, чтобы увидеть, какие бумаги формируют поступление.
-              </Text>
-              <ResponsiveContainer width="100%" height={chartSize.height}>
-                <BarChart
-                  data={chartData}
-                  style={{ cursor: 'pointer' }}
-                  onClick={(data) => {
-                    const monthKey = ((data as unknown) as { activePayload?: Array<{ payload: { raw?: { month?: string } } }> })?.activePayload?.[0]?.payload?.raw?.month;
-                    if (monthKey) setSelectedMonth((prev) => (prev === monthKey ? null : monthKey));
-                  }}
-                >
-                  <CartesianGrid {...CHART_GRID_PROPS} />
-                  <XAxis
-                    dataKey="month"
-                    ticks={pickAxisTicks(chartData.map((d) => d.month), chartSize.maxTicks)}
-                  />
-                  <YAxis tickFormatter={(v: number) => formatRub(v)} width={100} />
-                  <Tooltip
-                    content={({ active, payload, label }) => {
-                      if (!active || !payload?.length) return null;
-                      const item = payload[0].payload as { raw?: { hasEstimatedFlows?: boolean } };
-                      const title = item?.raw?.hasEstimatedFlows ? `${label} (есть оценочные потоки)` : String(label);
-                      return (
-                        <ChartTooltip
-                          title={title}
-                          rows={payload.map((entry) => ({
-                            label: String(entry.name),
-                            value: formatRub(Number(entry.value)),
-                            color: entry.color,
-                          }))}
-                        />
-                      );
-                    }}
-                  />
-                  <Legend {...CHART_LEGEND_PROPS} />
-                  <Bar dataKey="Нетто" stackId="flow" fill="var(--mantine-color-teal-6)" />
-                  <Bar dataKey="Налог" stackId="flow" fill="var(--mantine-color-red-5)" />
-                </BarChart>
-              </ResponsiveContainer>
-              {selectedMonth && (() => {
-                const monthData = byMonth.find((m) => m.month === selectedMonth);
-                if (!monthData || monthData.positions.length === 0) return null;
-                return (
-                  <Paper withBorder p="sm" radius="sm" mt="sm" data-testid="cashflow-month-drill-down">
-                    <Text fw={500} mb="xs">Поступления в {formatMonthLabel(selectedMonth)}</Text>
+              footer={
+                selectedMonthData && selectedMonthData.positions.length > 0 ? (
+                  <div className="bonds-drilldown" data-testid="cashflow-month-drill-down">
+                    <div className="bonds-drilldown-title">Поступления в {formatMonthLabel(selectedMonth)}</div>
                     <Table>
                       <Table.Thead>
                         <Table.Tr>
                           <Table.Th>Бумага</Table.Th>
                           <Table.Th>Тип</Table.Th>
-                          <Table.Th>Брутто</Table.Th>
-                          <Table.Th>Налог</Table.Th>
-                          <Table.Th>Нетто</Table.Th>
+                          <Table.Th ta="right">Брутто</Table.Th>
+                          <Table.Th ta="right">Налог</Table.Th>
+                          <Table.Th ta="right">Нетто</Table.Th>
                           <Table.Th>Пометки</Table.Th>
                         </Table.Tr>
                       </Table.Thead>
                       <Table.Tbody>
-                        {monthData.positions.map((pos, idx) => (
+                        {selectedMonthData.positions.map((pos, idx) => (
                           <Table.Tr key={`${pos.positionId}-${pos.flowType}-${idx}`}>
                             <Table.Td>{pos.name ?? pos.issuer ?? `#${pos.positionId}`}</Table.Td>
-                            <Table.Td>{FLOW_TYPE_LABEL[pos.flowType] ?? pos.flowType}</Table.Td>
-                            <Table.Td>{formatRub(pos.grossRub)}</Table.Td>
-                            <Table.Td>{formatRub(pos.taxRub)}</Table.Td>
-                            <Table.Td>{formatRub(pos.netRub)}</Table.Td>
-                            <Table.Td>
-                              {pos.isEstimated && (
-                                <MantineTooltip label="Оценка: будущий купон флоатера неизвестен, посчитан по текущей ставке" withArrow>
-                                  <Badge size="sm" color="yellow" variant="light">оценочно</Badge>
-                                </MantineTooltip>
-                              )}
-                            </Table.Td>
+                            <Table.Td c="dimmed">{FLOW_TYPE_LABEL[pos.flowType] ?? pos.flowType}</Table.Td>
+                            <Table.Td ta="right">{formatRub(pos.grossRub)}</Table.Td>
+                            <Table.Td ta="right">{formatRub(pos.taxRub)}</Table.Td>
+                            <Table.Td ta="right">{formatRub(pos.netRub)}</Table.Td>
+                            <Table.Td>{pos.isEstimated && <EstimatedBadge />}</Table.Td>
                           </Table.Tr>
                         ))}
                       </Table.Tbody>
                     </Table>
-                  </Paper>
-                );
-              })()}
-            </ChartCard>
+                  </div>
+                ) : undefined
+              }
+            >
+              <BarChart
+                data={chartData}
+                margin={t.margin}
+                style={{ cursor: 'pointer' }}
+                onClick={(data) => {
+                  const monthKey = ((data as unknown) as { activePayload?: Array<{ payload: { raw?: { month?: string } } }> })
+                    ?.activePayload?.[0]?.payload?.raw?.month;
+                  if (monthKey) setSelectedMonth((prev) => (prev === monthKey ? null : monthKey));
+                }}
+              >
+                <CartesianGrid {...t.grid} />
+                <XAxis dataKey="month" {...t.xAxis} ticks={pickAxisTicks(chartData.map((d) => d.month), t.maxTicks)} />
+                <YAxis {...t.yAxis} width={84} tickFormatter={(v: number) => formatRubCompact(v)} />
+                <Tooltip
+                  {...t.barTooltip}
+                  content={({ active, payload, label }) => {
+                    if (!active || !payload?.length) return null;
+                    const item = payload[0].payload as { raw?: { hasEstimatedFlows?: boolean } };
+                    const title = item?.raw?.hasEstimatedFlows ? `${label} (есть оценочные потоки)` : String(label);
+                    return (
+                      <ChartTooltip
+                        title={title}
+                        rows={payload.map((entry) => ({
+                          label: String(entry.name),
+                          value: formatRub(Number(entry.value)),
+                          color: entry.color,
+                        }))}
+                      />
+                    );
+                  }}
+                />
+                <Legend {...t.legend} />
+                <Bar {...t.bar} dataKey="Нетто" stackId="flow" fill={chartColors.accent} radius={[0, 0, 0, 0]} isAnimationActive={false} />
+                <Bar {...t.bar} dataKey="Налог" stackId="flow" fill={chartColors.negative} isAnimationActive={false} />
+              </BarChart>
+            </ChartFrame>
           )}
 
-          <Paper withBorder p="md" radius="md" data-testid="principal-releases">
-            <Text fw={600} mb="xs">
-              Даты освобождения тела долга
-            </Text>
-            {principalReleases.length === 0 ? (
-              <Text size="sm" c="dimmed">
-                Нет запланированных дат амортизации/погашения/оферты/колла в горизонте.
-              </Text>
-            ) : (
-              <Table>
-                <Table.Thead>
-                  <Table.Tr>
-                    <Table.Th>Дата</Table.Th>
-                    <Table.Th>Тип</Table.Th>
-                    <Table.Th>Сумма</Table.Th>
-                    <Table.Th>Пометки</Table.Th>
-                  </Table.Tr>
-                </Table.Thead>
-                <Table.Tbody>
-                  {principalReleases.map((r, idx) => (
-                    <Table.Tr key={`${r.positionId}-${r.date}-${idx}`}>
-                      <Table.Td>{formatDate(r.date)}</Table.Td>
-                      <Table.Td>{FLOW_TYPE_LABEL[r.flowType] ?? r.flowType}</Table.Td>
-                      <Table.Td>{formatRub(r.amountRub)}</Table.Td>
-                      <Table.Td>
-                        {r.isEstimated && (
-                          <MantineTooltip label="Оценка: будущий купон флоатера неизвестен, посчитан по текущей ставке" withArrow>
-                            <Badge size="sm" color="yellow" variant="light">оценочно</Badge>
-                          </MantineTooltip>
-                        )}
-                      </Table.Td>
+          <div className="bonds-grid-2">
+            <Section title="Даты освобождения тела долга" padding="none" data-testid="principal-releases">
+              {principalReleases.length === 0 ? (
+                <EmptyState
+                  compact
+                  title="Нет событий"
+                  description="Нет запланированных дат амортизации/погашения/оферты/колла в горизонте."
+                />
+              ) : (
+                <Table>
+                  <Table.Thead>
+                    <Table.Tr>
+                      <Table.Th>Дата</Table.Th>
+                      <Table.Th>Тип</Table.Th>
+                      <Table.Th ta="right">Сумма</Table.Th>
+                      <Table.Th>Пометки</Table.Th>
                     </Table.Tr>
-                  ))}
-                </Table.Tbody>
-              </Table>
+                  </Table.Thead>
+                  <Table.Tbody>
+                    {principalReleases.map((r, idx) => (
+                      <Table.Tr key={`${r.positionId}-${r.date}-${idx}`}>
+                        <Table.Td>{formatDate(r.date)}</Table.Td>
+                        <Table.Td>{FLOW_TYPE_LABEL[r.flowType] ?? r.flowType}</Table.Td>
+                        <Table.Td ta="right">{formatRub(r.amountRub)}</Table.Td>
+                        <Table.Td>{r.isEstimated && <EstimatedBadge />}</Table.Td>
+                      </Table.Tr>
+                    ))}
+                  </Table.Tbody>
+                </Table>
+              )}
+            </Section>
+
+            {nextPayments.length > 0 && (
+              <Section title="Ближайшие поступления" padding="none" data-testid="next-payments">
+                <Table>
+                  <Table.Thead>
+                    <Table.Tr>
+                      <Table.Th>Дата</Table.Th>
+                      <Table.Th>Бумага</Table.Th>
+                      <Table.Th>Тип</Table.Th>
+                      <Table.Th ta="right">Нетто</Table.Th>
+                    </Table.Tr>
+                  </Table.Thead>
+                  <Table.Tbody>
+                    {nextPayments.map((p, idx) => (
+                      <Table.Tr key={idx}>
+                        <Table.Td>{formatDate(p.date)}</Table.Td>
+                        <Table.Td>{p.name ?? p.issuer ?? '—'}</Table.Td>
+                        <Table.Td c="dimmed">{FLOW_TYPE_LABEL[p.flowType] ?? p.flowType}</Table.Td>
+                        <Table.Td ta="right">
+                          {formatRub(p.netRub)}
+                          {p.isEstimated && (
+                            <span className="bonds-inline-badge">
+                              <EstimatedBadge size="xs" label="~" />
+                            </span>
+                          )}
+                        </Table.Td>
+                      </Table.Tr>
+                    ))}
+                  </Table.Tbody>
+                </Table>
+              </Section>
             )}
-          </Paper>
-
-          {nextPayments.length > 0 && (
-            <Paper withBorder p="md" radius="md" data-testid="next-payments">
-              <Text fw={600} mb="xs">Ближайшие поступления</Text>
-              <Table>
-                <Table.Thead>
-                  <Table.Tr>
-                    <Table.Th>Дата</Table.Th>
-                    <Table.Th>Бумага</Table.Th>
-                    <Table.Th>Тип</Table.Th>
-                    <Table.Th>Нетто</Table.Th>
-                  </Table.Tr>
-                </Table.Thead>
-                <Table.Tbody>
-                  {nextPayments.map((p, idx) => (
-                    <Table.Tr key={idx}>
-                      <Table.Td>{formatDate(p.date)}</Table.Td>
-                      <Table.Td>{p.name ?? p.issuer ?? '—'}</Table.Td>
-                      <Table.Td>{FLOW_TYPE_LABEL[p.flowType] ?? p.flowType}</Table.Td>
-                      <Table.Td>
-                        {formatRub(p.netRub)}
-                        {p.isEstimated && (
-                          <MantineTooltip label="Оценка: будущий купон флоатера неизвестен, посчитан по текущей ставке" withArrow>
-                            <Badge size="xs" color="yellow" variant="light" ml={4}>~</Badge>
-                          </MantineTooltip>
-                        )}
-                      </Table.Td>
-                    </Table.Tr>
-                  ))}
-                </Table.Tbody>
-              </Table>
-            </Paper>
-          )}
+          </div>
 
           {byPosition.length > 0 && (
-            <Paper withBorder p="md" radius="md">
-              <UnstyledButton
-                onClick={() => setByPositionOpen((o) => !o)}
-                data-testid="toggle-by-position"
-              >
-                <Text fw={600}>
-                  Разбивка по позициям {byPositionOpen ? '▲' : '▼'}
-                </Text>
-              </UnstyledButton>
+            <Section
+              padding="none"
+              title={
+                <UnstyledButton
+                  className="bonds-disclosure"
+                  onClick={() => setByPositionOpen((o) => !o)}
+                  aria-expanded={byPositionOpen}
+                  data-testid="toggle-by-position"
+                >
+                  Разбивка по позициям
+                  <IconChevronDown size={16} className="bonds-disclosure-icon" data-open={byPositionOpen || undefined} />
+                </UnstyledButton>
+              }
+            >
               <Collapse expanded={byPositionOpen}>
-                <Table mt="sm" data-testid="cashflow-by-position-table">
+                <Table data-testid="cashflow-by-position-table">
                   <Table.Thead>
                     <Table.Tr>
                       <Table.Th>Позиция</Table.Th>
-                      <Table.Th>Брутто</Table.Th>
-                      <Table.Th>Налог</Table.Th>
-                      <Table.Th>Нетто</Table.Th>
+                      <Table.Th ta="right">Брутто</Table.Th>
+                      <Table.Th ta="right">Налог</Table.Th>
+                      <Table.Th ta="right">Нетто</Table.Th>
                       <Table.Th>Пометки</Table.Th>
                     </Table.Tr>
                   </Table.Thead>
@@ -340,27 +305,21 @@ export function Cashflow() {
                     {byPosition.map((p) => (
                       <Table.Tr key={p.positionId}>
                         <Table.Td>{p.name ?? p.issuer ?? `#${p.positionId}`}</Table.Td>
-                        <Table.Td>{formatRub(p.grossRub)}</Table.Td>
-                        <Table.Td>{formatRub(p.taxRub)}</Table.Td>
-                        <Table.Td>{formatRub(p.netRub)}</Table.Td>
-                        <Table.Td>
-                          {p.hasEstimatedFlows && (
-                            <MantineTooltip label="Оценка: будущий купон флоатера неизвестен, посчитан по текущей ставке" withArrow>
-                              <Badge size="sm" color="yellow" variant="light">оценочно</Badge>
-                            </MantineTooltip>
-                          )}
-                        </Table.Td>
+                        <Table.Td ta="right">{formatRub(p.grossRub)}</Table.Td>
+                        <Table.Td ta="right">{formatRub(p.taxRub)}</Table.Td>
+                        <Table.Td ta="right">{formatRub(p.netRub)}</Table.Td>
+                        <Table.Td>{p.hasEstimatedFlows && <EstimatedBadge />}</Table.Td>
                       </Table.Tr>
                     ))}
                   </Table.Tbody>
                 </Table>
               </Collapse>
-            </Paper>
+            </Section>
           )}
         </>
       )}
 
       <Disclaimer text={disclaimer} />
-    </Stack>
+    </Page>
   );
 }

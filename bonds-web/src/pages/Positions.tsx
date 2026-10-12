@@ -1,12 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
+import { EmptyState, ErrorState, Page, Section } from '@mvv42/kit';
 import {
-  Title,
   Stack,
   Table,
   Badge,
-  Alert,
   Loader,
-  Center,
   Text,
   UnstyledButton,
   Group,
@@ -99,55 +97,52 @@ export function Positions() {
   }, [positions]);
 
   return (
-    <Stack gap="md">
-      <Title order={2}>Позиции</Title>
-
+    <Page title="Позиции" description="Бумаги портфеля: стоимость, P&L, доходность и риск" width="wide">
       {isLoading && (
-        <Center py="xl">
+        <div className="bonds-center">
           <Loader />
-        </Center>
+        </div>
       )}
 
       {!isLoading && error && (
-        <Alert color="red" title="Не удалось загрузить позиции" data-testid="positions-error">
-          {error}
-        </Alert>
+        <Section>
+          <ErrorState title="Не удалось загрузить позиции" error={error} data-testid="positions-error" />
+        </Section>
       )}
 
       {!isLoading && !error && positions.length === 0 && settings && !settings.tInvestTokenConfigured && (
-        <Alert color="violet" title="Нужно подключить брокерский счёт" data-testid="positions-empty-no-token">
-          <Stack gap="sm">
-            <Text size="sm">
-              Чтобы увидеть позиции, укажите токен T-Invest (только на чтение) в настройках —
-              он хранится в зашифрованном виде и используется для синхронизации портфеля.
-            </Text>
-            <Button
-              variant="light"
-              w="fit-content"
-              onClick={() => navigate('/settings')}
-              data-testid="goto-settings-button"
-            >
-              Перейти в настройки
-            </Button>
-          </Stack>
-        </Alert>
+        <Section>
+          <EmptyState
+            data-testid="positions-empty-no-token"
+            title="Нужно подключить брокерский счёт"
+            description="Чтобы увидеть позиции, укажите токен T-Invest (только на чтение) в настройках — он хранится в зашифрованном виде и используется для синхронизации портфеля."
+            action={
+              <Button onClick={() => navigate('/settings')} data-testid="goto-settings-button">
+                Перейти в настройки
+              </Button>
+            }
+          />
+        </Section>
       )}
 
       {!isLoading && !error && positions.length === 0 && settings?.tInvestTokenConfigured && (
-        <Alert color="gray" title="Портфель пуст" data-testid="positions-empty">
-          Токен подключён. Позиции появятся здесь после синхронизации с брокерским счётом —
-          нажмите «Обновить данные» в шапке или подождите следующего автоматического цикла.
-        </Alert>
+        <Section>
+          <EmptyState
+            data-testid="positions-empty"
+            title="Портфель пуст"
+            description="Токен подключён. Позиции появятся здесь после синхронизации с брокерским счётом — нажмите «Обновить данные» в шапке или подождите следующего автоматического цикла."
+          />
+        </Section>
       )}
 
       {!isLoading && !error && positions.length > 0 && (
         <>
           <PortfolioIntradayChart />
 
-          <Text size="xs" c="dimmed">
+          <p className="bonds-note">
             Более низкая доходность не означает «хуже» без учёта срока до погашения и риска
             эмитента — сравнивайте бумаги с одинаковым горизонтом и качеством.
-          </Text>
+          </p>
 
           {isMobile ? (
             <Stack gap="sm" data-testid="positions-cards">
@@ -200,8 +195,9 @@ export function Positions() {
               ))}
             </Stack>
           ) : (
+          <Section padding="none" title="Бумаги в портфеле" description={`${positions.length} ${positions.length === 1 ? 'позиция' : positions.length < 5 ? 'позиции' : 'позиций'} · строка открывает карточку`}>
           <Table.ScrollContainer minWidth={1100}>
-            <Table striped highlightOnHover data-testid="positions-table">
+            <Table highlightOnHover data-testid="positions-table">
               <Table.Thead>
                 <Table.Tr>
                   <Table.Th>Бумага</Table.Th>
@@ -430,11 +426,12 @@ export function Positions() {
               </Table.Tfoot>
             </Table>
           </Table.ScrollContainer>
+          </Section>
           )}
         </>
       )}
 
       <Disclaimer text={disclaimer} />
-    </Stack>
+    </Page>
   );
 }

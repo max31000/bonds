@@ -1,12 +1,7 @@
-using System.Text;
+using Bonds.Api.Auth;
 using Bonds.Api.Endpoints;
 using Bonds.Api.Middleware;
 using Bonds.Infrastructure;
-using Bonds.Infrastructure.Services;
-using Microsoft.AspNetCore.Authentication.JwtBearer;
-using Microsoft.AspNetCore.Authorization;
-using Microsoft.Extensions.Options;
-using Microsoft.IdentityModel.Tokens;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -34,42 +29,10 @@ builder.Services.AddSwaggerGen(c =>
 // Infrastructure DI (repos, services, migration runner) — наполняется по мере роста сервиса
 builder.Services.AddInfrastructure(builder.Configuration);
 
-// JWT-авторизация (этап 02). Bearer-токен валидируется стандартным AddJwtBearer
-// (а не самописным middleware, как в cashpulse) — план 02 предпочитает этот способ.
-// IConfigureOptions резолвится из DI лениво при первом запросе (а не сразу из builder.Configuration
-// на старте), чтобы WebApplicationFactory.ConfigureWebHost в тестах успела подменить Jwt:Secret —
-// тот же паттерн, что и GetConnStr в DependencyInjection.cs.
-builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-    .AddJwtBearer();
-
-builder.Services.AddSingleton<IConfigureOptions<JwtBearerOptions>>(sp =>
-    new ConfigureNamedOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme, options =>
-    {
-        var config = sp.GetRequiredService<IConfiguration>();
-        var secret = config["Jwt:Secret"] ?? throw new InvalidOperationException("Jwt:Secret не настроен");
-
-        options.TokenValidationParameters = new TokenValidationParameters
-        {
-            ValidateIssuerSigningKey = true,
-            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secret)),
-            ValidateIssuer = true,
-            ValidIssuer = config["Jwt:Issuer"] ?? "bonds",
-            ValidateAudience = true,
-            ValidAudience = config["Jwt:Audience"] ?? "bonds",
-            ValidateLifetime = true,
-            ClockSkew = TimeSpan.FromSeconds(30),
-        };
-    }));
-
-// Fallback-политика: все эндпоинты требуют авторизации, если явно не помечены [AllowAnonymous]
-// (см. /health и POST /api/auth/telegram). Это гарантирует, что доменные эндпоинты,
-// добавленные в следующих этапах, не останутся незащищёнными по умолчанию.
-builder.Services.AddAuthorization(options =>
-{
-    options.FallbackPolicy = new AuthorizationPolicyBuilder()
-        .RequireAuthenticatedUser()
-        .Build();
-});
+// Auth: только общий mvv42-auth (cookie JWT, ключи из JWKS). Fallback/Default policy = app policy
+// `mvv42:app` + проверка владельца (tg == Telegram:OwnerId) — см. Auth/BondsAuth.cs. Новый эндпоинт
+// защищён по умолчанию; публичные — только явным .AllowAnonymous() (сейчас лишь /health).
+builder.Services.AddBondsAuth(builder.Configuration);
 
 // JSON: camelCase + string enums (контракт для фронта)
 builder.Services.ConfigureHttpJsonOptions(options =>
@@ -81,22 +44,14 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 
 var app = builder.Build();
 
-// Вне Development/Testing не стартуем с пустым, коротким или закоммиченным dev-секретом JWT.
-if (!app.Environment.IsDevelopment() && !app.Environment.IsEnvironment("Testing"))
-{
-    JwtSecretGuard.EnsureProductionSafe(app.Configuration["Jwt:Secret"]);
-}
-
 // Единый формат ошибок (plan/08) — должен оборачивать весь остальной конвейер, иначе
 // необработанные исключения дальше по цепочке не попадут в этот middleware.
 app.UseMiddleware<ErrorHandlingMiddleware>();
 
-app.UseCors();
-
-// Swagger ДО UseAuthentication/UseAuthorization: FallbackPolicy (RequireAuthenticatedUser)
+// Swagger ДО UseAuthentication/UseAuthorization: FallbackPolicy
 // применяется к ЛЮБОМУ эндпоинту маршрутизации, включая те, что UseSwagger/UseSwaggerUI
 // регистрируют внутри себя через IEndpointRouteBuilder — если поставить блок после
-// UseAuthorization(), swagger.json и Swagger UI сами требуют Bearer-токен и становятся
+// UseAuthorization(), swagger.json и Swagger UI сами требуют авторизацию и становятся
 // недоступны (обнаружено эмпирически при smoke-проверке этого этапа: curl возвращал 401
 // вместо JSON-схемы). Размещение здесь выводит их из-под действия middleware авторизации.
 if (app.Environment.IsDevelopment())
@@ -108,6 +63,7 @@ if (app.Environment.IsDevelopment())
     });
 }
 
+app.UseCors();
 app.UseAuthentication();
 app.UseAuthorization();
 
@@ -125,9 +81,6 @@ if (!app.Environment.IsEnvironment("Testing"))
         throw;
     }
 }
-
-// Auth (этап 02): POST /api/auth/telegram — публичный (AllowAnonymous внутри), GET /api/auth/me — защищён
-app.MapAuthEndpoints();
 
 // Этап 08: контракты для фронта (plan/08) — все защищены FallbackPolicy по умолчанию.
 app.MapPositionsEndpoints();

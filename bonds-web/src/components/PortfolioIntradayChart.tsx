@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Paper, Text, Group, SegmentedControl, Center, Loader } from '@mantine/core';
+import type { ReactNode } from 'react';
+import { SegmentedControl } from '@mantine/core';
+import { ChartFrame, ChartTooltip, CHART_HEIGHT_COMPACT, chartColors, useChartTheme } from '@mvv42/kit/charts';
 import {
-  ResponsiveContainer,
   AreaChart,
   Area,
   XAxis,
@@ -31,7 +32,8 @@ interface IntradayFetchState {
   error: string | null;
 }
 
-export function PortfolioIntradayChart() {
+export function PortfolioIntradayChart({ explanation }: { explanation?: ReactNode } = {}) {
+  const t = useChartTheme();
   const [range, setRange] = useState<IntradayRange>('1d');
   const [state, setState] = useState<IntradayFetchState>({ points: [], isLoading: true, error: null });
   const { points, isLoading, error } = state;
@@ -99,9 +101,12 @@ export function PortfolioIntradayChart() {
   }, [valueRange]);
 
   return (
-    <Paper withBorder p="md" radius="md" data-testid="portfolio-intraday-chart">
-      <Group justify="space-between" mb="xs">
-        <Text fw={600}>Стоимость портфеля сегодня</Text>
+    <ChartFrame
+      title="Стоимость портфеля сегодня"
+      data-testid="portfolio-intraday-chart"
+      explanation={explanation}
+      height={CHART_HEIGHT_COMPACT}
+      actions={
         <SegmentedControl
           size="xs"
           value={range}
@@ -115,62 +120,52 @@ export function PortfolioIntradayChart() {
           ]}
           data-testid="intraday-range-toggle"
         />
-      </Group>
-
-      {isLoading && chartData.length === 0 && (
-        <Center py="lg">
-          <Loader size="sm" />
-        </Center>
-      )}
-
-      {!isLoading && error && (
-        <Text size="sm" c="red" data-testid="intraday-chart-error">
-          {error}
-        </Text>
-      )}
-
-      {!error && !isLoading && chartData.length === 0 && (
-        <Text size="sm" c="dimmed" data-testid="intraday-chart-empty">
-          Данных пока нет — график наполнится по мере поступления живых котировок в торговые часы.
-        </Text>
-      )}
-
-      {chartData.length > 0 && (
-        <ResponsiveContainer width="100%" height={220}>
-          <AreaChart data={chartData}>
-            <CartesianGrid strokeDasharray="3 3" />
-            <XAxis dataKey="label" tick={false} />
-            <YAxis
-              domain={yDomain}
-              tickFormatter={(v: number) =>
-                valueRange ? formatRubCompactRange(v, valueRange[0], valueRange[1]) : formatRub(v)
-              }
-              width={80}
-            />
-            <Tooltip
-              content={({ active, payload }) => {
-                if (!active || !payload?.length) return null;
-                const point = payload[0].payload as (typeof chartData)[number];
-                return (
-                  <Paper withBorder p="xs" radius="sm" shadow="sm">
-                    <Text size="xs" fw={600}>
-                      {formatDateTime(point.tsUtc)}
-                    </Text>
-                    <Text size="xs">{formatRub(point.totalMarketValueRub)}</Text>
-                  </Paper>
-                );
-              }}
-            />
-            <Area
-              type="monotone"
-              dataKey="totalMarketValueRub"
-              stroke="var(--mantine-color-violet-6)"
-              fill="var(--mantine-color-violet-2)"
-              fillOpacity={0.5}
-            />
-          </AreaChart>
-        </ResponsiveContainer>
-      )}
-    </Paper>
+      }
+      loading={isLoading && chartData.length === 0}
+      error={!isLoading && error ? error : undefined}
+      empty={!error && !isLoading && chartData.length === 0}
+      emptyTitle={<span data-testid="intraday-chart-empty">Данных пока нет</span>}
+      emptyDescription="График наполнится по мере поступления живых котировок в торговые часы."
+    >
+      <AreaChart data={chartData} margin={t.margin}>
+        <defs>
+          <linearGradient id="bonds-intraday-fill" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={chartColors.accent} stopOpacity={0.22} />
+            <stop offset="100%" stopColor={chartColors.accent} stopOpacity={0} />
+          </linearGradient>
+        </defs>
+        <CartesianGrid {...t.grid} />
+        <XAxis dataKey="label" {...t.xAxis} tick={false} height={4} />
+        <YAxis
+          {...t.yAxis}
+          width={84}
+          domain={yDomain}
+          tickFormatter={(v: number) =>
+            valueRange ? formatRubCompactRange(v, valueRange[0], valueRange[1]) : formatRub(v)
+          }
+        />
+        <Tooltip
+          {...t.tooltip}
+          content={({ active, payload }) => {
+            if (!active || !payload?.length) return null;
+            const point = payload[0].payload as (typeof chartData)[number];
+            return (
+              <ChartTooltip
+                title={formatDateTime(point.tsUtc)}
+                rows={[{ label: 'Стоимость', value: formatRub(point.totalMarketValueRub), color: chartColors.accent }]}
+              />
+            );
+          }}
+        />
+        <Area
+          {...t.area}
+          dataKey="totalMarketValueRub"
+          name="Стоимость"
+          stroke={chartColors.accent}
+          fill="url(#bonds-intraday-fill)"
+          fillOpacity={1}
+        />
+      </AreaChart>
+    </ChartFrame>
   );
 }

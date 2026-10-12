@@ -6,7 +6,6 @@ import { http, HttpResponse } from 'msw';
 import { server } from '../test/msw-handlers';
 import { Signals } from './Signals';
 import { useSignalsStore } from '../store/useSignalsStore';
-import { useAuthStore } from '../store/useAuthStore';
 import type { Signal } from '../api/types';
 
 function renderSignals() {
@@ -44,7 +43,6 @@ const lowSignal: Signal = {
 describe('Signals', () => {
   beforeEach(() => {
     useSignalsStore.setState({ signals: [], isLoading: false, error: null });
-    useAuthStore.setState({ token: 'test-token', user: { id: 1, telegramId: 1 } });
   });
 
   it('renders signals sorted with high severity first and shows a badge for unread', async () => {

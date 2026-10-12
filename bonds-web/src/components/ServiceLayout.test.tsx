@@ -1,34 +1,36 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { MantineProvider } from '@mantine/core';
-import { Notifications, notifications } from '@mantine/notifications';
+import { notifications } from '@mantine/notifications';
+import { Mvv42Provider } from '@mvv42/kit';
+import { reloadMe } from '@mvv42/kit/platform';
 import { http, HttpResponse } from 'msw';
 import { server } from '../test/msw-handlers';
-import { AppLayout } from './AppLayout';
-import { useAuthStore } from '../store/useAuthStore';
+import { ServiceLayout } from './ServiceLayout';
+import { apiClient } from '../api/client';
+import { useAccessStore } from '../store/useAccessStore';
 import { useSignalsStore } from '../store/useSignalsStore';
 import { useSyncStore } from '../store/useSyncStore';
 
 function renderLayout() {
   return render(
-    <MantineProvider>
-      <Notifications />
+    <Mvv42Provider serviceId="bonds" accent="violet" env="test" insideShell={false}>
       <MemoryRouter initialEntries={['/']}>
         <Routes>
-          <Route element={<AppLayout />}>
+          <Route element={<ServiceLayout />}>
             <Route index element={<div>Контент</div>} />
             <Route path="/settings" element={<div>Экран настроек</div>} />
           </Route>
         </Routes>
       </MemoryRouter>
-    </MantineProvider>,
+    </Mvv42Provider>,
   );
 }
 
-describe('AppLayout', () => {
-  beforeEach(() => {
-    useAuthStore.setState({ token: 'test-token', user: { id: 1, telegramId: 1 } });
+describe('ServiceLayout', () => {
+  beforeEach(async () => {
+    await reloadMe();
+    useAccessStore.getState().reset();
     useSignalsStore.setState({ signals: [], isLoading: false, error: null });
     useSyncStore.setState({ isRunning: false, lastResult: null, error: null });
     // Очередь уведомлений Mantine — module-level singleton, переживает размонтирование
@@ -252,88 +254,6 @@ describe('AppLayout', () => {
     expect(syncCalled).toBe(false);
   });
 
-  // ─── T-21/A: переключатель светлая/тёмная/системная тема ──────────────────────────────────
-
-  it('switches the Mantine color scheme when a different option is selected in the header switcher', async () => {
-    server.use(
-      http.get('*/api/sync/status', () =>
-        HttpResponse.json({
-          isRunning: false,
-          lastRunStartedAtUtc: '2026-07-03T10:00:00Z',
-          lastSuccessAtUtc: '2026-07-03T10:00:00Z',
-          lastFailureAtUtc: null,
-          lastRunErrors: [],
-          tokenMissingOrInvalid: false,
-        }),
-      ),
-    );
-
-    renderLayout();
-
-    await waitFor(() => expect(screen.getByTestId('color-scheme-switcher')).toBeInTheDocument());
-
-    const { default: userEvent } = await import('@testing-library/user-event');
-    const darkOption = screen.getByText('Тёмная');
-    await userEvent.click(darkOption);
-
-    await waitFor(() => {
-      const input = document.querySelector('input[value="dark"]') as HTMLInputElement | null;
-      expect(input?.checked).toBe(true);
-    });
-  });
-
-  // ─── T-21/C.1: burger-навигация на мобиле ──────────────────────────────────────────────────
-
-  it('renders a burger button that toggles the mobile navbar', async () => {
-    server.use(
-      http.get('*/api/sync/status', () =>
-        HttpResponse.json({
-          isRunning: false,
-          lastRunStartedAtUtc: '2026-07-03T10:00:00Z',
-          lastSuccessAtUtc: '2026-07-03T10:00:00Z',
-          lastFailureAtUtc: null,
-          lastRunErrors: [],
-          tokenMissingOrInvalid: false,
-        }),
-      ),
-    );
-
-    renderLayout();
-
-    await waitFor(() => expect(screen.getByTestId('mobile-nav-burger')).toBeInTheDocument());
-
-    const { default: userEvent } = await import('@testing-library/user-event');
-    const burger = screen.getByTestId('mobile-nav-burger');
-    // Открытие/закрытие не должно бросать — навигация переключается через AppShell.Navbar collapsed.mobile.
-    await userEvent.click(burger);
-    await userEvent.click(burger);
-  });
-
-  it('closes the mobile navbar after clicking a nav link', async () => {
-    server.use(
-      http.get('*/api/sync/status', () =>
-        HttpResponse.json({
-          isRunning: false,
-          lastRunStartedAtUtc: '2026-07-03T10:00:00Z',
-          lastSuccessAtUtc: '2026-07-03T10:00:00Z',
-          lastFailureAtUtc: null,
-          lastRunErrors: [],
-          tokenMissingOrInvalid: false,
-        }),
-      ),
-    );
-
-    renderLayout();
-
-    await waitFor(() => expect(screen.getByTestId('mobile-nav-burger')).toBeInTheDocument());
-
-    const { default: userEvent } = await import('@testing-library/user-event');
-    await userEvent.click(screen.getByTestId('mobile-nav-burger'));
-    await userEvent.click(screen.getByText('Настройки'));
-
-    await waitFor(() => expect(screen.getByText('Экран настроек')).toBeInTheDocument());
-  });
-
   it('does not trigger a background sync when a sync is already running', async () => {
     let syncCalled = false;
     server.use(
@@ -357,5 +277,48 @@ describe('AppLayout', () => {
 
     await waitFor(() => expect(screen.getByTestId('force-sync-button')).toBeInTheDocument());
     expect(syncCalled).toBe(false);
+  });
+
+  // ─── Общий mvv42-auth: шапка кита, вход, «Нет доступа» ───────────────────────────────────
+
+  it('renders the kit layout: service title, section tabs and the sync action', async () => {
+    renderLayout();
+
+    await waitFor(() => expect(screen.getByRole('link', { name: 'Позиции' })).toBeInTheDocument());
+    expect(screen.getByText('Bond Analytics')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Обзор' })).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByTestId('force-sync-button')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Выйти' })).not.toBeInTheDocument();
+  });
+
+  it('shows the login gate (no tabs, no data requests) for an anonymous visitor', async () => {
+    let dataRequested = false;
+    server.use(
+      http.get('*/auth/api/me', () => HttpResponse.json({ user: null, apps: [{ id: 'bonds', anonymous: false, access: 'admin', granted: false }] })),
+      http.get('*/api/signals', () => {
+        dataRequested = true;
+        return HttpResponse.json({ signals: [] });
+      }),
+    );
+    await reloadMe();
+
+    renderLayout();
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Войти через Telegram' })).toBeInTheDocument());
+    expect(screen.queryByText('Контент')).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Позиции' })).not.toBeInTheDocument();
+    expect(dataRequested).toBe(false);
+  });
+
+  it('replaces the screens with «Нет доступа» when the API answers 403', async () => {
+    server.use(http.get('*/api/echo-403', () => HttpResponse.json({ error: 'access_denied' }, { status: 403 })));
+
+    renderLayout();
+    await waitFor(() => expect(screen.getByText('Контент')).toBeInTheDocument());
+
+    await apiClient.get('/echo-403').catch(() => undefined);
+
+    await waitFor(() => expect(screen.getByText('Нет доступа')).toBeInTheDocument());
+    expect(screen.queryByText('Контент')).not.toBeInTheDocument();
   });
 });

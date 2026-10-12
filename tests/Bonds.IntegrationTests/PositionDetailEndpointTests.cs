@@ -47,13 +47,13 @@ public class PositionDetailEndpointTests
     private async Task<(HttpClient Client, ulong AccountId)> CreateAuthorizedClientAsync(HttpClient client)
     {
         var userRepo = new UserRepository(_factory.Database.ConnectionString);
-        var userId = await userRepo.CreateAsync(new User { TelegramId = Random.Shared.NextInt64(1, long.MaxValue) });
+        var telegramId = Random.Shared.NextInt64(1, long.MaxValue);
+        var userId = await userRepo.CreateAsync(new User { TelegramId = telegramId });
 
         var accountRepo = new AccountRepository(_factory.Database.ConnectionString);
         var accountId = await accountRepo.CreateAsync(new Account { UserId = userId, Name = "Основной счёт" });
 
-        var token = JwtTestHelper.GenerateToken(userId);
-        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        Mvv42TestAuth.Authorize(client, telegramId);
 
         return (client, accountId);
     }

@@ -9,10 +9,11 @@ const LEVEL_COLOR: Record<RiskSignalLevel, string> = {
 };
 
 /** Задача 38 часть C.1 — цвет светофора надёжности, зеркалит backend `ReliabilityLight`. */
+/** Светофор на статусных токенах кита (`--mvv-success|warning|danger`) — одинаково читается в light/dark. */
 const RELIABILITY_COLOR: Record<ReliabilityLevel, string> = {
-  Green: 'green',
-  Yellow: 'yellow',
-  Red: 'red',
+  Green: 'var(--mvv-success)',
+  Yellow: 'var(--mvv-warning)',
+  Red: 'var(--mvv-danger)',
 };
 
 const RELIABILITY_ARIA_LABEL: Record<ReliabilityLevel, string> = {
@@ -86,7 +87,7 @@ export function ReliabilityDot({
           width: 10,
           height: 10,
           borderRadius: '50%',
-          backgroundColor: `var(--mantine-color-${RELIABILITY_COLOR[reliability]}-6)`,
+          backgroundColor: RELIABILITY_COLOR[reliability],
           flexShrink: 0,
         }}
       />

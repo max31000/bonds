@@ -1,7 +1,9 @@
 import { useEffect, useMemo } from 'react';
-import { Title, Stack, SimpleGrid, Paper, Text, Group, Loader, Center, UnstyledButton, Table, Badge } from '@mantine/core';
+import { Badge, Group, Loader, Table, UnstyledButton } from '@mantine/core';
+import { EmptyState, ErrorState, HelpHint, Metric, MetricGrid, Page, Section } from '@mvv42/kit';
+import { ChartFrame, ChartTooltip, CHART_HEIGHT_COMPACT, seriesColor, useChartTheme } from '@mvv42/kit/charts';
 import { useNavigate } from 'react-router-dom';
-import { Cell, Legend, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts';
+import { Cell, Legend, Pie, PieChart, Tooltip } from 'recharts';
 import { fetchPositions } from '../api/positions';
 import { fetchXirr, fetchComposition } from '../api/analytics';
 import { fetchCashflow } from '../api/cashflow';
@@ -11,7 +13,7 @@ import { useLiveQuotes } from '../hooks/useLiveQuotes';
 import { useWidgetData } from '../hooks/useWidgetData';
 import { Disclaimer } from '../components/Disclaimer';
 import { PortfolioIntradayChart } from '../components/PortfolioIntradayChart';
-import { ChartCard, ChartExplainIcon, ChartTooltip, CHART_COLORS, CHART_HEIGHT_COMPACT, CHART_EXPLANATIONS } from '../components/charts';
+import { CHART_EXPLANATIONS } from '../components/charts';
 import { DIRTY_PRICE_TOOLTIP_TEXT } from '../utils/positionsDisplay';
 import type { CompositionSlice, XirrResponse, CashflowResponse, PositionsResponse } from '../api/types';
 import { formatRub, formatPercent, formatSharePercent, formatDate } from '../utils/format';
@@ -29,9 +31,9 @@ const FLOW_TYPE_LABEL: Record<string, string> = {
 };
 
 /**
- * KPI-карточка «Стоимость портфеля» — сумма из GET /api/positions (последний синк) с дельтой за
- * день из GET /api/live/positions, если live-контур (plan/16) уже накопил хотя бы один тик.
- * Дельта скрывается, пока живых данных нет — план прямо требует не выдумывать значение.
+ * KPI «Стоимость портфеля» — сумма из GET /api/positions (последний синк) с дельтой за день из
+ * GET /api/live/positions, если live-контур (plan/16) уже накопил хотя бы один тик. Дельта
+ * скрывается, пока живых данных нет — план прямо требует не выдумывать значение.
  */
 function PortfolioValueKpi({ positions }: { positions: PositionsResponse | null }) {
   const liveTotal = useLiveStore((s) => s.totalMarketValueRub);
@@ -46,77 +48,70 @@ function PortfolioValueKpi({ positions }: { positions: PositionsResponse | null 
   const deltaPercent = deltaRub !== null && staticTotal ? deltaRub / staticTotal : null;
 
   return (
-    <Paper withBorder p="md" radius="md" data-testid="kpi-portfolio-value">
-      <Group gap={6}>
-        <Text size="xs" c="dimmed">
+    <Metric
+      data-testid="kpi-portfolio-value"
+      label={
+        <Group gap={4} wrap="nowrap" component="span">
           Стоимость портфеля
-        </Text>
-        <ChartExplainIcon
-          title="Стоимость портфеля"
-          explanation={DIRTY_PRICE_EXPLANATION}
-          data-testid="kpi-portfolio-value-explain-icon"
-        />
-      </Group>
-      <Text fw={700} size="xl">
-        {displayValue === null ? '—' : formatRub(displayValue)}
-      </Text>
-      {deltaPercent !== null && (
-        <Text size="xs" c={deltaPercent >= 0 ? 'green' : 'red'} data-testid="kpi-portfolio-value-delta">
-          {deltaPercent >= 0 ? '+' : ''}
-          {formatPercent(deltaPercent)} за день
-        </Text>
-      )}
-    </Paper>
+          <HelpHint label="Пояснение: Стоимость портфеля" data-testid="kpi-portfolio-value-explain-icon">{DIRTY_PRICE_EXPLANATION}</HelpHint>
+        </Group>
+      }
+      value={displayValue === null ? '—' : formatRub(displayValue)}
+      delta={
+        deltaPercent !== null
+          ? {
+              value: (
+                <span data-testid="kpi-portfolio-value-delta">
+                  {deltaPercent >= 0 ? '+' : ''}
+                  {formatPercent(deltaPercent)}
+                </span>
+              ),
+              tone: deltaPercent > 0 ? 'positive' : deltaPercent < 0 ? 'negative' : 'neutral',
+            }
+          : undefined
+      }
+      hint={deltaPercent !== null ? 'за день' : 'по последнему синку'}
+    />
   );
 }
 
 function XirrKpi({ xirr, error }: { xirr: XirrResponse | null; error: string | null }) {
   return (
-    <Paper withBorder p="md" radius="md" data-testid="kpi-xirr">
-      <Text size="xs" c="dimmed">
-        Доходность (XIRR)
-      </Text>
-      {error ? (
-        <Text size="sm" c="dimmed" data-testid="kpi-xirr-error">
-          нет данных
-        </Text>
-      ) : (
-        <Text fw={700} size="xl">
-          {formatPercent(xirr?.currentXirr ?? null)}
-        </Text>
-      )}
-    </Paper>
+    <Metric
+      data-testid="kpi-xirr"
+      label="Доходность (XIRR)"
+      value={error ? <span data-testid="kpi-xirr-error">—</span> : formatPercent(xirr?.currentXirr ?? null)}
+      hint={error ? 'нет данных' : 'годовых, по операциям счёта'}
+    />
   );
 }
 
 function NextPaymentKpi({ cashflow, error }: { cashflow: CashflowResponse | null; error: string | null }) {
   const next = cashflow?.nextPayments?.[0];
 
+  if (error) {
+    return (
+      <Metric
+        data-testid="kpi-next-payment"
+        label="Ближайшее поступление"
+        value={<span data-testid="kpi-next-payment-error">—</span>}
+        hint="нет данных"
+      />
+    );
+  }
   return (
-    <Paper withBorder p="md" radius="md" data-testid="kpi-next-payment">
-      <Text size="xs" c="dimmed">
-        Ближайшее поступление
-      </Text>
-      {error ? (
-        <Text size="sm" c="dimmed" data-testid="kpi-next-payment-error">
-          нет данных
-        </Text>
-      ) : !next ? (
-        <Text size="sm" c="dimmed">
-          нет запланированных поступлений
-        </Text>
-      ) : (
-        <>
-          <Text fw={700} size="xl">
-            {formatRub(next.netRub)}
-          </Text>
-          <Text size="xs" c="dimmed">
-            {formatDate(next.date)} — {FLOW_TYPE_LABEL[next.flowType] ?? next.flowType}
-            {next.name ? ` · ${next.name}` : next.issuer ? ` · ${next.issuer}` : ''}
-          </Text>
-        </>
-      )}
-    </Paper>
+    <Metric
+      data-testid="kpi-next-payment"
+      label="Ближайшее поступление"
+      value={next ? formatRub(next.netRub) : '—'}
+      hint={
+        next
+          ? `${formatDate(next.date)} · ${FLOW_TYPE_LABEL[next.flowType] ?? next.flowType}${
+              next.name ? ` · ${next.name}` : next.issuer ? ` · ${next.issuer}` : ''
+            }`
+          : 'нет запланированных поступлений'
+      }
+    />
   );
 }
 
@@ -132,52 +127,33 @@ function UnreadSignalsKpi() {
   const unreadCount = signals.filter((s) => !s.isRead).length;
 
   return (
-    <UnstyledButton onClick={() => navigate('/signals')} data-testid="kpi-unread-signals">
-      <Paper withBorder p="md" radius="md" style={{ cursor: 'pointer' }}>
-        <Text size="xs" c="dimmed">
-          Непрочитанные сигналы
-        </Text>
-        <Group gap={8} align="baseline">
-          <Text fw={700} size="xl">
+    <UnstyledButton
+      className="bonds-metric-link"
+      onClick={() => navigate('/signals')}
+      data-testid="kpi-unread-signals"
+    >
+      <Metric
+        label="Непрочитанные сигналы"
+        value={
+          <Group gap={8} align="center" component="span">
             {unreadCount}
-          </Text>
-          {unreadCount > 0 && (
-            <Badge size="sm" color="violet" variant="light">
-              смотреть
-            </Badge>
-          )}
-        </Group>
-      </Paper>
+            {unreadCount > 0 && (
+              <Badge size="sm" variant="light">
+                смотреть
+              </Badge>
+            )}
+          </Group>
+        }
+        hint="оферты, купоны, концентрация"
+      />
     </UnstyledButton>
-  );
-}
-
-/**
- * График стоимости — интрадей-виджет из plan/16, переиспускается как есть (план прямо запрещает
- * переписывать его логику/вёрстку). Объяснение выводится отдельной строкой над виджетом вместо
- * встраивания иконки в его собственный заголовок — не трогаем разметку PortfolioIntradayChart.
- */
-function ValueChartWidget() {
-  return (
-    <Stack gap={4} data-testid="dashboard-value-chart">
-      <Group gap={6}>
-        <Text size="xs" c="dimmed">
-          Что показывает этот график
-        </Text>
-        <ChartExplainIcon
-          title="Стоимость портфеля сегодня"
-          explanation={CHART_EXPLANATIONS.dashboardValue}
-          data-testid="dashboard-value-chart-explain-icon"
-        />
-      </Group>
-      <PortfolioIntradayChart />
-    </Stack>
   );
 }
 
 /** Мини-композиция по эмитентам: топ-5 + «прочие» (plan/18 часть B.3), компактный donut. */
 function MiniCompositionWidget() {
   const { data, isLoading, error } = useWidgetData(fetchComposition, []);
+  const t = useChartTheme();
 
   const slices = useMemo((): CompositionSlice[] => {
     if (!data) return [];
@@ -191,50 +167,60 @@ function MiniCompositionWidget() {
   }, [data]);
 
   return (
-    <ChartCard title="Композиция по эмитентам" data-testid="widget-composition" explanation={CHART_EXPLANATIONS.composition}>
-      {isLoading && (
-        <Center py="lg">
-          <Loader size="sm" />
-        </Center>
-      )}
-      {!isLoading && error && (
-        <Text size="sm" c="dimmed" data-testid="widget-composition-error">
-          Нет данных — запустите синк.
-        </Text>
-      )}
-      {!isLoading && !error && slices.length === 0 && (
-        <Text size="sm" c="dimmed" data-testid="widget-composition-empty">
-          Нет данных — запустите синк.
-        </Text>
-      )}
-      {!isLoading && !error && slices.length > 0 && (
-        <ResponsiveContainer width="100%" height={CHART_HEIGHT_COMPACT}>
-          <PieChart>
-            <Pie data={slices} dataKey="sharePercent" nameKey="key" cx="50%" cy="50%" outerRadius={80} innerRadius={40}>
-              {slices.map((s, idx) => (
-                <Cell key={s.key} fill={CHART_COLORS[idx % CHART_COLORS.length]} />
-              ))}
-            </Pie>
-            <Tooltip
-              content={({ payload }) => {
-                const slice = payload?.[0]?.payload as CompositionSlice | undefined;
-                if (!slice) return null;
-                return (
-                  <ChartTooltip
-                    title={slice.key}
-                    rows={[
-                      { label: 'Доля', value: formatSharePercent(slice.sharePercent) },
-                      { label: 'Стоимость', value: formatRub(slice.marketValueRub) },
-                    ]}
-                  />
-                );
-              }}
-            />
-            <Legend verticalAlign="bottom" height={48} />
-          </PieChart>
-        </ResponsiveContainer>
-      )}
-    </ChartCard>
+    <ChartFrame
+      title="Композиция по эмитентам"
+      data-testid="widget-composition"
+      explanation={CHART_EXPLANATIONS.composition}
+      height={CHART_HEIGHT_COMPACT + 40}
+      loading={isLoading}
+      error={error ? new Error(error) : undefined}
+      empty={!isLoading && !error && slices.length === 0}
+      emptyTitle="Нет данных"
+      emptyDescription="Запустите синк — состав портфеля появится после него."
+    >
+      <PieChart>
+        <Pie
+          data={slices}
+          dataKey="sharePercent"
+          nameKey="key"
+          cx={t.isCompact ? '50%' : '32%'}
+          cy={t.isCompact ? '42%' : '50%'}
+          outerRadius={t.isCompact ? '70%' : '80%'}
+          innerRadius={t.isCompact ? '46%' : '54%'}
+          paddingAngle={1}
+          stroke="var(--mvv-surface)"
+          strokeWidth={2}
+          isAnimationActive={false}
+        >
+          {slices.map((s, idx) => (
+            <Cell key={s.key} fill={s.key === 'Прочие' ? 'var(--mvv-text-3)' : seriesColor(idx)} />
+          ))}
+        </Pie>
+        <Tooltip
+          {...t.barTooltip}
+          content={({ payload }) => {
+            const slice = payload?.[0]?.payload as CompositionSlice | undefined;
+            if (!slice) return null;
+            return (
+              <ChartTooltip
+                title={slice.key}
+                rows={[
+                  { label: 'Доля', value: formatSharePercent(slice.sharePercent) },
+                  { label: 'Стоимость', value: formatRub(slice.marketValueRub) },
+                ]}
+              />
+            );
+          }}
+        />
+        <Legend
+          {...t.legend}
+          layout={t.isCompact ? 'horizontal' : 'vertical'}
+          verticalAlign={t.isCompact ? 'bottom' : 'middle'}
+          align={t.isCompact ? 'center' : 'right'}
+          height={undefined}
+        />
+      </PieChart>
+    </ChartFrame>
   );
 }
 
@@ -250,24 +236,20 @@ function UpcomingCashflowWidget() {
   }, [data]);
 
   return (
-    <Paper withBorder p="md" radius="md" data-testid="widget-upcoming-cashflow">
-      <Text fw={600} mb="xs">
-        Ближайшие 30 дней
-      </Text>
+    <Section title="Ближайшие 30 дней" padding="none" data-testid="widget-upcoming-cashflow">
       {isLoading && (
-        <Center py="lg">
+        <div className="bonds-center">
           <Loader size="sm" />
-        </Center>
+        </div>
       )}
-      {!isLoading && error && (
-        <Text size="sm" c="dimmed" data-testid="widget-upcoming-cashflow-error">
-          Нет данных — запустите синк.
-        </Text>
-      )}
+      {!isLoading && error && <ErrorState compact error={error} data-testid="widget-upcoming-cashflow-error" />}
       {!isLoading && !error && upcoming.length === 0 && (
-        <Text size="sm" c="dimmed" data-testid="widget-upcoming-cashflow-empty">
-          Нет запланированных поступлений в ближайшие 30 дней.
-        </Text>
+        <EmptyState
+          compact
+          title="Поступлений нет"
+          description="В ближайшие 30 дней купонов и погашений не запланировано."
+          data-testid="widget-upcoming-cashflow-empty"
+        />
       )}
       {!isLoading && !error && upcoming.length > 0 && (
         <Table>
@@ -276,7 +258,7 @@ function UpcomingCashflowWidget() {
               <Table.Th>Дата</Table.Th>
               <Table.Th>Бумага</Table.Th>
               <Table.Th>Тип</Table.Th>
-              <Table.Th>Нетто</Table.Th>
+              <Table.Th ta="right">Нетто</Table.Th>
             </Table.Tr>
           </Table.Thead>
           <Table.Tbody>
@@ -284,14 +266,14 @@ function UpcomingCashflowWidget() {
               <Table.Tr key={idx}>
                 <Table.Td>{formatDate(p.date)}</Table.Td>
                 <Table.Td>{p.name ?? p.issuer ?? '—'}</Table.Td>
-                <Table.Td>{FLOW_TYPE_LABEL[p.flowType] ?? p.flowType}</Table.Td>
-                <Table.Td>{formatRub(p.netRub)}</Table.Td>
+                <Table.Td c="dimmed">{FLOW_TYPE_LABEL[p.flowType] ?? p.flowType}</Table.Td>
+                <Table.Td ta="right">{formatRub(p.netRub)}</Table.Td>
               </Table.Tr>
             ))}
           </Table.Tbody>
         </Table>
       )}
-    </Paper>
+    </Section>
   );
 }
 
@@ -310,24 +292,24 @@ export function Dashboard() {
   const { data: cashflow, error: cashflowError } = useWidgetData(fetchCashflow, []);
 
   return (
-    <Stack gap="md">
-      <Title order={2}>Обзор</Title>
-
-      <SimpleGrid cols={{ base: 1, sm: 2, md: 4 }} data-testid="dashboard-kpi-row">
+    <Page title="Обзор" description="Стоимость, доходность и ближайшие поступления портфеля" width="wide">
+      <MetricGrid data-testid="dashboard-kpi-row">
         <PortfolioValueKpi positions={positions} />
         <XirrKpi xirr={xirr} error={xirrError} />
         <NextPaymentKpi cashflow={cashflow} error={cashflowError} />
         <UnreadSignalsKpi />
-      </SimpleGrid>
+      </MetricGrid>
 
-      <ValueChartWidget />
+      <div data-testid="dashboard-value-chart">
+        <PortfolioIntradayChart explanation={CHART_EXPLANATIONS.dashboardValue} />
+      </div>
 
-      <SimpleGrid cols={{ base: 1, md: 2 }}>
+      <div className="bonds-grid-2">
         <MiniCompositionWidget />
         <UpcomingCashflowWidget />
-      </SimpleGrid>
+      </div>
 
       <Disclaimer />
-    </Stack>
+    </Page>
   );
 }

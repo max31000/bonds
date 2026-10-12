@@ -1,19 +1,6 @@
 import { useEffect, useState } from 'react';
-import {
-  Title,
-  Stack,
-  Paper,
-  Text,
-  Alert,
-  Loader,
-  Center,
-  Group,
-  NumberInput,
-  Button,
-  PasswordInput,
-  Badge,
-  Divider,
-} from '@mantine/core';
+import { Badge, Button, Group, Loader, NumberInput, PasswordInput, SimpleGrid, Stack, Text } from '@mantine/core';
+import { ErrorState, Page, Section } from '@mvv42/kit';
 import { useForm } from '@mantine/form';
 import { notifications } from '@mantine/notifications';
 import { useSettingsStore } from '../store/useSettingsStore';
@@ -156,38 +143,35 @@ export function Settings() {
   };
 
   return (
-    <Stack gap="md">
-      <Title order={2}>Настройки</Title>
-
+    <Page title="Настройки" description="Брокерский счёт, комиссия и пороги сигналов">
       {isLoading && (
-        <Center py="xl">
+        <div className="bonds-center">
           <Loader />
-        </Center>
+        </div>
       )}
 
       {!isLoading && error && (
-        <Alert color="red" title="Не удалось загрузить настройки" data-testid="settings-error">
-          {error}
-        </Alert>
+        <Section>
+          <ErrorState title="Не удалось загрузить настройки" error={error} data-testid="settings-error" />
+        </Section>
       )}
 
       {!isLoading && settings && (
         <>
-          <Paper withBorder p="md" radius="md" data-testid="tinvest-token-section">
-            <Text fw={600} mb="xs">
-              Токен T-Invest
-            </Text>
-            <Group mb="sm">
-              {settings.tInvestTokenConfigured ? (
-                <Badge color="teal" variant="light">
+          <Section
+            title="Токен T-Invest"
+            description="Только на чтение. Хранится зашифрованным и используется для синхронизации портфеля."
+            actions={
+              settings.tInvestTokenConfigured ? (
+                <Badge color="teal">
                   задан{settings.tInvestTokenMasked ? `: ${settings.tInvestTokenMasked}` : ''}
                 </Badge>
               ) : (
-                <Badge color="gray" variant="light">
-                  не задан
-                </Badge>
-              )}
-            </Group>
+                <Badge color="gray">не задан</Badge>
+              )
+            }
+            data-testid="tinvest-token-section"
+          >
             <Group align="flex-end" wrap="wrap">
               <PasswordInput
                 placeholder="Новый read-only токен T-Invest"
@@ -205,22 +189,21 @@ export function Settings() {
                 Сохранить токен
               </Button>
             </Group>
-            <Text size="xs" c="dimmed" mt="xs">
+            <p className="bonds-note bonds-mt">
               Токен никогда не отображается повторно после сохранения — только статус «задан».
-            </Text>
-          </Paper>
+            </p>
+          </Section>
 
-          <Divider />
-
-          <Paper withBorder p="md" radius="md" data-testid="commission-section">
-            <Text fw={600} mb="xs">
-              Комиссия брокера
-            </Text>
-            <Stack gap={4} mb="sm">
-              <Text size="sm" data-testid="commission-tariff">
+          <Section
+            title="Комиссия брокера"
+            description="Используется в оценках «если продать сейчас», замен и корзины"
+            data-testid="commission-section"
+          >
+            <Stack gap={4} mb="md">
+              <Text size="sm" c="dimmed" data-testid="commission-tariff">
                 Тариф T-Invest: {settings.tInvestTariff ?? '—'}
               </Text>
-              <Text size="sm" data-testid="commission-auto-estimate">
+              <Text size="sm" c="dimmed" data-testid="commission-auto-estimate">
                 {settings.commissionAutoEstimate
                   ? `Фактическая по сделкам: ≈${formatPercent(settings.commissionAutoEstimate.rate)} (${settings.commissionAutoEstimate.tradeCount} сделок за ${settings.commissionAutoEstimate.windowMonths} мес, оборот ${formatRub(settings.commissionAutoEstimate.turnoverRub)})`
                   : 'Фактическая по сделкам: недостаточно данных в журнале операций'}
@@ -250,20 +233,19 @@ export function Settings() {
                 Сохранить
               </Button>
             </Group>
-            <Text size="xs" c="dimmed" mt="xs">
+            <p className="bonds-note bonds-mt">
               Пусто — override не задан, применяется авто-оценка из журнала сделок либо дефолт 0.3%.
               Ввод в процентах, на бэкенде хранится и применяется как доля (0.05% = 0.0005).
-            </Text>
-          </Paper>
+            </p>
+          </Section>
 
-          <Divider />
-
-          <Paper withBorder p="md" radius="md" data-testid="thresholds-section">
-            <Text fw={600} mb="sm">
-              Пороги триггеров сигналов
-            </Text>
+          <Section
+            title="Пороги триггеров сигналов"
+            description="Когда сервис создаёт сигнал: события, кэш, доходность, концентрация, дюрация"
+            data-testid="thresholds-section"
+          >
             <form onSubmit={handleSaveThresholds}>
-              <Stack gap="sm">
+              <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md" verticalSpacing="sm">
                 <NumberInput
                   label="Горизонт предстоящих событий, дней"
                   min={0}
@@ -306,16 +288,16 @@ export function Settings() {
                   decimalScale={2}
                   {...form.getInputProps('durationDriftToleranceYears')}
                 />
-                <Group justify="flex-end">
-                  <Button type="submit" loading={savingThresholds} data-testid="thresholds-save">
-                    Сохранить пороги
-                  </Button>
-                </Group>
-              </Stack>
+              </SimpleGrid>
+              <Group justify="flex-end" mt="lg">
+                <Button type="submit" loading={savingThresholds} data-testid="thresholds-save">
+                  Сохранить пороги
+                </Button>
+              </Group>
             </form>
-          </Paper>
+          </Section>
         </>
       )}
-    </Stack>
+    </Page>
   );
 }
