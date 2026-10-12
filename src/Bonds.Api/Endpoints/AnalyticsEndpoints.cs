@@ -1223,10 +1223,6 @@ public static class AnalyticsEndpoints
 
     // ─── GET /api/analytics/relative-value ─────────────────────────────────────────────────────
 
-    /// <summary>Порог |deviation| для Fair-вердикта (план часть C.1): меньше — «в рынке», не
-    /// заслуживает бейджа. 0.0020 = 20 базисных пунктов (доля, см. общая конвенция единиц репо).</summary>
-    public const decimal FairVerdictThresholdFraction = 0.0020m;
-
     /// <summary>Сколько дешёвых кандидатов из корзины показывать для каждой Rich-позиции (план часть C.2).</summary>
     public const int TopCheapCandidatesPerRichPosition = 3;
 
@@ -1300,13 +1296,13 @@ public static class AnalyticsEndpoints
         });
     }
 
-    /// <summary>Cheap/Fair/Rich по знаку и порогу <see cref="FairVerdictThresholdFraction"/> (план часть C.1):
+    /// <summary>Cheap/Fair/Rich по знаку и порогу <see cref="SpreadThresholds.DeviationFraction"/> (план часть C.1):
     /// |deviation| &lt; порог → Fair (в рынке); иначе положительное — Cheap (спред выше медианы,
     /// рынок недооценивает/закладывает риск), отрицательное — Rich (спред ниже медианы, дорого
     /// относительно соседей по корзине, кандидат на пересмотр).</summary>
     private static RelativeValueVerdict ResolveVerdict(decimal deviationFraction)
     {
-        if (Math.Abs(deviationFraction) < FairVerdictThresholdFraction) return RelativeValueVerdict.Fair;
+        if (Math.Abs(deviationFraction) < SpreadThresholds.DeviationFraction) return RelativeValueVerdict.Fair;
         return deviationFraction > 0 ? RelativeValueVerdict.Cheap : RelativeValueVerdict.Rich;
     }
 
@@ -1697,7 +1693,7 @@ public static class AnalyticsEndpoints
 
 /// <summary>Verdict одной позиции (план часть C.1): Cheap — спред заметно выше медианы корзины
 /// (рынок недооценивает/закладывает риск), Rich — заметно ниже (дорого относительно соседей,
-/// кандидат на пересмотр), Fair — в пределах порога (см. <see cref="AnalyticsEndpoints.FairVerdictThresholdFraction"/>).</summary>
+/// кандидат на пересмотр), Fair — в пределах порога (см. <see cref="SpreadThresholds.DeviationFraction"/>).</summary>
 public enum RelativeValueVerdict
 {
     Cheap,

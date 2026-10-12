@@ -69,15 +69,6 @@ public enum ReliabilityLight
 public static class CandidateRiskSignalService
 {
     /// <summary>
-    /// Порог |отклонение спреда от медианы корзины| для Caution/Good (согласовано с RV-вердиктом
-    /// Cheap/Fair/Rich, см. <c>AnalyticsEndpoints.FairVerdictThresholdFraction</c> в Bonds.Api —
-    /// Bonds.Core не может ссылаться на Api-слой, поэтому здесь отдельная константа с тем же
-    /// значением; держать оба места синхронными при пересмотре порога, см. план задачи 33 часть A).
-    /// 0.0020 = 20 базисных пунктов (доля, общая конвенция единиц репо).
-    /// </summary>
-    public const decimal SpreadDeviationThresholdFraction = 0.0020m;
-
-    /// <summary>
     /// Матрица ликвидность×листинг → уровень (план задачи 33 часть A.1, зафиксировано тестами
     /// <c>CandidateRiskSignalServiceTests</c>):
     /// <list type="bullet">
@@ -130,7 +121,7 @@ public static class CandidateRiskSignalService
 
     /// <summary>
     /// Отклонение G-спреда кандидата от медианы ЕГО ЖЕ корзины (план часть A.1): заметно выше
-    /// (&gt; <see cref="SpreadDeviationThresholdFraction"/>) → Caution (рынок закладывает повышенный
+    /// (&gt; <see cref="SpreadThresholds.DeviationFraction"/>) → Caution (рынок закладывает повышенный
     /// риск/премию), в пределах порога → Neutral, заметно ниже → Good (спокойнее рынка своей группы).
     /// <paramref name="gSpreadFraction"/> или <paramref name="basketMedianGSpreadFraction"/> == null
     /// (MOEX не отдал спред/кривую или корзина не резолвится) → Neutral, оба значения в ответе null —
@@ -144,8 +135,8 @@ public static class CandidateRiskSignalService
         }
 
         var deviation = gSpread - median;
-        if (deviation > SpreadDeviationThresholdFraction) return SignalLevel.Caution;
-        if (deviation < -SpreadDeviationThresholdFraction) return SignalLevel.Good;
+        if (deviation > SpreadThresholds.DeviationFraction) return SignalLevel.Caution;
+        if (deviation < -SpreadThresholds.DeviationFraction) return SignalLevel.Good;
         return SignalLevel.Neutral;
     }
 
@@ -182,7 +173,7 @@ public static class CandidateRiskSignalService
     /// <summary>Классификация "Гособлигации" банка (<c>BondUniverseEntry.Sector</c>) — см.
     /// <c>Bonds.Infrastructure.Connectors.Moex.BondUniverseSectorMapper</c>/<c>MoexSegmentMapper</c>.
     /// Bonds.Core не может ссылаться на Infrastructure (layering) — строка продублирована здесь,
-    /// тот же приём, что <see cref="SpreadDeviationThresholdFraction"/> (см. её doc-comment).</summary>
+    /// тот же приём, что <see cref="SpreadThresholds.DeviationFraction"/>.</summary>
     public const string GovernmentSectorLabel = "Гособлигации";
 
     /// <summary>Классификация "Муниципальные" банка — см. doc-comment <see cref="GovernmentSectorLabel"/>.</summary>

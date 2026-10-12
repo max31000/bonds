@@ -24,9 +24,22 @@ public class PortfolioSnapshotServiceTests
     private const ulong AccountId = 1;
     private static readonly DateOnly AsOf = new(2025, 6, 1);
 
+    private readonly Mock<ICouponScheduleRepository> _coupons = new();
+    private readonly Mock<IAmortizationScheduleRepository> _amortizations = new();
+    private readonly Mock<IOfferScheduleRepository> _offers = new();
+    private readonly Mock<IYieldCurveRepository> _yieldCurve = new();
+
     private PortfolioSnapshotService CreateService() => new(
-        _positions.Object, _instruments.Object, _quotes.Object, _operations.Object, _snapshots.Object,
+        new PortfolioHoldingsBuilder(
+            _positions.Object, _instruments.Object, _coupons.Object, _amortizations.Object,
+            _offers.Object, _quotes.Object, _yieldCurve.Object, _operations.Object),
+        _instruments.Object, _operations.Object, _snapshots.Object,
         NullLogger<PortfolioSnapshotService>.Instance);
+
+    private static Instrument LiveInstrument(ulong id) => new()
+    {
+        Id = id, FaceValue = 1000m, MaturityDate = AsOf.AddYears(3),
+    };
 
     private static Operation Op(OperationType type, decimal amount) => new()
     {
@@ -46,6 +59,7 @@ public class PortfolioSnapshotServiceTests
         {
             InstrumentId = 10, AsOf = AsOf, CleanPrice = 980m, DirtyPrice = 990m,
         });
+        _instruments.Setup(r => r.GetByIdAsync(10)).ReturnsAsync(LiveInstrument(10));
         _operations.Setup(r => r.GetByAccountIdAsync(AccountId, null, null)).ReturnsAsync(Array.Empty<Operation>());
 
         var snapshot = await CreateService().ComputeSnapshotAsync(AccountId, AsOf);
@@ -64,6 +78,8 @@ public class PortfolioSnapshotServiceTests
         _positions.Setup(r => r.GetByAccountIdAsync(AccountId)).ReturnsAsync(new[] { withQuote, withoutQuote });
         _quotes.Setup(r => r.GetLatestAsync(10)).ReturnsAsync(new MarketQuote { InstrumentId = 10, AsOf = AsOf, DirtyPrice = 1000m });
         _quotes.Setup(r => r.GetLatestAsync(20)).ReturnsAsync((MarketQuote?)null);
+        _instruments.Setup(r => r.GetByIdAsync(10)).ReturnsAsync(LiveInstrument(10));
+        _instruments.Setup(r => r.GetByIdAsync(20)).ReturnsAsync(LiveInstrument(20));
         _operations.Setup(r => r.GetByAccountIdAsync(AccountId, null, null)).ReturnsAsync(Array.Empty<Operation>());
 
         var snapshot = await CreateService().ComputeSnapshotAsync(AccountId, AsOf);
