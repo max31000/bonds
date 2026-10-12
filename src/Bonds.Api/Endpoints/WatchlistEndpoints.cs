@@ -11,7 +11,7 @@ namespace Bonds.Api.Endpoints;
 
 /// <summary>
 /// Задача 20 (часть A): ручной watchlist — бумаги вне текущих позиций, отслеживаемые по ISIN
-/// (НЕ скринер по всей вселенной, см. doc-comment <see cref="Bonds.Core.Analytics.ICandidateScreener"/>).
+/// (НЕ скринер по всей вселенной).
 /// GET отдаёт полный набор метрик тем же расчётным путём, что у позиций
 /// (<see cref="PortfolioHoldingsBuilder.BuildForInstrumentsAsync"/> → <see cref="Bonds.Core.Calculation.BondMetricsCalculator"/>).
 /// POST валидирует ISIN на MOEX синхронно (422, если не найден/не облигация) и сразу обогащает

@@ -390,7 +390,7 @@ public sealed record CashAllocationCandidate
     /// ДО проверки <see cref="EffectiveYield"/> (у флоатера ЕСТЬ доходность — CurrentYield, — но
     /// она не сравнима с YTM фикс-купона, поэтому не должна ранжироваться вместе с ним).
     /// <para>
-    /// Не обязательно совпадает с полным <see cref="ReplacementMatrixService.IsComparable"/>
+    /// Не обязательно совпадает с полным <see cref="YieldComparability.IsComparable"/>
     /// (тем же, что использует матрица замен/RV/PostReplacement) — GetAllocation намеренно НЕ
     /// включает сюда DataIncomplete: бумага с неполными данными и без цены и так естественно
     /// получает <see cref="EffectiveYield"/>=null и уходит в существующий
@@ -468,7 +468,7 @@ public enum CashAllocationSkipReason
     /// <summary>
     /// Задача 31 часть B.3: флоатер/индексируемая/бумага с неполными данными — доходность не
     /// сравнима с YTM фикс-купона (см. <see cref="CashAllocationCandidate.IsComparable"/> /
-    /// <see cref="ReplacementMatrixService.IsComparable"/>), поэтому исключена из аллокации, даже
+    /// <see cref="YieldComparability.IsComparable"/>), поэтому исключена из аллокации, даже
     /// если у неё формально есть высокая CurrentYield.
     /// </summary>
     NotComparable,
