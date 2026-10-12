@@ -22,5 +22,10 @@ yarn typecheck
 yarn test:run
 ```
 
-Переменные окружения сборки: `VITE_API_BASE` (по умолчанию `/bonds/api`),
-`VITE_TELEGRAM_BOT_USERNAME` (этап 02).
+Переменные окружения сборки: `VITE_API_BASE` (по умолчанию `/bonds/api`).
+
+Вход — только общий mvv42-auth (cookie на mvv42.ru, логин в shell); своего логина, токенов и
+переключателя темы нет. UI собран на [`@mvv42/kit`](https://github.com/max31000/mvv42-kit)
+(`Mvv42Provider accent="violet"`, `AppLayout`, `Page`/`Section`/`Metric`, `@mvv42/kit/charts`).
+Локально без auth-сервиса залогиненные экраны видны только с моками `/auth/api/me` и API
+(Playwright `page.route`).

@@ -1,37 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import {
-  Title,
-  Stack,
-  Paper,
-  Text,
-  Alert,
-  Loader,
-  Center,
-  Badge,
-  Group,
-  Table,
-  SimpleGrid,
-  SegmentedControl,
-  Tooltip as MantineTooltip,
-  ActionIcon,
-  Button,
-} from '@mantine/core';
-import {
-  ResponsiveContainer,
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ReferenceDot,
-  ReferenceLine,
-} from 'recharts';
+import { Badge, Button, Group, Loader, SegmentedControl, Table } from '@mantine/core';
+import { EmptyState, ErrorState, Metric, MetricGrid, Page, Section } from '@mvv42/kit';
+import { ChartFrame, ChartTooltip, chartColors, pickAxisTicks, useChartTheme } from '@mvv42/kit/charts';
+import { IconArrowLeft } from '@tabler/icons-react';
+import { CartesianGrid, Line, LineChart, ReferenceDot, ReferenceLine, Tooltip, XAxis, YAxis } from 'recharts';
 import { fetchPositionDetail } from '../api/positions';
 import { Disclaimer } from '../components/Disclaimer';
-import { ChartCard, ChartTooltip, CHART_GRID_PROPS, CHART_HEIGHT, CHART_MARGIN } from '../components/charts';
-import { pickAxisTicks } from '../components/charts/axisTicks';
+import { ChartExplainIcon } from '../components/charts';
 import type { PositionDetail as PositionDetailDto, PriceHistoryRange } from '../api/types';
 import { formatRub, formatPercent, formatBp, formatNumber, formatDate, commissionSourceLabel, formatDaysUntil } from '../utils/format';
 
@@ -65,30 +41,20 @@ interface MetricCardProps {
   extra?: string;
 }
 
+/** Метрика бумаги с «?»-пояснением — `Metric` кита. */
 function MetricCard({ label, value, explanation, extra }: MetricCardProps) {
   return (
-    <Paper withBorder p="sm" radius="md" data-testid={`metric-card-${label}`}>
-      <Group gap={4} wrap="nowrap" mb={4}>
-        <Text size="xs" c="dimmed">
+    <Metric
+      data-testid={`metric-card-${label}`}
+      label={
+        <Group gap={4} wrap="nowrap" component="span">
           {label}
-        </Text>
-        <MantineTooltip label={explanation} multiline w={260} withArrow>
-          <ActionIcon variant="subtle" color="gray" size="xs" radius="xl" aria-label={`Пояснение к «${label}»`}>
-            <Text size="xs" fw={700}>
-              ?
-            </Text>
-          </ActionIcon>
-        </MantineTooltip>
-      </Group>
-      <Text fw={700} size="lg">
-        {value}
-      </Text>
-      {extra && (
-        <Text size="xs" c="dimmed">
-          {extra}
-        </Text>
-      )}
-    </Paper>
+          <ChartExplainIcon title={label} explanation={explanation} data-testid={`metric-explain-${label}`} />
+        </Group>
+      }
+      value={value}
+      hint={extra}
+    />
   );
 }
 
@@ -161,148 +127,85 @@ export function PositionDetail() {
       .filter((m): m is NonNullable<typeof m> => m !== null);
   }, [detail, priceChartData]);
 
+  const t = useChartTheme();
+
   if (!id) {
     return (
-      <Alert color="red" title="Некорректная ссылка" data-testid="position-detail-invalid-id">
-        Не указан идентификатор позиции.
-      </Alert>
+      <Page>
+        <ErrorState
+          title="Некорректная ссылка"
+          error="Не указан идентификатор позиции."
+          data-testid="position-detail-invalid-id"
+        />
+      </Page>
     );
   }
 
-  return (
-    <Stack gap="md" data-testid="position-detail-page">
-      <Group justify="space-between">
-        <Button variant="subtle" color="gray" onClick={() => navigate('/positions')} data-testid="back-to-positions">
-          ← К списку позиций
-        </Button>
-      </Group>
+  const backButton = (
+    <Button
+      variant="subtle"
+      color="gray"
+      size="xs"
+      leftSection={<IconArrowLeft size={14} />}
+      onClick={() => navigate('/positions')}
+      data-testid="back-to-positions"
+    >
+      Позиции
+    </Button>
+  );
 
+  const nextCoupon = detail?.couponSchedule.find((c) => !c.isPast);
+
+  return (
+    <Page
+      width="wide"
+      data-testid="position-detail-page"
+      eyebrow={backButton}
+      title={detail ? (detail.name ?? detail.issuer ?? detail.isin) : 'Позиция'}
+      description={
+        detail
+          ? `${detail.isin} · ${detail.issuer ?? '—'}${detail.sector ? ` · ${detail.sector}` : ''}`
+          : undefined
+      }
+    >
       {isLoading && (
-        <Center py="xl">
+        <div className="bonds-center">
           <Loader />
-        </Center>
+        </div>
       )}
 
       {!isLoading && error && (
-        <Alert color="red" title="Не удалось загрузить карточку позиции" data-testid="position-detail-error">
-          {error}
-        </Alert>
+        <Section>
+          <ErrorState title="Не удалось загрузить карточку позиции" error={error} data-testid="position-detail-error" />
+        </Section>
       )}
 
       {!isLoading && !error && detail && (
         <>
-          {/* ── Шапка ────────────────────────────────────────────────────────────── */}
-          <Paper withBorder p="md" radius="md" data-testid="position-detail-header">
-            <Group justify="space-between" wrap="wrap">
+          {/* ── Шапка: стоимость позиции и признаки бумаги ─────────────────────── */}
+          <Section data-testid="position-detail-header">
+            <div className="bonds-position-head">
               <div>
-                <Title order={2}>{detail.name ?? detail.issuer ?? detail.isin}</Title>
-                <Text size="sm" c="dimmed">
-                  {detail.isin} · {detail.issuer ?? '—'}
-                  {detail.sector ? ` · ${detail.sector}` : ''}
-                </Text>
+                <div className="bonds-eyebrow">Стоимость позиции</div>
+                <div className="bonds-figure mvv-num">{formatRub(detail.marketValueRub)}</div>
+                <div className="bonds-note">
+                  {detail.quantity} шт × {formatRub(detail.dirtyPrice)} · до{' '}
+                  {detail.calculatedToOffer ? 'оферты' : 'погашения'} {formatDaysUntil(detail.horizonDate)}
+                </div>
               </div>
-              <Stack gap={0} align="flex-end">
-                <Text size="sm" c="dimmed">
-                  {detail.quantity} шт × {formatRub(detail.dirtyPrice)}
-                </Text>
-                <Text fw={700} size="xl">
-                  {formatRub(detail.marketValueRub)}
-                </Text>
-              </Stack>
-            </Group>
-            <Group gap={4} mt="sm" wrap="wrap">
-              <Badge size="sm" color="gray" variant="outline">
-                {COUPON_TYPE_LABEL[detail.couponType]}
-              </Badge>
-              {detail.isFloater && (
-                <Badge size="sm" color="blue" variant="light">
-                  плавающая
-                </Badge>
-              )}
-              {detail.isIndexed && (
-                <Badge size="sm" color="teal" variant="light">
-                  индексируемая
-                </Badge>
-              )}
-              {detail.calculatedToOffer && (
-                <Badge size="sm" color="orange" variant="light">
-                  к оферте
-                </Badge>
-              )}
-              {detail.dataIncomplete && (
-                <Badge size="sm" color="red" variant="light">
-                  данные неполные
-                </Badge>
-              )}
-              {detail.isOutOfScopeCurrency && (
-                <Badge size="sm" color="grape" variant="light">
-                  валютная / вне скоупа
-                </Badge>
-              )}
-            </Group>
-          </Paper>
-
-          {/* ── График цены ──────────────────────────────────────────────────────── */}
-          <ChartCard
-            title="Цена"
-            data-testid="price-history-chart"
-            explanation="Дневная цена бумаги (грязная — с учётом НКД), пересчитанная в рубли по номиналу. Точки — ваши покупки/продажи; пунктир — средняя цена входа, если она известна."
-            controls={
-              <SegmentedControl
-                size="xs"
-                value={range}
-                onChange={(v) => {
-                  setState((prev) => ({ ...prev, isLoading: true }));
-                  setRange(v as PriceHistoryRange);
-                }}
-                data={RANGE_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
-                data-testid="price-range-toggle"
-              />
-            }
-          >
-            {priceChartData.length === 0 ? (
-              <Text size="sm" c="dimmed" data-testid="price-history-empty">
-                История цены недоступна за выбранный период.
-              </Text>
-            ) : (
-              <ResponsiveContainer width="100%" height={CHART_HEIGHT}>
-                <LineChart data={priceChartData} margin={CHART_MARGIN}>
-                  <CartesianGrid {...CHART_GRID_PROPS} />
-                  <XAxis dataKey="label" ticks={pickAxisTicks(priceChartData.map((d) => d.label))} />
-                  <YAxis tickFormatter={(v: number) => formatRub(v)} width={90} domain={['auto', 'auto']} />
-                  <Tooltip
-                    content={({ active, payload }) => {
-                      if (!active || !payload?.length) return null;
-                      const point = payload[0].payload as (typeof priceChartData)[number];
-                      return <ChartTooltip title={point.label} rows={[{ label: 'Цена', value: formatRub(point.priceRub) }]} />;
-                    }}
-                  />
-                  <Line type="monotone" dataKey="priceRub" stroke="var(--mantine-color-violet-6)" dot={false} strokeWidth={2} />
-                  {detail.averageCostRub !== null && (
-                    <ReferenceLine
-                      y={detail.averageCostRub}
-                      stroke="var(--mantine-color-gray-6)"
-                      strokeDasharray="4 4"
-                      label={{ value: 'Ср. цена входа', position: 'insideTopLeft', fontSize: 11, fill: 'var(--mantine-color-gray-6)' }}
-                    />
-                  )}
-                  {tradeMarkers.map((marker, idx) => (
-                    <ReferenceDot
-                      key={`${marker.date}-${idx}`}
-                      x={marker.label}
-                      y={marker.priceRub}
-                      r={5}
-                      fill={marker.type === 'Buy' ? 'var(--mantine-color-teal-6)' : 'var(--mantine-color-red-5)'}
-                      stroke="none"
-                    />
-                  ))}
-                </LineChart>
-              </ResponsiveContainer>
-            )}
-          </ChartCard>
+              <Group gap={6} wrap="wrap" justify="flex-end">
+                <Badge color="gray">{COUPON_TYPE_LABEL[detail.couponType]}</Badge>
+                {detail.isFloater && <Badge color="blue">плавающая</Badge>}
+                {detail.isIndexed && <Badge color="teal">индексируемая</Badge>}
+                {detail.calculatedToOffer && <Badge color="orange">к оферте</Badge>}
+                {detail.dataIncomplete && <Badge color="red">данные неполные</Badge>}
+                {detail.isOutOfScopeCurrency && <Badge color="grape">валютная / вне скоупа</Badge>}
+              </Group>
+            </div>
+          </Section>
 
           {/* ── Метрики ──────────────────────────────────────────────────────────── */}
-          <SimpleGrid cols={{ base: 2, sm: 3, md: 6 }} data-testid="position-detail-metrics">
+          <MetricGrid cols={3} data-testid="position-detail-metrics">
             <MetricCard
               label={detail.isFloater || detail.isIndexed ? 'Текущая доходность' : 'YTM'}
               value={formatPercent(detail.isFloater || detail.isIndexed ? detail.currentYield : detail.ytmEffective)}
@@ -330,222 +233,272 @@ export function PositionDetail() {
             />
             <MetricCard
               label="Следующий купон"
-              value={formatDate(detail.couponSchedule.find((c) => !c.isPast)?.couponDate)}
+              value={formatDate(nextCoupon?.couponDate)}
               explanation="Дата ближайшей будущей купонной выплаты по графику бумаги."
-              extra={
-                detail.couponSchedule.find((c) => !c.isPast)?.valueForPositionRub !== undefined
-                  ? formatRub(detail.couponSchedule.find((c) => !c.isPast)?.valueForPositionRub ?? null)
-                  : undefined
-              }
+              extra={nextCoupon?.valueForPositionRub !== undefined ? formatRub(nextCoupon?.valueForPositionRub ?? null) : undefined}
             />
-          </SimpleGrid>
+          </MetricGrid>
 
-          {/* ── Календарь бумаги ─────────────────────────────────────────────────── */}
-          <Paper withBorder p="md" radius="md" data-testid="instrument-calendar">
-            <Text fw={600} mb="xs">
-              Календарь бумаги
-            </Text>
-            {detail.couponSchedule.length === 0 && detail.amortizationSchedule.length === 0 && detail.offerSchedule.length === 0 ? (
-              <Text size="sm" c="dimmed" data-testid="instrument-calendar-empty">
-                График купонов/амортизаций/оферт недоступен.
-              </Text>
-            ) : (
-              <Table>
-                <Table.Thead>
-                  <Table.Tr>
-                    <Table.Th>Дата</Table.Th>
-                    <Table.Th>Событие</Table.Th>
-                    <Table.Th>Сумма на позицию</Table.Th>
-                    <Table.Th>Пометки</Table.Th>
-                  </Table.Tr>
-                </Table.Thead>
-                <Table.Tbody>
-                  {[
-                    ...detail.couponSchedule.map((c) => ({
-                      key: `coupon-${c.couponDate}`,
-                      date: c.couponDate,
-                      label: 'Купон',
-                      amount: c.valueForPositionRub,
-                      isPast: c.isPast,
-                      isKnown: c.isKnown,
-                    })),
-                    ...detail.amortizationSchedule.map((a) => ({
-                      key: `amort-${a.date}`,
-                      date: a.date,
-                      label: 'Амортизация',
-                      amount: a.amountForPositionRub,
-                      isPast: a.isPast,
-                      isKnown: a.isKnown,
-                    })),
-                    ...detail.offerSchedule.map((o) => ({
-                      key: `offer-${o.date}`,
-                      date: o.date,
-                      label: o.offerType === 'Put' ? 'Оферта (put)' : 'Оферта (call)',
-                      amount: null as number | null,
-                      isPast: o.isPast,
-                      isKnown: true,
-                    })),
-                  ]
-                    .sort((a, b) => a.date.localeCompare(b.date))
-                    .map((row) => (
-                      <Table.Tr key={row.key} data-testid={row.isPast ? 'calendar-row-past' : 'calendar-row-future'}>
-                        <Table.Td>{formatDate(row.date)}</Table.Td>
-                        <Table.Td>{row.label}</Table.Td>
-                        <Table.Td>{row.amount !== null ? formatRub(row.amount) : '—'}</Table.Td>
-                        <Table.Td>
-                          <Group gap={4}>
-                            {row.isPast && (
-                              <Badge size="xs" color="gray" variant="light">
-                                прошло
-                              </Badge>
-                            )}
-                            {!row.isKnown && (
-                              <Badge size="xs" color="yellow" variant="light">
-                                оценка
-                              </Badge>
-                            )}
-                          </Group>
-                        </Table.Td>
-                      </Table.Tr>
-                    ))}
-                </Table.Tbody>
-              </Table>
-            )}
-          </Paper>
-
-          {/* ── Мои операции ─────────────────────────────────────────────────────── */}
-          <Paper withBorder p="md" radius="md" data-testid="position-operations">
-            <Text fw={600} mb="xs">
-              Мои операции
-            </Text>
-            {detail.operations.length === 0 ? (
-              <Text size="sm" c="dimmed" data-testid="position-operations-empty">
-                Операций по бумаге в журнале нет.
-              </Text>
-            ) : (
-              <Table>
-                <Table.Thead>
-                  <Table.Tr>
-                    <Table.Th>Дата</Table.Th>
-                    <Table.Th>Тип</Table.Th>
-                    <Table.Th>Количество</Table.Th>
-                    <Table.Th>Сумма</Table.Th>
-                  </Table.Tr>
-                </Table.Thead>
-                <Table.Tbody>
-                  {detail.operations.map((op) => (
-                    <Table.Tr key={op.id}>
-                      <Table.Td>{formatDate(op.date)}</Table.Td>
-                      <Table.Td>{OPERATION_TYPE_LABEL[op.type] ?? op.type}</Table.Td>
-                      <Table.Td>{op.quantity ?? '—'}</Table.Td>
-                      <Table.Td c={op.amountRub >= 0 ? 'green' : 'red'}>{formatRub(op.amountRub)}</Table.Td>
-                    </Table.Tr>
-                  ))}
-                </Table.Tbody>
-              </Table>
-            )}
-          </Paper>
+          {/* ── График цены ──────────────────────────────────────────────────────── */}
+          <ChartFrame
+            title="Цена"
+            data-testid="price-history-chart"
+            explanation="Дневная цена бумаги (грязная — с учётом НКД), пересчитанная в рубли по номиналу. Точки — ваши покупки/продажи; пунктир — средняя цена входа, если она известна."
+            actions={
+              <SegmentedControl
+                size="xs"
+                value={range}
+                onChange={(v) => {
+                  setState((prev) => ({ ...prev, isLoading: true }));
+                  setRange(v as PriceHistoryRange);
+                }}
+                data={RANGE_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
+                data-testid="price-range-toggle"
+              />
+            }
+            empty={priceChartData.length === 0}
+            emptyTitle={<span data-testid="price-history-empty">Нет истории цены</span>}
+            emptyDescription="История цены недоступна за выбранный период."
+          >
+            <LineChart data={priceChartData} margin={t.margin}>
+              <CartesianGrid {...t.grid} />
+              <XAxis dataKey="label" {...t.xAxis} ticks={pickAxisTicks(priceChartData.map((d) => d.label), t.maxTicks)} />
+              <YAxis {...t.yAxis} tickFormatter={(v: number) => formatRub(v)} width={84} domain={['auto', 'auto']} />
+              <Tooltip
+                {...t.tooltip}
+                content={({ active, payload }) => {
+                  if (!active || !payload?.length) return null;
+                  const point = payload[0].payload as (typeof priceChartData)[number];
+                  return (
+                    <ChartTooltip
+                      title={point.label}
+                      rows={[{ label: 'Цена', value: formatRub(point.priceRub), color: chartColors.accent }]}
+                    />
+                  );
+                }}
+              />
+              <Line {...t.line} dataKey="priceRub" name="Цена" stroke={chartColors.accent} />
+              {detail.averageCostRub !== null && (
+                <ReferenceLine
+                  y={detail.averageCostRub}
+                  stroke={chartColors.neutral}
+                  strokeDasharray="4 4"
+                  ifOverflow="extendDomain"
+                  label={{ value: 'Ср. цена входа', position: 'insideTopLeft', fontSize: 11, fill: chartColors.tick }}
+                />
+              )}
+              {tradeMarkers.map((marker, idx) => (
+                <ReferenceDot
+                  key={`${marker.date}-${idx}`}
+                  x={marker.label}
+                  y={marker.priceRub}
+                  r={5}
+                  fill={marker.type === 'Buy' ? chartColors.positive : chartColors.negative}
+                  stroke={chartColors.surface}
+                  strokeWidth={2}
+                />
+              ))}
+            </LineChart>
+          </ChartFrame>
 
           {/* ── Если продать сейчас ──────────────────────────────────────────────── */}
-          <Paper withBorder p="md" radius="md" data-testid="if-sold-now-card">
-            <Text fw={600} mb="xs">
-              Если продать сейчас
-            </Text>
-            <SimpleGrid cols={{ base: 2, sm: 5 }}>
+          <Section
+            title="Если продать сейчас"
+            description="Оценка выручки и итога при продаже всей позиции по текущей цене"
+            data-testid="if-sold-now-card"
+          >
+            <div className="bonds-figures">
               <div>
-                <Text size="xs" c="dimmed">
-                  Рыночная стоимость
-                </Text>
-                <Text fw={600}>{formatRub(detail.ifSoldNow.marketValueRub)}</Text>
+                <div className="bonds-eyebrow">Рыночная стоимость</div>
+                <div className="bonds-figure-sm mvv-num">{formatRub(detail.ifSoldNow.marketValueRub)}</div>
                 {detail.ifSoldNow.accruedTotalRub > 0 && (
-                  <Text size="xs" c="dimmed" data-testid="if-sold-now-accrued-caption">
+                  <div className="bonds-note" data-testid="if-sold-now-accrued-caption">
                     в т.ч. НКД {formatRub(detail.ifSoldNow.accruedTotalRub)}
-                  </Text>
+                  </div>
                 )}
               </div>
               <div>
-                <Text size="xs" c="dimmed">
-                  Комиссия ({formatPercent(detail.ifSoldNow.commissionRate)})
-                </Text>
-                <Text fw={600} c="red">
-                  −{formatRub(detail.ifSoldNow.commissionRub)}
-                </Text>
+                <div className="bonds-eyebrow">Комиссия ({formatPercent(detail.ifSoldNow.commissionRate)})</div>
+                <div className="bonds-figure-sm mvv-num bonds-negative">−{formatRub(detail.ifSoldNow.commissionRub)}</div>
               </div>
               <div>
-                <Text size="xs" c="dimmed">
-                  Выручка на руки
-                </Text>
-                <Text fw={700} size="lg" data-testid="if-sold-now-net-proceeds">
+                <div className="bonds-eyebrow">Выручка на руки</div>
+                <div className="bonds-figure-sm mvv-num" data-testid="if-sold-now-net-proceeds">
                   {formatRub(detail.ifSoldNow.netProceedsRub)}
-                </Text>
+                </div>
               </div>
               <div>
-                <Text size="xs" c="dimmed">
-                  − НДФЛ (оценка, 13% с прибыли к средней цене входа)
-                </Text>
+                <div className="bonds-eyebrow">− НДФЛ (оценка, 13% с прибыли к средней цене входа)</div>
                 {detail.ifSoldNow.taxEstimateRub !== null ? (
-                  <Text fw={600} c="red" data-testid="if-sold-now-tax-estimate">
+                  <div className="bonds-figure-sm mvv-num bonds-negative" data-testid="if-sold-now-tax-estimate">
                     −{formatRub(detail.ifSoldNow.taxEstimateRub)}
-                  </Text>
+                  </div>
                 ) : (
-                  <Text size="sm" c="dimmed" data-testid="if-sold-now-tax-unavailable">
+                  <div className="bonds-note" data-testid="if-sold-now-tax-unavailable">
                     налог не оценён: журнал операций неполон
-                  </Text>
+                  </div>
                 )}
               </div>
               <div>
-                <Text size="xs" c="dimmed">
-                  Итог после налога (P&amp;L + купоны − НДФЛ)
-                </Text>
+                <div className="bonds-eyebrow">Итог после налога (P&amp;L + купоны − НДФЛ)</div>
                 {detail.ifSoldNow.pnlAvailable ? (
                   detail.ifSoldNow.netAfterTaxRub !== null ? (
-                    <Text
-                      fw={700}
-                      size="lg"
-                      c={detail.ifSoldNow.netAfterTaxRub >= 0 ? 'green' : 'red'}
+                    <div
+                      className={`bonds-figure-sm mvv-num ${detail.ifSoldNow.netAfterTaxRub >= 0 ? 'bonds-positive' : 'bonds-negative'}`}
                       data-testid="if-sold-now-net-after-tax"
                     >
                       {formatRub(detail.ifSoldNow.netAfterTaxRub)}
-                    </Text>
+                    </div>
                   ) : (
-                    <Text size="sm" c="dimmed" data-testid="if-sold-now-net-after-tax-unavailable">
+                    <div className="bonds-note" data-testid="if-sold-now-net-after-tax-unavailable">
                       налог не оценён: журнал операций неполон
-                    </Text>
+                    </div>
                   )
                 ) : (
-                  <Text size="sm" c="dimmed">
-                    Недоступно — журнал операций не покрывает остаток
-                  </Text>
+                  <div className="bonds-note">Недоступно — журнал операций не покрывает остаток</div>
                 )}
                 {detail.ifSoldNow.pnlAvailable && (
-                  <Text size="xs" c="dimmed" data-testid="if-sold-now-pretax-caption">
+                  <div className="bonds-note" data-testid="if-sold-now-pretax-caption">
                     до налога {formatRub(detail.ifSoldNow.totalReturnWithCouponsRub)}
-                  </Text>
+                  </div>
                 )}
               </div>
-            </SimpleGrid>
-            {detail.ifSoldNow.accruedTotalRub > 0 && (
-              <Text size="xs" c="dimmed" mt="sm" data-testid="if-sold-now-formula">
-                выручка = чистая стоимость {formatRub(detail.ifSoldNow.cleanValueRub)} + НКД{' '}
-                {formatRub(detail.ifSoldNow.accruedTotalRub)} − комиссия {formatRub(detail.ifSoldNow.commissionRub)} ={' '}
-                {formatRub(detail.ifSoldNow.netProceedsRub)}
-              </Text>
-            )}
-            <Text size="xs" c="dimmed" mt="sm" data-testid="if-sold-now-commission-source">
-              Комиссия {formatPercent(detail.ifSoldNow.commissionRate)} — {commissionSourceLabel(detail.ifSoldNow.commissionRateSource)}
-            </Text>
-            <Text size="xs" c="dimmed" mt="sm">
-              {detail.ifSoldNow.disclaimer}
-            </Text>
-          </Paper>
+            </div>
+            <div className="bonds-footnotes">
+              {detail.ifSoldNow.accruedTotalRub > 0 && (
+                <p className="bonds-note" data-testid="if-sold-now-formula">
+                  выручка = чистая стоимость {formatRub(detail.ifSoldNow.cleanValueRub)} + НКД{' '}
+                  {formatRub(detail.ifSoldNow.accruedTotalRub)} − комиссия {formatRub(detail.ifSoldNow.commissionRub)} ={' '}
+                  {formatRub(detail.ifSoldNow.netProceedsRub)}
+                </p>
+              )}
+              <p className="bonds-note" data-testid="if-sold-now-commission-source">
+                Комиссия {formatPercent(detail.ifSoldNow.commissionRate)} —{' '}
+                {commissionSourceLabel(detail.ifSoldNow.commissionRateSource)}
+              </p>
+              <p className="bonds-note">{detail.ifSoldNow.disclaimer}</p>
+            </div>
+          </Section>
 
-          <Text size="xs" c="dimmed">
-            До {detail.calculatedToOffer ? 'оферты' : 'погашения'}: {formatDaysUntil(detail.horizonDate)}
-          </Text>
+          <div className="bonds-grid-2">
+            {/* ── Календарь бумаги ───────────────────────────────────────────────── */}
+            <Section title="Календарь бумаги" padding="none" data-testid="instrument-calendar">
+              {detail.couponSchedule.length === 0 &&
+              detail.amortizationSchedule.length === 0 &&
+              detail.offerSchedule.length === 0 ? (
+                <EmptyState
+                  compact
+                  title="Нет графика"
+                  description="График купонов/амортизаций/оферт недоступен."
+                  data-testid="instrument-calendar-empty"
+                />
+              ) : (
+                <Table>
+                  <Table.Thead>
+                    <Table.Tr>
+                      <Table.Th>Дата</Table.Th>
+                      <Table.Th>Событие</Table.Th>
+                      <Table.Th ta="right">На позицию</Table.Th>
+                      <Table.Th>Пометки</Table.Th>
+                    </Table.Tr>
+                  </Table.Thead>
+                  <Table.Tbody>
+                    {[
+                      ...detail.couponSchedule.map((c) => ({
+                        key: `coupon-${c.couponDate}`,
+                        date: c.couponDate,
+                        label: 'Купон',
+                        amount: c.valueForPositionRub,
+                        isPast: c.isPast,
+                        isKnown: c.isKnown,
+                      })),
+                      ...detail.amortizationSchedule.map((a) => ({
+                        key: `amort-${a.date}`,
+                        date: a.date,
+                        label: 'Амортизация',
+                        amount: a.amountForPositionRub,
+                        isPast: a.isPast,
+                        isKnown: a.isKnown,
+                      })),
+                      ...detail.offerSchedule.map((o) => ({
+                        key: `offer-${o.date}`,
+                        date: o.date,
+                        label: o.offerType === 'Put' ? 'Оферта (put)' : 'Оферта (call)',
+                        amount: null as number | null,
+                        isPast: o.isPast,
+                        isKnown: true,
+                      })),
+                    ]
+                      .sort((a, b) => a.date.localeCompare(b.date))
+                      .map((row) => (
+                        <Table.Tr
+                          key={row.key}
+                          data-testid={row.isPast ? 'calendar-row-past' : 'calendar-row-future'}
+                          className={row.isPast ? 'bonds-row-past' : undefined}
+                        >
+                          <Table.Td>{formatDate(row.date)}</Table.Td>
+                          <Table.Td>{row.label}</Table.Td>
+                          <Table.Td ta="right">{row.amount !== null ? formatRub(row.amount) : '—'}</Table.Td>
+                          <Table.Td>
+                            <Group gap={4} wrap="nowrap">
+                              {row.isPast && (
+                                <Badge size="xs" color="gray">
+                                  прошло
+                                </Badge>
+                              )}
+                              {!row.isKnown && (
+                                <Badge size="xs" color="yellow">
+                                  оценка
+                                </Badge>
+                              )}
+                            </Group>
+                          </Table.Td>
+                        </Table.Tr>
+                      ))}
+                  </Table.Tbody>
+                </Table>
+              )}
+            </Section>
+
+            {/* ── Мои операции ───────────────────────────────────────────────────── */}
+            <Section title="Мои операции" padding="none" data-testid="position-operations">
+              {detail.operations.length === 0 ? (
+                <EmptyState
+                  compact
+                  title="Операций нет"
+                  description="Операций по бумаге в журнале нет."
+                  data-testid="position-operations-empty"
+                />
+              ) : (
+                <Table>
+                  <Table.Thead>
+                    <Table.Tr>
+                      <Table.Th>Дата</Table.Th>
+                      <Table.Th>Тип</Table.Th>
+                      <Table.Th ta="right">Кол-во</Table.Th>
+                      <Table.Th ta="right">Сумма</Table.Th>
+                    </Table.Tr>
+                  </Table.Thead>
+                  <Table.Tbody>
+                    {detail.operations.map((op) => (
+                      <Table.Tr key={op.id}>
+                        <Table.Td>{formatDate(op.date)}</Table.Td>
+                        <Table.Td>{OPERATION_TYPE_LABEL[op.type] ?? op.type}</Table.Td>
+                        <Table.Td ta="right">{op.quantity ?? '—'}</Table.Td>
+                        <Table.Td ta="right" c={op.amountRub >= 0 ? 'green' : 'red'}>
+                          {formatRub(op.amountRub)}
+                        </Table.Td>
+                      </Table.Tr>
+                    ))}
+                  </Table.Tbody>
+                </Table>
+              )}
+            </Section>
+          </div>
         </>
       )}
 
       <Disclaimer text={detail?.disclaimer} />
-    </Stack>
+    </Page>
   );
 }

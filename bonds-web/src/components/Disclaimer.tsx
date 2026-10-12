@@ -1,4 +1,4 @@
-import { Paper, Text } from '@mantine/core';
+import { IconInfoCircle } from '@tabler/icons-react';
 
 interface DisclaimerProps {
   /** Текст дисклеймера от backend (поле `disclaimer` в ответах аналитических эндпоинтов). */
@@ -16,10 +16,9 @@ const DEFAULT_TEXT =
  */
 export function Disclaimer({ text }: DisclaimerProps) {
   return (
-    <Paper withBorder p="sm" radius="md" data-testid="disclaimer">
-      <Text size="xs" c="dimmed">
-        {text?.trim() || DEFAULT_TEXT}
-      </Text>
-    </Paper>
+    <aside className="bonds-disclaimer" data-testid="disclaimer">
+      <IconInfoCircle size={14} stroke={1.8} aria-hidden="true" />
+      <p>{text?.trim() || DEFAULT_TEXT}</p>
+    </aside>
   );
 }

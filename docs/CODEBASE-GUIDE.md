@@ -112,11 +112,16 @@ RemoveAll<IMoexIssClient>() ...)`. 401-проверки — `[Theory]/[InlineDat
 Страницы — `pages/*`, сторы — Zustand `store/use*Store.ts` (загрузка виджетов страницы —
 независимая, отказ одного эндпоинта не роняет остальные), api-клиенты — `api/*.ts` + типы в
 `api/types.ts` (**зеркалят бэкенд-DTO буквально**, включая строковые enum-значения — сверяйся с
-сериализацией, был кейс `Unknown` vs `None`). Графики — chart-kit `components/charts/`
-(ChartCard/ChartTooltip/константы/ChartExplainIcon — у каждого графика «?»-объяснение).
-Форматтеры — `utils/format.ts`. Мобильная адаптация — карточки по паттерну `PositionCard` +
-`useMediaQuery`. Роуты — `App.tsx`, навигация — `AppLayout.tsx` (там же индикатор синка, burger,
-переключатель темы — не ломать).
+сериализацией, был кейс `Unknown` vs `None`). UI — **`@mvv42/kit`** (релизный tarball): экран =
+`Page` → `MetricGrid`/`Metric` + `Section` (таблицы — `padding="none"`), состояния — `EmptyState`/
+`ErrorState`; графики — `@mvv42/kit/charts` (`ChartFrame` с «?»-объяснением из
+`components/charts/explanations.ts`, `useChartTheme`, `ChartTooltip`, `chartColors` — без сырых hex и
+`--mantine-color-*`). Свои стили — только `src/app.css` (`bonds-*`, на токенах `--mvv-*`).
+API — `api/client.ts` поверх `apiJson` кита (cookie, refresh; финальный 401 → `requestLogin`,
+403 → экран «Нет доступа»). Форматтеры — `utils/format.ts`. Мобильная адаптация — карточки по
+паттерну `PositionCard` + `useMediaQuery`. Роуты — `App.tsx`, каркас — `components/ServiceLayout.tsx`
+(`AppLayout` кита, `LoginRequired`, индикатор синка + «Обновить данные», автосинк — не ломать).
+Тесты страниц рендерят их в `MantineProvider`; `/auth/api/me` владельца — `OWNER_ME` в MSW.
 
 ## Продуктовые константы
 

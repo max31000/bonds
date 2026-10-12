@@ -7,7 +7,6 @@ import { http, HttpResponse } from 'msw';
 import { server } from '../test/msw-handlers';
 import { Settings } from './Settings';
 import { useSettingsStore } from '../store/useSettingsStore';
-import { useAuthStore } from '../store/useAuthStore';
 import type { SettingsResponse } from '../api/types';
 
 function renderSettings() {
@@ -42,7 +41,6 @@ const baseSettings: SettingsResponse = {
 describe('Settings', () => {
   beforeEach(() => {
     useSettingsStore.setState({ settings: null, isLoading: false, error: null });
-    useAuthStore.setState({ token: 'test-token', user: { id: 1, telegramId: 1 } });
   });
 
   it('renders the thresholds form and token section', async () => {

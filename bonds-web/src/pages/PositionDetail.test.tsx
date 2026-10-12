@@ -5,7 +5,6 @@ import { MantineProvider } from '@mantine/core';
 import { http, HttpResponse } from 'msw';
 import { server } from '../test/msw-handlers';
 import { PositionDetail } from './PositionDetail';
-import { useAuthStore } from '../store/useAuthStore';
 import type { PositionDetail as PositionDetailDto } from '../api/types';
 
 function renderDetail(positionId = '1') {
@@ -99,7 +98,6 @@ const baseDetail: PositionDetailDto = {
 
 describe('PositionDetail', () => {
   beforeEach(() => {
-    useAuthStore.setState({ token: 'test-token', user: { id: 1, telegramId: 1 } });
   });
 
   it('renders all sections from the mocked response', async () => {

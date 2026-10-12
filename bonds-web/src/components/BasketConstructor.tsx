@@ -22,7 +22,7 @@ import { fetchAllocation, postBasket } from '../api/recommendations';
 import { liquidityLabel, liquidityColor } from '../utils/universeDisplay';
 import { formatRub, formatPercent, formatNumber } from '../utils/format';
 import { Disclaimer } from './Disclaimer';
-import { ChartExplainIcon } from './charts/ChartCard';
+import { ChartExplainIcon } from './charts';
 import { RiskSignalBadges, RiskSignalsCaption } from './RiskSignalBadges';
 import type { AllocationLine, AllocationSource, BasketResponse, RiskSignals, UniverseRow, WhatIfWarning } from '../api/types';
 

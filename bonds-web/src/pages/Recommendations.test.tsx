@@ -7,7 +7,6 @@ import { server } from '../test/msw-handlers';
 import { Recommendations } from './Recommendations';
 import { useRecommendationsStore } from '../store/useRecommendationsStore';
 import { useWatchlistStore } from '../store/useWatchlistStore';
-import { useAuthStore } from '../store/useAuthStore';
 import { useRelativeValueStore } from '../store/useRelativeValueStore';
 import type {
   ComparisonResponse,
@@ -343,7 +342,6 @@ describe('Recommendations', () => {
       isAdding: false,
       addError: null,
     });
-    useAuthStore.setState({ token: 'test-token', user: { id: 1, telegramId: 1 } });
     useRelativeValueStore.setState({ positionsById: {}, disclaimer: '', isLoading: false, error: null, hasLoaded: false });
 
     server.use(

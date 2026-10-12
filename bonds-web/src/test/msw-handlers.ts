@@ -1,16 +1,24 @@
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 
+/** Ответ `/auth/api/me` для владельца (контракт кита: `bonds` обязан быть в `apps`). */
+export const OWNER_ME = {
+  user: {
+    id: 42,
+    telegramId: 123456789,
+    name: 'Owner',
+    username: 'owner',
+    photoUrl: null,
+    isAdmin: true,
+    isOwner: true,
+  },
+  apps: [{ id: 'bonds', anonymous: false, access: 'admin', granted: true }],
+};
+
 export const handlers = [
-  http.post('*/api/auth/telegram', () =>
-    HttpResponse.json({
-      token: 'mock-jwt-token',
-      user: { id: 1, telegramId: 123456789, firstName: 'Owner' },
-    }),
-  ),
-  http.get('*/api/auth/me', () =>
-    HttpResponse.json({ id: 1, telegramId: 123456789, firstName: 'Owner' }),
-  ),
+  // Общий mvv42-auth: владелец с доступом к bonds; refresh сессии в тестах не удаётся (финальный 401).
+  http.get('*/auth/api/me', () => HttpResponse.json(OWNER_ME)),
+  http.post('*/auth/api/refresh', () => HttpResponse.json({ error: 'no_session' }, { status: 401 })),
   // Дефолтный кейс — пустой портфель; конкретные сценарии (обычная бумага/флоатер/
   // dataIncomplete/401) переопределяются через server.use(...) в тестах экрана позиций.
   http.get('*/api/positions', () =>

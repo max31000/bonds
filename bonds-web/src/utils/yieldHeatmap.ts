@@ -43,6 +43,6 @@ export function buildYieldHeatmapScale(values: number[]): (value: number) => str
     if (!Number.isFinite(value)) return undefined;
     const rank = percentileRank(value, sorted);
     const alpha = MIN_ALPHA + rank * (MAX_ALPHA - MIN_ALPHA);
-    return `color-mix(in srgb, var(--mantine-color-violet-6) ${Math.round(alpha * 100)}%, transparent)`;
+    return `color-mix(in srgb, var(--mvv-accent) ${Math.round(alpha * 100)}%, transparent)`;
   };
 }

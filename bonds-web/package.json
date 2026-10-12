@@ -14,11 +14,13 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
-    "@mantine/core": "^9.0.0",
-    "@mantine/dates": "^9.0.0",
-    "@mantine/form": "^9.0.0",
-    "@mantine/hooks": "^9.0.0",
-    "@mantine/notifications": "^9.0.0",
+    "@mantine/core": "~9.4.0",
+    "@mantine/dates": "~9.4.0",
+    "@mantine/form": "~9.4.0",
+    "@mantine/hooks": "~9.4.0",
+    "@mantine/notifications": "~9.4.0",
+    "@mvv42/kit": "https://github.com/max31000/mvv42-kit/releases/download/v0.1.1/mvv42-kit-0.1.1.tgz",
+    "@tabler/icons-react": "^3.31.0",
     "dayjs": "^1.11.20",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
