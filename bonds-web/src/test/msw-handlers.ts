@@ -127,6 +127,7 @@ export const handlers = [
   ),
   // Дефолтные кейсы для 09c — пустые/неактивные данные; переопределяются в тестах экранов.
   http.get('*/api/signals', () => HttpResponse.json({ signals: [] })),
+  http.post('*/api/signals/read-all', () => HttpResponse.json({ acknowledged: 0 })),
   http.post('*/api/signals/:id/read', ({ params }) =>
     HttpResponse.json({ id: Number(params.id), isRead: true }),
   ),
@@ -161,11 +162,7 @@ export const handlers = [
       tInvestTokenMasked: null,
       upcomingEventDaysThreshold: 14,
       uninvestedCashThresholdRub: 10000,
-      uninvestedCashLookbackDays: 7,
-      yieldBelowAlternativeBpsThreshold: 50,
-      maturityWindowDaysForAlternativeComparison: 30,
       defaultMaxConcentrationPercent: 25,
-      durationDriftToleranceYears: 0.5,
     }),
   ),
   http.put('*/api/settings', async ({ request }) => {

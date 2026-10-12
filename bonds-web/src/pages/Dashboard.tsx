@@ -9,7 +9,7 @@ import { fetchXirr, fetchComposition } from '../api/analytics';
 import { fetchCashflow } from '../api/cashflow';
 import { fetchLivePositions } from '../api/live';
 import { useLiveStore } from '../store/useLiveStore';
-import { useSignalsStore } from '../store/useSignalsStore';
+import { countAttention, useSignalsStore } from '../store/useSignalsStore';
 import { useLiveQuotes } from '../hooks/useLiveQuotes';
 import { useWidgetData } from '../hooks/useWidgetData';
 import { Disclaimer } from '../components/Disclaimer';
@@ -142,7 +142,8 @@ function UnreadSignalsKpi() {
     loadSignals();
   }, [loadSignals]);
 
-  const unreadCount = signals.filter((s) => !s.isRead).length;
+  // Только активные непрочитанные Critical+Warning — Info и подтверждённые не шумят (plan/40).
+  const unreadCount = countAttention(signals);
 
   return (
     <UnstyledButton
@@ -151,7 +152,7 @@ function UnreadSignalsKpi() {
       data-testid="kpi-unread-signals"
     >
       <Metric
-        label="Непрочитанные сигналы"
+        label="События, требующие внимания"
         value={
           <Group gap={8} align="center" component="span">
             {unreadCount}
@@ -162,7 +163,7 @@ function UnreadSignalsKpi() {
             )}
           </Group>
         }
-        hint="оферты, купоны, концентрация"
+        hint="оферты, концентрация лимитов"
       />
     </UnstyledButton>
   );

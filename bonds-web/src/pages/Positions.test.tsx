@@ -201,11 +201,7 @@ describe('Positions', () => {
           tInvestTokenMasked: '...1234',
           upcomingEventDaysThreshold: 14,
           uninvestedCashThresholdRub: 10000,
-          uninvestedCashLookbackDays: 7,
-          yieldBelowAlternativeBpsThreshold: 50,
-          maturityWindowDaysForAlternativeComparison: 30,
           defaultMaxConcentrationPercent: 25,
-          durationDriftToleranceYears: 0.5,
         }),
       ),
     );

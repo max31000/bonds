@@ -10,7 +10,7 @@ import type { SettingsUpdateRequest } from '../api/types';
 type ThresholdsForm = Omit<SettingsUpdateRequest, 'baseCurrency' | 'commissionRateOverride'>;
 
 /**
- * Экран настроек: пороги триггеров сигналов + токен T-Invest (write-only) (план 09c §B.8).
+ * Экран настроек: пороги правил событий + токен T-Invest (write-only) (план 09c §B.8).
  * Токен никогда не приходит обратно от API — после сохранения поле очищается, показываем
  * только tInvestTokenMasked/статус «задан».
  */
@@ -29,21 +29,12 @@ export function Settings() {
     initialValues: {
       upcomingEventDaysThreshold: 0,
       uninvestedCashThresholdRub: 0,
-      uninvestedCashLookbackDays: 0,
-      yieldBelowAlternativeBpsThreshold: 0,
-      maturityWindowDaysForAlternativeComparison: 0,
       defaultMaxConcentrationPercent: 0,
-      durationDriftToleranceYears: 0,
     },
     validate: {
       upcomingEventDaysThreshold: (v) => (v < 0 || v > 365 ? 'От 0 до 365 дней' : null),
       uninvestedCashThresholdRub: (v) => (v < 0 ? 'Не может быть отрицательным' : null),
-      uninvestedCashLookbackDays: (v) => (v < 0 || v > 365 ? 'От 0 до 365 дней' : null),
-      yieldBelowAlternativeBpsThreshold: (v) => (v < 0 ? 'Не может быть отрицательным' : null),
-      maturityWindowDaysForAlternativeComparison: (v) =>
-        v < 0 || v > 3650 ? 'От 0 до 3650 дней' : null,
       defaultMaxConcentrationPercent: (v) => (v < 0 || v > 100 ? 'От 0 до 100%' : null),
-      durationDriftToleranceYears: (v) => (v < 0 || v > 30 ? 'От 0 до 30 лет' : null),
     },
   });
 
@@ -52,11 +43,7 @@ export function Settings() {
     form.setValues({
       upcomingEventDaysThreshold: settings.upcomingEventDaysThreshold,
       uninvestedCashThresholdRub: settings.uninvestedCashThresholdRub,
-      uninvestedCashLookbackDays: settings.uninvestedCashLookbackDays,
-      yieldBelowAlternativeBpsThreshold: settings.yieldBelowAlternativeBpsThreshold,
-      maturityWindowDaysForAlternativeComparison: settings.maturityWindowDaysForAlternativeComparison,
       defaultMaxConcentrationPercent: settings.defaultMaxConcentrationPercent,
-      durationDriftToleranceYears: settings.durationDriftToleranceYears,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings]);
@@ -89,7 +76,7 @@ export function Settings() {
     notifications.show({
       color: ok ? 'green' : 'red',
       title: ok ? 'Настройки сохранены' : 'Не удалось сохранить настройки',
-      message: ok ? 'Пороги триггеров обновлены.' : 'Попробуйте ещё раз позже.',
+      message: ok ? 'Пороги событий обновлены.' : 'Попробуйте ещё раз позже.',
     });
   });
 
@@ -123,11 +110,7 @@ export function Settings() {
       baseCurrency: settings.baseCurrency,
       upcomingEventDaysThreshold: settings.upcomingEventDaysThreshold,
       uninvestedCashThresholdRub: settings.uninvestedCashThresholdRub,
-      uninvestedCashLookbackDays: settings.uninvestedCashLookbackDays,
-      yieldBelowAlternativeBpsThreshold: settings.yieldBelowAlternativeBpsThreshold,
-      maturityWindowDaysForAlternativeComparison: settings.maturityWindowDaysForAlternativeComparison,
       defaultMaxConcentrationPercent: settings.defaultMaxConcentrationPercent,
-      durationDriftToleranceYears: settings.durationDriftToleranceYears,
       commissionRateOverride,
     });
     setSavingCommission(false);
@@ -143,7 +126,7 @@ export function Settings() {
   };
 
   return (
-    <Page title="Настройки" description="Брокерский счёт, комиссия и пороги сигналов">
+    <Page title="Настройки" description="Брокерский счёт, комиссия и пороги событий">
       {isLoading && (
         <div className="bonds-center">
           <Loader />
@@ -240,8 +223,8 @@ export function Settings() {
           </Section>
 
           <Section
-            title="Пороги триггеров сигналов"
-            description="Когда сервис создаёт сигнал: события, кэш, доходность, концентрация, дюрация"
+            title="Пороги событий"
+            description="Когда в «Событиях» появляются оферты, погашения, свободные деньги и превышение лимита концентрации"
             data-testid="thresholds-section"
           >
             <form onSubmit={handleSaveThresholds}>
@@ -253,40 +236,15 @@ export function Settings() {
                   {...form.getInputProps('upcomingEventDaysThreshold')}
                 />
                 <NumberInput
-                  label="Порог незаинвестированного кэша, ₽"
+                  label="Порог свободных денег на счёте, ₽"
                   min={0}
                   {...form.getInputProps('uninvestedCashThresholdRub')}
-                />
-                <NumberInput
-                  label="Окно проверки незаинвестированного кэша, дней"
-                  min={0}
-                  max={365}
-                  {...form.getInputProps('uninvestedCashLookbackDays')}
-                />
-                <NumberInput
-                  label="Порог «доходность ниже альтернативы», б.п."
-                  min={0}
-                  {...form.getInputProps('yieldBelowAlternativeBpsThreshold')}
-                />
-                <NumberInput
-                  label="Окно сравнения с альтернативой до погашения, дней"
-                  min={0}
-                  max={3650}
-                  {...form.getInputProps('maturityWindowDaysForAlternativeComparison')}
                 />
                 <NumberInput
                   label="Максимальная концентрация по эмитенту, %"
                   min={0}
                   max={100}
                   {...form.getInputProps('defaultMaxConcentrationPercent')}
-                />
-                <NumberInput
-                  label="Допуск дрейфа дюрации, лет"
-                  min={0}
-                  max={30}
-                  step={0.1}
-                  decimalScale={2}
-                  {...form.getInputProps('durationDriftToleranceYears')}
                 />
               </SimpleGrid>
               <Group justify="flex-end" mt="lg">

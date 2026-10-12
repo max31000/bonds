@@ -350,21 +350,40 @@ export interface XirrBackfillResponse {
   pointsWritten: number;
 }
 
-// ---- GET /api/signals, POST /api/signals/{id}/read (см. plan/09c §B.6) ----
+// ---- GET /api/signals, POST /api/signals/{id}/read, POST /api/signals/read-all (plan/40: «События») ----
 
-/** Уровень важности сигнала. */
-export type SignalSeverity = 'Low' | 'Medium' | 'High';
+/** Важность события — буквально enum бэка `SignalSeverity`. */
+export type SignalSeverity = 'Info' | 'Warning' | 'Critical';
 
-/** Сигнал по позиции/портфелю (купон, оферта, концентрация и т.д., см. спека §8). */
+/** Тип события — буквально enum бэка `SignalType` (купоны/дюрация/доходность из событий убраны). */
+export type SignalType =
+  | 'UpcomingAmortization'
+  | 'UpcomingRedemption'
+  | 'UpcomingOffer'
+  | 'FloaterRateReset'
+  | 'UninvestedCashThreshold'
+  | 'ConcentrationLimitBreached';
+
+/**
+ * Событие портфеля, требующее внимания (бэкенд `SignalDto`). Это текущее состояние, а не лог:
+ * `eventDate` — дата события (оферта/погашение/ресет), null для «состояний» (концентрация, свободные деньги).
+ * Даты-время (`firstSeenAt`, `resolvedAt`) — UTC ISO.
+ */
 export interface Signal {
   id: number;
-  type: string;
+  type: SignalType;
   severity: SignalSeverity;
-  positionId: number | null;
   instrumentId: number | null;
-  suggestedAction: string;
-  date: string;
+  /** Имя бумаги либо эмитента. */
+  subject: string | null;
+  suggestedAction: string | null;
+  eventDate: string | null;
+  firstSeenAt: string;
+  /** Подтверждено владельцем («прочитано»). */
   isRead: boolean;
+  /** Движок перестал производить событие (история). */
+  isResolved: boolean;
+  resolvedAt: string | null;
 }
 
 /** Ответ GET /api/signals. */
@@ -376,6 +395,11 @@ export interface SignalsResponse {
 export interface SignalReadResponse {
   id: number;
   isRead: boolean;
+}
+
+/** Ответ POST /api/signals/read-all. */
+export interface SignalsReadAllResponse {
+  acknowledged: number;
 }
 
 // ---- POST /api/sync, GET /api/sync/status (см. plan/09c §B.7) ----
@@ -802,18 +826,14 @@ export interface CommissionAutoEstimate {
 /** Источник эффективной ставки комиссии (plan/22 часть C). */
 export type CommissionRateSource = 'UserOverride' | 'EstimatedFromTrades' | 'Default';
 
-/** Настройки пользователя — пороги триггеров сигналов и базовая валюта. */
+/** Настройки пользователя — пороги правил событий и базовая валюта. */
 export interface SettingsResponse {
   baseCurrency: 'RUB';
   tInvestTokenConfigured: boolean;
   tInvestTokenMasked: string | null;
   upcomingEventDaysThreshold: number;
   uninvestedCashThresholdRub: number;
-  uninvestedCashLookbackDays: number;
-  yieldBelowAlternativeBpsThreshold: number;
-  maturityWindowDaysForAlternativeComparison: number;
   defaultMaxConcentrationPercent: number;
-  durationDriftToleranceYears: number;
 
   /** Plan/22 часть D: ручной override ставки комиссии — ДОЛЯ (0.0005 = 0.05%). Null — не задан. UI вводит в %, конвертация на границе API. */
   commissionRateOverride: number | null;

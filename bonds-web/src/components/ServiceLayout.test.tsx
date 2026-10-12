@@ -47,12 +47,23 @@ describe('ServiceLayout', () => {
     vi.useRealTimers();
   });
 
-  it('shows an unread signal count badge in the nav', async () => {
+  it('shows a badge in the nav counting only unread active Critical+Warning events', async () => {
+    const base = {
+      instrumentId: 1,
+      subject: 'ОФЗ 26238',
+      suggestedAction: 'Решите до даты',
+      eventDate: '2099-01-10',
+      firstSeenAt: '2099-01-01T00:00:00Z',
+      isResolved: false,
+      resolvedAt: null,
+    };
     server.use(
       http.get('*/api/signals', () =>
         HttpResponse.json({
           signals: [
-            { id: 1, type: 'Coupon', severity: 'Low', positionId: 1, instrumentId: 1, suggestedAction: '', date: '2026-06-20', isRead: false },
+            { ...base, id: 1, type: 'UpcomingOffer', severity: 'Critical', isRead: false },
+            { ...base, id: 2, type: 'ConcentrationLimitBreached', severity: 'Warning', isRead: true },
+            { ...base, id: 3, type: 'UpcomingRedemption', severity: 'Info', isRead: false },
           ],
         }),
       ),
@@ -61,6 +72,7 @@ describe('ServiceLayout', () => {
     renderLayout();
 
     await waitFor(() => expect(screen.getByText('1')).toBeInTheDocument());
+    expect(screen.getByRole('link', { name: /События/ })).toBeInTheDocument();
   });
 
   it('triggers a sync and shows a success notification with a summary', async () => {

@@ -135,6 +135,34 @@ describe('Dashboard', () => {
     expect(screen.getByTestId('kpi-unread-signals')).toBeInTheDocument();
   });
 
+  it('counts only unread active Critical+Warning events in the attention KPI', async () => {
+    const ev = {
+      instrumentId: 1,
+      subject: 'ОФЗ 26238',
+      suggestedAction: 'Решите до даты',
+      eventDate: '2099-01-10',
+      firstSeenAt: '2099-01-01T00:00:00Z',
+      isResolved: false,
+      resolvedAt: null,
+    };
+    server.use(
+      http.get('*/api/signals', () =>
+        HttpResponse.json({
+          signals: [
+            { ...ev, id: 1, type: 'UpcomingOffer', severity: 'Critical', isRead: false },
+            { ...ev, id: 2, type: 'ConcentrationLimitBreached', severity: 'Warning', isRead: false },
+            { ...ev, id: 3, type: 'ConcentrationLimitBreached', severity: 'Warning', isRead: true },
+            { ...ev, id: 4, type: 'UpcomingRedemption', severity: 'Info', isRead: false },
+          ],
+        }),
+      ),
+    );
+
+    renderDashboard();
+
+    await waitFor(() => expect(screen.getByTestId('kpi-unread-signals')).toHaveTextContent('2'));
+  });
+
   it('renders the value chart, mini composition, and upcoming cashflow widgets', async () => {
     server.use(
       http.get('*/api/positions', () => HttpResponse.json(basePositions)),
