@@ -30,7 +30,7 @@ export const handlers = [
   ),
   // Дефолтные кейсы для 09b — пустые данные; конкретные сценарии переопределяются в тестах экранов.
   http.get('*/api/cashflow', () =>
-    HttpResponse.json({ byMonth: [], byPosition: [], principalReleases: [], disclaimer: '' }),
+    HttpResponse.json({ byMonth: [], byPosition: [], principalReleases: [], nextPayments: [], disclaimer: '' }),
   ),
   http.get('*/api/analytics/scatter', () =>
     HttpResponse.json({ points: [], curve: [], curveAsOf: null, disclaimer: '' }),

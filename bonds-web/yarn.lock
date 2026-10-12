@@ -662,9 +662,9 @@
     outvariant "^1.4.3"
     strict-event-emitter "^0.5.1"
 
-"@mvv42/kit@https://github.com/max31000/mvv42-kit/releases/download/v0.1.1/mvv42-kit-0.1.1.tgz":
-  version "0.1.1"
-  resolved "https://github.com/max31000/mvv42-kit/releases/download/v0.1.1/mvv42-kit-0.1.1.tgz#f4814e0810a26289c21acb6a9b39d5238976539d"
+"@mvv42/kit@https://github.com/max31000/mvv42-kit/releases/download/v0.1.2/mvv42-kit-0.1.2.tgz":
+  version "0.1.2"
+  resolved "https://github.com/max31000/mvv42-kit/releases/download/v0.1.2/mvv42-kit-0.1.2.tgz#6d16eaff4b912e2a31fc3e5332e65eb3e901cc38"
   dependencies:
     "@fontsource-variable/inter" "^5.3.0"
 

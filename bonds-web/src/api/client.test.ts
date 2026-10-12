@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, onTestFinished, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { ApiError } from '@mvv42/kit/platform';
 import { server } from '../test/msw-handlers';
@@ -46,13 +46,6 @@ describe('apiClient', () => {
   });
 
   it('retries once after a successful session refresh', async () => {
-    // jsdom's AbortSignal is not the one Node's fetch accepts: the kit's refresh timeout signal would make
-    // the refresh fetch reject under vitest. Without AbortSignal.timeout the kit sends no signal.
-    const timeout = AbortSignal.timeout;
-    Object.defineProperty(AbortSignal, 'timeout', { value: undefined, configurable: true, writable: true });
-    onTestFinished(() => {
-      Object.defineProperty(AbortSignal, 'timeout', { value: timeout, configurable: true, writable: true });
-    });
     let calls = 0;
     server.use(
       http.post('*/auth/api/refresh', () => new HttpResponse(null, { status: 204 })),
