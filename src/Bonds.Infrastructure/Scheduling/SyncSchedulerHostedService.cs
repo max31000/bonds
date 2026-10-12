@@ -47,8 +47,6 @@ public sealed class SyncSchedulerHostedService : BackgroundService
     /// <summary>Порог plan/15 §B.4: если снапшотов меньше этого числа при старте приложения (а
     /// операции в журнале есть), запускаем однократный бэкфилл истории XIRR — виджет иначе пуст
     /// неделями, пока не накопится история от одного лишь автосинка (2 снапшота/день).</summary>
-    private const int BackfillSnapshotThreshold = 5;
-
     public SyncSchedulerHostedService(
         ISyncCycleRunner runner,
         IOptions<SchedulerOptions> options,
@@ -82,8 +80,6 @@ public sealed class SyncSchedulerHostedService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        await RunStartupBackfillIfNeededAsync(stoppingToken);
-
         while (!stoppingToken.IsCancellationRequested)
         {
             try
@@ -137,65 +133,6 @@ public sealed class SyncSchedulerHostedService : BackgroundService
 
             var result = await _runner.RunCycleAsync(ct);
             await MaybeAlertOnFailureAsync(result, today, ct);
-        }
-    }
-
-    /// <summary>
-    /// Plan/15 §B.4 housekeeping-хук: один раз при старте приложения — если у единственного счёта
-    /// продукта снапшотов истории меньше <see cref="BackfillSnapshotThreshold"/>, а операции в
-    /// журнале уже есть (значит, синк когда-то отработал и накопил историю операций, но график
-    /// XIRR почти пуст — типичный случай "автосинк долго не работал", plan/13), запускаем
-    /// ретроспективный бэкфилл <see cref="PortfolioHistoryBackfillService"/>. Не влияет на обычный
-    /// плановый цикл — выполняется до входа в цикл <see cref="ExecuteAsync"/>, максимум один раз за
-    /// время жизни процесса. Ошибка бэкфилла логируется и не мешает автосинку стартовать (та же
-    /// устойчивость "не падать", что у остального планировщика).
-    /// </summary>
-    private async Task RunStartupBackfillIfNeededAsync(CancellationToken ct)
-    {
-        try
-        {
-            using var scope = _scopeFactory.CreateScope();
-            var sp = scope.ServiceProvider;
-
-            var accountRepo = sp.GetRequiredService<IAccountRepository>();
-            var accountId = await accountRepo.GetPrimaryAccountIdAsync();
-            if (accountId is null)
-            {
-                return; // ещё нет онбординга — нечего бэкфиллить (та же логика, что TickAsync).
-            }
-
-            var snapshotRepo = sp.GetRequiredService<IPortfolioValueSnapshotRepository>();
-            var existingSnapshots = (await snapshotRepo.GetByAccountIdAsync(accountId.Value)).ToList();
-            if (existingSnapshots.Count >= BackfillSnapshotThreshold)
-            {
-                return; // истории уже достаточно — бэкфилл не нужен.
-            }
-
-            var operationRepo = sp.GetRequiredService<IOperationRepository>();
-            var hasOperations = (await operationRepo.GetByAccountIdAsync(accountId.Value)).Any();
-            if (!hasOperations)
-            {
-                return; // журнал операций пуст — бэкфиллить нечего (не первый синк ещё не прошёл).
-            }
-
-            _logger.LogInformation(
-                "Startup backfill: account {AccountId} has {SnapshotCount} snapshots (< {Threshold}) but operations exist — running history backfill",
-                accountId, existingSnapshots.Count, BackfillSnapshotThreshold);
-
-            var backfillService = sp.GetRequiredService<PortfolioHistoryBackfillService>();
-            var written = await backfillService.BackfillAsync(accountId.Value, BusinessClock.MoscowToday(), ct);
-
-            _logger.LogInformation("Startup backfill: wrote {Written} history points for account {AccountId}", written, accountId);
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            // Устойчивость: сбой одноразового бэкфилла при старте не должен мешать автосинку
-            // подняться и работать дальше (plan/07 "не падать").
-            _logger.LogError(ex, "Startup backfill failed — sync scheduler continues normally");
         }
     }
 

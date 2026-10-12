@@ -114,6 +114,7 @@ public class SyncCycleServiceTests
         services.AddScoped<PortfolioSnapshotService>();
         services.AddScoped<InstrumentEnrichmentService>();
         services.AddScoped<WatchlistSyncService>();
+        services.AddScoped<PortfolioHistoryBackfillService>();
 
         services.AddSingleton<IOptions<SignalEngineOptions>>(Options.Create(new SignalEngineOptions()));
         services.AddSingleton<ISyncCycleRunner, SyncCycleService>();
@@ -132,6 +133,33 @@ public class SyncCycleServiceTests
 
         result.NoAccountConfigured.Should().BeTrue();
         result.HasErrors.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task RunCycleAsync_JournalSyncFailed_HistoryBackfillNotAttempted()
+    {
+        // Бэкфилл истории из неполного журнала закрепился бы навсегда — без успешного синка журнала
+        // его не запускаем (ни разу не спрашиваем количество снапшотов).
+        SetupNoPositionsHappyPath();
+        _tInvest.Setup(c => c.GetOperationsAsync(BrokerAccountId, It.IsAny<DateTime?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new Exception("journal down"));
+        var runner = BuildServiceProvider().GetRequiredService<ISyncCycleRunner>();
+
+        await runner.RunCycleAsync();
+
+        _snapshots.Verify(s => s.GetByAccountIdAsync(AccountId, null, null), Times.Never);
+    }
+
+    [Fact]
+    public async Task RunCycleAsync_JournalSynced_SparseHistory_ChecksAndBackfills()
+    {
+        SetupNoPositionsHappyPath();
+        _snapshots.Setup(s => s.GetByAccountIdAsync(AccountId, null, null)).ReturnsAsync(new List<PortfolioValueSnapshot>());
+        var runner = BuildServiceProvider().GetRequiredService<ISyncCycleRunner>();
+
+        await runner.RunCycleAsync();
+
+        _snapshots.Verify(s => s.GetByAccountIdAsync(AccountId, null, null), Times.AtLeastOnce);
     }
 
     [Fact]

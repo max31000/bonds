@@ -123,6 +123,9 @@ public sealed class SyncCycleService : ISyncCycleRunner
         }
     }
 
+    /// <summary>Меньше стольких снапшотов истории — история считается пустой и пересобирается бэкфиллом.</summary>
+    internal const int BackfillSnapshotThreshold = 5;
+
     private async Task<SyncCycleResult> RunCycleInternalAsync(CancellationToken ct)
     {
         var result = new SyncCycleResult();
@@ -150,6 +153,7 @@ public sealed class SyncCycleService : ISyncCycleRunner
         result.TokenMissingOrInvalid = tokenStatus is TInvestTokenStatus.NotConfigured or TInvestTokenStatus.DecryptionFailed;
 
         // --- 1. BondSyncService ---
+        var journalSynced = false;
         try
         {
             var syncService = sp.GetRequiredService<BondSyncService>();
@@ -157,6 +161,7 @@ public sealed class SyncCycleService : ISyncCycleRunner
             result.InstrumentsSynced = syncResult.InstrumentsSynced;
             result.OperationsUpserted = syncResult.OperationsUpserted;
             result.YieldCurveUpdated = syncResult.YieldCurveUpdated;
+            journalSynced = syncResult.JournalSynced;
             if (syncResult.HasErrors) result.Errors.AddRange(syncResult.Errors.Select(e => $"Sync: {e}"));
         }
         catch (InvalidOperationException ex)
@@ -187,6 +192,30 @@ public sealed class SyncCycleService : ISyncCycleRunner
         {
             _logger.LogError(ex, "Watchlist sync step failed");
             result.Errors.Add($"Watchlist: непредвиденная ошибка ({ex.GetType().Name})");
+        }
+
+        // --- 1b. Бэкфилл истории стоимости, если она пуста/почти пуста (первый запуск, или миграция
+        // пересчёта истории её очистила). Строго ПОСЛЕ успешного перечитывания журнала: история
+        // строится из журнала, и бэкфилл из неполного журнала закрепился бы навсегда (бэкфилл
+        // пропускает уже существующие даты).
+        if (journalSynced)
+        {
+            try
+            {
+                var snapshotRepo = sp.GetRequiredService<IPortfolioValueSnapshotRepository>();
+                var existing = (await snapshotRepo.GetByAccountIdAsync(accountId.Value)).Count();
+                if (existing < BackfillSnapshotThreshold)
+                {
+                    var backfill = sp.GetRequiredService<PortfolioHistoryBackfillService>();
+                    var written = await backfill.BackfillAsync(accountId.Value, asOf, ct);
+                    _logger.LogInformation("History backfill after sync: {Written} points (had {Existing})", written, existing);
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogError(ex, "History backfill failed for account {AccountId}", accountId);
+                result.Errors.Add($"History: непредвиденная ошибка ({ex.GetType().Name})");
+            }
         }
 
         // --- 2. Проекция денежного потока ---

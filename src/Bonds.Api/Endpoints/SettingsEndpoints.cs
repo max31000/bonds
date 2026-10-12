@@ -220,15 +220,18 @@ public static class SettingsEndpoints
         var last4 = token.Length >= 4 ? token[^4..] : token;
 
         var existing = await settingsRepo.GetByUserIdAsync(userId) ?? new UserSettings { UserId = userId };
+        var tokenChanged = !IsSameToken(protector, existing.TInvestTokenEncrypted, token);
         existing.TInvestTokenEncrypted = encrypted;
         existing.TInvestTokenLast4 = last4;
 
         await settingsRepo.UpsertAsync(existing);
 
         // Новый токен может смотреть на другой счёт — перепривязываем локальный счёт к тому, что
-        // подтвердила валидация (синк берёт брокерский счёт отсюда, см. BondSyncService).
+        // подтвердила валидация (синк берёт брокерский счёт отсюда, см. BondSyncService). Тот же
+        // токен — привязку не трогаем: валидация берёт «первый открытый счёт», а владелец мог быть
+        // привязан ко второму, и сверка позиций стёрла бы его портфель.
         var localAccountId = await PositionsEndpoints.ResolveAccountIdAsync(currentUser, accountRepo);
-        if (localAccountId is not null && await accountRepo.GetByIdAsync(localAccountId.Value) is { } account)
+        if (tokenChanged && localAccountId is > 0 && await accountRepo.GetByIdAsync(localAccountId.Value) is { } account)
         {
             account.BrokerAccountId = string.IsNullOrEmpty(validation.AccountId) ? null : validation.AccountId;
             await accountRepo.UpdateAsync(account);
@@ -243,6 +246,19 @@ public static class SettingsEndpoints
             TInvestTokenMasked = MaskToken(last4),
             ValidatedAccountIdMasked = MaskToken(accountId.Length >= 4 ? accountId[^4..] : accountId),
         });
+    }
+
+    private static bool IsSameToken(IDataProtector protector, string? previousEncrypted, string token)
+    {
+        if (string.IsNullOrEmpty(previousEncrypted)) return false;
+        try
+        {
+            return protector.Unprotect(previousEncrypted) == token;
+        }
+        catch (System.Security.Cryptography.CryptographicException)
+        {
+            return false; // ключи DataProtection сменились — считаем токен новым
+        }
     }
 
     private static string? MaskToken(string? last4) =>

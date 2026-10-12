@@ -158,16 +158,37 @@ public class BondSyncServiceTests
     }
 
     [Fact]
-    public async Task SyncAsync_BrokerHoldsNoBonds_DeletesAllPositions()
+    public async Task SyncAsync_BrokerHoldsNoBonds_DeletesOnlyAfterSecondConsecutiveEmptySync()
     {
+        // Один пустой ответ брокера мог быть деградацией API — весь портфель по нему не стираем;
+        // второй подряд пустой ответ подтверждает «всё погашено/продано».
+        const ulong account = 4242; // свой id: состояние «пустой ответ уже видели» статическое
+        BondSyncService.EmptyPortfolioSeen.TryRemove(account, out _);
         SetupHappyPathAccountAndPositions();
         _tInvest.Setup(c => c.GetPortfolioAsync(BrokerAccountId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new TInvestPortfolio { Bonds = [], CashRub = 16_000m });
+        _positions.Setup(p => p.GetByAccountIdAsync(account))
+            .ReturnsAsync(new List<Position> { new() { AccountId = account, InstrumentId = InstrumentId, Quantity = 10 } });
+
+        await CreateService().SyncAsync(account);
+        _positions.Verify(p => p.DeleteAllExceptAsync(It.IsAny<ulong>(), It.IsAny<IReadOnlyCollection<ulong>>()), Times.Never);
+
+        await CreateService().SyncAsync(account);
+        _positions.Verify(p => p.DeleteAllExceptAsync(account,
+            It.Is<IReadOnlyCollection<ulong>>(keep => keep.Count == 0)), Times.Once);
+    }
+
+    [Fact]
+    public async Task SyncAsync_BrokerHoldsNoBonds_NoLocalPositions_NothingToDefer()
+    {
+        SetupHappyPathAccountAndPositions();
+        _tInvest.Setup(c => c.GetPortfolioAsync(BrokerAccountId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TInvestPortfolio { Bonds = [] });
+        _positions.Setup(p => p.GetByAccountIdAsync(AccountId)).ReturnsAsync(new List<Position>());
 
         await CreateService().SyncAsync(AccountId);
 
-        _positions.Verify(p => p.DeleteAllExceptAsync(AccountId,
-            It.Is<IReadOnlyCollection<ulong>>(keep => keep.Count == 0)), Times.Once);
+        _positions.Verify(p => p.DeleteAllExceptAsync(AccountId, It.IsAny<IReadOnlyCollection<ulong>>()), Times.Once);
     }
 
     [Fact]

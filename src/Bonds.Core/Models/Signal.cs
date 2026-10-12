@@ -49,8 +49,21 @@ public class Signal
     /// бумаге либо имя эмитента для состояний по эмитенту; пусто для счётных состояний. Дата пустая
     /// для состояний (концентрация, свободные деньги) — их идентичность не зависит от дня.
     /// </summary>
-    public static string BuildKey(SignalType type, string? subjectKey, DateOnly? eventDate) =>
-        $"{type}|{subjectKey}|{eventDate:yyyy-MM-dd}";
+    public static string BuildKey(SignalType type, string? subjectKey, DateOnly? eventDate)
+    {
+        // event_key — VARCHAR(255): длинное имя эмитента (ключ концентрации) иначе роняло бы вставку
+        // и весь шаг событий. Обрезаем с хеш-суффиксом, чтобы разные длинные имена не слиплись.
+        var subject = subjectKey ?? string.Empty;
+        if (subject.Length > MaxSubjectKeyLength)
+        {
+            var hash = Convert.ToHexString(System.Security.Cryptography.SHA1.HashData(System.Text.Encoding.UTF8.GetBytes(subject)))[..12];
+            subject = $"{subject[..(MaxSubjectKeyLength - 13)]}~{hash}";
+        }
+
+        return $"{type}|{subject}|{eventDate:yyyy-MM-dd}";
+    }
+
+    private const int MaxSubjectKeyLength = 200;
 }
 
 /// <summary>

@@ -66,7 +66,7 @@ public sealed class PortfolioSnapshotService
                 continue;
             }
 
-            if (instrument is { FaceValue: > 0m } && instrument.MaturityDate < asOf)
+            if (instrument is { FaceValue: > 0m, IsOutOfScopeCurrency: false } && instrument.MaturityDate < asOf)
             {
                 // Дата погашения прошла, выплаты в журнале ещё нет: оцениваем по НОМИНАЛУ остатка
                 // (instrument.FaceValue — актуальный номинал с учётом амортизаций, рубли за бумагу),

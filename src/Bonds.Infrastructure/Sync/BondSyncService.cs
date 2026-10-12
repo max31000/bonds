@@ -21,6 +21,10 @@ namespace Bonds.Infrastructure.Sync;
 /// </summary>
 public sealed class BondSyncService
 {
+    // Счета, по которым предыдущий синк получил от брокера пустой список облигаций (см. сверку).
+    // Static: сервис scoped (новый экземпляр на цикл), а подтверждение нужно между циклами.
+    internal static readonly System.Collections.Concurrent.ConcurrentDictionary<ulong, byte> EmptyPortfolioSeen = new();
+
     private readonly ITInvestPortfolioClient _tInvest;
     private readonly IMoexIssClient _moex;
     private readonly IInstrumentRepository _instruments;
@@ -135,7 +139,8 @@ public sealed class BondSyncService
                 ulong? instrumentId = null;
                 if (!string.IsNullOrEmpty(op.Figi))
                 {
-                    instrumentId = await ResolveOperationInstrumentAsync(op.Figi, figiCache, ct);
+                    // Тип не указан — создавать инструмент не будем (может быть не облигация), только найдём.
+                    instrumentId = await ResolveOperationInstrumentAsync(op.Figi, allowCreate: op.IsBond, figiCache, ct);
                 }
 
                 domainOperations.Add(new Operation
@@ -154,6 +159,8 @@ public sealed class BondSyncService
             {
                 result.OperationsUpserted = await _operations.UpsertManyByExternalIdAsync(domainOperations);
             }
+
+            result.JournalSynced = true;
         }
         catch (Exception ex)
         {
@@ -240,6 +247,27 @@ public sealed class BondSyncService
         // --- Сверка: позиции, которых у брокера больше нет (погашение, оферта, полная продажа,
         // вывод бумаг), удаляются. Без этого погашенная бумага навсегда оставалась в списке и итогах
         // с последней известной ценой (баг ОФЗ 26226, 2026-10).
+        // Пустой ответ брокера при непустом локальном портфеле — подозрительно (деградация API,
+        // токен с урезанным доступом): стирать весь портфель по одному ответу нельзя. Легитимный
+        // случай «всё погашено/продано» подтверждается тем, что брокер видит счёт, но облигаций нет —
+        // тогда удаляем со следующего синка, если и он пустой (два подряд).
+        if (reconciliationSafe && tInvestPositions.Count == 0)
+        {
+            var localCount = (await _positions.GetByAccountIdAsync(accountId)).Count();
+            if (localCount > 0 && !EmptyPortfolioSeen.ContainsKey(accountId))
+            {
+                EmptyPortfolioSeen[accountId] = 0;
+                reconciliationSafe = false;
+                _logger.LogWarning(
+                    "Sync: broker returned no bonds while {Count} local position(s) exist — deferring deletion to the next sync",
+                    localCount);
+            }
+        }
+        else
+        {
+            EmptyPortfolioSeen.TryRemove(accountId, out _);
+        }
+
         if (reconciliationSafe)
         {
             try
@@ -345,7 +373,7 @@ public sealed class BondSyncService
     /// сохранится без инструмента, как раньше.
     /// </summary>
     private async Task<ulong?> ResolveOperationInstrumentAsync(
-        string figi, Dictionary<string, ulong?> cache, CancellationToken ct)
+        string figi, bool allowCreate, Dictionary<string, ulong?> cache, CancellationToken ct)
     {
         if (cache.TryGetValue(figi, out var cached)) return cached;
 
@@ -357,7 +385,7 @@ public sealed class BondSyncService
             {
                 id = existing.Id;
             }
-            else
+            else if (allowCreate)
             {
                 id = await ResolveOrCreateInstrumentAsync(figi, ct);
                 if (id is not null)
@@ -582,6 +610,9 @@ public sealed class SyncResult
 {
     public int InstrumentsSynced { get; set; }
     public int OperationsUpserted { get; set; }
+
+    /// <summary>Журнал операций полностью перечитан у брокера и сохранён (база для бэкфилла истории).</summary>
+    public bool JournalSynced { get; set; }
 
     /// <summary>Сколько позиций удалено сверкой (у брокера их больше нет: погашены/проданы).</summary>
     public int PositionsClosed { get; set; }

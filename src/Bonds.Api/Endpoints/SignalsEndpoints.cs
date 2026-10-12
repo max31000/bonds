@@ -79,10 +79,11 @@ public static class SignalsEndpoints
         Subject = s.Subject,
         SuggestedAction = s.SuggestedAction,
         EventDate = s.EventDate,
-        FirstSeenAt = s.FirstSeenAt,
+        // DATETIME без пояса пишется из UtcNow — помечаем UTC, чтобы JSON нёс «Z» и фронт не сдвигал время.
+        FirstSeenAt = DateTime.SpecifyKind(s.FirstSeenAt, DateTimeKind.Utc),
         IsRead = s.IsAcknowledged,
         IsResolved = s.IsResolved,
-        ResolvedAt = s.ResolvedAt,
+        ResolvedAt = s.ResolvedAt is { } resolved ? DateTime.SpecifyKind(resolved, DateTimeKind.Utc) : null,
     };
 }
 
