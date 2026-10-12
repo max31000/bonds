@@ -59,6 +59,15 @@ public sealed class TInvestOperation
     public decimal PaymentRub { get; init; }
     public decimal? Quantity { get; init; }
 
+    /// <summary>
+    /// Тип инструмента операции — имя enum T-Invest <c>InstrumentType</c> ("Bond", "Share", "Currency",
+    /// "Etf", ...). Null — не указан (операции по счёту без инструмента). Облигационный журнал
+    /// сохраняет Buy/Sell/Coupon/Redemption/Amortization/SecurityIn/Out только для <see cref="IsBond"/>.
+    /// </summary>
+    public string? InstrumentKind { get; init; }
+
+    public bool IsBond => string.Equals(InstrumentKind, "Bond", StringComparison.OrdinalIgnoreCase);
+
     /// <summary>НКД, относящийся к данной операции (если применимо, напр. покупка/продажа купонной бумаги).</summary>
     public decimal? AccruedInterest { get; init; }
 }

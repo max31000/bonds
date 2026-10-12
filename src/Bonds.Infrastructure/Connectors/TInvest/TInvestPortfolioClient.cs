@@ -166,6 +166,7 @@ public sealed class TInvestPortfolioClient : ITInvestPortfolioClient
                 {
                     Id = item.Id,
                     OperationType = item.Type.ToString(),
+                    InstrumentKind = ResolveInstrumentKind(item.InstrumentKind, item.InstrumentType),
                     Figi = string.IsNullOrEmpty(item.Figi) ? null : item.Figi,
                     InstrumentUid = string.IsNullOrEmpty(item.InstrumentUid) ? null : item.InstrumentUid,
                     Date = item.Date.ToDateTime(),
@@ -179,6 +180,20 @@ public sealed class TInvestPortfolioClient : ITInvestPortfolioClient
         } while (!string.IsNullOrEmpty(cursor));
 
         return result;
+    }
+
+    /// <summary>
+    /// Тип инструмента операции в виде имени enum <c>Tinkoff.InvestApi.V1.InstrumentType</c>
+    /// (Bond/Share/Currency/Etf/...; имена сверены рефлексией по сборке SDK 0.6.22). Если enum-поле
+    /// <c>InstrumentKind</c> не заполнено, берём строковое <c>InstrumentType</c> ("bond", "share"...)
+    /// и нормализуем регистр. Null — брокер тип не указал (операции по счёту: комиссии, пополнения).
+    /// </summary>
+    internal static string? ResolveInstrumentKind(Tinkoff.InvestApi.V1.InstrumentType kind, string? rawType)
+    {
+        if (kind != Tinkoff.InvestApi.V1.InstrumentType.Unspecified) return kind.ToString();
+        if (string.IsNullOrWhiteSpace(rawType)) return null;
+        var t = rawType.Trim();
+        return char.ToUpperInvariant(t[0]) + t[1..].ToLowerInvariant();
     }
 
     public async Task<string?> GetIsinByFigiAsync(string figi, CancellationToken ct = default)

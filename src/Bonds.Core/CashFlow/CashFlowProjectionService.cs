@@ -35,7 +35,8 @@ public static class CashFlowProjectionService
             input.AsOf,
             horizon,
             input.Coupons,
-            input.Amortizations);
+            input.Amortizations,
+            includeAsOf: true); // календарь: сегодняшняя выплата видна до факта (plan/39 m4)
 
         var isFloaterLike = input.CouponType is CouponType.Floating or CouponType.Indexed;
 

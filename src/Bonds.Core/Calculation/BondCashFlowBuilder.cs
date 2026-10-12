@@ -18,7 +18,8 @@ public static class BondCashFlowBuilder
     /// Строит поток для горизонта "asOf эксклюзивно" до <paramref name="horizonDate"/> включительно.
     /// </summary>
     /// <param name="faceValue">Номинал бумаги (1 шт.).</param>
-    /// <param name="asOf">Дата расчёта (не включается в поток).</param>
+    /// <param name="asOf">Дата расчёта (не включается в поток, если не задан <paramref name="includeAsOf"/>).</param>
+    /// <param name="includeAsOf">Включать выплаты ровно в дату <paramref name="asOf"/> (только для отображения календаря).</param>
     /// <param name="horizonDate">Дата окончания горизонта (погашение или оферта).</param>
     /// <param name="coupons">Полный график купонов инструмента.</param>
     /// <param name="amortizations">Полный график амортизаций инструмента (может быть пустым).</param>
@@ -27,15 +28,22 @@ public static class BondCashFlowBuilder
         DateOnly asOf,
         DateOnly horizonDate,
         IEnumerable<CouponSchedule> coupons,
-        IEnumerable<AmortizationSchedule>? amortizations)
+        IEnumerable<AmortizationSchedule>? amortizations,
+        bool includeAsOf = false)
     {
+        // includeAsOf: для ОТОБРАЖЕНИЯ «ближайших поступлений» выплата сегодняшнего дня ещё ждёт факта
+        // у брокера и должна быть видна (plan/39 m4). Для доходностей/дюрации остаётся false: там
+        // горизонт «строго после asOf» — сегодняшняя выплата уже не принадлежит покупателю (после
+        // отсечки) и не должна задваивать XIRR/YTM.
+        bool InWindow(DateOnly d) => (includeAsOf ? d >= asOf : d > asOf) && d <= horizonDate;
+
         var amortList = (amortizations ?? Enumerable.Empty<AmortizationSchedule>())
-            .Where(a => a.Date > asOf && a.Date <= horizonDate)
+            .Where(a => InWindow(a.Date) && a.Date <= horizonDate)
             .OrderBy(a => a.Date)
             .ToList();
 
         var couponList = coupons
-            .Where(c => c.CouponDate > asOf && c.CouponDate <= horizonDate)
+            .Where(c => InWindow(c.CouponDate))
             .OrderBy(c => c.CouponDate)
             .ToList();
 
@@ -85,7 +93,7 @@ public static class BondCashFlowBuilder
         // амортизация с неизвестной суммой, остаточный номинал недостоверен — не подставляем
         // его целиком на дату горизонта (Audit(engine) E-1), только помечаем точку горизонта
         // (если она уже существует из купона/амортизации) неизвестной.
-        if (horizonDate > asOf)
+        if (horizonDate > asOf || (includeAsOf && horizonDate == asOf))
         {
             if (!hasUnknownAmortization && remainingPrincipalAtHorizon > 0m)
             {

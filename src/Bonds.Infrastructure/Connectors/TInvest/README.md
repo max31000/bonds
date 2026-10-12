@@ -131,3 +131,11 @@ MVP берёт первый счёт со `Status == AccountStatus.Open` (spec �
   protobuf-контракта (имена методов/полей и их типы в собранной сборке SDK), не из ответа реального
   API. Финальная сверка с реальными данными — на live-smoke тесте, помеченном `Category=Live`,
   который запускается вручную владельцем с его токеном (вне CI, см. `plan/04` "Тесты").
+
+## Операции: тип инструмента и переводы бумаг (plan/39)
+
+- `TInvestOperation.InstrumentKind` — имя enum `Tinkoff.InvestApi.V1.InstrumentType` из `OperationItem.InstrumentKind`
+  (`Bond`/`Share`/`Currency`/`Etf`/...; сверено рефлексией по SDK 0.6.22; при `Unspecified` берётся строковое
+  `InstrumentType`). Синк сохраняет в журнал только облигационные операции (или операции без типа инструмента).
+- `InputSecurities` / `OutputSecurities` (имена enum сверены по SDK) -> `SecurityIn` / `SecurityOut`.
+

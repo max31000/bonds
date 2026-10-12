@@ -155,4 +155,52 @@ public class PositionCostBasisServiceTests
         result.AverageCostRub.Should().Be(1000m);
         result.HasUnknownLots.Should().BeFalse();
     }
+
+    [Fact]
+    public void Calculate_Amortization_ReturnsCapital_NoPhantomLoss()
+    {
+        // plan/39 M1: 10 шт номиналом 1000 куплены по 1000 (10000). Амортизация 30% = 3000 руб на 10 шт.
+        // Вложенное = 10000 - 3000 = 7000; после выплаты номинал 700, цена 100% -> стоимость 7000; P&L = 0
+        // (а не -3000, как было, когда амортизация игнорировалась).
+        var operations = new[]
+        {
+            Op(OperationType.Buy, BaseDate, -10_000m, quantity: 10m),
+            Op(OperationType.Amortization, BaseDate.AddDays(90), 3_000m),
+        };
+
+        var result = PositionCostBasisService.Calculate(operations, currentQuantity: 10m, currentMarketValueRub: 7_000m);
+
+        result.InvestedRub.Should().Be(7_000m);
+        result.AverageCostRub.Should().Be(700m);
+        result.UnrealizedPnlRub.Should().Be(0m);
+        result.HasUnknownLots.Should().BeFalse();
+    }
+
+    [Fact]
+    public void Calculate_CouponsReceived_AreNetOfInstrumentTax()
+    {
+        // Купон брутто 1000, удержан НДФЛ 130 отдельной операцией (BondTax -> Tax) -> нетто 870.
+        var operations = new[]
+        {
+            Op(OperationType.Buy, BaseDate, -10_000m, quantity: 10m),
+            Op(OperationType.Coupon, BaseDate.AddDays(90), 1_000m),
+            Op(OperationType.Tax, BaseDate.AddDays(90), -130m),
+        };
+
+        var result = PositionCostBasisService.Calculate(operations, currentQuantity: 10m, currentMarketValueRub: 10_000m);
+
+        result.CouponsReceivedRub.Should().Be(870m);
+        result.TotalReturnRub.Should().Be(870m);
+    }
+
+    [Fact]
+    public void Calculate_SecurityIn_WithoutPrice_FlagsUnknownLots()
+    {
+        var operations = new[] { Op(OperationType.SecurityIn, BaseDate, 0m, quantity: 10m) };
+
+        var result = PositionCostBasisService.Calculate(operations, currentQuantity: 10m, currentMarketValueRub: 10_000m);
+
+        result.HasUnknownLots.Should().BeTrue();
+        result.InvestedRub.Should().BeNull("себестоимость введённых бумаг неизвестна");
+    }
 }

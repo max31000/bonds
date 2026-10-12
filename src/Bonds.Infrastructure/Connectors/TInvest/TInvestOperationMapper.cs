@@ -25,6 +25,10 @@ public static class TInvestOperationMapper
         "Coupon" => OperationType.Coupon,
         "BondRepayment" => OperationType.Amortization,
         "BondRepaymentFull" => OperationType.Redemption,
+        // Переводы бумаг между счетами/брокерами (имена enum сверены рефлексией по SDK 0.6.22):
+        // не покупка/продажа — меняют количество без движения денег (plan/39 M3).
+        "InputSecurities" => OperationType.SecurityIn,
+        "OutputSecurities" => OperationType.SecurityOut,
         "BondTax" or "BondTaxProgressive" or "Tax" or "TaxProgressive"
             or "TaxCorrection" or "TaxCorrectionProgressive" or "TaxCorrectionCoupon"
             or "DividendTax" or "DividendTaxProgressive" or "BenefitTax" or "BenefitTaxProgressive" => OperationType.Tax,

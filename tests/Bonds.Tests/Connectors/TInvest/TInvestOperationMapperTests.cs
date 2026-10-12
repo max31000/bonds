@@ -23,6 +23,8 @@ public class TInvestOperationMapperTests
     [InlineData("BondTax", OperationType.Tax)]
     [InlineData("BondTaxProgressive", OperationType.Tax)]
     [InlineData("Tax", OperationType.Tax)]
+    [InlineData("InputSecurities", OperationType.SecurityIn)]
+    [InlineData("OutputSecurities", OperationType.SecurityOut)]
     [InlineData("BrokerFee", OperationType.Fee)]
     [InlineData("ServiceFee", OperationType.Fee)]
     public void Map_KnownTypes_ReturnsExpectedDomainType(string tInvestType, OperationType expected)

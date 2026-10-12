@@ -16,6 +16,7 @@ namespace Bonds.Infrastructure.Analytics;
 public sealed class PortfolioSnapshotService
 {
     private readonly IPositionRepository _positions;
+    private readonly IInstrumentRepository _instruments;
     private readonly IMarketQuoteRepository _quotes;
     private readonly IOperationRepository _operations;
     private readonly IPortfolioValueSnapshotRepository _snapshots;
@@ -23,12 +24,14 @@ public sealed class PortfolioSnapshotService
 
     public PortfolioSnapshotService(
         IPositionRepository positions,
+        IInstrumentRepository instruments,
         IMarketQuoteRepository quotes,
         IOperationRepository operations,
         IPortfolioValueSnapshotRepository snapshots,
         ILogger<PortfolioSnapshotService> logger)
     {
         _positions = positions;
+        _instruments = instruments;
         _quotes = quotes;
         _operations = operations;
         _snapshots = snapshots;
@@ -52,6 +55,26 @@ public sealed class PortfolioSnapshotService
         foreach (var position in positions)
         {
             ct.ThrowIfCancellationRequested();
+
+            // plan/39 B2: погашенная бумага не живёт в «текущей» стоимости. У брокера она может
+            // провисеть день-два после даты погашения до фактической выплаты.
+            var instrument = await _instruments.GetByIdAsync(position.InstrumentId);
+            if (HasBeenRedeemed(operations, position.InstrumentId))
+            {
+                // Деньги уже пришли (Redemption в журнале — приток учтён в XIRR), терминальная
+                // стоимость той же бумаги дала бы двойной учёт.
+                continue;
+            }
+
+            if (instrument is { FaceValue: > 0m } && instrument.MaturityDate < asOf)
+            {
+                // Дата погашения прошла, выплаты в журнале ещё нет: оцениваем по НОМИНАЛУ остатка
+                // (instrument.FaceValue — актуальный номинал с учётом амортизаций, рубли за бумагу),
+                // а не по последней котировке, которая после погашения неактуальна.
+                marketValue += instrument.FaceValue * position.Quantity;
+                continue;
+            }
+
             var quote = await _quotes.GetLatestAsync(position.InstrumentId);
             if (quote is null)
             {
@@ -80,6 +103,23 @@ public sealed class PortfolioSnapshotService
             XirrToDate = xirr?.Rate,
             InvestedRub = investedRub,
         };
+    }
+
+    /// <summary>
+    /// True, если по инструменту в журнале есть полное погашение (<see cref="OperationType.Redemption"/>),
+    /// датированное не раньше последней покупки/ввода бумаги (иначе это погашение предыдущего лота).
+    /// </summary>
+    internal static bool HasBeenRedeemed(IReadOnlyCollection<Operation> operations, ulong instrumentId)
+    {
+        var forInstrument = operations.Where(o => o.InstrumentId == instrumentId).ToList();
+        var lastRedemption = forInstrument.Where(o => o.Type == OperationType.Redemption)
+            .Select(o => (DateTime?)o.Date).Max();
+        if (lastRedemption is null) return false;
+
+        var lastAcquisition = forInstrument
+            .Where(o => o.Type is OperationType.Buy or OperationType.SecurityIn)
+            .Select(o => (DateTime?)o.Date).Max();
+        return lastAcquisition is null || lastRedemption >= lastAcquisition;
     }
 
     /// <summary>Считает снимок и сохраняет его (upsert по (AccountId, AsOf) — повторный вызов в тот же день не дублирует).</summary>

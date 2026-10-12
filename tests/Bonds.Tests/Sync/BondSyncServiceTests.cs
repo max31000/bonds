@@ -1,5 +1,6 @@
 using Bonds.Core.Interfaces.Repositories;
 using Bonds.Core.Models;
+using Bonds.Core.Time;
 using Bonds.Infrastructure.Connectors.Moex;
 using Bonds.Infrastructure.Connectors.TInvest;
 using Bonds.Infrastructure.Sync;
@@ -318,6 +319,86 @@ public class BondSyncServiceTests
 
         _positions.Verify(p => p.UpsertAsync(It.Is<Position>(pos => pos.InstrumentId == InstrumentId)), Times.Once);
         _positions.Verify(p => p.UpsertAsync(It.Is<Position>(pos => pos.InstrumentId == secondInstrumentId)), Times.Never);
+    }
+
+    [Fact]
+    public async Task SyncAsync_NonBondOperations_AreNotStoredInBondJournal()
+    {
+        // plan/39 B3: покупка валюты/акции и дивидендный налог по акции не должны попасть в журнал
+        // облигационного XIRR; комиссия без инструмента (InstrumentKind = null) — остаётся.
+        SetupHappyPathAccountAndPositions();
+        _tInvest.Setup(c => c.GetOperationsAsync(BrokerAccountId, It.IsAny<DateTime?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<TInvestOperation>
+            {
+                new() { Id = "bond-buy", OperationType = "Buy", Figi = Figi, InstrumentKind = "Bond", Date = new DateTime(2026, 1, 10), PaymentRub = -9800m, Quantity = 10 },
+                new() { Id = "cny-buy", OperationType = "Buy", Figi = "CNY-FIGI", InstrumentKind = "Currency", Date = new DateTime(2026, 1, 11), PaymentRub = -50000m, Quantity = 5000 },
+                new() { Id = "share-sell", OperationType = "Sell", Figi = "SBER-FIGI", InstrumentKind = "Share", Date = new DateTime(2026, 1, 12), PaymentRub = 7000m, Quantity = 20 },
+                new() { Id = "share-tax", OperationType = "DividendTax", Figi = "SBER-FIGI", InstrumentKind = "Share", Date = new DateTime(2026, 1, 13), PaymentRub = -130m },
+                new() { Id = "acct-fee", OperationType = "ServiceFee", Date = new DateTime(2026, 1, 14), PaymentRub = -290m },
+            });
+        _operations.Setup(o => o.UpsertManyByExternalIdAsync(It.IsAny<IEnumerable<Operation>>()))
+            .ReturnsAsync((IEnumerable<Operation> ops) => ops.Count());
+
+        var result = await CreateService().SyncAsync(AccountId);
+
+        result.OperationsUpserted.Should().Be(2);
+        _operations.Verify(o => o.UpsertManyByExternalIdAsync(It.Is<IEnumerable<Operation>>(ops =>
+            ops.Select(x => x.ExternalId).OrderBy(x => x).SequenceEqual(new[] { "acct-fee", "bond-buy" }))), Times.Once);
+    }
+
+    [Fact]
+    public async Task SyncAsync_HistoricalBondOperation_CreatesInstrument_ResolvedOncePerFigi()
+    {
+        // plan/39 M6: бумага куплена и погашена до первого синка — в справочнике её нет. Инструмент
+        // создаётся, InstrumentId проставлен; два события по одному FIGI → один поход в T-Invest за ISIN.
+        SetupHappyPathAccountAndPositions();
+        const string histFigi = "HIST-FIGI";
+        _tInvest.Setup(c => c.GetIsinByFigiAsync(histFigi, It.IsAny<CancellationToken>())).ReturnsAsync("RU000HIST001");
+        _tInvest.Setup(c => c.GetOperationsAsync(BrokerAccountId, It.IsAny<DateTime?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<TInvestOperation>
+            {
+                new() { Id = "h-buy", OperationType = "Buy", Figi = histFigi, InstrumentKind = "Bond", Date = new DateTime(2025, 1, 10), PaymentRub = -980m, Quantity = 1 },
+                new() { Id = "h-red", OperationType = "BondRepaymentFull", Figi = histFigi, InstrumentKind = "Bond", Date = new DateTime(2025, 9, 10), PaymentRub = 1000m, Quantity = 1 },
+            });
+        _operations.Setup(o => o.UpsertManyByExternalIdAsync(It.IsAny<IEnumerable<Operation>>()))
+            .ReturnsAsync((IEnumerable<Operation> ops) => ops.Count());
+
+        await CreateService().SyncAsync(AccountId);
+
+        _tInvest.Verify(c => c.GetIsinByFigiAsync(histFigi, It.IsAny<CancellationToken>()), Times.Once);
+        _instruments.Verify(r => r.UpsertAsync(It.Is<Instrument>(i => i.Figi == histFigi && i.Isin == "RU000HIST001")), Times.Once);
+        _operations.Verify(o => o.UpsertManyByExternalIdAsync(It.Is<IEnumerable<Operation>>(ops =>
+            ops.Where(x => x.ExternalId == "h-buy" || x.ExternalId == "h-red").All(x => x.InstrumentId == InstrumentId)
+            && ops.Count(x => x.ExternalId == "h-buy" || x.ExternalId == "h-red") == 2)), Times.Once);
+    }
+
+    [Fact]
+    public async Task SyncAsync_FallbackQuote_NotWrittenForMaturedInstrument()
+    {
+        // plan/39 M8: у погашенной бумаги может остаться «последняя сделка» — котировку на сегодня не пишем.
+        SetupHappyPathAccountAndPositions(currentPrice: null);
+        var matured = new Instrument
+        {
+            Id = InstrumentId, Isin = Isin, Figi = Figi, Secid = "SU26238RMFS4",
+            FaceValue = 1000m, MaturityDate = BusinessClock.MoscowToday().AddDays(-3),
+        };
+        _instruments.Setup(r => r.GetByIdAsync(InstrumentId)).ReturnsAsync(matured);
+        _instruments.Setup(r => r.GetByFigiAsync(Figi)).ReturnsAsync(matured);
+        // Обогащение из MOEX перезаписывает MaturityDate — отдаём ту же (прошедшую) дату.
+        _moex.Setup(m => m.GetSecurityInfoAsync("SU26238RMFS4", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MoexSecurityInfo
+            {
+                Secid = "SU26238RMFS4", BoardId = "TQOB", FaceValue = 1000m, MatDate = matured.MaturityDate,
+            });
+        _tInvest.Setup(c => c.GetQuotesAsync(It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<string, TInvestQuote>
+            {
+                [Figi] = new TInvestQuote { Figi = Figi, LastPrice = 100m },
+            });
+
+        await CreateService().SyncAsync(AccountId);
+
+        _quotes.Verify(q => q.UpsertAsync(It.IsAny<MarketQuote>()), Times.Never);
     }
 
     [Fact]

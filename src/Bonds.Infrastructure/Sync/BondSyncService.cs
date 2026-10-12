@@ -118,16 +118,24 @@ public sealed class BondSyncService
         {
             var tInvestOperations = await _tInvest.GetOperationsAsync(brokerAccountId, operationsFrom, ct);
             var domainOperations = new List<Operation>();
+            // Резолв FIGI → инструмент кэшируется в пределах синка: историческая бумага с десятком
+            // операций не должна давать десять походов в справочник/T-Invest/MOEX (plan/39 M6).
+            var figiCache = new Dictionary<string, ulong?>();
             foreach (var op in tInvestOperations)
             {
                 var mappedType = TInvestOperationMapper.Map(op.OperationType);
                 if (mappedType is null) continue; // нерелевантный тип операции (см. README коннектора) — пропускаем, не падаем
 
+                // plan/39 B3: журнал — облигационный. Операции по акциям/фондам/валюте (купил CNYRUB_TOM,
+                // дивидендный налог по акции) без инструмента-облигации портили XIRR и InvestedRub.
+                // Тип неизвестен (null) — операция по счёту (комиссия/налог без бумаги) либо старый
+                // формат — не отбрасываем. Тип известен и это не облигация — пропускаем любую операцию.
+                if (op.InstrumentKind is not null && !op.IsBond) continue;
+
                 ulong? instrumentId = null;
                 if (!string.IsNullOrEmpty(op.Figi))
                 {
-                    var instrument = await _instruments.GetByFigiAsync(op.Figi);
-                    instrumentId = instrument?.Id;
+                    instrumentId = await ResolveOperationInstrumentAsync(op.Figi, figiCache, ct);
                 }
 
                 domainOperations.Add(new Operation
@@ -197,7 +205,7 @@ public sealed class BondSyncService
                     await _quotes.UpsertAsync(new MarketQuote
                     {
                         InstrumentId = instrumentId.Value,
-                        AsOf = DateOnly.FromDateTime(DateTime.UtcNow),
+                        AsOf = BusinessClock.MoscowToday(),
                         CleanPrice = tip.CurrentPrice,
                         DirtyPrice = tip.CurrentPrice + tip.CurrentNkd,
                         Accrued = tip.CurrentNkd,
@@ -268,6 +276,10 @@ public sealed class BondSyncService
                     var instrument = await _instruments.GetByIdAsync(instrumentId);
                     if (instrument is null) continue;
 
+                    // plan/39 M8: по погашенной/делистингованной бумаге последняя сделка — давняя, а
+                    // свежая котировка «сегодня» воскресила бы её в итогах.
+                    if (instrument.MaturityDate < BusinessClock.MoscowToday()) continue;
+
                     var cleanPriceRub = LiveQuoteConverter.TryComputeCleanPriceRub(
                         q.LastPrice.Value, instrument.FaceValue, instrument.IsOutOfScopeCurrency);
                     if (cleanPriceRub is null)
@@ -293,7 +305,7 @@ public sealed class BondSyncService
                     await _quotes.UpsertAsync(new MarketQuote
                     {
                         InstrumentId = instrumentId,
-                        AsOf = DateOnly.FromDateTime(DateTime.UtcNow),
+                        AsOf = BusinessClock.MoscowToday(),
                         CleanPrice = cleanPriceRub,
                         Volume = null,
                         Source = MarketQuoteSource.TInvest,
@@ -327,6 +339,52 @@ public sealed class BondSyncService
     }
 
     /// <summary>
+    /// Инструмент для облигационной операции журнала (plan/39 M6). Бумага, купленная и погашенная/
+    /// проданная до первого синка, в справочнике отсутствует — создаём её тем же
+    /// <see cref="ResolveOrCreateInstrumentAsync"/> и по возможности обогащаем из MOEX, чтобы
+    /// <see cref="Operation.InstrumentId"/> не был null (иначе операция выпадает из истории и cost basis).
+    /// Результат (в т.ч. неудачный) кэшируется по FIGI на время синка. Сбой не бросается: операция
+    /// сохранится без инструмента, как раньше.
+    /// </summary>
+    private async Task<ulong?> ResolveOperationInstrumentAsync(
+        string figi, Dictionary<string, ulong?> cache, CancellationToken ct)
+    {
+        if (cache.TryGetValue(figi, out var cached)) return cached;
+
+        ulong? id = null;
+        try
+        {
+            var existing = await _instruments.GetByFigiAsync(figi);
+            if (existing is not null)
+            {
+                id = existing.Id;
+            }
+            else
+            {
+                id = await ResolveOrCreateInstrumentAsync(figi, ct);
+                if (id is not null)
+                {
+                    try
+                    {
+                        await EnrichFromMoexAsync(id.Value, ct);
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        _logger.LogWarning(ex, "Failed to enrich historical instrument for FIGI {Figi}", figi);
+                    }
+                }
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Failed to resolve instrument for operation FIGI {Figi}", figi);
+        }
+
+        cache[figi] = id;
+        return id;
+    }
+
+    /// <summary>
     /// Резолвит инструмент по ISIN для бумаги БЕЗ позиции (задача 20 — watchlist): если уже есть в
     /// справочнике — возвращает его Id; иначе создаёт минимальную запись Instrument (без FIGI —
     /// T-Invest мост здесь не нужен, у бумаги нет позиции/брокерского счёта), которую затем
@@ -348,7 +406,7 @@ public sealed class BondSyncService
             Isin = isin,
             FaceValue = 0m,
             Currency = "RUB",
-            MaturityDate = DateOnly.FromDateTime(DateTime.UtcNow),
+            MaturityDate = BusinessClock.MoscowToday(),
             DataIncomplete = true,
         };
 
@@ -389,7 +447,7 @@ public sealed class BondSyncService
             Figi = figi,
             FaceValue = 0m,
             Currency = "RUB",
-            MaturityDate = DateOnly.FromDateTime(DateTime.UtcNow),
+            MaturityDate = BusinessClock.MoscowToday(),
             DataIncomplete = true,
         };
 

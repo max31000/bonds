@@ -65,9 +65,10 @@ public sealed class PortfolioHistoryBackfillService
             .ToList();
 
         var firstDate = DateOnly.FromDateTime(operations.Min(o => o.Date));
-        var priceHistory = await BuildPriceHistoryAsync(instrumentIds, firstDate, asOf, ct);
+        var maturityDates = new Dictionary<ulong, DateOnly>();
+        var priceHistory = await BuildPriceHistoryAsync(instrumentIds, firstDate, asOf, maturityDates, ct);
 
-        var points = PortfolioHistoryRebuildService.Rebuild(operations, priceHistory, asOf);
+        var points = PortfolioHistoryRebuildService.Rebuild(operations, priceHistory, asOf, maturityDates);
         if (points.Count == 0)
         {
             return 0;
@@ -120,7 +121,8 @@ public sealed class PortfolioHistoryBackfillService
     /// forward fill делает <see cref="PortfolioHistoryRebuildService"/>.
     /// </summary>
     private async Task<IReadOnlyDictionary<ulong, IReadOnlyDictionary<DateOnly, decimal>>> BuildPriceHistoryAsync(
-        IReadOnlyList<ulong> instrumentIds, DateOnly from, DateOnly to, CancellationToken ct)
+        IReadOnlyList<ulong> instrumentIds, DateOnly from, DateOnly to,
+        Dictionary<ulong, DateOnly> maturityDates, CancellationToken ct)
     {
         var result = new Dictionary<ulong, IReadOnlyDictionary<DateOnly, decimal>>();
 
@@ -130,6 +132,13 @@ public sealed class PortfolioHistoryBackfillService
 
             var instrument = await _instruments.GetByIdAsync(instrumentId);
             if (instrument is null) continue;
+
+            // Даты погашения нужны, чтобы не тянуть котировку вперёд после погашения (plan/39 B1).
+            // FaceValue = 0 — заготовка без обогащения (MaturityDate там заглушка «сегодня»), ей не верим.
+            if (instrument.FaceValue > 0m && instrument.MaturityDate != default)
+            {
+                maturityDates[instrumentId] = instrument.MaturityDate;
+            }
 
             var secid = instrument.Secid;
             if (string.IsNullOrEmpty(secid))

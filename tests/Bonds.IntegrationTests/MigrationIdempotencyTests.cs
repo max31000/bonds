@@ -64,6 +64,7 @@ public class MigrationIdempotencyTests : IAsyncLifetime
             "012_add_commission_rate_override.sql",
             "013_add_bond_universe.sql",
             "014_add_account_balance.sql",
+            "015_redemption_correctness_repair.sql",
         });
 
         var expectedTables = new[]
@@ -98,13 +99,29 @@ public class MigrationIdempotencyTests : IAsyncLifetime
         await conn.OpenAsync();
 
         var migrationCount = await conn.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM _migrations");
-        migrationCount.Should().Be(14, "повторный запуск не должен заново применять уже применённые миграции");
+        migrationCount.Should().Be(15, "повторный запуск не должен заново применять уже применённые миграции");
 
         // users.base_currency существует ровно один раз (ALTER ... ADD COLUMN IF NOT EXISTS не падает повторно).
         var columnCount = await conn.ExecuteScalarAsync<long>(
             @"SELECT COUNT(*) FROM information_schema.columns
               WHERE table_schema = DATABASE() AND table_name = 'users' AND column_name = 'base_currency'");
         columnCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task RunAsync_Migration015_OperationsTypeEnumAcceptsSecurityTransfers()
+    {
+        var connectionString = _container.GetConnectionString();
+        await new MigrationRunner(connectionString, NullLogger<MigrationRunner>.Instance).RunAsync();
+
+        await using var conn = new MySqlConnection(connectionString);
+        await conn.OpenAsync();
+
+        var columnType = await conn.ExecuteScalarAsync<string>(
+            @"SELECT COLUMN_TYPE FROM information_schema.columns
+              WHERE table_schema = DATABASE() AND table_name = 'operations' AND column_name = 'type'");
+        columnType.Should().Contain("'SecurityIn'").And.Contain("'SecurityOut'");
+        columnType.Should().Contain("'Redemption'", "прежние значения enum не потеряны");
     }
 
     [Fact]

@@ -42,4 +42,11 @@ public enum OperationType
     Redemption,
     Tax,
     Fee,
+
+    /// <summary>Ввод ценных бумаг на счёт (T-Invest <c>InputSecurities</c>) — перевод от другого брокера/счёта,
+    /// не покупка: количество растёт, денег не списано. Внешний приток капитала для XIRR.</summary>
+    SecurityIn,
+
+    /// <summary>Вывод ценных бумаг со счёта (T-Invest <c>OutputSecurities</c>) — симметрично <see cref="SecurityIn"/>.</summary>
+    SecurityOut,
 }
