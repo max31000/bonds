@@ -35,11 +35,11 @@ public class SettingsTokenValidationTests
     private async Task<(HttpClient Client, ulong UserId)> CreateAuthorizedClientAsync(Microsoft.AspNetCore.Mvc.Testing.WebApplicationFactory<Program> factory)
     {
         var userRepo = new UserRepository(_factory.Database.ConnectionString);
-        var userId = await userRepo.CreateAsync(new Bonds.Core.Models.User { TelegramId = Random.Shared.NextInt64(1, long.MaxValue) });
+        var telegramId = Random.Shared.NextInt64(1, long.MaxValue);
+        var userId = await userRepo.CreateAsync(new Bonds.Core.Models.User { TelegramId = telegramId });
 
         var client = factory.CreateClient();
-        var token = JwtTestHelper.GenerateToken(userId);
-        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        Mvv42TestAuth.Authorize(client, telegramId);
 
         return (client, userId);
     }

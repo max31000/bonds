@@ -1,4 +1,4 @@
-using System.Security.Claims;
+using Bonds.Api.Auth;
 using Bonds.Api.Middleware;
 using Bonds.Core.Interfaces.Repositories;
 
@@ -17,12 +17,12 @@ public static class SignalsEndpoints
     }
 
     private static async Task<IResult> GetSignals(
-        ClaimsPrincipal principal,
+        ICurrentUser currentUser,
         IAccountRepository accountRepo,
         ISignalRepository signalRepo,
         bool? unreadOnly)
     {
-        var accountId = await PositionsEndpoints.ResolveAccountIdAsync(principal, accountRepo);
+        var accountId = await PositionsEndpoints.ResolveAccountIdAsync(currentUser, accountRepo);
         if (accountId is null) return Results.Ok(new SignalsResponseDto { Signals = [] });
 
         // unreadOnly=false (по умолчанию не задан) -> показываем все; unreadOnly=true -> только непрочитанные.
@@ -51,11 +51,11 @@ public static class SignalsEndpoints
 
     private static async Task<IResult> MarkRead(
         ulong id,
-        ClaimsPrincipal principal,
+        ICurrentUser currentUser,
         IAccountRepository accountRepo,
         ISignalRepository signalRepo)
     {
-        var accountId = await PositionsEndpoints.ResolveAccountIdAsync(principal, accountRepo);
+        var accountId = await PositionsEndpoints.ResolveAccountIdAsync(currentUser, accountRepo);
         if (accountId is null) throw new NotFoundException("Сигнал не найден");
 
         await signalRepo.MarkReadAsync(id, accountId.Value);

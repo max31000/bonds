@@ -1,4 +1,4 @@
-using System.Security.Claims;
+using Bonds.Api.Auth;
 using Bonds.Core.Analytics;
 using Bonds.Core.Interfaces.Repositories;
 using Bonds.Core.Models;
@@ -34,7 +34,7 @@ public static class UniverseEndpoints
     // ─── GET /api/universe ────────────────────────────────────────────────────────────────────
 
     private static async Task<IResult> GetUniverse(
-        ClaimsPrincipal principal,
+        ICurrentUser currentUser,
         IBondUniverseRepository universeRepo,
         IAccountRepository accountRepo,
         IPositionRepository positionRepo,
@@ -124,7 +124,7 @@ public static class UniverseEndpoints
         // primary account, один эффективный "пользователь" watchlist — тот же принцип, что
         // PositionsEndpoints.ResolveAccountIdAsync/WatchlistEndpoints.
         var portfolioIsins = await ResolvePortfolioIsinsAsync(accountRepo, positionRepo, instrumentRepo);
-        var watchlistIsins = await ResolveWatchlistIsinsAsync(principal, watchlistRepo);
+        var watchlistIsins = await ResolveWatchlistIsinsAsync(currentUser, watchlistRepo);
 
         var rows = page.Select(x => ToRowDto(x.Entry, x.HiddenReason, x.Reliability, x.ReliabilityReason, portfolioIsins, watchlistIsins)).ToList();
 
@@ -184,10 +184,9 @@ public static class UniverseEndpoints
         return isins;
     }
 
-    private static async Task<HashSet<string>> ResolveWatchlistIsinsAsync(ClaimsPrincipal principal, IWatchlistItemRepository watchlistRepo)
+    private static async Task<HashSet<string>> ResolveWatchlistIsinsAsync(ICurrentUser currentUser, IWatchlistItemRepository watchlistRepo)
     {
-        var sub = principal.FindFirstValue(ClaimTypes.NameIdentifier);
-        if (!ulong.TryParse(sub, out var userId)) return [];
+        if (await currentUser.GetUserIdAsync() is not { } userId) return [];
 
         var items = await watchlistRepo.GetByUserIdAsync(userId);
         return new HashSet<string>(items.Select(i => i.Isin), StringComparer.OrdinalIgnoreCase);

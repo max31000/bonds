@@ -1,4 +1,4 @@
-using System.Security.Claims;
+using Bonds.Api.Auth;
 using Bonds.Core.Analytics;
 using Bonds.Core.Interfaces.Repositories;
 using Bonds.Core.Models;
@@ -28,14 +28,14 @@ public static class LiveEndpoints
     // ─── GET /api/live/positions ────────────────────────────────────────────────────────────
 
     private static async Task<IResult> GetLivePositions(
-        ClaimsPrincipal principal,
+        ICurrentUser currentUser,
         IAccountRepository accountRepo,
         IPositionRepository positionRepo,
         IInstrumentRepository instrumentRepo,
         IIntradayQuoteRepository intradayRepo,
         IMarketQuoteRepository marketQuoteRepo)
     {
-        var accountId = await PositionsEndpoints.ResolveAccountIdAsync(principal, accountRepo);
+        var accountId = await PositionsEndpoints.ResolveAccountIdAsync(currentUser, accountRepo);
         if (accountId is null)
         {
             return Results.Ok(new LivePositionsResponseDto
@@ -119,13 +119,13 @@ public static class LiveEndpoints
     // ─── GET /api/live/portfolio-intraday?range=1d|5d ──────────────────────────────────────────
 
     private static async Task<IResult> GetPortfolioIntraday(
-        ClaimsPrincipal principal,
+        ICurrentUser currentUser,
         IAccountRepository accountRepo,
         IPositionRepository positionRepo,
         IIntradayQuoteRepository intradayRepo,
         string? range)
     {
-        var accountId = await PositionsEndpoints.ResolveAccountIdAsync(principal, accountRepo);
+        var accountId = await PositionsEndpoints.ResolveAccountIdAsync(currentUser, accountRepo);
         if (accountId is null)
         {
             return Results.Ok(new PortfolioIntradayResponseDto { Points = [] });

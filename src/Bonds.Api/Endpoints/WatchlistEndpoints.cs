@@ -1,4 +1,4 @@
-using System.Security.Claims;
+using Bonds.Api.Auth;
 using Bonds.Api.Middleware;
 using Bonds.Core.Interfaces.Repositories;
 using Bonds.Core.Models;
@@ -37,12 +37,12 @@ public static class WatchlistEndpoints
     // ─── GET /api/watchlist ──────────────────────────────────────────────────────────────────
 
     private static async Task<IResult> GetWatchlist(
-        ClaimsPrincipal principal,
+        ICurrentUser currentUser,
         IWatchlistItemRepository watchlistRepo,
         IInstrumentRepository instrumentRepo,
         PortfolioHoldingsBuilder holdingsBuilder)
     {
-        var userId = ResolveUserId(principal);
+        var userId = await currentUser.GetUserIdAsync();
         if (userId is null)
         {
             return Results.Ok(new WatchlistResponseDto { Items = [], Disclaimer = WatchlistDisclaimer });
@@ -110,13 +110,13 @@ public static class WatchlistEndpoints
 
     private static async Task<IResult> PostWatchlist(
         WatchlistCreateRequestDto request,
-        ClaimsPrincipal principal,
+        ICurrentUser currentUser,
         IWatchlistItemRepository watchlistRepo,
         IMoexIssClient moex,
         WatchlistSyncService watchlistSync,
         CancellationToken ct)
     {
-        var userId = ResolveUserId(principal);
+        var userId = await currentUser.GetUserIdAsync();
         if (userId is null) throw new NotFoundException("Пользователь не найден");
 
         var isin = request.Isin?.Trim().ToUpperInvariant();
@@ -172,10 +172,10 @@ public static class WatchlistEndpoints
 
     private static async Task<IResult> DeleteWatchlist(
         ulong id,
-        ClaimsPrincipal principal,
+        ICurrentUser currentUser,
         IWatchlistItemRepository watchlistRepo)
     {
-        var userId = ResolveUserId(principal);
+        var userId = await currentUser.GetUserIdAsync();
         if (userId is null) throw new NotFoundException("Пользователь не найден");
 
         var existing = await watchlistRepo.GetByIdAsync(id, userId.Value);
@@ -188,11 +188,6 @@ public static class WatchlistEndpoints
     private static IResult ValidationError(string message) =>
         Results.Json(new { error = message, type = "ValidationException" }, statusCode: StatusCodes.Status422UnprocessableEntity);
 
-    private static ulong? ResolveUserId(ClaimsPrincipal principal)
-    {
-        var sub = principal.FindFirstValue(ClaimTypes.NameIdentifier);
-        return ulong.TryParse(sub, out var userId) ? userId : null;
-    }
 }
 
 public sealed record WatchlistResponseDto

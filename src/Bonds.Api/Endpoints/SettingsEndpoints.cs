@@ -1,4 +1,4 @@
-using System.Security.Claims;
+using Bonds.Api.Auth;
 using Bonds.Api.Middleware;
 using Bonds.Core.Analytics;
 using Bonds.Core.Interfaces;
@@ -44,7 +44,7 @@ public static class SettingsEndpoints
     private const decimal MaxCommissionRateOverride = 0.05m;
 
     private static async Task<IResult> GetSettings(
-        ClaimsPrincipal principal,
+        ICurrentUser currentUser,
         IUserRepository userRepo,
         IUserSettingsRepository settingsRepo,
         IAccountRepository accountRepo,
@@ -54,20 +54,20 @@ public static class SettingsEndpoints
         IOptions<SignalEngineOptions> defaultSignalOptions,
         CancellationToken ct)
     {
-        var userId = ResolveUserId(principal);
+        var userId = await ResolveUserIdAsync(currentUser);
         var user = await userRepo.GetByIdAsync(userId);
         if (user is null) throw new NotFoundException("Пользователь не найден");
 
         var settings = await settingsRepo.GetByUserIdAsync(userId);
         var context = await BuildCommissionContextAsync(
-            principal, accountRepo, operationRepo, commissionRateProvider, tInvestClient, ct);
+            currentUser, accountRepo, operationRepo, commissionRateProvider, tInvestClient, ct);
 
         return Results.Ok(BuildSettingsDto(user, settings, defaultSignalOptions.Value, context));
     }
 
     private static async Task<IResult> PutSettings(
         SettingsUpdateRequestDto request,
-        ClaimsPrincipal principal,
+        ICurrentUser currentUser,
         IUserRepository userRepo,
         IUserSettingsRepository settingsRepo,
         IAccountRepository accountRepo,
@@ -77,7 +77,7 @@ public static class SettingsEndpoints
         IOptions<SignalEngineOptions> defaultSignalOptions,
         CancellationToken ct)
     {
-        var userId = ResolveUserId(principal);
+        var userId = await ResolveUserIdAsync(currentUser);
         var user = await userRepo.GetByIdAsync(userId);
         if (user is null) throw new NotFoundException("Пользователь не найден");
 
@@ -117,7 +117,7 @@ public static class SettingsEndpoints
         await settingsRepo.UpsertAsync(existing);
 
         var context = await BuildCommissionContextAsync(
-            principal, accountRepo, operationRepo, commissionRateProvider, tInvestClient, ct);
+            currentUser, accountRepo, operationRepo, commissionRateProvider, tInvestClient, ct);
 
         return Results.Ok(BuildSettingsDto(user, existing, defaultSignalOptions.Value, context));
     }
@@ -130,14 +130,14 @@ public static class SettingsEndpoints
         string CommissionEffectiveSource);
 
     private static async Task<CommissionContext> BuildCommissionContextAsync(
-        ClaimsPrincipal principal,
+        ICurrentUser currentUser,
         IAccountRepository accountRepo,
         IOperationRepository operationRepo,
         ICommissionRateProvider commissionRateProvider,
         ITInvestPortfolioClient tInvestClient,
         CancellationToken ct)
     {
-        var accountId = await PositionsEndpoints.ResolveAccountIdAsync(principal, accountRepo);
+        var accountId = await PositionsEndpoints.ResolveAccountIdAsync(currentUser, accountRepo);
 
         // Тариф — best-effort, не должен ронять GET/PUT /api/settings (см. doc-comment GetUserTariffAsync).
         string? tariff = null;
@@ -198,7 +198,7 @@ public static class SettingsEndpoints
 
     private static async Task<IResult> PutTInvestToken(
         TInvestTokenRequestDto request,
-        ClaimsPrincipal principal,
+        ICurrentUser currentUser,
         IUserSettingsRepository settingsRepo,
         IDataProtectionProvider dataProtection,
         ITInvestTokenValidator tokenValidator,
@@ -209,7 +209,7 @@ public static class SettingsEndpoints
             throw new ValidationException("Токен не должен быть пустым");
         }
 
-        var userId = ResolveUserId(principal);
+        var userId = await ResolveUserIdAsync(currentUser);
         var token = request.Token.Trim();
 
         // Пробный вызов T-Invest ДО шифрования/записи (plan/13 часть C) — невалидный токен не
@@ -246,13 +246,9 @@ public static class SettingsEndpoints
     private static string? MaskToken(string? last4) =>
         string.IsNullOrEmpty(last4) ? null : $"••••{last4}";
 
-    private static ulong ResolveUserId(ClaimsPrincipal principal)
-    {
-        var sub = principal.FindFirstValue(ClaimTypes.NameIdentifier);
-        if (!ulong.TryParse(sub, out var userId))
-            throw new ValidationException("Не удалось определить пользователя из токена авторизации");
-        return userId;
-    }
+    private static async Task<ulong> ResolveUserIdAsync(ICurrentUser currentUser) =>
+        await currentUser.GetUserIdAsync()
+        ?? throw new ValidationException("Не удалось определить пользователя из токена авторизации");
 }
 
 public sealed record SettingsResponseDto
