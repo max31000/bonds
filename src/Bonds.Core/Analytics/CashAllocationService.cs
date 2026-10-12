@@ -395,7 +395,7 @@ public sealed record CashAllocationCandidate
     /// включает сюда DataIncomplete: бумага с неполными данными и без цены и так естественно
     /// получает <see cref="EffectiveYield"/>=null и уходит в существующий
     /// <see cref="CashAllocationSkipReason.NoYield"/> (см. doc-comment вызывающего кода в
-    /// AnalyticsEndpoints.GetAllocation).
+    /// AllocationEndpoints.GetAllocation).
     /// </para>
     /// </summary>
     public bool IsComparable { get; init; } = true;

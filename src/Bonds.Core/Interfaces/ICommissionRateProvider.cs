@@ -20,7 +20,7 @@ namespace Bonds.Core.Interfaces;
 /// </para>
 /// Явные ставки, переданные вызывающим слоем напрямую в запросе (например,
 /// <c>PostReplacement.SellCommissionRate/BuyCommissionRate</c>), по-прежнему побеждают резолвер —
-/// он вызывается только когда явная ставка не передана (см. AnalyticsEndpoints/PositionsEndpoints).
+/// он вызывается только когда явная ставка не передана (см. ReplacementEndpoints/AllocationEndpoints/PositionsEndpoints).
 /// </summary>
 public interface ICommissionRateProvider
 {

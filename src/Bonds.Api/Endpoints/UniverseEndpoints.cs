@@ -56,7 +56,7 @@ public static class UniverseEndpoints
         int? offset,
         CancellationToken ct)
     {
-        if (!AnalyticsEndpoints.IsValidReliabilityFilterValue(reliability))
+        if (!AnalyticsSupport.IsValidReliabilityFilterValue(reliability))
         {
             return Results.Json(
                 new { error = "reliability должен быть 'green', 'yellow' или 'red'", type = "ValidationException" },
@@ -67,7 +67,7 @@ public static class UniverseEndpoints
         var hygieneOptions = universeOptions.Value.Hygiene;
         var today = BusinessClock.MoscowToday();
         // Задача 38 часть B.2: снимок RV нужен для медианы корзины при агрегации светофора надёжности
-        // (см. AnalyticsEndpoints.AssessEntryRiskSignals) — singleton-кэш (см. doc-comment
+        // (см. AnalyticsSupport.AssessEntryRiskSignals) — singleton-кэш (см. doc-comment
         // RelativeValueSnapshotBuilder), лишнего I/O на каждый вызов не добавляет.
         var snapshot = await snapshotBuilder.GetSnapshotAsync(ct);
 
@@ -81,7 +81,7 @@ public static class UniverseEndpoints
             .Select(e =>
             {
                 var hiddenReason = UniverseHygieneFilter.Evaluate(e, hygieneOptions, today);
-                var signals = AnalyticsEndpoints.AssessEntryRiskSignals(e, snapshot);
+                var signals = AnalyticsSupport.AssessEntryRiskSignals(e, snapshot);
                 var (reliabilityLevel, reliabilityReason) = CandidateRiskSignalService.Aggregate(signals, e.ListLevel, e.Sector);
                 return (Entry: e, HiddenReason: hiddenReason, Reliability: reliabilityLevel, ReliabilityReason: reliabilityReason);
             })
@@ -109,7 +109,7 @@ public static class UniverseEndpoints
         if (minYield is { } minY) query = query.Where(x => x.Entry.YieldFraction is { } y && y >= minY);
         if (maxYield is { } maxY) query = query.Where(x => x.Entry.YieldFraction is { } y && y <= maxY);
         if (!string.IsNullOrWhiteSpace(sector)) query = query.Where(x => string.Equals(x.Entry.Sector, sector, StringComparison.OrdinalIgnoreCase));
-        if (!string.IsNullOrWhiteSpace(reliability)) query = query.Where(x => AnalyticsEndpoints.ReliabilityMeetsFilter(x.Reliability.ToString(), reliability));
+        if (!string.IsNullOrWhiteSpace(reliability)) query = query.Where(x => AnalyticsSupport.ReliabilityMeetsFilter(x.Reliability.ToString(), reliability));
 
         var materialized = query.ToList();
         var total = materialized.Count;

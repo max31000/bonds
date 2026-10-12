@@ -85,7 +85,10 @@ if (!app.Environment.IsEnvironment("Testing"))
 // Этап 08: контракты для фронта (plan/08) — все защищены FallbackPolicy по умолчанию.
 app.MapPositionsEndpoints();
 app.MapCashFlowEndpoints();
-app.MapAnalyticsEndpoints();
+app.MapXirrEndpoints();
+app.MapPortfolioAnalyticsEndpoints();
+app.MapReplacementEndpoints();
+app.MapAllocationEndpoints();
 app.MapSignalsEndpoints();
 app.MapSyncEndpoints();
 app.MapSettingsEndpoints();
