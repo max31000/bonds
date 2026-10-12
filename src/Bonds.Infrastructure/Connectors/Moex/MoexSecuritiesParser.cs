@@ -4,7 +4,7 @@ namespace Bonds.Infrastructure.Connectors.Moex;
 
 /// <summary>
 /// Парсер ответа MOEX ISS <c>/iss/engines/stock/markets/bonds/securities/{SECID}.json</c>
-/// (параметры выпуска + текущие цены, plan/04 Часть A). Один SECID может вернуть несколько строк —
+/// (параметры выпуска + текущие цены). Один SECID может вернуть несколько строк —
 /// по одной на каждый BOARDID, где бумага торгуется/торговалась. Выбираем наиболее "торговый" board.
 /// </summary>
 public static class MoexSecuritiesParser
@@ -58,7 +58,7 @@ public static class MoexSecuritiesParser
 
     /// <summary>
     /// Результат поиска <c>/iss/securities.json?q=...</c> по ISIN — резолвер ISIN→SECID
-    /// (plan/04 Часть A, задача 1). Возвращает первую бумагу из группы "stock_bonds" (отфильтровывая
+    ///. Возвращает первую бумагу из группы "stock_bonds" (отфильтровывая
     /// индексы/прочие инструменты, которые ISS иногда подмешивает в полнотекстовый поиск).
     /// </summary>
     public static string? ParseSecidFromSearch(string json, string isin)

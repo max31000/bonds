@@ -6,23 +6,20 @@ using Bonds.Core.Models;
 namespace Bonds.Infrastructure.Analytics;
 
 /// <summary>
-/// Связующее звено между репозиториями (этап 03) и чистыми аналитическими сервисами
+/// Связующее звено между репозиториями и чистыми аналитическими сервисами
 /// (<see cref="PortfolioCompositionService"/>, <see cref="PositionComparisonService"/>,
-/// <see cref="SwitchAnalysisService"/>, <see cref="BondMetricsCalculator"/>) — этап 08
-/// явно называет этот пробел: "между репозиториями и аналитическими сервисами сейчас нет
-/// готового сборщика". Для каждой позиции счёта достаёт Instrument + CouponSchedule +
+/// <see cref="SwitchAnalysisService"/>, <see cref="BondMetricsCalculator"/>). Для каждой позиции счёта достаёт Instrument + CouponSchedule +
 /// AmortizationSchedule + OfferSchedule + последнюю MarketQuote + актуальный
-/// YieldCurveSnapshot, считает <see cref="BondMetrics"/> через чистый движок (этап 05) и
+/// YieldCurveSnapshot, считает <see cref="BondMetrics"/> через чистый движок и
 /// возвращает список <see cref="PortfolioHolding"/> — общий вход для всех аналитических
-/// эндпоинтов этапа 08 (positions/composition/scatter/comparison/replacement/cashflow-метрик).
+/// эндпоинтов (positions/composition/scatter/comparison/replacement/cashflow-метрик).
 /// <para>
-/// Логика расчёта рыночной стоимости и метрик зеркалит <c>SyncCycleService.RunSignalsAsync</c>
-/// (этап 07) — это не дублирование по ошибке, а осознанное переиспользование уже проверенного
-/// паттерна сборки; вынесено в отдельный публичный класс именно потому, что теперь нужно
-/// несколько независимых потребителей (HTTP-эндпоинты), а не только цикл синка.
+/// ЕДИНЫЙ источник «стоимости портфеля»: события (SyncCycleService), снимок NAV
+/// (<see cref="PortfolioSnapshotService"/>) и все HTTP-эндпоинты берут MarketValue отсюда
+/// (правило — в <c>ToHolding</c> и docs/CODEBASE-GUIDE.md, «MarketValue»).
 /// </para>
 /// <para>
-/// <b>Cost basis (plan/14 §B):</b> <see cref="PortfolioHolding.CostBasis"/> считается через
+/// <b>Cost basis:</b> <see cref="PortfolioHolding.CostBasis"/> считается через
 /// чистый <see cref="PositionCostBasisService"/> поверх журнала <see cref="Operation"/>.
 /// В <see cref="BuildForAccountAsync"/> журнал читается ОДНИМ батч-запросом на весь счёт
 /// (<see cref="IOperationRepository.GetByAccountIdAsync"/>) и группируется по InstrumentId в
@@ -60,7 +57,7 @@ public sealed class PortfolioHoldingsBuilder
         _operations = operations;
     }
 
-    /// <summary>Holdings для всех позиций счёта (composition/comparison/scatter/replacement/positions — этап 08, plan/14).</summary>
+    /// <summary>Holdings для всех позиций счёта (composition/comparison/scatter/replacement/positions).</summary>
     public async Task<IReadOnlyList<PortfolioHolding>> BuildForAccountAsync(ulong accountId, DateOnly asOf, CancellationToken ct = default)
     {
         var positions = (await _positions.GetByAccountIdAsync(accountId)).ToList();
@@ -132,7 +129,7 @@ public sealed class PortfolioHoldingsBuilder
                 InstrumentId = instrument.Id,
                 Quantity = 1m,
                 MarketValueRub = pricePerUnitRub,
-                // Задача 24: Quantity=1 здесь, поэтому НКД на бумагу и на "позицию" совпадают.
+                // Quantity=1 здесь, поэтому НКД на бумагу и на "позицию" совпадают.
                 AccruedPerBondRub = quote?.Accrued ?? metrics.AccruedInterest,
                 Name = instrument.Name,
                 Isin = instrument.Isin,
@@ -247,7 +244,7 @@ public sealed class PortfolioHoldingsBuilder
             InstrumentId = instrument.Id,
             Quantity = position.Quantity,
             MarketValueRub = marketValue,
-            // Задача 24: НКД на одну бумагу — котировка (Accrued источника) приоритетнее, тот же
+            // НКД на одну бумагу — котировка (Accrued источника) приоритетнее, тот же
             // фолбэк-порядок, что у DirtyPrice выше (см. doc-comment ToHolding про приоритет квоты).
             AccruedPerBondRub = quote?.Accrued ?? metrics.AccruedInterest,
             Name = instrument.Name,

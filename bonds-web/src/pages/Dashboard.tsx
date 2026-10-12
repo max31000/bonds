@@ -7,18 +7,19 @@ import { Cell, Legend, Pie, PieChart, Tooltip } from 'recharts';
 import { fetchPositions } from '../api/positions';
 import { fetchXirr, fetchComposition } from '../api/analytics';
 import { fetchCashflow } from '../api/cashflow';
+import { fetchLivePositions } from '../api/live';
 import { useLiveStore } from '../store/useLiveStore';
-import { useSignalsStore } from '../store/useSignalsStore';
+import { countAttention, useSignalsStore } from '../store/useSignalsStore';
 import { useLiveQuotes } from '../hooks/useLiveQuotes';
 import { useWidgetData } from '../hooks/useWidgetData';
 import { Disclaimer } from '../components/Disclaimer';
 import { PortfolioIntradayChart } from '../components/PortfolioIntradayChart';
 import { CHART_EXPLANATIONS } from '../components/charts';
 import { DIRTY_PRICE_TOOLTIP_TEXT } from '../utils/positionsDisplay';
-import type { CompositionSlice, XirrResponse, CashflowResponse, PositionsResponse } from '../api/types';
+import type { CompositionSlice, XirrResponse, CashflowResponse, LivePositionsResponse, PositionsResponse } from '../api/types';
 import { formatRub, formatPercent, formatSharePercent, formatDate } from '../utils/format';
 
-/** Задача 24: та же подсказка про «грязные» цены, что и у таблицы позиций (positionsDisplay.ts) — один источник текста. */
+/** Та же подсказка про «грязные» цены, что и у таблицы позиций (positionsDisplay.ts) — один источник текста. */
 const DIRTY_PRICE_EXPLANATION = DIRTY_PRICE_TOOLTIP_TEXT;
 
 const FLOW_TYPE_LABEL: Record<string, string> = {
@@ -32,7 +33,7 @@ const FLOW_TYPE_LABEL: Record<string, string> = {
 
 /**
  * KPI «Стоимость портфеля» — сумма из GET /api/positions (последний синк) с дельтой за день из
- * GET /api/live/positions, если live-контур (plan/16) уже накопил хотя бы один тик. Дельта
+ * GET /api/live/positions, если live-контур уже накопил хотя бы один тик. Дельта
  * скрывается, пока живых данных нет — план прямо требует не выдумывать значение.
  */
 function PortfolioValueKpi({ positions }: { positions: PositionsResponse | null }) {
@@ -52,8 +53,8 @@ function PortfolioValueKpi({ positions }: { positions: PositionsResponse | null 
       data-testid="kpi-portfolio-value"
       label={
         <Group gap={4} wrap="nowrap" component="span">
-          Стоимость портфеля
-          <HelpHint label="Пояснение: Стоимость портфеля" data-testid="kpi-portfolio-value-explain-icon">{DIRTY_PRICE_EXPLANATION}</HelpHint>
+          Стоимость облигаций
+          <HelpHint label="Пояснение: Стоимость облигаций" data-testid="kpi-portfolio-value-explain-icon">{DIRTY_PRICE_EXPLANATION}</HelpHint>
         </Group>
       }
       value={displayValue === null ? '—' : formatRub(displayValue)}
@@ -71,6 +72,23 @@ function PortfolioValueKpi({ positions }: { positions: PositionsResponse | null 
           : undefined
       }
       hint={deltaPercent !== null ? 'за день' : 'по последнему синку'}
+    />
+  );
+}
+
+/**
+ * Свободные деньги на счёте (T-Invest GetPortfolio, последний синк) и итог «облигации + деньги» —
+ * сюда приходят погашения и купоны; без них итог сервиса не сходился с приложением брокера.
+ */
+function CashKpi({ live, bondsTotal }: { live: LivePositionsResponse | null; bondsTotal: number | null }) {
+  const cash = live?.cashRub ?? null;
+  const accountTotal = cash !== null && bondsTotal !== null ? bondsTotal + cash : null;
+  return (
+    <Metric
+      data-testid="kpi-cash"
+      label="Деньги на счёте"
+      value={cash === null ? '—' : formatRub(cash)}
+      hint={accountTotal !== null ? `итого со счётом: ${formatRub(accountTotal)}` : 'появится после синка'}
     />
   );
 }
@@ -124,7 +142,8 @@ function UnreadSignalsKpi() {
     loadSignals();
   }, [loadSignals]);
 
-  const unreadCount = signals.filter((s) => !s.isRead).length;
+  // Только активные непрочитанные Critical+Warning — Info и подтверждённые не шумят.
+  const unreadCount = countAttention(signals);
 
   return (
     <UnstyledButton
@@ -133,7 +152,7 @@ function UnreadSignalsKpi() {
       data-testid="kpi-unread-signals"
     >
       <Metric
-        label="Непрочитанные сигналы"
+        label="События, требующие внимания"
         value={
           <Group gap={8} align="center" component="span">
             {unreadCount}
@@ -144,13 +163,13 @@ function UnreadSignalsKpi() {
             )}
           </Group>
         }
-        hint="оферты, купоны, концентрация"
+        hint="оферты, концентрация лимитов"
       />
     </UnstyledButton>
   );
 }
 
-/** Мини-композиция по эмитентам: топ-5 + «прочие» (plan/18 часть B.3), компактный donut. */
+/** Мини-композиция по эмитентам: топ-5 + «прочие», компактный donut. */
 function MiniCompositionWidget() {
   const { data, isLoading, error } = useWidgetData(fetchComposition, []);
   const t = useChartTheme();
@@ -224,7 +243,7 @@ function MiniCompositionWidget() {
   );
 }
 
-/** Ближайшие 30 дней денежного потока — компактный список из GET /api/cashflow (plan/18 часть B.4). */
+/** Ближайшие 30 дней денежного потока — компактный список из GET /api/cashflow. */
 function UpcomingCashflowWidget() {
   const { data, isLoading, error } = useWidgetData(fetchCashflow, []);
 
@@ -278,7 +297,7 @@ function UpcomingCashflowWidget() {
 }
 
 /**
- * Главная страница-дашборд (plan/18 часть B) — «взгляд за 5 секунд»: сколько всего, что
+ * Главная страница-дашборд — «взгляд за 5 секунд»: сколько всего, что
  * изменилось, что требует внимания. Таблица позиций переехала на /positions.
  * <p>
  * Каждая карточка грузит свои данные независимо (useWidgetData/собственные сторы) — отказ
@@ -288,6 +307,12 @@ export function Dashboard() {
   useLiveQuotes();
 
   const { data: positions } = useWidgetData(fetchPositions, []);
+  const { data: live } = useWidgetData(fetchLivePositions, []);
+  const liveTotal = useLiveStore((s) => s.totalMarketValueRub);
+  const bondsTotal = useMemo(
+    () => liveTotal ?? live?.totalMarketValueRub ?? (positions ? positions.positions.reduce((sum, p) => sum + p.marketValueRub, 0) : null),
+    [liveTotal, live, positions],
+  );
   const { data: xirr, error: xirrError } = useWidgetData(fetchXirr, []);
   const { data: cashflow, error: cashflowError } = useWidgetData(fetchCashflow, []);
 
@@ -295,6 +320,7 @@ export function Dashboard() {
     <Page title="Обзор" description="Стоимость, доходность и ближайшие поступления портфеля" width="wide">
       <MetricGrid data-testid="dashboard-kpi-row">
         <PortfolioValueKpi positions={positions} />
+        <CashKpi live={live} bondsTotal={bondsTotal} />
         <XirrKpi xirr={xirr} error={xirrError} />
         <NextPaymentKpi cashflow={cashflow} error={cashflowError} />
         <UnreadSignalsKpi />

@@ -12,4 +12,11 @@ public interface IPositionRepository
     Task<ulong> UpsertAsync(Position position);
 
     Task DeleteAsync(ulong id, ulong accountId);
+
+    /// <summary>
+    /// Сверка с брокером: удаляет позиции счёта, чьих инструментов НЕТ в <paramref name="keepInstrumentIds"/>
+    /// (погашены, проданы целиком, исполнена оферта, выведены). Каскадом уходят их проекции потоков
+    /// (<c>projected_cash_flows</c>); сигналы отвязываются (FK SET NULL). Возвращает число удалённых.
+    /// </summary>
+    Task<int> DeleteAllExceptAsync(ulong accountId, IReadOnlyCollection<ulong> keepInstrumentIds);
 }

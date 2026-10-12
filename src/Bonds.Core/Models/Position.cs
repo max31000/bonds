@@ -2,7 +2,7 @@ namespace Bonds.Core.Models;
 
 /// <summary>
 /// Холдинг пользователя по инструменту — cost basis и количество, источник истины T-Invest
-/// (spec §4.1, §5). Текущая НКД по открытой позиции приоритетно из T-Invest (см. plan/00 §4).
+/// (spec §4.1, §5). Текущая НКД по открытой позиции приоритетно из T-Invest.
 /// </summary>
 public class Position
 {
@@ -19,7 +19,7 @@ public class Position
     /// Текущий накопленный купонный доход (НКД) НА ОДНУ БУМАГУ (не на всю позицию), из T-Invest
     /// на момент синка (<c>PortfolioPosition.current_nkd</c>).
     /// <para>
-    /// Задача 24 — подтверждено по коду: <see cref="Bonds.Infrastructure.Sync.BondSyncService"/>
+    /// Подтверждено по коду: <see cref="Bonds.Infrastructure.Sync.BondSyncService"/>
     /// пишет сюда <c>tip.CurrentNkd</c> и ТУДА ЖЕ (не умножая на количество) кладёт его в
     /// <c>MarketQuote.Accrued</c>/<c>DirtyPrice = CurrentPrice + CurrentNkd</c> — грязная цена ОДНОЙ
     /// бумаги. Дальше <see cref="Bonds.Infrastructure.Analytics.PortfolioHoldingsBuilder.ToHolding"/>

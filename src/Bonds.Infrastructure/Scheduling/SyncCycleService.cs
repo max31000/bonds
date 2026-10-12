@@ -15,26 +15,24 @@ using Microsoft.Extensions.Options;
 namespace Bonds.Infrastructure.Scheduling;
 
 /// <summary>
-/// Полный цикл "синк → пересчёт → сигналы" (plan/07 Часть B): синк T-Invest/MOEX
+/// Полный цикл "синк → пересчёт → сигналы": синк T-Invest/MOEX
 /// (<see cref="BondSyncService"/>) → построение holdings с метриками inline (БЕЗ отдельной
-/// персистентности снимка метрик — см. plan/07 преамбула: "пересчитывай on-demand при каждом
-/// тике") → проекция денежного потока (<see cref="CashFlowProjectionOrchestrator"/>) → снимок
-/// NAV/XIRR (<see cref="PortfolioSnapshotService"/>) → прогон <see cref="SignalsEngine"/> с
-/// дедупликацией против непрочитанных сигналов в БД → запись новых сигналов.
+/// персистентности снимка метрик) → проекция денежного потока (<see cref="CashFlowProjectionOrchestrator"/>) → снимок
+/// NAV/XIRR (<see cref="PortfolioSnapshotService"/>) → прогон <see cref="SignalsEngine"/> и
+/// синхронизация набора активных событий с БД (insert/refresh/resolve, без дублей).
 /// <para>
 /// <b>Lifetime: Singleton.</b> Должен переживать отдельные HTTP-запросы/тики хостед-сервиса,
 /// чтобы статус (<see cref="GetStatus"/>) и защита от параллельного запуска (семафор) были
-/// общими для вызовов из <see cref="SyncSchedulerHostedService"/> и будущего
-/// <c>POST /api/sync</c> (этап 08). Поэтому scoped-зависимости (репозитории, BondSyncService и
+/// общими для вызовов из <see cref="SyncSchedulerHostedService"/> и эндпоинта
+/// <c>POST /api/sync</c>. Поэтому scoped-зависимости (репозитории, BondSyncService и
 /// другие Scoped-сервисы) резолвятся ВНУТРИ <see cref="RunCycleAsync"/> через
-/// <see cref="IServiceScopeFactory.CreateScope"/> — тот же паттерн, что у cashpulse
-/// ExchangeRateRefreshService (plan/00 "Эталон фоновых задач").
+/// <see cref="IServiceScopeFactory.CreateScope"/> — стандартный паттерн фоновых сервисов.
 /// </para>
 /// <para>
 /// <b>Защита от параллельного запуска.</b> <see cref="SemaphoreSlim"/> с неблокирующим
 /// <c>WaitAsync(0, ct)</c> (НЕ ожидание занятого слота) — если цикл уже идёт, повторный вызов
 /// немедленно возвращает <see cref="SyncCycleResult.AlreadyRunning"/> = true, не блокируя вызывающий
-/// HTTP-запрос (plan/07: "так HTTP POST /api/sync не подвисает").
+/// HTTP-запрос ("так HTTP POST /api/sync не подвисает").
 /// </para>
 /// </summary>
 public sealed class SyncCycleService : ISyncCycleRunner
@@ -123,6 +121,9 @@ public sealed class SyncCycleService : ISyncCycleRunner
         }
     }
 
+    /// <summary>Меньше стольких снапшотов истории — история считается пустой и пересобирается бэкфиллом.</summary>
+    internal const int BackfillSnapshotThreshold = 5;
+
     private async Task<SyncCycleResult> RunCycleInternalAsync(CancellationToken ct)
     {
         var result = new SyncCycleResult();
@@ -134,7 +135,7 @@ public sealed class SyncCycleService : ISyncCycleRunner
         if (accountId is null)
         {
             // Single-user продукт без онбординга (ни одного Account не создано) — не ошибка,
-            // цикл просто нет смысла выполнять (plan/07: "используй тот же способ в Scheduler").
+            // цикл просто нет смысла выполнять ("используй тот же способ в Scheduler").
             _logger.LogInformation("No account configured yet — skipping sync cycle");
             result.NoAccountConfigured = true;
             return result;
@@ -142,7 +143,7 @@ public sealed class SyncCycleService : ISyncCycleRunner
 
         var asOf = BusinessClock.MoscowToday();
 
-        // Диагностика токена (plan/13 часть B) — вычисляется отдельно от шага синка ниже, чтобы
+        // Диагностика токена — вычисляется отдельно от шага синка ниже, чтобы
         // здоровье синка (GET /api/sync/status) отражало причину сбоя явным флагом, а не требовало
         // от фронта парсить текст ошибки. Заведённый Account уже найден выше — "пользователь есть".
         var tokenProvider = sp.GetRequiredService<ITInvestTokenProvider>();
@@ -150,6 +151,7 @@ public sealed class SyncCycleService : ISyncCycleRunner
         result.TokenMissingOrInvalid = tokenStatus is TInvestTokenStatus.NotConfigured or TInvestTokenStatus.DecryptionFailed;
 
         // --- 1. BondSyncService ---
+        var journalSynced = false;
         try
         {
             var syncService = sp.GetRequiredService<BondSyncService>();
@@ -157,6 +159,7 @@ public sealed class SyncCycleService : ISyncCycleRunner
             result.InstrumentsSynced = syncResult.InstrumentsSynced;
             result.OperationsUpserted = syncResult.OperationsUpserted;
             result.YieldCurveUpdated = syncResult.YieldCurveUpdated;
+            journalSynced = syncResult.JournalSynced;
             if (syncResult.HasErrors) result.Errors.AddRange(syncResult.Errors.Select(e => $"Sync: {e}"));
         }
         catch (InvalidOperationException ex)
@@ -173,7 +176,7 @@ public sealed class SyncCycleService : ISyncCycleRunner
             result.Errors.Add($"Sync: непредвиденная ошибка ({ex.GetType().Name})");
         }
 
-        // --- 1a. Watchlist (задача 20 часть A): справочник/расписания/котировка бумаг без позиции.
+        // --- 1a. Watchlist: справочник/расписания/котировка бумаг без позиции.
         // Отдельный шаг, независимый от счёта/токена T-Invest — не влияет на позиции/сигналы ниже,
         // поэтому не должен блокировать остальной цикл при собственной ошибке.
         try
@@ -187,6 +190,30 @@ public sealed class SyncCycleService : ISyncCycleRunner
         {
             _logger.LogError(ex, "Watchlist sync step failed");
             result.Errors.Add($"Watchlist: непредвиденная ошибка ({ex.GetType().Name})");
+        }
+
+        // --- 1b. Бэкфилл истории стоимости, если она пуста/почти пуста (первый запуск, или миграция
+        // пересчёта истории её очистила). Строго ПОСЛЕ успешного перечитывания журнала: история
+        // строится из журнала, и бэкфилл из неполного журнала закрепился бы навсегда (бэкфилл
+        // пропускает уже существующие даты).
+        if (journalSynced)
+        {
+            try
+            {
+                var snapshotRepo = sp.GetRequiredService<IPortfolioValueSnapshotRepository>();
+                var existing = (await snapshotRepo.GetByAccountIdAsync(accountId.Value)).Count();
+                if (existing < BackfillSnapshotThreshold)
+                {
+                    var backfill = sp.GetRequiredService<PortfolioHistoryBackfillService>();
+                    var written = await backfill.BackfillAsync(accountId.Value, asOf, ct);
+                    _logger.LogInformation("History backfill after sync: {Written} points (had {Existing})", written, existing);
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogError(ex, "History backfill failed for account {AccountId}", accountId);
+                result.Errors.Add($"History: непредвиденная ошибка ({ex.GetType().Name})");
+            }
         }
 
         // --- 2. Проекция денежного потока ---
@@ -233,131 +260,115 @@ public sealed class SyncCycleService : ISyncCycleRunner
     }
 
     /// <summary>
-    /// Собирает <see cref="SignalEvaluationInput"/> из репозиториев (позиции, инструменты,
-    /// расписания, котировки, операции, TargetAllocation, существующие непрочитанные сигналы),
-    /// считает <see cref="BondMetrics"/> inline для каждой позиции (plan/07: "BondMetricsCalculator
-    /// нигде не вызывается из Infrastructure — вызывай inline, без отдельного сохранения снимка"),
-    /// прогоняет <see cref="SignalsEngine.Evaluate"/> и сохраняет только новые (уже
-    /// дедуплицированные движком) сигналы.
+    /// Шаг «События»: собирает <see cref="SignalEvaluationInput"/> (holdings — через
+    /// <see cref="PortfolioHoldingsBuilder"/>, расписания открытых позиций — из репозиториев; пороги —
+    /// <c>UserSettings</c> поверх дефолтов <see cref="SignalEngineOptions"/>; свободные деньги —
+    /// <c>accounts.cash_rub</c>), прогоняет <see cref="SignalsEngine.Evaluate"/> (ПОЛНЫЙ набор активных
+    /// событий) и синхронизирует его с таблицей через <see cref="SignalSetSynchronizer"/>: новое —
+    /// insert, прежнее — refresh, исчезнувшее — resolved, закрытые старше 90 дней — удаляются.
+    /// Для НОВЫХ Critical-событий (put-оферта) шлёт одно Telegram-сообщение на цикл. Троттлинг —
+    /// естественный: событие вставляется один раз по ключу, повторные синки его не «создают» заново.
+    /// Возвращает число вставленных (новых) событий.
     /// </summary>
     private async Task<int> RunSignalsAsync(IServiceProvider sp, ulong accountId, DateOnly asOf, CancellationToken ct)
     {
-        var positionRepo = sp.GetRequiredService<IPositionRepository>();
-        var instrumentRepo = sp.GetRequiredService<IInstrumentRepository>();
+        var holdingsBuilder = sp.GetRequiredService<PortfolioHoldingsBuilder>();
         var couponRepo = sp.GetRequiredService<ICouponScheduleRepository>();
         var amortizationRepo = sp.GetRequiredService<IAmortizationScheduleRepository>();
         var offerRepo = sp.GetRequiredService<IOfferScheduleRepository>();
-        var quoteRepo = sp.GetRequiredService<IMarketQuoteRepository>();
-        var yieldCurveRepo = sp.GetRequiredService<IYieldCurveRepository>();
-        var operationRepo = sp.GetRequiredService<IOperationRepository>();
         var targetAllocationRepo = sp.GetRequiredService<ITargetAllocationRepository>();
         var signalRepo = sp.GetRequiredService<ISignalRepository>();
+        var accountRepo = sp.GetRequiredService<IAccountRepository>();
+        var settingsRepo = sp.GetRequiredService<IUserSettingsRepository>();
 
-        var positions = (await positionRepo.GetByAccountIdAsync(accountId)).ToList();
-        var operations = (await operationRepo.GetByAccountIdAsync(accountId)).ToList();
+        var account = await accountRepo.GetByIdAsync(accountId);
+        var userSettings = account is null ? null : await settingsRepo.GetByUserIdAsync(account.UserId);
+        var options = _signalOptions.WithOverrides(
+            userSettings?.UpcomingEventDaysThreshold,
+            userSettings?.UninvestedCashThresholdRub,
+            userSettings?.DefaultMaxConcentrationPercent);
+
         var targetAllocations = (await targetAllocationRepo.GetByAccountIdAsync(accountId)).ToList();
-        var existingUnread = (await signalRepo.GetByAccountIdAsync(accountId, isRead: false)).ToList();
-        var curve = await yieldCurveRepo.GetLatestAsync();
 
-        var positionContexts = new List<SignalPositionContext>();
-        var holdings = new List<PortfolioHolding>();
+        // Позиции уже сверены с брокером (закрытые удалены) — Quantity > 0 страхует от остатков.
+        var holdings = (await holdingsBuilder.BuildForAccountAsync(accountId, asOf, ct))
+            .Where(h => h.Quantity > 0m)
+            .ToList();
 
-        foreach (var position in positions)
+        var positionContexts = new List<SignalPositionContext>(holdings.Count);
+        foreach (var holding in holdings)
         {
             ct.ThrowIfCancellationRequested();
 
-            var instrument = await instrumentRepo.GetByIdAsync(position.InstrumentId);
-            if (instrument is null) continue; // ссылочная целостность нарушена — пропускаем, не падаем (та же устойчивость, что у других оркестраторов)
-
-            var coupons = (await couponRepo.GetByInstrumentIdAsync(position.InstrumentId)).ToList();
-            var amortizations = (await amortizationRepo.GetByInstrumentIdAsync(position.InstrumentId)).ToList();
-            var offers = (await offerRepo.GetByInstrumentIdAsync(position.InstrumentId)).ToList();
-
             positionContexts.Add(new SignalPositionContext
             {
-                PositionId = position.Id,
-                InstrumentId = instrument.Id,
-                Issuer = instrument.Issuer,
-                Name = instrument.Name,
-                MaturityDate = instrument.MaturityDate,
-                Coupons = coupons,
-                Amortizations = amortizations,
-                Offers = offers,
-            });
-
-            var quote = await quoteRepo.GetLatestAsync(position.InstrumentId);
-
-            var metricsInput = new BondMetricsCalculatorInput
-            {
-                InstrumentId = instrument.Id,
-                AsOf = asOf,
-                FaceValue = instrument.FaceValue,
-                MaturityDate = instrument.MaturityDate,
-                CouponType = instrument.CouponType,
-                HasAmortization = instrument.HasAmortization,
-                HasOffers = instrument.HasOffers,
-                DataIncomplete = instrument.DataIncomplete || position.DataIncomplete,
-                CleanPrice = quote?.CleanPrice,
-                AccruedInterestFromSource = quote?.Accrued ?? position.Accrued,
-                Coupons = coupons,
-                Amortizations = amortizations,
-                Offers = offers,
-                CurveSnapshot = curve,
-            };
-
-            var metrics = BondMetricsCalculator.Calculate(metricsInput);
-
-            // Если котировка недоступна, BondMetrics.DirtyPrice деградирует к 0 (см. doc-comment
-            // BondMetricsCalculator) — holding попадает в список с нулевой рыночной стоимостью
-            // вместо исключения из него: для правил композиции/концентрации (5/6/7) это безопасная
-            // деградация (вклад в Σ MarketValue = 0, не искажает доли остальных эмитентов), в
-            // отличие от PortfolioSnapshotService (NAV), где такая позиция вместо этого полностью
-            // исключается из суммы — разная семантика разных потребителей одних и тех же данных.
-            var marketValue = (quote?.DirtyPrice ?? metrics.DirtyPrice) * position.Quantity;
-
-            holdings.Add(new PortfolioHolding
-            {
-                PositionId = position.Id,
-                InstrumentId = instrument.Id,
-                Quantity = position.Quantity,
-                MarketValueRub = marketValue,
-                Issuer = instrument.Issuer,
-                Sector = instrument.Sector,
-                CouponType = instrument.CouponType,
-                MaturityDate = instrument.MaturityDate,
-                HorizonDate = metrics.HorizonDate,
-                IsCalculatedToOffer = metrics.CalculatedToOffer,
-                ModifiedDuration = metrics.ModifiedDuration,
-                YtmEffective = metrics.YtmEffective,
-                CurrentYield = metrics.CurrentYield,
-                GSpread = metrics.GSpread,
-                IsFloater = metrics.IsFloater,
-                IsIndexed = metrics.IsIndexed,
-                IsEstimated = metrics.IsEstimated,
-                DataIncomplete = metrics.DataIncomplete,
+                PositionId = holding.PositionId,
+                InstrumentId = holding.InstrumentId,
+                Issuer = holding.Issuer,
+                Name = holding.Name,
+                MaturityDate = holding.MaturityDate,
+                Quantity = holding.Quantity,
+                CouponType = holding.CouponType,
+                Coupons = (await couponRepo.GetByInstrumentIdAsync(holding.InstrumentId)).ToList(),
+                Amortizations = (await amortizationRepo.GetByInstrumentIdAsync(holding.InstrumentId)).ToList(),
+                Offers = (await offerRepo.GetByInstrumentIdAsync(holding.InstrumentId)).ToList(),
             });
         }
 
-        var evaluationInput = new SignalEvaluationInput
+        var produced = SignalsEngine.Evaluate(new SignalEvaluationInput
         {
             AccountId = accountId,
             AsOf = asOf,
             Positions = positionContexts,
             Holdings = holdings,
-            Operations = operations,
+            CashRub = account?.CashRub,
             TargetAllocations = targetAllocations,
-            ExistingUnreadSignals = existingUnread,
-            Options = _signalOptions,
-        };
+            Options = options,
+        });
 
-        var newSignals = SignalsEngine.Evaluate(evaluationInput);
+        var now = DateTime.UtcNow;
+        var existing = await signalRepo.GetByAccountIdAsync(accountId, includeResolved: true);
+        var plan = SignalSetSynchronizer.Plan(produced, existing);
 
-        foreach (var signal in newSignals)
+        foreach (var signal in plan.ToInsert)
         {
             ct.ThrowIfCancellationRequested();
-            await signalRepo.CreateAsync(signal);
+            signal.FirstSeenAt = now;
+            signal.LastSeenAt = now;
+            await signalRepo.InsertAsync(signal);
         }
 
-        return newSignals.Count;
+        foreach (var (current, fresh) in plan.ToRefresh)
+        {
+            ct.ThrowIfCancellationRequested();
+            await signalRepo.RefreshAsync(current.Id, fresh.Severity, fresh.Subject, fresh.SuggestedAction, now);
+        }
+
+        await signalRepo.ResolveAsync(plan.ToResolve.Select(s => s.Id).ToList(), now);
+        await signalRepo.PurgeResolvedBeforeAsync(accountId, now.AddDays(-ResolvedRetentionDays));
+
+        await NotifyNewCriticalAsync(sp, plan.ToInsert, ct);
+
+        return plan.ToInsert.Count;
+    }
+
+    /// <summary>Сколько дней хранить закрытые события (история) до удаления.</summary>
+    internal const int ResolvedRetentionDays = 90;
+
+    /// <summary>
+    /// Одно Telegram-сообщение на цикл о НОВЫХ Critical-событиях (put-оферта — требует решения
+    /// владельца). Купоны/Info/Warning не пушатся. Сбой отправки не роняет цикл
+    /// (<see cref="ITelegramAlertSender.SendAsync"/> не бросает).
+    /// </summary>
+    private static async Task NotifyNewCriticalAsync(IServiceProvider sp, IReadOnlyList<Signal> inserted, CancellationToken ct)
+    {
+        var critical = inserted.Where(s => s.Severity == SignalSeverity.Critical).ToList();
+        if (critical.Count == 0) return;
+
+        var sender = sp.GetService<ITelegramAlertSender>();
+        if (sender is null) return;
+
+        var lines = critical.Select(s => $"• {s.Subject}: {s.SuggestedAction}");
+        await sender.SendAsync("Bonds: требуется ваше решение" + Environment.NewLine + string.Join(Environment.NewLine, lines), ct);
     }
 }

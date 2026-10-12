@@ -1,7 +1,7 @@
 namespace Bonds.Core.Analytics;
 
 /// <summary>
-/// Задача 34 часть B.3 — какую ось концентрации применяет <see cref="CashAllocationService.Allocate"/>.
+/// Какую ось концентрации применяет <see cref="CashAllocationService.Allocate"/>.
 /// Issuer в банке (<c>bond_universe</c>) отсутствует (задача 34 doc-comment
 /// <see cref="CashAllocationCandidate.Sector"/>) — для рыночных источников (market/recommended)
 /// нужна альтернативная ось, а "market" по решению владельца (см. plan/34 часть B.3 NEEDS DECISION,
@@ -15,13 +15,13 @@ public enum CashAllocationConcentrationAxis
     Issuer,
 
     /// <summary>Лимит доли СЕКТОРА (<see cref="CashAllocationCandidate.Sector"/>) — source=recommended
-    /// (задача 34). Требует <c>maxSectorSharePercent</c> в <see cref="CashAllocationService.Allocate"/>.
+    ///. Требует <c>maxSectorSharePercent</c> в <see cref="CashAllocationService.Allocate"/>.
     /// В отличие от issuer-оси, "текущая доля сектора в портфеле" НЕ учитывается (на банк-слое нет
     /// данных о секторной композиции уже удерживаемых позиций) — лимит ограничивает распределение
     /// ТОЛЬКО вносимых денег между секторами кандидатов, не всего портфеля.</summary>
     Sector,
 
-    /// <summary>Без лимита концентрации вовсе — source=market (задача 34, принятый дефолт NEEDS
+    /// <summary>Без лимита концентрации вовсе — source=market (принятый дефолт NEEDS
     /// DECISION plan/34 часть B.3): "весь рынок" должен честно показывать самые доходные бумаги без
     /// диверсификационных искажений; диверсификация в этом режиме — только через
     /// <c>maxLotsPerCandidate</c> (не более 1 лота на кандидата).</summary>
@@ -29,10 +29,10 @@ public enum CashAllocationConcentrationAxis
 }
 
 /// <summary>
-/// «Куда вложить сумму» (plan/17 §B, задача 34 §B — источники кандидатов). Жадное распределение
+/// «Куда вложить сумму» (задача 34 §B — источники кандидатов). Жадное распределение
 /// свободных денег между кандидатами: для source=portfolio — текущими позициями портфеля (НЕ
 /// скринер по всей вселенной бумаг — та же граница MVP, что у <see cref="SwitchAnalysisService"/>,
-/// spec §3 «Вне скоупа»); для source=market/recommended (задача 34) — кандидатами всей
+/// spec §3 «Вне скоупа»); для source=market/recommended — кандидатами всей
 /// фикс-купонной вселенной банка <c>bond_universe</c> (вызывающий эндпоинт строит
 /// <see cref="CashAllocationCandidate"/> из банк-записей, сервис не знает о происхождении
 /// кандидата — тот же принцип, что <see cref="CashAllocationCandidate.IsComparable"/>). Кандидаты
@@ -50,7 +50,7 @@ public static class CashAllocationService
     public const decimal DefaultMaxIssuerSharePercent = 25m;
 
     /// <summary>
-    /// Задача 34 часть B.3 — дефолтный лимит доли СЕКТОРА для source=recommended
+    /// Дефолтный лимит доли СЕКТОРА для source=recommended
     /// (<see cref="CashAllocationConcentrationAxis.Sector"/>). 35% — выбрано в согласованном
     /// владельцем диапазоне 30-40% (plan/34 NEEDS DECISION), ближе к верхней границе: банк
     /// классифицирует сектор ГРУБО, всего 3 значения (<c>BondUniverseSectorMapper</c>:
@@ -94,7 +94,7 @@ public static class CashAllocationService
     /// Если ни одного лота купить не удалось: для оси Issuer (обратная совместимость source=portfolio,
     /// поведение НЕ менялось задачей 34) причина всегда <see cref="CashAllocationSkipReason.ConcentrationLimit"/>
     /// — так было исторически, даже когда истинная причина "не хватило денег на первый лот"; для
-    /// осей Sector/None (задача 34, новый код, ничьё поведение не ломает) причина различается честно:
+    /// осей Sector/None (новый код, ничьё поведение не ломает) причина различается честно:
     /// <see cref="CashAllocationSkipReason.InsufficientFunds"/>, если денег не хватило бы даже без
     /// учёта лимита концентрации, иначе <see cref="CashAllocationSkipReason.ConcentrationLimit"/>.
     /// </summary>
@@ -148,7 +148,7 @@ public static class CashAllocationService
 
         foreach (var candidate in ordered)
         {
-            // Задача 31 часть B.3: гейт сравнимости — ПЕРЕД гейтом доходности. Сервис по-прежнему не
+            // Гейт сравнимости — ПЕРЕД гейтом доходности. Сервис по-прежнему не
             // знает про IsFloater как таковой (см. doc-comment CashAllocationCandidate.IsComparable/
             // тест Allocate_FloaterWithoutYtm...) — просто получает уже посчитанный вызывающим слоем
             // булев флаг (тот же паттерн, что EffectiveYield уже готовый CurrentYield для флоатера).
@@ -193,7 +193,7 @@ public static class CashAllocationService
                 continue;
             }
 
-            // Задача 34: ключ бакета зависит от активной оси — Sector/None читают Sector/ничего,
+            // Ключ бакета зависит от активной оси — Sector/None читают Sector/ничего,
             // Issuer (прежнее поведение) — Issuer с fallback на InstrumentId, если у кандидата нет
             // эмитента (тот же fallback, что и до задачи 34; InstrumentId для этой оси всегда не
             // null — источник portfolio всегда его проставляет, см. doc-comment CashAllocationCandidate.InstrumentId).
@@ -227,7 +227,7 @@ public static class CashAllocationService
                 {
                     var newBucketValue = bucketValue + costRub + candidate.PricePerLotRub;
 
-                    // Задача 34: ось Sector делит на ФИКСИРОВАННЫЙ amountRub (весь бюджет
+                    // Ось Sector делит на ФИКСИРОВАННЫЙ amountRub (весь бюджет
                     // распределения), а не на растущую базу newPortfolioValue, как ось Issuer.
                     // Причина: у Issuer есть содержательная "текущая стоимость портфеля" — база
                     // изначально большая и растёт только за вносимые деньги (реалистичное
@@ -261,7 +261,7 @@ public static class CashAllocationService
                     bucketValueAfterAllocation[bucketKey] = bucketValue + costRub;
                 }
 
-                // Задача 24: разложение costRub (вся докупка) на компоненты — тот же множитель
+                // Разложение costRub (вся докупка) на компоненты — тот же множитель
                 // "число купленных лотов", что и у costRub относительно PricePerLotRub.
                 var lotsBought = candidate.LotSize > 0m ? quantity / candidate.LotSize : 0m;
 
@@ -283,7 +283,7 @@ public static class CashAllocationService
             }
             else
             {
-                // Задача 34: ось Issuer сохраняет прежнее поведение (всегда ConcentrationLimit, см.
+                // Ось Issuer сохраняет прежнее поведение (всегда ConcentrationLimit, см.
                 // doc-comment метода) для обратной совместимости source=portfolio; оси Sector/None —
                 // новый код, честно различает "не хватило бы денег даже без лимита" от "лимит
                 // реально заблокировал покупку".
@@ -316,8 +316,8 @@ public static class CashAllocationService
 }
 
 /// <summary>
-/// Один кандидат на докупку — для source=portfolio (plan/17 §B) текущая позиция портфеля, для
-/// source=market/recommended (задача 34) — запись <c>bond_universe</c> банка. Сервис не знает,
+/// Один кандидат на докупку — для source=portfolio текущая позиция портфеля, для
+/// source=market/recommended — запись <c>bond_universe</c> банка. Сервис не знает,
 /// откуда взялся кандидат (тот же принцип, что <see cref="IsComparable"/>).
 /// </summary>
 public sealed record CashAllocationCandidate
@@ -325,7 +325,7 @@ public sealed record CashAllocationCandidate
     /// <summary>
     /// Реальный <c>Instrument.Id</c> — для source=portfolio (в т.ч. watchlist-кандидаты) ВСЕГДА не
     /// null (holdings строятся из реальных позиций/материализованных инструментов). Для
-    /// source=market/recommended (задача 34) — null: банк-кандидат из <c>bond_universe</c> не связан
+    /// source=market/recommended — null: банк-кандидат из <c>bond_universe</c> не связан
     /// с таблицей Instrument (материализация каждого кандидата через
     /// <c>POST /api/universe/{secid}/materialize</c> намеренно НЕ вызывается — план явно запрещает
     /// "материализовывать вселенную через движок"; тот же принцип, что уже применён в
@@ -334,7 +334,7 @@ public sealed record CashAllocationCandidate
     /// </summary>
     public required ulong? InstrumentId { get; init; }
 
-    /// <summary>Задача 34: биржевой идентификатор MOEX (SECID) — только для source=market/recommended
+    /// <summary>Биржевой идентификатор MOEX (SECID) — только для source=market/recommended
     /// (идентификатор рыночного кандидата, см. <see cref="InstrumentId"/>). Null для source=portfolio.</summary>
     public string? Secid { get; init; }
 
@@ -345,7 +345,7 @@ public sealed record CashAllocationCandidate
     /// имени — см. doc-comment plan/34).</summary>
     public string? Issuer { get; init; }
 
-    /// <summary>Задача 34: грубая секторная классификация банка (<c>BondUniverseEntry.Sector</c> —
+    /// <summary>Грубая секторная классификация банка (<c>BondUniverseEntry.Sector</c> —
     /// "Гособлигации"/"Муниципальные"/"Корпоративные", НЕ то же самое, что <c>Instrument.Sector</c>)
     /// — альтернативная ось концентрации для source=market/recommended, когда issuer недоступен (см.
     /// <see cref="CashAllocationConcentrationAxis.Sector"/>). Null для source=portfolio (issuer-ветка
@@ -359,17 +359,17 @@ public sealed record CashAllocationCandidate
     public required decimal PricePerLotRub { get; init; }
 
     /// <summary>
-    /// Задача 24: разложение <see cref="PricePerLotRub"/> на компоненты (чистая цена + НКД + комиссия)
+    /// Разложение <see cref="PricePerLotRub"/> на компоненты (чистая цена + НКД + комиссия)
     /// для одного лота — только для отображения в UI («купить N шт × цена (чистая + НКД + комиссия)»),
     /// не участвует в расчёте распределения (тот использует только <see cref="PricePerLotRub"/>).
     /// Сумма CleanPriceRub + AccruedRub + CommissionRub должна равняться PricePerLotRub.
     /// </summary>
     public decimal CleanPriceRub { get; init; }
 
-    /// <summary>Задача 24: НКД в составе цены одного лота — см. <see cref="CleanPriceRub"/>.</summary>
+    /// <summary>НКД в составе цены одного лота — см. <see cref="CleanPriceRub"/>.</summary>
     public decimal AccruedRub { get; init; }
 
-    /// <summary>Задача 24: комиссия покупки в составе цены одного лота — см. <see cref="CleanPriceRub"/>.</summary>
+    /// <summary>Комиссия покупки в составе цены одного лота — см. <see cref="CleanPriceRub"/>.</summary>
     public decimal CommissionRub { get; init; }
 
     /// <summary>Размер лота в штуках. У большинства корп. облигаций 1 — если источник (Instrument/T-Invest) не отдаёт лот, берётся 1 и помечается <see cref="LotSizeIsAssumed"/>.</summary>
@@ -382,7 +382,7 @@ public sealed record CashAllocationCandidate
     public required decimal CurrentIssuerMarketValueRub { get; init; }
 
     /// <summary>
-    /// Задача 31 часть B.3: true — доходность кандидата сравнима с YTM обычной фикс-купонной
+    /// true — доходность кандидата сравнима с YTM обычной фикс-купонной
     /// бумаги (флоатер/индексируемая — не сравнимы, их "доходность" — CurrentYield, не YTM).
     /// Вызывающий слой (эндпоинт) обязан проставить флаг; дефолт <c>true</c> — существующие
     /// вызовы без явного значения (в т.ч. старые тесты) продолжают работать как раньше.
@@ -390,12 +390,12 @@ public sealed record CashAllocationCandidate
     /// ДО проверки <see cref="EffectiveYield"/> (у флоатера ЕСТЬ доходность — CurrentYield, — но
     /// она не сравнима с YTM фикс-купона, поэтому не должна ранжироваться вместе с ним).
     /// <para>
-    /// Не обязательно совпадает с полным <see cref="ReplacementMatrixService.IsComparable"/>
+    /// Не обязательно совпадает с полным <see cref="YieldComparability.IsComparable"/>
     /// (тем же, что использует матрица замен/RV/PostReplacement) — GetAllocation намеренно НЕ
     /// включает сюда DataIncomplete: бумага с неполными данными и без цены и так естественно
     /// получает <see cref="EffectiveYield"/>=null и уходит в существующий
     /// <see cref="CashAllocationSkipReason.NoYield"/> (см. doc-comment вызывающего кода в
-    /// AnalyticsEndpoints.GetAllocation).
+    /// AllocationEndpoints.GetAllocation).
     /// </para>
     /// </summary>
     public bool IsComparable { get; init; } = true;
@@ -417,13 +417,13 @@ public sealed record CashAllocationLine
     /// <summary>Null для source=market/recommended — см. doc-comment <see cref="CashAllocationCandidate.InstrumentId"/>. Идентификатор для этих строк — <see cref="Secid"/>.</summary>
     public required ulong? InstrumentId { get; init; }
 
-    /// <summary>Задача 34: см. <see cref="CashAllocationCandidate.Secid"/>.</summary>
+    /// <summary>См. <see cref="CashAllocationCandidate.Secid"/>.</summary>
     public string? Secid { get; init; }
 
     public string? Name { get; init; }
     public string? Issuer { get; init; }
 
-    /// <summary>Задача 34: см. <see cref="CashAllocationCandidate.Sector"/>.</summary>
+    /// <summary>См. <see cref="CashAllocationCandidate.Sector"/>.</summary>
     public string? Sector { get; init; }
 
     public required decimal Quantity { get; init; }
@@ -434,16 +434,16 @@ public sealed record CashAllocationLine
     public required bool LotSizeAssumed { get; init; }
 
     /// <summary>
-    /// Задача 24: разложение EstimatedCostRub на всю докупку (не на 1 лот) — чистая цена всех купленных
+    /// Разложение EstimatedCostRub на всю докупку (не на 1 лот) — чистая цена всех купленных
     /// бумаг. CleanCostRub + AccruedCostRub + CommissionCostRub = EstimatedCostRub (с точностью до
     /// округления). 0, если у кандидата не было разложения (см. <see cref="CashAllocationCandidate.CleanPriceRub"/>).
     /// </summary>
     public decimal CleanCostRub { get; init; }
 
-    /// <summary>Задача 24: НКД в составе EstimatedCostRub — см. <see cref="CleanCostRub"/>.</summary>
+    /// <summary>НКД в составе EstimatedCostRub — см. <see cref="CleanCostRub"/>.</summary>
     public decimal AccruedCostRub { get; init; }
 
-    /// <summary>Задача 24: комиссия покупки в составе EstimatedCostRub — см. <see cref="CleanCostRub"/>.</summary>
+    /// <summary>Комиссия покупки в составе EstimatedCostRub — см. <see cref="CleanCostRub"/>.</summary>
     public decimal CommissionCostRub { get; init; }
 }
 
@@ -457,7 +457,7 @@ public enum CashAllocationSkipReason
     /// Активная ось концентрации (эмитент/сектор, <see cref="CashAllocationConcentrationAxis"/>) не
     /// позволяет купить ни одного лота. Для оси Issuer (source=portfolio, поведение до задачи 34 не
     /// менялось) — универсальная причина для ЛЮБОГО нулевого исхода, в т.ч. когда денег не хватило бы
-    /// даже без лимита (историческое упрощение). Для осей Sector/None (задача 34) она отличается от
+    /// даже без лимита (историческое упрощение). Для осей Sector/None она отличается от
     /// <see cref="InsufficientFunds"/> честно (см. doc-comment <see cref="CashAllocationService.Allocate"/>).
     /// </summary>
     ConcentrationLimit,
@@ -466,15 +466,15 @@ public enum CashAllocationSkipReason
     NoPrice,
 
     /// <summary>
-    /// Задача 31 часть B.3: флоатер/индексируемая/бумага с неполными данными — доходность не
+    /// Флоатер/индексируемая/бумага с неполными данными — доходность не
     /// сравнима с YTM фикс-купона (см. <see cref="CashAllocationCandidate.IsComparable"/> /
-    /// <see cref="ReplacementMatrixService.IsComparable"/>), поэтому исключена из аллокации, даже
+    /// <see cref="YieldComparability.IsComparable"/>), поэтому исключена из аллокации, даже
     /// если у неё формально есть высокая CurrentYield.
     /// </summary>
     NotComparable,
 
     /// <summary>
-    /// Задача 34 — только для осей Sector/None (source=market/recommended): остатка денег не хватило
+    /// Только для осей Sector/None (source=market/recommended): остатка денег не хватило
     /// бы на 1 лот кандидата ДАЖЕ без учёта лимита концентрации (для оси None лимита концентрации
     /// вообще нет — это единственная возможная причина нулевого исхода). Ось Issuer
     /// (source=portfolio) этой причиной не пользуется — см. doc-comment <see cref="ConcentrationLimit"/>.
@@ -488,7 +488,7 @@ public sealed record CashAllocationSkip
     /// <summary>Null для source=market/recommended — см. doc-comment <see cref="CashAllocationCandidate.InstrumentId"/>.</summary>
     public required ulong? InstrumentId { get; init; }
 
-    /// <summary>Задача 34: см. <see cref="CashAllocationCandidate.Secid"/>.</summary>
+    /// <summary>См. <see cref="CashAllocationCandidate.Secid"/>.</summary>
     public string? Secid { get; init; }
 
     public string? Name { get; init; }

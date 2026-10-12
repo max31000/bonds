@@ -1,8 +1,8 @@
 namespace Bonds.Infrastructure.Scheduling;
 
 /// <summary>
-/// Снимок состояния последнего/текущего цикла синка (plan/07 Часть B) — потокобезопасное
-/// in-memory чтение для будущего <c>GET /api/sync/status</c> (этап 08). Immutable record:
+/// Снимок состояния последнего/текущего цикла синка — потокобезопасное
+/// in-memory чтение для будущего <c>GET /api/sync/status</c>. Immutable record:
 /// <see cref="SyncCycleService.GetStatus"/> возвращает копию текущего внутреннего состояния, а не
 /// ссылку на мутируемый объект, поэтому читатель не увидит частично обновлённое состояние даже
 /// без блокировки на своей стороне.
@@ -16,7 +16,7 @@ public sealed record SyncCycleStatus
     public IReadOnlyList<string> LastRunErrors { get; init; } = Array.Empty<string>();
 
     /// <summary>
-    /// Plan/13 часть B: true, если у заведённого пользователя токен T-Invest не задан или не
+    /// true, если у заведённого пользователя токен T-Invest не задан или не
     /// расшифровался (см. <see cref="Bonds.Infrastructure.Services.TInvestTokenStatus"/>) —
     /// выставляется циклом синка (<see cref="SyncCycleService"/>) по результату
     /// <c>ITInvestTokenProvider.GetTokenStatusAsync</c>, чтобы фронт мог показать явный бейдж

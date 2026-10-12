@@ -5,7 +5,7 @@ namespace Bonds.Infrastructure.Connectors.Moex;
 
 /// <summary>
 /// Парсер ответа MOEX ISS <c>/iss/engines/stock/zcyc/securities.json</c> — параметры кривой
-/// Нельсона-Сигеля-Свенссона безрисковой кривой (Gcurve/КБД), блок "params" (plan/04 Часть A,
+/// Нельсона-Сигеля-Свенссона безрисковой кривой (Gcurve/КБД), блок "params" (
 /// §4.2). Название "MOEX GCURVE" — товарный знак (spec §4.3), в коде используем нейтральное
 /// "YieldCurve"/"безрисковая кривая".
 /// </summary>

@@ -138,4 +138,20 @@ public class BondCashFlowBuilderTests
         // считать YTM/дюрацию на этой исковерканной форме.
         flow.Should().Contain(f => !f.IsKnown);
     }
+
+    [Fact]
+    public void Build_TodayPaymentAndMaturity_ExcludedByDefault_IncludedForDisplay()
+    {
+        // plan/39 m4: выплата ровно в asOf. Для доходностей (по умолчанию) — строго после asOf;
+        // для календаря (includeAsOf) — видна до факта, включая погашение номинала в день asOf.
+        var coupons = new[] { TestModelFactory.Coupon(InstrumentId, AsOf, 100m) };
+
+        BondCashFlowBuilder.Build(1000m, AsOf, AsOf, coupons, amortizations: null).Should().BeEmpty();
+
+        var display = BondCashFlowBuilder.Build(1000m, AsOf, AsOf, coupons, amortizations: null, includeAsOf: true);
+        display.Should().ContainSingle();
+        display[0].Date.Should().Be(AsOf);
+        display[0].CouponAmount.Should().Be(100m);
+        display[0].PrincipalAmount.Should().Be(1000m);
+    }
 }

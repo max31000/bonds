@@ -11,7 +11,7 @@ import relativeTime from 'dayjs/plugin/relativeTime';
 import 'dayjs/locale/ru';
 import { resetAuthState, SERVICE_ID } from '../api/client';
 import { useAccessStore } from '../store/useAccessStore';
-import { useSignalsStore } from '../store/useSignalsStore';
+import { countAttention, useSignalsStore } from '../store/useSignalsStore';
 import { useSyncStore } from '../store/useSyncStore';
 
 dayjs.extend(relativeTime);
@@ -30,11 +30,11 @@ const NAV_ITEMS: BondsNavItem[] = [
   { label: 'Аналитика', path: '/analytics' },
   { label: 'Рекомендации', path: '/recommendations' },
   { label: 'Скринер', path: '/screener' },
-  { label: 'Сигналы', path: '/signals', showUnreadBadge: true },
+  { label: 'События', path: '/signals', showUnreadBadge: true },
   { label: 'Настройки', path: '/settings' },
 ];
 
-/** Plan/16 часть B: порог "долгого перерыва" — старше этого с последнего успешного синка триггерит тихий фоновый синк при открытии. */
+/** Порог "долгого перерыва" — старше этого с последнего успешного синка триггерит тихий фоновый синк при открытии. */
 const STALE_SYNC_THRESHOLD_MS = 12 * 60 * 60 * 1000;
 
 /** Пользователь вошёл и `/auth/api/me` выдаёт ему bonds (окончательно решает API: 403 → «Нет доступа»). */
@@ -44,7 +44,7 @@ function useHasAccess(): boolean {
 }
 
 /**
- * Компактный индикатор здоровья синка рядом с кнопкой «Обновить данные» (plan/13 часть B) —
+ * Компактный индикатор здоровья синка рядом с кнопкой «Обновить данные» —
  * иначе упавший/деградировавший автосинк никак не виден в UI. Три состояния, приоритет сверху вниз:
  * 1. Бейдж «Токен не подключён» (TokenMissingOrInvalid) — кликабельный, ведёт на /settings.
  * 2. Бейдж «Ошибка синка» с tooltip первой ошибки — последний прогон упал позже последнего успеха.
@@ -113,7 +113,7 @@ function showSyncResult(result: Awaited<ReturnType<ReturnType<typeof useSyncStor
     notifications.show({
       color: 'green',
       title: 'Данные обновлены',
-      message: `Инструментов: ${result.instrumentsSynced}, операций: ${result.operationsUpserted}, сигналов создано: ${result.signalsCreated}.`,
+      message: `Инструментов: ${result.instrumentsSynced}, операций: ${result.operationsUpserted}, новых событий: ${result.signalsCreated}.`,
     });
   }
 }
@@ -149,7 +149,7 @@ export function SyncActions() {
 
 /**
  * Загрузка данных шапки (сигналы для бейджа, статус синка) и автосинк после долгого перерыва
- * (plan/16 часть B): если последний успешный синк старше 12 часов и ничего не бежит — тихо
+ *: если последний успешный синк старше 12 часов и ничего не бежит — тихо
  * запускаем синк, по завершении — тост. Рендерится только внутри `LoginRequired`.
  */
 function SessionBootstrap() {
@@ -243,7 +243,7 @@ export function ServiceLayout() {
   useResetOnSessionChange();
   const hasAccess = useHasAccess();
   const denied = useAccessStore((s) => s.denied);
-  const unreadCount = useSignalsStore((s) => s.signals.filter((x) => !x.isRead).length);
+  const unreadCount = useSignalsStore((s) => countAttention(s.signals));
 
   const nav: NavItem[] =
     hasAccess && !denied

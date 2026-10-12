@@ -1,12 +1,12 @@
 namespace Bonds.Infrastructure.Scheduling;
 
 /// <summary>
-/// Контракт полного цикла синка (plan/07 Часть B) — реализуется <see cref="SyncCycleService"/>.
+/// Контракт полного цикла синка — реализуется <see cref="SyncCycleService"/>.
 /// Интерфейс выделен отдельно (а не просто конкретный класс, как у BondSyncService/
 /// CashFlowProjectionOrchestrator/PortfolioSnapshotService) потому что: (1) этот сервис должен
 /// быть Singleton (держит статус и семафор между тиками — см. doc-comment SyncCycleService), тогда
-/// как остальные оркестраторы Scoped; (2) этап 08 будет резолвить его и из HostedService, и из
-/// HTTP-контроллера force-refresh — интерфейс упрощает мокирование в тестах эндпоинта на этапе 08.
+/// как остальные оркестраторы Scoped; (2) его резолвят и HostedService, и
+/// эндпоинт force-refresh — интерфейс упрощает мокирование в тестах эндпоинта.
 /// </summary>
 public interface ISyncCycleRunner
 {
@@ -18,7 +18,7 @@ public interface ISyncCycleRunner
     /// </summary>
     Task<SyncCycleResult> RunCycleAsync(CancellationToken ct = default);
 
-    /// <summary>Текущий статус последнего/текущего цикла — для будущего GET /api/sync/status (этап 08).</summary>
+    /// <summary>Текущий статус последнего/текущего цикла — для будущего GET /api/sync/status.</summary>
     SyncCycleStatus GetStatus();
 }
 
@@ -32,14 +32,14 @@ public sealed class SyncCycleResult
     public bool NoAccountConfigured { get; set; }
 
     /// <summary>
-    /// Plan/13 часть B: true, если у заведённого пользователя токен T-Invest не задан или не
+    /// true, если у заведённого пользователя токен T-Invest не задан или не
     /// расшифровался (см. <see cref="Bonds.Infrastructure.Services.TInvestTokenStatus"/>).
     /// </summary>
     public bool TokenMissingOrInvalid { get; set; }
 
     public int InstrumentsSynced { get; set; }
 
-    /// <summary>Задача 20 часть A: сколько уникальных watchlist ISIN обновлено (справочник + котировка) за цикл.</summary>
+    /// <summary>Сколько уникальных watchlist ISIN обновлено (справочник + котировка) за цикл.</summary>
     public int WatchlistInstrumentsSynced { get; set; }
     public int OperationsUpserted { get; set; }
     public bool YieldCurveUpdated { get; set; }

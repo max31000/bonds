@@ -3,15 +3,15 @@ using Bonds.Core.Analytics;
 namespace Bonds.Core.Interfaces;
 
 /// <summary>
-/// Резолвер эффективной ставки комиссии брокера для счёта (plan/22 часть C). Контракт этого
+/// Резолвер эффективной ставки комиссии брокера для счёта. Контракт этого
 /// интерфейса потребляется задачами 23/25 — менять сигнатуру без согласования нельзя.
 /// <para>
 /// Приоритет источника ставки (первый применимый побеждает):
 /// 1. <see cref="CommissionRateSource.UserOverride"/> — ручной override в настройках пользователя
-///    (<c>UserSettings.CommissionRateOverride</c>, plan/22 часть D) — пользователь явно указал
+/// (<c>UserSettings.CommissionRateOverride</c>) — пользователь явно указал
 ///    свою реальную ставку, доверяем ей безусловно.
 /// 2. <see cref="CommissionRateSource.EstimatedFromTrades"/> — автоматическая оценка из журнала
-///    операций счёта (<see cref="CommissionRateEstimator"/>, plan/22 часть A) — используется, если
+/// операций счёта (<see cref="CommissionRateEstimator"/>) — используется, если
 ///    override не задан, но журнал позволяет оценить ставку (см. doc-comment estimator'а про
 ///    условия null).
 /// 3. <see cref="CommissionRateSource.Default"/> — захардкоженный дефолт
@@ -20,7 +20,7 @@ namespace Bonds.Core.Interfaces;
 /// </para>
 /// Явные ставки, переданные вызывающим слоем напрямую в запросе (например,
 /// <c>PostReplacement.SellCommissionRate/BuyCommissionRate</c>), по-прежнему побеждают резолвер —
-/// он вызывается только когда явная ставка не передана (см. AnalyticsEndpoints/PositionsEndpoints).
+/// он вызывается только когда явная ставка не передана (см. ReplacementEndpoints/AllocationEndpoints/PositionsEndpoints).
 /// </summary>
 public interface ICommissionRateProvider
 {

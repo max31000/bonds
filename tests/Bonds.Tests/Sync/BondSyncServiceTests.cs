@@ -1,5 +1,6 @@
 using Bonds.Core.Interfaces.Repositories;
 using Bonds.Core.Models;
+using Bonds.Core.Time;
 using Bonds.Infrastructure.Connectors.Moex;
 using Bonds.Infrastructure.Connectors.TInvest;
 using Bonds.Infrastructure.Sync;
@@ -28,6 +29,7 @@ public class BondSyncServiceTests
     private readonly Mock<IYieldCurveRepository> _yieldCurve = new();
     private readonly Mock<IPositionRepository> _positions = new();
     private readonly Mock<IOperationRepository> _operations = new();
+    private readonly Mock<IAccountRepository> _accounts = new();
 
     private const ulong AccountId = 42;
     private const string BrokerAccountId = "BA-1";
@@ -46,6 +48,7 @@ public class BondSyncServiceTests
         _yieldCurve.Object,
         _positions.Object,
         _operations.Object,
+        _accounts.Object,
         NullLogger<BondSyncService>.Instance);
 
     private void SetupHappyPathAccountAndPositions(decimal? currentNkd = 12.3m, decimal? currentPrice = 985.5m)
@@ -53,17 +56,20 @@ public class BondSyncServiceTests
         _tInvest.Setup(c => c.GetPrimaryAccountIdAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(BrokerAccountId);
 
-        _tInvest.Setup(c => c.GetBondPositionsAsync(BrokerAccountId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<TInvestPortfolioPosition>
+        _tInvest.Setup(c => c.GetPortfolioAsync(BrokerAccountId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TInvestPortfolio
             {
-                new()
+                Bonds = new List<TInvestPortfolioPosition>
                 {
-                    Figi = Figi,
-                    InstrumentUid = "uid-1",
-                    Quantity = 10,
-                    AveragePositionPrice = 980m,
-                    CurrentPrice = currentPrice,
-                    CurrentNkd = currentNkd,
+                    new()
+                    {
+                        Figi = Figi,
+                        InstrumentUid = "uid-1",
+                        Quantity = 10,
+                        AveragePositionPrice = 980m,
+                        CurrentPrice = currentPrice,
+                        CurrentNkd = currentNkd,
+                    },
                 },
             });
 
@@ -138,6 +144,111 @@ public class BondSyncServiceTests
     }
 
     [Fact]
+    public async Task SyncAsync_ReconcilesPositions_DeletesEverythingBrokerNoLongerHolds()
+    {
+        // Баг ОФЗ 26226: погашенная бумага пропадает из GetPortfolio, а в positions оставалась навсегда.
+        SetupHappyPathAccountAndPositions();
+        _positions.Setup(p => p.DeleteAllExceptAsync(AccountId, It.IsAny<IReadOnlyCollection<ulong>>())).ReturnsAsync(1);
+
+        var result = await CreateService().SyncAsync(AccountId);
+
+        result.PositionsClosed.Should().Be(1);
+        _positions.Verify(p => p.DeleteAllExceptAsync(AccountId,
+            It.Is<IReadOnlyCollection<ulong>>(keep => keep.Count == 1 && keep.Contains(InstrumentId))), Times.Once);
+    }
+
+    [Fact]
+    public async Task SyncAsync_BrokerHoldsNoBonds_DeletesOnlyAfterSecondConsecutiveEmptySync()
+    {
+        // Один пустой ответ брокера мог быть деградацией API — весь портфель по нему не стираем;
+        // второй подряд пустой ответ подтверждает «всё погашено/продано».
+        const ulong account = 4242; // свой id: состояние «пустой ответ уже видели» статическое
+        BondSyncService.EmptyPortfolioSeen.TryRemove(account, out _);
+        SetupHappyPathAccountAndPositions();
+        _tInvest.Setup(c => c.GetPortfolioAsync(BrokerAccountId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TInvestPortfolio { Bonds = [], CashRub = 16_000m });
+        _positions.Setup(p => p.GetByAccountIdAsync(account))
+            .ReturnsAsync(new List<Position> { new() { AccountId = account, InstrumentId = InstrumentId, Quantity = 10 } });
+
+        await CreateService().SyncAsync(account);
+        _positions.Verify(p => p.DeleteAllExceptAsync(It.IsAny<ulong>(), It.IsAny<IReadOnlyCollection<ulong>>()), Times.Never);
+
+        await CreateService().SyncAsync(account);
+        _positions.Verify(p => p.DeleteAllExceptAsync(account,
+            It.Is<IReadOnlyCollection<ulong>>(keep => keep.Count == 0)), Times.Once);
+    }
+
+    [Fact]
+    public async Task SyncAsync_BrokerHoldsNoBonds_NoLocalPositions_NothingToDefer()
+    {
+        SetupHappyPathAccountAndPositions();
+        _tInvest.Setup(c => c.GetPortfolioAsync(BrokerAccountId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TInvestPortfolio { Bonds = [] });
+        _positions.Setup(p => p.GetByAccountIdAsync(AccountId)).ReturnsAsync(new List<Position>());
+
+        await CreateService().SyncAsync(AccountId);
+
+        _positions.Verify(p => p.DeleteAllExceptAsync(AccountId, It.IsAny<IReadOnlyCollection<ulong>>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task SyncAsync_BrokerFigiNotResolvable_SkipsReconciliation()
+    {
+        // Не смогли сопоставить бумагу брокера с инструментом — не знаем, какие позиции живые;
+        // удалять ничего нельзя.
+        SetupHappyPathAccountAndPositions();
+        _tInvest.Setup(c => c.GetPortfolioAsync(BrokerAccountId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TInvestPortfolio
+            {
+                Bonds = [new() { Figi = "UNKNOWN", InstrumentUid = "uid-x", Quantity = 1, CurrentNkd = 0m }],
+            });
+        _tInvest.Setup(c => c.GetIsinByFigiAsync("UNKNOWN", It.IsAny<CancellationToken>())).ReturnsAsync((string?)null);
+
+        await CreateService().SyncAsync(AccountId);
+
+        _positions.Verify(p => p.DeleteAllExceptAsync(It.IsAny<ulong>(), It.IsAny<IReadOnlyCollection<ulong>>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task SyncAsync_StoresCashBalanceFromBroker()
+    {
+        SetupHappyPathAccountAndPositions();
+        _tInvest.Setup(c => c.GetPortfolioAsync(BrokerAccountId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TInvestPortfolio { Bonds = [], CashRub = 8_123.45m, TotalPortfolioRub = 173_000m });
+
+        await CreateService().SyncAsync(AccountId);
+
+        _accounts.Verify(a => a.UpdateBalanceAsync(AccountId, 8_123.45m, 173_000m, It.IsAny<DateTime>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task SyncAsync_UsesPinnedBrokerAccount_DoesNotFallBackToFirstOpenAccount()
+    {
+        // Закреплённый счёт важнее «первого открытого»: иначе открытие второго счёта переключило бы
+        // синк, а сверка стёрла бы весь портфель.
+        SetupHappyPathAccountAndPositions();
+        _accounts.Setup(a => a.GetByIdAsync(AccountId)).ReturnsAsync(new Account { Id = AccountId, BrokerAccountId = BrokerAccountId });
+        _tInvest.Setup(c => c.GetPrimaryAccountIdAsync(It.IsAny<CancellationToken>())).ReturnsAsync("OTHER-ACCOUNT");
+
+        var result = await CreateService().SyncAsync(AccountId);
+
+        result.Errors.Should().BeEmpty();
+        _tInvest.Verify(c => c.GetPortfolioAsync(BrokerAccountId, It.IsAny<CancellationToken>()), Times.Once);
+        _tInvest.Verify(c => c.GetPrimaryAccountIdAsync(It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task SyncAsync_NoPinnedBrokerAccount_PinsTheResolvedOne()
+    {
+        SetupHappyPathAccountAndPositions();
+        _accounts.Setup(a => a.GetByIdAsync(AccountId)).ReturnsAsync(new Account { Id = AccountId, UserId = 1 });
+
+        await CreateService().SyncAsync(AccountId);
+
+        _accounts.Verify(a => a.UpdateAsync(It.Is<Account>(acc => acc.BrokerAccountId == BrokerAccountId)), Times.Once);
+    }
+
+    [Fact]
     public async Task SyncAsync_PortfolioAlreadyHasCurrentPrice_DoesNotOverwriteQuoteWithoutAccrued()
     {
         // Регрессия: GetQuotesAsync (часть 3, fallback) не несёт НКД (только LastPrice). Если бы он
@@ -196,11 +307,14 @@ public class BondSyncServiceTests
         _tInvest.Setup(c => c.GetQuotesAsync(It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new Dictionary<string, TInvestQuote>());
 
-        _tInvest.Setup(c => c.GetBondPositionsAsync(BrokerAccountId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<TInvestPortfolioPosition>
+        _tInvest.Setup(c => c.GetPortfolioAsync(BrokerAccountId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TInvestPortfolio
             {
-                new() { Figi = Figi, InstrumentUid = "uid-1", Quantity = 10, AveragePositionPrice = 980m, CurrentNkd = 1m },
-                new() { Figi = secondFigi, InstrumentUid = "uid-2", Quantity = 5, AveragePositionPrice = 500m, CurrentNkd = 1m },
+                Bonds = new List<TInvestPortfolioPosition>
+                {
+                    new() { Figi = Figi, InstrumentUid = "uid-1", Quantity = 10, AveragePositionPrice = 980m, CurrentNkd = 1m },
+                    new() { Figi = secondFigi, InstrumentUid = "uid-2", Quantity = 5, AveragePositionPrice = 500m, CurrentNkd = 1m },
+                },
             });
 
         // Первый инструмент резолвится нормально...
@@ -226,6 +340,86 @@ public class BondSyncServiceTests
 
         _positions.Verify(p => p.UpsertAsync(It.Is<Position>(pos => pos.InstrumentId == InstrumentId)), Times.Once);
         _positions.Verify(p => p.UpsertAsync(It.Is<Position>(pos => pos.InstrumentId == secondInstrumentId)), Times.Never);
+    }
+
+    [Fact]
+    public async Task SyncAsync_NonBondOperations_AreNotStoredInBondJournal()
+    {
+        // plan/39 B3: покупка валюты/акции и дивидендный налог по акции не должны попасть в журнал
+        // облигационного XIRR; комиссия без инструмента (InstrumentKind = null) — остаётся.
+        SetupHappyPathAccountAndPositions();
+        _tInvest.Setup(c => c.GetOperationsAsync(BrokerAccountId, It.IsAny<DateTime?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<TInvestOperation>
+            {
+                new() { Id = "bond-buy", OperationType = "Buy", Figi = Figi, InstrumentKind = "Bond", Date = new DateTime(2026, 1, 10), PaymentRub = -9800m, Quantity = 10 },
+                new() { Id = "cny-buy", OperationType = "Buy", Figi = "CNY-FIGI", InstrumentKind = "Currency", Date = new DateTime(2026, 1, 11), PaymentRub = -50000m, Quantity = 5000 },
+                new() { Id = "share-sell", OperationType = "Sell", Figi = "SBER-FIGI", InstrumentKind = "Share", Date = new DateTime(2026, 1, 12), PaymentRub = 7000m, Quantity = 20 },
+                new() { Id = "share-tax", OperationType = "DividendTax", Figi = "SBER-FIGI", InstrumentKind = "Share", Date = new DateTime(2026, 1, 13), PaymentRub = -130m },
+                new() { Id = "acct-fee", OperationType = "ServiceFee", Date = new DateTime(2026, 1, 14), PaymentRub = -290m },
+            });
+        _operations.Setup(o => o.UpsertManyByExternalIdAsync(It.IsAny<IEnumerable<Operation>>()))
+            .ReturnsAsync((IEnumerable<Operation> ops) => ops.Count());
+
+        var result = await CreateService().SyncAsync(AccountId);
+
+        result.OperationsUpserted.Should().Be(2);
+        _operations.Verify(o => o.UpsertManyByExternalIdAsync(It.Is<IEnumerable<Operation>>(ops =>
+            ops.Select(x => x.ExternalId).OrderBy(x => x).SequenceEqual(new[] { "acct-fee", "bond-buy" }))), Times.Once);
+    }
+
+    [Fact]
+    public async Task SyncAsync_HistoricalBondOperation_CreatesInstrument_ResolvedOncePerFigi()
+    {
+        // plan/39 M6: бумага куплена и погашена до первого синка — в справочнике её нет. Инструмент
+        // создаётся, InstrumentId проставлен; два события по одному FIGI → один поход в T-Invest за ISIN.
+        SetupHappyPathAccountAndPositions();
+        const string histFigi = "HIST-FIGI";
+        _tInvest.Setup(c => c.GetIsinByFigiAsync(histFigi, It.IsAny<CancellationToken>())).ReturnsAsync("RU000HIST001");
+        _tInvest.Setup(c => c.GetOperationsAsync(BrokerAccountId, It.IsAny<DateTime?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<TInvestOperation>
+            {
+                new() { Id = "h-buy", OperationType = "Buy", Figi = histFigi, InstrumentKind = "Bond", Date = new DateTime(2025, 1, 10), PaymentRub = -980m, Quantity = 1 },
+                new() { Id = "h-red", OperationType = "BondRepaymentFull", Figi = histFigi, InstrumentKind = "Bond", Date = new DateTime(2025, 9, 10), PaymentRub = 1000m, Quantity = 1 },
+            });
+        _operations.Setup(o => o.UpsertManyByExternalIdAsync(It.IsAny<IEnumerable<Operation>>()))
+            .ReturnsAsync((IEnumerable<Operation> ops) => ops.Count());
+
+        await CreateService().SyncAsync(AccountId);
+
+        _tInvest.Verify(c => c.GetIsinByFigiAsync(histFigi, It.IsAny<CancellationToken>()), Times.Once);
+        _instruments.Verify(r => r.UpsertAsync(It.Is<Instrument>(i => i.Figi == histFigi && i.Isin == "RU000HIST001")), Times.Once);
+        _operations.Verify(o => o.UpsertManyByExternalIdAsync(It.Is<IEnumerable<Operation>>(ops =>
+            ops.Where(x => x.ExternalId == "h-buy" || x.ExternalId == "h-red").All(x => x.InstrumentId == InstrumentId)
+            && ops.Count(x => x.ExternalId == "h-buy" || x.ExternalId == "h-red") == 2)), Times.Once);
+    }
+
+    [Fact]
+    public async Task SyncAsync_FallbackQuote_NotWrittenForMaturedInstrument()
+    {
+        // plan/39 M8: у погашенной бумаги может остаться «последняя сделка» — котировку на сегодня не пишем.
+        SetupHappyPathAccountAndPositions(currentPrice: null);
+        var matured = new Instrument
+        {
+            Id = InstrumentId, Isin = Isin, Figi = Figi, Secid = "SU26238RMFS4",
+            FaceValue = 1000m, MaturityDate = BusinessClock.MoscowToday().AddDays(-3),
+        };
+        _instruments.Setup(r => r.GetByIdAsync(InstrumentId)).ReturnsAsync(matured);
+        _instruments.Setup(r => r.GetByFigiAsync(Figi)).ReturnsAsync(matured);
+        // Обогащение из MOEX перезаписывает MaturityDate — отдаём ту же (прошедшую) дату.
+        _moex.Setup(m => m.GetSecurityInfoAsync("SU26238RMFS4", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MoexSecurityInfo
+            {
+                Secid = "SU26238RMFS4", BoardId = "TQOB", FaceValue = 1000m, MatDate = matured.MaturityDate,
+            });
+        _tInvest.Setup(c => c.GetQuotesAsync(It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<string, TInvestQuote>
+            {
+                [Figi] = new TInvestQuote { Figi = Figi, LastPrice = 100m },
+            });
+
+        await CreateService().SyncAsync(AccountId);
+
+        _quotes.Verify(q => q.UpsertAsync(It.IsAny<MarketQuote>()), Times.Never);
     }
 
     [Fact]
@@ -261,10 +455,13 @@ public class BondSyncServiceTests
             .ReturnsAsync(new List<TInvestOperation>());
         _tInvest.Setup(c => c.GetQuotesAsync(It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new Dictionary<string, TInvestQuote>());
-        _tInvest.Setup(c => c.GetBondPositionsAsync(BrokerAccountId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<TInvestPortfolioPosition>
+        _tInvest.Setup(c => c.GetPortfolioAsync(BrokerAccountId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TInvestPortfolio
             {
-                new() { Figi = Figi, InstrumentUid = "uid-1", Quantity = 1, AveragePositionPrice = 100m, CurrentNkd = 0m },
+                Bonds = new List<TInvestPortfolioPosition>
+                {
+                    new() { Figi = Figi, InstrumentUid = "uid-1", Quantity = 1, AveragePositionPrice = 100m, CurrentNkd = 0m },
+                },
             });
 
         _instruments.Setup(r => r.GetByFigiAsync(Figi)).ReturnsAsync(new Instrument { Id = InstrumentId, Isin = "RU000NOTFOUND", Secid = null });

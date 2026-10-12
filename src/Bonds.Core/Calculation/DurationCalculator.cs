@@ -59,7 +59,7 @@ public static class DurationCalculator
 
         if (pvSum <= 0) return null;
 
-        // T-9/L-4: единая база нормировки — рыночная грязная цена (price), и для Маколея/выпуклости,
+        // единая база нормировки — рыночная грязная цена (price), и для Маколея/выпуклости,
         // и для PVBP. Раньше Маколей/выпуклость делились на ΣPV, а PVBP — на DirtyPrice; при неточном
         // YTM (ΣPV ≠ price) метрики чуть рассинхронизировались. При точном YTM ΣPV == price → без изменений.
         var macaulayYears = weightedTimeSum / price;

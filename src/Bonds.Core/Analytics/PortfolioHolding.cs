@@ -3,7 +3,7 @@ using Bonds.Core.Models;
 namespace Bonds.Core.Analytics;
 
 /// <summary>
-/// Один holding для расчёта композиции/сравнения портфеля (plan/06 B2/B3) — объединяет позицию,
+/// Один holding для расчёта композиции/сравнения портфеля — объединяет позицию,
 /// справочные данные инструмента и (опционально) уже посчитанные метрики движка
 /// (<see cref="Bonds.Core.Calculation.BondMetrics"/>). Сборка из репозиториев + вызов
 /// <see cref="Bonds.Core.Calculation.BondMetricsCalculator"/> — ответственность вызывающего
@@ -19,7 +19,7 @@ public sealed record PortfolioHolding
     public required decimal MarketValueRub { get; init; }
 
     /// <summary>
-    /// Задача 24: НКД на ОДНУ бумагу (см. doc-comment <see cref="Bonds.Core.Models.Position.Accrued"/>)
+    /// НКД на ОДНУ бумагу (см. doc-comment <see cref="Bonds.Core.Models.Position.Accrued"/>)
     /// — источник истины для разложения MarketValueRub на «чистую» стоимость и НКД в UI. НКД на всю
     /// позицию = AccruedPerBondRub × Quantity.
     /// </summary>
@@ -40,7 +40,7 @@ public sealed record PortfolioHolding
     /// <summary>Модифицированная дюрация (в годах) — null, если метрика не посчиталась (флоатер без дюрации/неполные данные).</summary>
     public decimal? ModifiedDuration { get; init; }
 
-    /// <summary>Дюрация Маколея (в годах) — единый измеритель «срока» для scatter-оси и G-спреда (T-7).
+    /// <summary>Дюрация Маколея (в годах) — единый измеритель «срока» для scatter-оси и G-спреда.
     /// Null там же, где и модифицированная.</summary>
     public decimal? MacaulayDuration { get; init; }
 
@@ -65,7 +65,7 @@ public sealed record PortfolioHolding
     public bool IsOutOfScopeCurrency { get; init; }
 
     /// <summary>
-    /// Цена входа/P&amp;L "от цены входа" (plan/14 §A) — null, если сборщик не считал эту метрику
+    /// Цена входа/P&amp;L "от цены входа" — null, если сборщик не считал эту метрику
     /// для данного потребителя (не все эндпоинты в ней нуждаются). Не путать с nullable-полями
     /// ВНУТРИ <see cref="PositionCostBasis"/> — те nullable, даже когда сама метрика посчитана, но
     /// цена входа не определена (пустой журнал/нет остатка).

@@ -3,7 +3,7 @@ using Bonds.Core.Universe;
 namespace Bonds.Core.Analytics;
 
 /// <summary>
-/// Задача 33 часть A — уровень одного риск-сигнала кандидата-замены. <b>ИНФОРМАЦИОННЫЙ, не
+/// Уровень одного риск-сигнала кандидата-замены. <b>ИНФОРМАЦИОННЫЙ, не
 /// «надёжность»</b>: владелец явно ограничил объём задачи 33 — не считать «надёжность рейтинговых
 /// агентств», в будущем добавится отдельный тег кредитного рейтинга. <see cref="Good"/> —
 /// позитивный сигнал (спокойнее рынка своей группы), <see cref="Caution"/> — негативный (заметно
@@ -18,7 +18,7 @@ public enum SignalLevel
 }
 
 /// <summary>
-/// Задача 33 часть A — два риск-сигнала одного кандидата-замены (не рейтинг, см. doc-comment
+/// Два риск-сигнала одного кандидата-замены (не рейтинг, см. doc-comment
 /// <see cref="SignalLevel"/>). Единицы: <see cref="GSpreadFraction"/> и
 /// <see cref="SpreadVsBasketMedianFraction"/> — ДОЛИ (контракт репо, см. docs/CODEBASE-GUIDE.md).
 /// </summary>
@@ -48,7 +48,7 @@ public sealed record CandidateRiskSignals(
     LiquidityScore LiquidityScoreRaw);
 
 /// <summary>
-/// Задача 38 часть A — светофор надёжности: ОДИН агрегат поверх двух информационных риск-сигналов
+/// Светофор надёжности: ОДИН агрегат поверх двух информационных риск-сигналов
 /// (<see cref="SignalLevel"/>) кандидата. <b>НЕ кредитный рейтинг</b> — см. doc-comment
 /// <see cref="CandidateRiskSignalService.Aggregate"/> для точной матрицы и владельческих рамок
 /// задачи (никаких внешних источников, никаких формулировок "рейтинг"/"надёжность эмитента").
@@ -61,22 +61,13 @@ public enum ReliabilityLight
 }
 
 /// <summary>
-/// Задача 33 часть A — чистый сервис двух информационных риск-сигналов кандидата-замены поверх
+/// Чистый сервис двух информационных риск-сигналов кандидата-замены поверх
 /// уже посчитанных данных (переиспользует <see cref="Bonds.Core.Universe.LiquidityScoreCalculator"/>
 /// и медиану корзины <see cref="RelativeValueService"/> — сам НЕ делает I/O и не строит корзины
 /// заново, вызывающий слой (Infrastructure/Api) передаёт готовые входы).
 /// </summary>
 public static class CandidateRiskSignalService
 {
-    /// <summary>
-    /// Порог |отклонение спреда от медианы корзины| для Caution/Good (согласовано с RV-вердиктом
-    /// Cheap/Fair/Rich, см. <c>AnalyticsEndpoints.FairVerdictThresholdFraction</c> в Bonds.Api —
-    /// Bonds.Core не может ссылаться на Api-слой, поэтому здесь отдельная константа с тем же
-    /// значением; держать оба места синхронными при пересмотре порога, см. план задачи 33 часть A).
-    /// 0.0020 = 20 базисных пунктов (доля, общая конвенция единиц репо).
-    /// </summary>
-    public const decimal SpreadDeviationThresholdFraction = 0.0020m;
-
     /// <summary>
     /// Матрица ликвидность×листинг → уровень (план задачи 33 часть A.1, зафиксировано тестами
     /// <c>CandidateRiskSignalServiceTests</c>):
@@ -130,7 +121,7 @@ public static class CandidateRiskSignalService
 
     /// <summary>
     /// Отклонение G-спреда кандидата от медианы ЕГО ЖЕ корзины (план часть A.1): заметно выше
-    /// (&gt; <see cref="SpreadDeviationThresholdFraction"/>) → Caution (рынок закладывает повышенный
+    /// (&gt; <see cref="SpreadThresholds.DeviationFraction"/>) → Caution (рынок закладывает повышенный
     /// риск/премию), в пределах порога → Neutral, заметно ниже → Good (спокойнее рынка своей группы).
     /// <paramref name="gSpreadFraction"/> или <paramref name="basketMedianGSpreadFraction"/> == null
     /// (MOEX не отдал спред/кривую или корзина не резолвится) → Neutral, оба значения в ответе null —
@@ -144,8 +135,8 @@ public static class CandidateRiskSignalService
         }
 
         var deviation = gSpread - median;
-        if (deviation > SpreadDeviationThresholdFraction) return SignalLevel.Caution;
-        if (deviation < -SpreadDeviationThresholdFraction) return SignalLevel.Good;
+        if (deviation > SpreadThresholds.DeviationFraction) return SignalLevel.Caution;
+        if (deviation < -SpreadThresholds.DeviationFraction) return SignalLevel.Good;
         return SignalLevel.Neutral;
     }
 
@@ -182,7 +173,7 @@ public static class CandidateRiskSignalService
     /// <summary>Классификация "Гособлигации" банка (<c>BondUniverseEntry.Sector</c>) — см.
     /// <c>Bonds.Infrastructure.Connectors.Moex.BondUniverseSectorMapper</c>/<c>MoexSegmentMapper</c>.
     /// Bonds.Core не может ссылаться на Infrastructure (layering) — строка продублирована здесь,
-    /// тот же приём, что <see cref="SpreadDeviationThresholdFraction"/> (см. её doc-comment).</summary>
+    /// тот же приём, что <see cref="SpreadThresholds.DeviationFraction"/>.</summary>
     public const string GovernmentSectorLabel = "Гособлигации";
 
     /// <summary>Классификация "Муниципальные" банка — см. doc-comment <see cref="GovernmentSectorLabel"/>.</summary>
@@ -193,7 +184,7 @@ public static class CandidateRiskSignalService
         string.Equals(sector, MunicipalSectorLabel, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
-    /// Задача 38 часть A.1 — светофор надёжности: ОДИН агрегат поверх двух риск-сигналов
+    /// Светофор надёжности: ОДИН агрегат поверх двух риск-сигналов
     /// (<see cref="SignalLevel"/> ликвидности и спреда) + листинга + сектора. <b>Информационный
     /// сигнал по биржевой статистике, НЕ кредитный рейтинг</b> (владелец задачи 38 явно запретил
     /// эту формулировку — нет надёжного бесплатного источника кредитного качества, см. план).
@@ -219,7 +210,7 @@ public static class CandidateRiskSignalService
     /// </para>
     /// <para>Возвращает уровень + строку-обоснование (что именно притянуло вниз) — обоснование НЕ
     /// содержит слова "рейтинг"/"надёжность эмитента" (закреплено тестом), финальный обязательный
-    /// дисклеймер "оценка по биржевой статистике, не кредитный рейтинг" — на фронте (задача 38 часть C),
+    /// дисклеймер "оценка по биржевой статистике, не кредитный рейтинг" — на фронте,
     /// рядом с обоснованием, не внутри строки.</para>
     /// </summary>
     public static (ReliabilityLight Level, string Reason) Aggregate(

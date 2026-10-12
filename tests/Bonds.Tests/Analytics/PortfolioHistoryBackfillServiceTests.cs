@@ -145,4 +145,29 @@ public class PortfolioHistoryBackfillServiceTests
         // Точка всё равно пишется (Approximate), просто без стоимости этой бумаги.
         written.Should().Be(1);
     }
+
+    [Fact]
+    public async Task BackfillAsync_MaturedInstrument_NoValueAfterMaturity()
+    {
+        // plan/39 B1: MaturityDate инструмента передаётся в ребилд — после неё цена не переносится вперёд.
+        var operations = new[] { Op(OperationType.Buy, BaseDate, -10000m, quantity: 10m) };
+        _operations.Setup(r => r.GetByAccountIdAsync(AccountId, null, null)).ReturnsAsync(operations);
+        _instruments.Setup(r => r.GetByIdAsync(InstrumentId)).ReturnsAsync(new Instrument
+        {
+            Id = InstrumentId, Isin = "RU000A10AZ45", Secid = "RU000A10AZ45", FaceValue = 1000m,
+            MaturityDate = BaseDate.AddDays(3),
+        });
+        var asOf = BaseDate.AddDays(7);
+        _moex.Setup(m => m.GetHistoryPricesAsync("RU000A10AZ45", BaseDate, asOf, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<MoexHistoryPricePoint> { new(BaseDate, 100m, 0m) });
+        _snapshots.Setup(r => r.GetByAccountIdAsync(AccountId, null, null)).ReturnsAsync(Array.Empty<PortfolioValueSnapshot>());
+        var written = new List<PortfolioValueSnapshot>();
+        _snapshots.Setup(r => r.UpsertAsync(It.IsAny<PortfolioValueSnapshot>()))
+            .Callback<PortfolioValueSnapshot>(written.Add).Returns(Task.CompletedTask);
+
+        await CreateService().BackfillAsync(AccountId, asOf);
+
+        written.Single(w => w.AsOf == BaseDate).MarketValueRub.Should().Be(10000m);
+        written.Single(w => w.AsOf == asOf).MarketValueRub.Should().Be(0m);
+    }
 }

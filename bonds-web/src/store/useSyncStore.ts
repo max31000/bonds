@@ -6,7 +6,7 @@ interface SyncStore {
   isRunning: boolean;
   lastResult: SyncRunResult | null;
   error: string | null;
-  /** T-13/B: полный статус последнего/текущего синка (для шапки — зелёная точка/красный/оранжевый бейдж). */
+  /** полный статус последнего/текущего синка (для шапки — зелёная точка/красный/оранжевый бейдж). */
   status: SyncStatus | null;
   /** Запускает форс-синхронизацию и опрашивает /sync/status, пока она не завершится. */
   triggerSync: () => Promise<SyncRunResult | null>;
@@ -20,7 +20,7 @@ function sleep(ms: number) {
 }
 
 /**
- * Состояние форс-обновления (POST /api/sync, GET /api/sync/status, plan/09c §B.7).
+ * Состояние форс-обновления (POST /api/sync, GET /api/sync/status).
  * Кнопка доступна из шапки/навигации на любом экране — состояние держим в общем сторе,
  * не локальным хуком, чтобы не дублировать спиннер/дизейбл в нескольких местах.
  */
@@ -53,7 +53,7 @@ export const useSyncStore = create<SyncStore>()((set, get) => ({
         await sleep(POLL_INTERVAL_MS);
       }
 
-      // Статус после ручного синка (plan/13 часть B) — тот же снимок, что и refreshStatus,
+      // Статус после ручного синка — тот же снимок, что и refreshStatus,
       // чтобы бейдж «Ошибка синка/Токен не подключён» в шапке обновился без отдельного вызова.
       set({ isRunning: false, status: latestStatus ?? get().status });
       return result;

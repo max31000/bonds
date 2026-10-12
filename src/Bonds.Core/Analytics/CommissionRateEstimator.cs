@@ -3,7 +3,7 @@ using Bonds.Core.Models;
 namespace Bonds.Core.Analytics;
 
 /// <summary>
-/// Оценка фактической ставки комиссии брокера из журнала операций счёта (plan/22 часть A).
+/// Оценка фактической ставки комиссии брокера из журнала операций счёта.
 /// Числовой ставки в T-Invest API нет — но журнал уже несёт фактические <see cref="OperationType.Fee"/>
 /// операции (комиссии сделок) и объём торгов (<see cref="OperationType.Buy"/>/<see cref="OperationType.Sell"/>),
 /// поэтому ставку можно восстановить как отношение суммы комиссий к обороту сделок за окно.
@@ -32,7 +32,7 @@ public static class CommissionRateEstimator
 
     /// <summary>
     /// Оценивает ставку комиссии по журналу <paramref name="operations"/> на момент <paramref name="asOf"/>.
-    /// Алгоритм (plan/22 §A): берём окно [asOf − 6 мес, asOf]; если сделок (Buy+Sell) в окне меньше
+    /// Алгоритм: берём окно [asOf − 6 мес, asOf]; если сделок (Buy+Sell) в окне меньше
     /// <see cref="MinTradesInWindow"/> — расширяем окно на всю историю журнала (WindowMonths отражает
     /// фактическую ширину использованного окна). Ставка = Σ|AmountRub| операций Fee / Σ|AmountRub|
     /// операций Buy+Sell за окно. Нет сделок в окне вообще, либо оборот равен нулю (например, только
@@ -88,7 +88,7 @@ public static class CommissionRateEstimator
 }
 
 /// <summary>
-/// Результат оценки ставки комиссии по журналу операций (plan/22 часть A). Null у вызывающего
+/// Результат оценки ставки комиссии по журналу операций. Null у вызывающего
 /// кода — журнал не позволяет оценить ставку (нет сделок/оборот 0), см. doc-comment <see cref="CommissionRateEstimator"/>.
 /// </summary>
 public sealed record CommissionEstimate

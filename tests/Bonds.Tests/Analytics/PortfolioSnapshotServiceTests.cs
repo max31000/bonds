@@ -16,6 +16,7 @@ namespace Bonds.Tests.Analytics;
 public class PortfolioSnapshotServiceTests
 {
     private readonly Mock<IPositionRepository> _positions = new();
+    private readonly Mock<IInstrumentRepository> _instruments = new();
     private readonly Mock<IMarketQuoteRepository> _quotes = new();
     private readonly Mock<IOperationRepository> _operations = new();
     private readonly Mock<IPortfolioValueSnapshotRepository> _snapshots = new();
@@ -23,9 +24,22 @@ public class PortfolioSnapshotServiceTests
     private const ulong AccountId = 1;
     private static readonly DateOnly AsOf = new(2025, 6, 1);
 
+    private readonly Mock<ICouponScheduleRepository> _coupons = new();
+    private readonly Mock<IAmortizationScheduleRepository> _amortizations = new();
+    private readonly Mock<IOfferScheduleRepository> _offers = new();
+    private readonly Mock<IYieldCurveRepository> _yieldCurve = new();
+
     private PortfolioSnapshotService CreateService() => new(
-        _positions.Object, _quotes.Object, _operations.Object, _snapshots.Object,
+        new PortfolioHoldingsBuilder(
+            _positions.Object, _instruments.Object, _coupons.Object, _amortizations.Object,
+            _offers.Object, _quotes.Object, _yieldCurve.Object, _operations.Object),
+        _instruments.Object, _operations.Object, _snapshots.Object,
         NullLogger<PortfolioSnapshotService>.Instance);
+
+    private static Instrument LiveInstrument(ulong id) => new()
+    {
+        Id = id, FaceValue = 1000m, MaturityDate = AsOf.AddYears(3),
+    };
 
     private static Operation Op(OperationType type, decimal amount) => new()
     {
@@ -45,6 +59,7 @@ public class PortfolioSnapshotServiceTests
         {
             InstrumentId = 10, AsOf = AsOf, CleanPrice = 980m, DirtyPrice = 990m,
         });
+        _instruments.Setup(r => r.GetByIdAsync(10)).ReturnsAsync(LiveInstrument(10));
         _operations.Setup(r => r.GetByAccountIdAsync(AccountId, null, null)).ReturnsAsync(Array.Empty<Operation>());
 
         var snapshot = await CreateService().ComputeSnapshotAsync(AccountId, AsOf);
@@ -63,6 +78,8 @@ public class PortfolioSnapshotServiceTests
         _positions.Setup(r => r.GetByAccountIdAsync(AccountId)).ReturnsAsync(new[] { withQuote, withoutQuote });
         _quotes.Setup(r => r.GetLatestAsync(10)).ReturnsAsync(new MarketQuote { InstrumentId = 10, AsOf = AsOf, DirtyPrice = 1000m });
         _quotes.Setup(r => r.GetLatestAsync(20)).ReturnsAsync((MarketQuote?)null);
+        _instruments.Setup(r => r.GetByIdAsync(10)).ReturnsAsync(LiveInstrument(10));
+        _instruments.Setup(r => r.GetByIdAsync(20)).ReturnsAsync(LiveInstrument(20));
         _operations.Setup(r => r.GetByAccountIdAsync(AccountId, null, null)).ReturnsAsync(Array.Empty<Operation>());
 
         var snapshot = await CreateService().ComputeSnapshotAsync(AccountId, AsOf);
@@ -108,4 +125,73 @@ public class PortfolioSnapshotServiceTests
 
         history.Should().ContainSingle();
     }
+
+    [Fact]
+    public async Task ComputeSnapshotAsync_RedeemedPosition_ExcludedFromMarketValue_NoDoubleCountInXirr()
+    {
+        // plan/39 B2: у брокера бумага провисла после погашения, Redemption уже в журнале (приток учтён
+        // в XIRR). Терминальная стоимость той же бумаги дала бы двойной учёт — должна быть 0.
+        var position = new Position { Id = 1, AccountId = AccountId, InstrumentId = 10, Quantity = 10 };
+        _positions.Setup(r => r.GetByAccountIdAsync(AccountId)).ReturnsAsync(new[] { position });
+        _instruments.Setup(r => r.GetByIdAsync(10)).ReturnsAsync(new Instrument
+        {
+            Id = 10, FaceValue = 1000m, MaturityDate = AsOf.AddDays(-1),
+        });
+        _quotes.Setup(r => r.GetLatestAsync(10)).ReturnsAsync(new MarketQuote { InstrumentId = 10, AsOf = AsOf, DirtyPrice = 1000m });
+        _operations.Setup(r => r.GetByAccountIdAsync(AccountId, null, null)).ReturnsAsync(new[]
+        {
+            InstrumentOp(OperationType.Buy, -10000m, 10, -40),
+            InstrumentOp(OperationType.Redemption, 10000m, 10, -1),
+        });
+
+        var snapshot = await CreateService().ComputeSnapshotAsync(AccountId, AsOf);
+
+        snapshot.MarketValueRub.Should().Be(0m);
+        snapshot.XirrToDate.Should().NotBeNull();
+        snapshot.XirrToDate!.Value.Should().BeApproximately(0m, 0.001m, "10000 вложено, 10000 вернулось, терминальной стоимости нет");
+    }
+
+    [Fact]
+    public async Task ComputeSnapshotAsync_MaturedWithoutRedemptionYet_ValuedAtNominal_NotLastQuote()
+    {
+        var position = new Position { Id = 1, AccountId = AccountId, InstrumentId = 10, Quantity = 3 };
+        _positions.Setup(r => r.GetByAccountIdAsync(AccountId)).ReturnsAsync(new[] { position });
+        _instruments.Setup(r => r.GetByIdAsync(10)).ReturnsAsync(new Instrument
+        {
+            Id = 10, FaceValue = 1000m, MaturityDate = AsOf.AddDays(-1),
+        });
+        _quotes.Setup(r => r.GetLatestAsync(10)).ReturnsAsync(new MarketQuote { InstrumentId = 10, AsOf = AsOf.AddDays(-30), DirtyPrice = 985m });
+        _operations.Setup(r => r.GetByAccountIdAsync(AccountId, null, null)).ReturnsAsync(Array.Empty<Operation>());
+
+        var snapshot = await CreateService().ComputeSnapshotAsync(AccountId, AsOf);
+
+        snapshot.MarketValueRub.Should().Be(3000m, "номинал 1000 x 3, а не устаревшая котировка 985");
+    }
+
+    [Fact]
+    public async Task ComputeSnapshotAsync_MaturityDay_PositionStillValuedByQuote()
+    {
+        var position = new Position { Id = 1, AccountId = AccountId, InstrumentId = 10, Quantity = 3 };
+        _positions.Setup(r => r.GetByAccountIdAsync(AccountId)).ReturnsAsync(new[] { position });
+        _instruments.Setup(r => r.GetByIdAsync(10)).ReturnsAsync(new Instrument
+        {
+            Id = 10, FaceValue = 1000m, MaturityDate = AsOf, // в день погашения бумага ещё в портфеле
+        });
+        _quotes.Setup(r => r.GetLatestAsync(10)).ReturnsAsync(new MarketQuote { InstrumentId = 10, AsOf = AsOf, DirtyPrice = 999m });
+        _operations.Setup(r => r.GetByAccountIdAsync(AccountId, null, null)).ReturnsAsync(Array.Empty<Operation>());
+
+        var snapshot = await CreateService().ComputeSnapshotAsync(AccountId, AsOf);
+
+        snapshot.MarketValueRub.Should().Be(2997m);
+    }
+
+    private static Operation InstrumentOp(OperationType type, decimal amount, ulong instrumentId, int daysFromAsOf) => new()
+    {
+        AccountId = AccountId,
+        InstrumentId = instrumentId,
+        Type = type,
+        Date = AsOf.AddDays(daysFromAsOf).ToDateTime(TimeOnly.MinValue),
+        AmountRub = amount,
+        ExternalId = Guid.NewGuid().ToString(),
+    };
 }

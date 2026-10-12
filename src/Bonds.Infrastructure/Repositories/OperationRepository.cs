@@ -58,7 +58,7 @@ public class OperationRepository : IOperationRepository
     }
 
     /// <summary>
-    /// Идемпотентный upsert по ExternalId (plan/03 §C): INSERT ... ON DUPLICATE KEY UPDATE
+    /// Идемпотентный upsert по ExternalId: INSERT... ON DUPLICATE KEY UPDATE
     /// на уникальный индекс uq_operations_external_id гарантирует, что повторный синк той же
     /// брокерской операции обновляет существующую строку, а не создаёт дубль.
     /// </summary>

@@ -16,7 +16,7 @@ import type { IntradayRange, IntradaySeriesPoint } from '../api/types';
 import { formatRub, formatRubCompactRange, formatDateTime } from '../utils/format';
 
 /**
- * Интрадей-виджет «Стоимость портфеля сегодня» (plan/16 часть B) — area-график ряда
+ * Интрадей-виджет «Стоимость портфеля сегодня» — area-график ряда
  * GET /api/live/portfolio-intraday, переключатель 1д/5д. Переиспускается задачей 18 (дашборд).
  * <p>
  * Ось Y НЕ от нуля (план явно предупреждает: "иначе линия будет плоской" — суточные колебания
@@ -38,7 +38,7 @@ export function PortfolioIntradayChart({ explanation }: { explanation?: ReactNod
   const [state, setState] = useState<IntradayFetchState>({ points: [], isLoading: true, error: null });
   const { points, isLoading, error } = state;
 
-  // Тик поллинга (plan/16 часть B) — новый asOfUtc сигнализирует, что стоит перезапросить ряд,
+  // Тик поллинга — новый asOfUtc сигнализирует, что стоит перезапросить ряд,
   // чтобы график рос по мере поступления новых тиков без отдельного таймера.
   const liveAsOfUtc = useLiveStore((s) => s.asOfUtc);
 
@@ -78,7 +78,7 @@ export function PortfolioIntradayChart({ explanation }: { explanation?: ReactNod
   );
 
   // min/max сырых значений ряда (без отступа) — нужны и для домена оси (с паддингом ниже), и для
-  // range-aware форматтера подписей (formatRubCompactRange, plan/16 §5): на узком диапазоне
+  // range-aware форматтера подписей (formatRubCompactRange): на узком диапазоне
   // обычный formatRubCompact схлопывает все деления оси в одну и ту же подпись ("15,5 тыс ₽"
   // четыре раза подряд), formatRubCompactRange переключается на точные рубли в этом случае.
   const valueRange = useMemo((): [number, number] | undefined => {
@@ -102,7 +102,7 @@ export function PortfolioIntradayChart({ explanation }: { explanation?: ReactNod
 
   return (
     <ChartFrame
-      title="Стоимость портфеля сегодня"
+      title="Стоимость облигаций"
       data-testid="portfolio-intraday-chart"
       explanation={explanation}
       height={CHART_HEIGHT_COMPACT}

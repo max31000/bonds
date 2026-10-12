@@ -37,7 +37,7 @@ describe('ServiceLayout', () => {
     // <Notifications> между тестами; без явной очистки уведомления предыдущего теста
     // остаются в DOM следующего рендера и ломают getByText (несколько совпадений).
     notifications.clean();
-    // Plan/16 часть B: автосинк-при-открытии сравнивает lastSuccessAtUtc с "сейчас" по порогу 12ч —
+    // Автосинк-при-открытии сравнивает lastSuccessAtUtc с "сейчас" по порогу 12ч —
     // фиксируем системное время, чтобы тесты не зависели от реальной даты запуска.
     vi.useFakeTimers({ shouldAdvanceTime: true });
     vi.setSystemTime(new Date('2026-07-03T12:00:00Z'));
@@ -47,12 +47,23 @@ describe('ServiceLayout', () => {
     vi.useRealTimers();
   });
 
-  it('shows an unread signal count badge in the nav', async () => {
+  it('shows a badge in the nav counting only unread active Critical+Warning events', async () => {
+    const base = {
+      instrumentId: 1,
+      subject: 'ОФЗ 26238',
+      suggestedAction: 'Решите до даты',
+      eventDate: '2099-01-10',
+      firstSeenAt: '2099-01-01T00:00:00Z',
+      isResolved: false,
+      resolvedAt: null,
+    };
     server.use(
       http.get('*/api/signals', () =>
         HttpResponse.json({
           signals: [
-            { id: 1, type: 'Coupon', severity: 'Low', positionId: 1, instrumentId: 1, suggestedAction: '', date: '2026-06-20', isRead: false },
+            { ...base, id: 1, type: 'UpcomingOffer', severity: 'Critical', isRead: false },
+            { ...base, id: 2, type: 'ConcentrationLimitBreached', severity: 'Warning', isRead: true },
+            { ...base, id: 3, type: 'UpcomingRedemption', severity: 'Info', isRead: false },
           ],
         }),
       ),
@@ -61,6 +72,7 @@ describe('ServiceLayout', () => {
     renderLayout();
 
     await waitFor(() => expect(screen.getByText('1')).toBeInTheDocument());
+    expect(screen.getByRole('link', { name: /События/ })).toBeInTheDocument();
   });
 
   it('triggers a sync and shows a success notification with a summary', async () => {
@@ -122,7 +134,7 @@ describe('ServiceLayout', () => {
     await waitFor(() => expect(screen.getByText('Обновление завершилось с ошибками')).toBeInTheDocument());
   });
 
-  // ─── T-13/B: индикатор здоровья синка в шапке (три состояния) ─────────────────────────────
+  // ─── индикатор здоровья синка в шапке (три состояния) ─────────────────────────────
 
   it('shows a green dot with relative time when the last sync succeeded', async () => {
     server.use(
@@ -189,7 +201,7 @@ describe('ServiceLayout', () => {
     await waitFor(() => expect(screen.getByText('Экран настроек')).toBeInTheDocument());
   });
 
-  // ─── T-16/B: тихий фоновый синк при открытии после долгого перерыва ────────────────────────
+  // ─── тихий фоновый синк при открытии после долгого перерыва ────────────────────────
 
   it('triggers a background sync on mount when the last success is older than 12 hours', async () => {
     let syncCalled = false;

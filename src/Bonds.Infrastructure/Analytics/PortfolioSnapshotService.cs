@@ -6,7 +6,7 @@ using Microsoft.Extensions.Logging;
 namespace Bonds.Infrastructure.Analytics;
 
 /// <summary>
-/// Снимок портфеля "на сейчас" (plan/06 B1, spec §6.9/§9) — координирует репозитории (позиции,
+/// Снимок портфеля "на сейчас" (spec §6.9/§9) — координирует репозитории (позиции,
 /// котировки, журнал операций) и считает <see cref="PortfolioValueSnapshot"/> через чистый
 /// <see cref="PortfolioXirrService"/>. Этот класс НЕ планирует себя по расписанию и НЕ пишет
 /// в <see cref="IPortfolioValueSnapshotRepository"/> автоматически — он просто умеет посчитать
@@ -15,58 +15,81 @@ namespace Bonds.Infrastructure.Analytics;
 /// </summary>
 public sealed class PortfolioSnapshotService
 {
-    private readonly IPositionRepository _positions;
-    private readonly IMarketQuoteRepository _quotes;
+    private readonly PortfolioHoldingsBuilder _holdingsBuilder;
+    private readonly IInstrumentRepository _instruments;
     private readonly IOperationRepository _operations;
     private readonly IPortfolioValueSnapshotRepository _snapshots;
     private readonly ILogger<PortfolioSnapshotService> _logger;
 
     public PortfolioSnapshotService(
-        IPositionRepository positions,
-        IMarketQuoteRepository quotes,
+        PortfolioHoldingsBuilder holdingsBuilder,
+        IInstrumentRepository instruments,
         IOperationRepository operations,
         IPortfolioValueSnapshotRepository snapshots,
         ILogger<PortfolioSnapshotService> logger)
     {
-        _positions = positions;
-        _quotes = quotes;
+        _holdingsBuilder = holdingsBuilder;
+        _instruments = instruments;
         _operations = operations;
         _snapshots = snapshots;
         _logger = logger;
     }
 
     /// <summary>
-    /// Считает снимок "на сейчас": текущую рыночную стоимость портфеля (сумма Quantity × DirtyPrice
-    /// последней известной котировки по каждой позиции; позиции без котировки исключаются из
-    /// суммы стоимости, но не падают расчёт — деградация с пометкой, spec §4.4), XIRR с начала
-    /// учёта (по полному журналу операций счёта) и InvestedRub (чистая вложенная сумма: покупки
+    /// Считает снимок "на сейчас": текущую рыночную стоимость портфеля, XIRR с начала учёта
+    /// (по полному журналу операций счёта) и InvestedRub (чистая вложенная сумма: покупки
     /// минус продажи минус погашения/амортизации, т.е. сколько "живого" капитала сейчас сидит
     /// в позициях — см. doc-comment <see cref="CalculateInvestedRub"/>).
+    /// <para>
+    /// Стоимость позиции — <see cref="PortfolioHolding.MarketValueRub"/> из единого
+    /// <see cref="PortfolioHoldingsBuilder"/> (грязная цена × количество; fallback-цепочка цены
+    /// описана в docs/CODEBASE-GUIDE.md, «MarketValue»). Позиция без котировки получает 0 и
+    /// не влияет на сумму (деградация, spec §4.4). Поверх этого — правило погашенных бумаг:
+    /// погашенная (Redemption в журнале) не учитывается; с прошедшей датой погашения без выплаты —
+    /// оценивается по номиналу остатка.
+    /// </para>
     /// </summary>
     public async Task<PortfolioValueSnapshot> ComputeSnapshotAsync(ulong accountId, DateOnly asOf, CancellationToken ct = default)
     {
-        var positions = (await _positions.GetByAccountIdAsync(accountId)).ToList();
+        var holdings = await _holdingsBuilder.BuildForAccountAsync(accountId, asOf, ct);
         var operations = (await _operations.GetByAccountIdAsync(accountId)).ToList();
 
         decimal marketValue = 0m;
-        foreach (var position in positions)
+        foreach (var holding in holdings)
         {
             ct.ThrowIfCancellationRequested();
-            var quote = await _quotes.GetLatestAsync(position.InstrumentId);
-            if (quote is null)
+
+            // Погашенная бумага не живёт в «текущей» стоимости. У брокера она может провисеть
+            // день-два после даты погашения до фактической выплаты.
+            if (HasBeenRedeemed(operations, holding.InstrumentId))
             {
-                _logger.LogWarning(
-                    "No quote available for instrument {InstrumentId} (position {PositionId}) — excluded from market value",
-                    position.InstrumentId, position.Id);
+                // Деньги уже пришли (Redemption в журнале — приток учтён в XIRR), терминальная
+                // стоимость той же бумаги дала бы двойной учёт.
                 continue;
             }
 
-            // DirtyPrice приоритетнее (включает НКД); если его нет — чистая цена + НКД позиции
-            // из T-Invest (см. doc-comment Position.Accrued), иначе только чистая цена (деградация).
-            var priceWithAccrued = quote.DirtyPrice ?? (quote.CleanPrice + position.Accrued);
-            if (priceWithAccrued is null) continue;
+            if (!holding.IsOutOfScopeCurrency && holding.MaturityDate < asOf)
+            {
+                // Дата погашения прошла, выплаты в журнале ещё нет: оцениваем по НОМИНАЛУ остатка
+                // (instrument.FaceValue — актуальный номинал с учётом амортизаций, рубли за бумагу),
+                // а не по последней котировке, которая после погашения неактуальна.
+                var instrument = await _instruments.GetByIdAsync(holding.InstrumentId);
+                if (instrument is { FaceValue: > 0m })
+                {
+                    marketValue += instrument.FaceValue * holding.Quantity;
+                    continue;
+                }
+            }
 
-            marketValue += priceWithAccrued.Value * position.Quantity;
+            if (holding.MarketValueRub <= 0m)
+            {
+                _logger.LogWarning(
+                    "No price available for instrument {InstrumentId} (position {PositionId}) — excluded from market value",
+                    holding.InstrumentId, holding.PositionId);
+                continue;
+            }
+
+            marketValue += holding.MarketValueRub;
         }
 
         var investedRub = CalculateInvestedRub(operations);
@@ -80,6 +103,23 @@ public sealed class PortfolioSnapshotService
             XirrToDate = xirr?.Rate,
             InvestedRub = investedRub,
         };
+    }
+
+    /// <summary>
+    /// True, если по инструменту в журнале есть полное погашение (<see cref="OperationType.Redemption"/>),
+    /// датированное не раньше последней покупки/ввода бумаги (иначе это погашение предыдущего лота).
+    /// </summary>
+    internal static bool HasBeenRedeemed(IReadOnlyCollection<Operation> operations, ulong instrumentId)
+    {
+        var forInstrument = operations.Where(o => o.InstrumentId == instrumentId).ToList();
+        var lastRedemption = forInstrument.Where(o => o.Type == OperationType.Redemption)
+            .Select(o => (DateTime?)o.Date).Max();
+        if (lastRedemption is null) return false;
+
+        var lastAcquisition = forInstrument
+            .Where(o => o.Type is OperationType.Buy or OperationType.SecurityIn)
+            .Select(o => (DateTime?)o.Date).Max();
+        return lastAcquisition is null || lastRedemption >= lastAcquisition;
     }
 
     /// <summary>Считает снимок и сохраняет его (upsert по (AccountId, AsOf) — повторный вызов в тот же день не дублирует).</summary>

@@ -124,7 +124,7 @@ describe('PositionDetail', () => {
     expect(screen.getByTestId('if-sold-now-net-proceeds')).toHaveTextContent('100');
   });
 
-  // ─── T-25: строка налога и итог после налога в если-продать-сейчас ─────────────────────────
+  // ─── строка налога и итог после налога в если-продать-сейчас ─────────────────────────
 
   it('shows the tax estimate row and the after-tax total when tax is available', async () => {
     server.use(http.get('*/api/positions/1', () => HttpResponse.json(baseDetail)));
@@ -159,7 +159,7 @@ describe('PositionDetail', () => {
     expect(screen.queryByTestId('if-sold-now-net-after-tax')).not.toBeInTheDocument();
   });
 
-  // ─── T-24: разложение выручки на чистую стоимость + НКД − комиссию ────────────────────────
+  // ─── разложение выручки на чистую стоимость + НКД − комиссию ────────────────────────
 
   it('shows the accrued caption and the "если продать" formula when accruedTotalRub is positive', async () => {
     server.use(http.get('*/api/positions/1', () => HttpResponse.json(baseDetail)));
@@ -194,7 +194,7 @@ describe('PositionDetail', () => {
     expect(screen.queryByTestId('if-sold-now-formula')).not.toBeInTheDocument();
   });
 
-  // Plan/22 часть E: подпись с применённой ставкой комиссии и её источником.
+  // Подпись с применённой ставкой комиссии и её источником.
   it('shows the commission rate source caption in the если-продать-сейчас card', async () => {
     server.use(
       http.get('*/api/positions/1', () =>

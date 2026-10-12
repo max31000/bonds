@@ -58,6 +58,17 @@ DTO — `sealed record` с `required`/nullable. Ошибки: кастомные
 statusCode: 422)`. Юзер — параметр `ICurrentUser currentUser` → `await currentUser.GetUserIdAsync()`
 (локальный `users.id`), счёт — `PositionsEndpoints.ResolveAccountIdAsync(currentUser, accountRepo)`.
 
+Аналитические эндпоинты `/api/analytics/*` разрезаны по темам (маршруты стабильны; регистрация —
+в `Program.cs`): `XirrEndpoints` (xirr, xirr/backfill), `PortfolioAnalyticsEndpoints`
+(composition, scatter, rate-scenario, trajectory), `ReplacementEndpoints` (comparison,
+replacement, relative-value, replacement-candidates), `AllocationEndpoints` (allocation, basket).
+DTO этих эндпоинтов — `Endpoints/Dtos/Analytics*Dtos.cs`; общие хелперы (422-ошибка валидации,
+риск-сигналы кандидата, фильтр надёжности) — `AnalyticsSupport`. «События» портфеля — маршрут
+исторически `/api/signals` (`SignalsEndpoints`): `SignalsEngine` отдаёт ПОЛНЫЙ набор активных
+событий на дату (состояние), `SignalSetSynchronizer` сводит его с таблицей `signals` по
+`EventKey` (insert/refresh/resolve); лимит концентрации — из `UserSettings`
+(`DefaultMaxConcentrationPercent`), индивидуальный лимит по эмитенту — `target_allocations`.
+
 **Auth** (`Bonds.Api/Auth`): только общий mvv42-auth — `Mvv42Auth.cs` (copy-in SDK, не править),
 `BondsAuth.cs`: схема `mvv42` (JWT из cookie `__Host-mvv42_at`, ключи из JWKS `mvv42-auth:8080`),
 Fallback/Default policy = `mvv42:app` + владелец (`tg == Telegram:OwnerId`, иначе 403). Локальный
@@ -77,12 +88,22 @@ snake_case, выравнивание типов, `UNIQUE KEY uq_*` / `KEY idx_*`
 никогда не валить процесс; `IServiceScopeFactory` для scoped-зависимостей; торговые часы MSK
 через options.
 
+**Единое правило «стоимости портфеля» (MarketValue).** Стоимость позиции строится ТОЛЬКО в
+`PortfolioHoldingsBuilder` (`PortfolioHolding.MarketValueRub`) = **грязная цена × количество**;
+цена за бумагу — fallback-цепочка: `MarketQuote.DirtyPrice` → `DirtyPrice`, посчитанная движком
+(чистая цена + НКД, где НКД = `quote.Accrued ?? position.Accrued`) → 0 (нет котировки: позиция
+не вносит вклад, но не исключается из списка). Потребители не пересчитывают цену сами: события
+(`SyncCycleService`), снимок NAV/XIRR (`PortfolioSnapshotService`), эндпоинты. Поверх правила
+снимок применяет правило погашенных бумаг: с `Redemption` в журнале — стоимость 0 (приток уже в
+XIRR), дата погашения прошла, а выплаты нет — номинал остатка × количество.
+
 **Ключевые расчётные сервисы** (чистые, `Bonds.Core`): движок — `Calculation/*` (YTM, дюрации,
 НКД, XIRR, G-спред: интерполяция кривой — `GSpreadCalculator.CurveValue`); портфельные —
-`Analytics/*` (cost basis, матрица замен, аллокация/корзина, what-if, налог продажи
-`SaleTaxEstimator`, RV `RelativeValueService`, бакеты — `DurationBucketClassifier`). Правило
-сравнимости доходностей: floater/indexed/dataIncomplete — «вне сравнения»
-(`ReplacementMatrixService.IsComparable`). Ставка комиссии — ТОЛЬКО через
+`Analytics/*` (cost basis, сравнение/замена `SwitchAnalysisService`, аллокация/корзина, what-if,
+налог продажи `SaleTaxEstimator`, RV `RelativeValueService`, бакеты — `DurationBucketClassifier`).
+Правило сравнимости доходностей: floater/indexed/dataIncomplete — «вне сравнения»
+(`YieldComparability.IsComparable`). Порог отклонения спреда (RV-вердикт и риск-сигнал кандидата) —
+одна константа `SpreadThresholds.DeviationFraction` (0.0020 = 20 б.п.). Ставка комиссии — ТОЛЬКО через
 `ICommissionRateProvider` (override → оценка из журнала → дефолт), не константа.
 
 ## Тесты

@@ -10,8 +10,8 @@ using Bonds.Infrastructure.Sync;
 namespace Bonds.Api.Endpoints;
 
 /// <summary>
-/// Задача 20 (часть A): ручной watchlist — бумаги вне текущих позиций, отслеживаемые по ISIN
-/// (НЕ скринер по всей вселенной, см. doc-comment <see cref="Bonds.Core.Analytics.ICandidateScreener"/>).
+/// Ручной watchlist — бумаги вне текущих позиций, отслеживаемые по ISIN
+/// (НЕ скринер по всей вселенной).
 /// GET отдаёт полный набор метрик тем же расчётным путём, что у позиций
 /// (<see cref="PortfolioHoldingsBuilder.BuildForInstrumentsAsync"/> → <see cref="Bonds.Core.Calculation.BondMetricsCalculator"/>).
 /// POST валидирует ISIN на MOEX синхронно (422, если не найден/не облигация) и сразу обогащает
@@ -152,7 +152,7 @@ public static class WatchlistEndpoints
             Note = request.Note,
         });
 
-        // Синхронное обогащение + котировка (plan/20 §A.4) — бумага появляется с метриками сразу,
+        // Синхронное обогащение + котировка — бумага появляется с метриками сразу,
         // не дожидаясь следующего цикла синка. Тот же путь, что и у позиций (BondSyncService), плюс
         // MOEX-котировка (WatchlistSyncService.SyncOneAsync — переиспользуется и шагом синка).
         await watchlistSync.SyncOneAsync(isin, ct);

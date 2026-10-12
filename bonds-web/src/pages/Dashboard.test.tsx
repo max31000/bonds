@@ -98,6 +98,26 @@ describe('Dashboard', () => {
     vi.useRealTimers();
   });
 
+  it('shows free cash and the account total (bonds + cash) so it reconciles with the broker', async () => {
+    server.use(
+      http.get('*/api/positions', () => HttpResponse.json(basePositions)),
+      http.get('*/api/live/positions', () =>
+        HttpResponse.json({
+          positions: [],
+          totalMarketValueRub: 165_000,
+          asOfUtc: new Date().toISOString(),
+          cashRub: 8_000,
+          brokerTotalRub: 173_000,
+        }),
+      ),
+    );
+
+    renderDashboard();
+
+    await waitFor(() => expect(screen.getByTestId('kpi-cash')).toHaveTextContent('8 000'));
+    expect(screen.getByTestId('kpi-cash')).toHaveTextContent('173 000');
+  });
+
   it('renders the KPI row from MSW data', async () => {
     server.use(
       http.get('*/api/positions', () => HttpResponse.json(basePositions)),
@@ -113,6 +133,34 @@ describe('Dashboard', () => {
     expect(screen.getByTestId('kpi-xirr')).toHaveTextContent('13.20%');
     expect(screen.getByTestId('kpi-next-payment')).toHaveTextContent('8 700');
     expect(screen.getByTestId('kpi-unread-signals')).toBeInTheDocument();
+  });
+
+  it('counts only unread active Critical+Warning events in the attention KPI', async () => {
+    const ev = {
+      instrumentId: 1,
+      subject: 'ОФЗ 26238',
+      suggestedAction: 'Решите до даты',
+      eventDate: '2099-01-10',
+      firstSeenAt: '2099-01-01T00:00:00Z',
+      isResolved: false,
+      resolvedAt: null,
+    };
+    server.use(
+      http.get('*/api/signals', () =>
+        HttpResponse.json({
+          signals: [
+            { ...ev, id: 1, type: 'UpcomingOffer', severity: 'Critical', isRead: false },
+            { ...ev, id: 2, type: 'ConcentrationLimitBreached', severity: 'Warning', isRead: false },
+            { ...ev, id: 3, type: 'ConcentrationLimitBreached', severity: 'Warning', isRead: true },
+            { ...ev, id: 4, type: 'UpcomingRedemption', severity: 'Info', isRead: false },
+          ],
+        }),
+      ),
+    );
+
+    renderDashboard();
+
+    await waitFor(() => expect(screen.getByTestId('kpi-unread-signals')).toHaveTextContent('2'));
   });
 
   it('renders the value chart, mini composition, and upcoming cashflow widgets', async () => {
@@ -217,7 +265,7 @@ describe('Dashboard', () => {
     await waitFor(() => expect(screen.getByText(/Как стоимость портфеля распределена/)).toBeInTheDocument());
   });
 
-  // ─── T-24: глобальная подсказка про "грязные" цены на KPI «Стоимость портфеля» ─────────────
+  // ─── глобальная подсказка про "грязные" цены на KPI «Стоимость портфеля» ─────────────
 
   it('opens the dirty-price explanation popover for the portfolio value KPI', async () => {
     server.use(

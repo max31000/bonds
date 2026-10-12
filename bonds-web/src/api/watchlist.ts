@@ -1,7 +1,7 @@
 import { apiClient } from './client';
 import type { WatchlistCreateRequest, WatchlistCreateResponse, WatchlistResponse } from './types';
 
-/** GET /api/watchlist — ручной список бумаг вне текущих позиций, с метриками (plan/20 §A). */
+/** GET /api/watchlist — ручной список бумаг вне текущих позиций, с метриками. */
 export function fetchWatchlist(): Promise<WatchlistResponse> {
   return apiClient.get<WatchlistResponse>('/watchlist');
 }

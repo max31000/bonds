@@ -1,7 +1,7 @@
 namespace Bonds.Core.Analytics;
 
 /// <summary>
-/// Задача 30 часть A — «относительная дешевизна» (Bloomberg RV-подход): «где YTM больше» — плохой
+/// «относительная дешевизна» (Bloomberg RV-подход): «где YTM больше» — плохой
 /// вопрос (наверху рынка обычно преддефолтный мусор), правильный вопрос деск-трейдера — «что дёшево
 /// ОТНОСИТЕЛЬНО СВОИХ» — сравнить G-спред бумаги с медианным G-спредом её КОРЗИНЫ (сектор ×
 /// дюрационный бакет). Бумага сильно НАД медианой корзины — «дешёвая» (рынок закладывает бОльшую
@@ -42,7 +42,7 @@ public static class RelativeValueService
         public required decimal? GSpreadFraction { get; init; }
 
         /// <summary>
-        /// Задача 31 часть B.1 — эвристика по BONDTYPE MOEX, из <see cref="Bonds.Core.Models.BondUniverseEntry.IsFloater"/>
+        /// Эвристика по BONDTYPE MOEX, из <see cref="Bonds.Core.Models.BondUniverseEntry.IsFloater"/>
         /// (<c>bool?</c> в источнике; <c>null</c> → <c>false</c>, т.е. НЕ исключаем — BONDTYPE не пришёл
         /// от MOEX, осознанный дефолт, иначе теряем бумаги с неполным справочником). Флоатеры
         /// исключаются из корпуса корзин ДО конструирования <see cref="BasketMember"/> —

@@ -48,7 +48,7 @@ const SOURCE_OPTIONS: { label: string; value: AllocationSource }[] = [
 ];
 
 // Задача 35 review (MAJOR 1): банк облигаций (bond_universe) не хранит эмитента — источники
-// market/recommended диверсифицируются по грубой классификации сектора (задача 34), НЕ по
+// market/recommended диверсифицируются по грубой классификации сектора, НЕ по
 // эмитенту. Текст ниже описывает фактическое поведение, не желаемое.
 const SOURCE_EXPLANATION =
   'Весь рынок — самые доходные фикс-купонные бумаги биржи (банк облигаций), без дополнительных ' +
@@ -64,11 +64,11 @@ interface BasketDraftLine {
   name: string;
   issuer: string | null;
   weightPercent: number;
-  /** Задача 35: SECID банк-кандидата, из которого материализована строка пресетом source=market/
+  /** SECID банк-кандидата, из которого материализована строка пресетом source=market/
    * recommended — undefined для строк портфеля/ручного добавления. Ключ рендера рыночных строк
    * (см. эскалацию задачи 34 в plan/35) — избегает коллизий с instrumentId ручных строк. */
   secid?: string;
-  /** Задача 35: риск-сигналы строки (эхо AllocationLine.riskSignals) — только для source=market/
+  /** Риск-сигналы строки (эхо AllocationLine.riskSignals) — только для source=market/
    * recommended, undefined/null для остальных. */
   riskSignals?: RiskSignals | null;
 }
@@ -102,7 +102,7 @@ function UniverseOptionLabel({ row }: { row: UniverseRow }) {
   );
 }
 
-/** Один предупреждение what-if — фраза по-русски по WhatIfWarningKind (plan/29 §B.1). */
+/** Один предупреждение what-if — фраза по-русски по WhatIfWarningKind. */
 function warningLabel(warning: WhatIfWarning): string {
   const share = formatSharePercentLocal(warning.sharePercentAfter);
   if (warning.kind === 'NewIssuerAboveThreshold') {
@@ -117,7 +117,7 @@ function formatSharePercentLocal(value: number): string {
 }
 
 /**
- * Конструктор портфеля (plan/29 §C) — «куда вложить сумму» становится настраиваемой корзиной
+ * Конструктор портфеля — «куда вложить сумму» становится настраиваемой корзиной
  * вместо чистого жадного алгоритма: сумма + строки бумаг с процентами (поиск по портфелю/
  * watchlist/банку, материализация бумаг банка) → штуки с лотами/НКД/комиссией + метрики корзины +
  * what-if всего портфеля (доходность/дюрация/концентрации до/после). Пресет «Максимум доходности»
@@ -134,7 +134,7 @@ export function BasketConstructor() {
   const [amountRub, setAmountRub] = useState<number>(15000);
   const [lines, setLines] = useState<BasketDraftLine[]>([]);
 
-  // Задача 35 §C.1: источник кандидатов пресета «Максимум доходности» — дефолт "market" (весь
+  // Источник кандидатов пресета «Максимум доходности» — дефолт "market" (весь
   // рынок доходных), пользователь может вернуться к прежнему поведению ("portfolio").
   const [source, setSource] = useState<AllocationSource>('market');
 
@@ -235,7 +235,7 @@ export function BasketConstructor() {
   };
 
   /**
-   * Пресет «Максимум доходности» (plan/29 §C.2, задача 35 §C.1 — источник кандидатов): заполняет
+   * Пресет «Максимум доходности» (задача 35 §C.1 — источник кандидатов): заполняет
    * корзину результатом жадного алгоритма (GET /api/analytics/allocation?source=) как отправную
    * точку: вес каждой строки = её фактическая доля потраченной суммы (estimatedCostRub / amountRub
    * × 100), НЕ включает скипнутые бумаги (allocation.skipped). Дальше пользователь сам подстраивает

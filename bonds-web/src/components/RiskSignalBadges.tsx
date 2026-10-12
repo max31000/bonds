@@ -8,7 +8,7 @@ const LEVEL_COLOR: Record<RiskSignalLevel, string> = {
   Caution: 'orange',
 };
 
-/** Задача 38 часть C.1 — цвет светофора надёжности, зеркалит backend `ReliabilityLight`. */
+/** Цвет светофора надёжности, зеркалит backend `ReliabilityLight`. */
 /** Светофор на статусных токенах кита (`--mvv-success|warning|danger`) — одинаково читается в light/dark. */
 const RELIABILITY_COLOR: Record<ReliabilityLevel, string> = {
   Green: 'var(--mvv-success)',
@@ -23,7 +23,7 @@ const RELIABILITY_ARIA_LABEL: Record<ReliabilityLevel, string> = {
 };
 
 /**
- * Задача 38 — обязательный дисклеймер светофора (владелец явно запретил формулировку «рейтинг»,
+ * Обязательный дисклеймер светофора (владелец явно запретил формулировку «рейтинг»,
  * см. план часть C.1/рамки задачи): показывается в тултипе <see>ReliabilityDot</see> И в
  * <see>RiskSignalsCaption</see>, чтобы дисклеймер был на видном месте независимо от того, открыл
  * ли пользователь тултип точки.
@@ -37,7 +37,7 @@ function spreadLabel(signals: RiskSignals): string {
 }
 
 /**
- * Задача 38 часть C.1 — светофор надёжности: цветная точка (Green зелёная / Yellow жёлтая / Red
+ * Светофор надёжности: цветная точка (Green зелёная / Yellow жёлтая / Red
  * красная), переиспользуется везде, где известен агрегат (<see>RiskSignalBadges</see> — кандидаты/
  * аллокация/сравнивалка, скринер — колонка «Надёжность», у которого нет полного `RiskSignals`,
  * только `reliability`/`reliabilityReason` + отдельные ликвидность/G-спред столбцы). Тултип несёт

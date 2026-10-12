@@ -9,7 +9,7 @@ namespace Bonds.Infrastructure.Connectors.TInvest;
 /// Реализация <see cref="ITInvestTokenValidator"/> — строит одноразовый <c>InvestApiClient</c>
 /// напрямую из переданного токена (в обход <c>ITInvestTokenProvider</c>/БД, см. doc-comment
 /// интерфейса) и делает <c>Users.GetAccounts</c> — самый дешёвый вызов, дающий однозначный ответ
-/// "токен принят брокером" без побочных эффектов (plan/13 часть C).
+/// "токен принят брокером" без побочных эффектов.
 /// </summary>
 public sealed class TInvestTokenValidator : ITInvestTokenValidator
 {

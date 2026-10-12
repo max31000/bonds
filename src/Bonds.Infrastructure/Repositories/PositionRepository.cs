@@ -66,4 +66,19 @@ public class PositionRepository : IPositionRepository
             "DELETE FROM positions WHERE id = @Id AND account_id = @AccountId",
             new { Id = id, AccountId = accountId });
     }
+
+    public async Task<int> DeleteAllExceptAsync(ulong accountId, IReadOnlyCollection<ulong> keepInstrumentIds)
+    {
+        using var conn = CreateConnection();
+        if (keepInstrumentIds.Count == 0)
+        {
+            return await conn.ExecuteAsync(
+                "DELETE FROM positions WHERE account_id = @AccountId",
+                new { AccountId = accountId });
+        }
+
+        return await conn.ExecuteAsync(
+            "DELETE FROM positions WHERE account_id = @AccountId AND instrument_id NOT IN @Keep",
+            new { AccountId = accountId, Keep = keepInstrumentIds.ToArray() });
+    }
 }

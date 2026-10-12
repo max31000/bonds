@@ -12,7 +12,7 @@ interface AnalyticsStore {
   error: string | null;
   isBackfilling: boolean;
   load: () => Promise<void>;
-  /** Plan/15 §C.3: ручной запуск ретроспективного бэкфилла из пустого состояния XIRR-виджета,
+  /** Ручной запуск ретроспективного бэкфилла из пустого состояния XIRR-виджета,
    * затем перезагрузка данных экрана (в т.ч. свежей истории). */
   runXirrBackfill: () => Promise<void>;
 }

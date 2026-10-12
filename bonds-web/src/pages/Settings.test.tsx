@@ -26,11 +26,7 @@ const baseSettings: SettingsResponse = {
   tInvestTokenMasked: null,
   upcomingEventDaysThreshold: 14,
   uninvestedCashThresholdRub: 10000,
-  uninvestedCashLookbackDays: 7,
-  yieldBelowAlternativeBpsThreshold: 50,
-  maturityWindowDaysForAlternativeComparison: 30,
   defaultMaxConcentrationPercent: 25,
-  durationDriftToleranceYears: 0.5,
   commissionRateOverride: null,
   commissionAutoEstimate: null,
   tInvestTariff: null,
@@ -87,7 +83,7 @@ describe('Settings', () => {
     expect(screen.queryByText('secret-token-value')).not.toBeInTheDocument();
   });
 
-  // T-13/C: PUT /api/settings/tinvest-token валидирует токен перед сохранением — 422 не должен
+  // PUT /api/settings/tinvest-token валидирует токен перед сохранением — 422 не должен
   // отображаться как "задан", и текст ошибки от бэкенда должен дойти до пользователя.
   it('shows a validation error notification and does not mark the token as configured on 422', async () => {
     server.use(
@@ -145,8 +141,8 @@ describe('Settings', () => {
     await waitFor(() => expect(screen.getByTestId('settings-error')).toBeInTheDocument());
   });
 
-  // Plan/22 часть D: блок «Комиссия брокера» — тариф T-Invest, авто-оценка из журнала, применённая ставка+источник.
-  describe('commission section (plan/22)', () => {
+  // Блок «Комиссия брокера» — тариф T-Invest, авто-оценка из журнала, применённая ставка+источник.
+  describe('commission section', () => {
     it('shows tariff, auto-estimate, and effective rate from the journal', async () => {
       server.use(
         http.get('*/api/settings', () =>

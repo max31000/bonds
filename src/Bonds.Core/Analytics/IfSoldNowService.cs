@@ -1,12 +1,12 @@
 namespace Bonds.Core.Analytics;
 
 /// <summary>
-/// «Если продать сейчас» (plan/19 §A.4) — чистая прикидка выручки от продажи всего текущего
+/// «Если продать сейчас» — чистая прикидка выручки от продажи всего текущего
 /// остатка позиции ПРЯМО СЕЙЧАС по последней известной котировке: рыночная стоимость (уже включает
 /// НКД — см. doc-comment <see cref="PortfolioHoldingsBuilder"/> про DirtyPrice × Quantity) минус
 /// комиссия брокера (<see cref="Bonds.Core.Analytics.SwitchAnalysisService.DefaultCommissionRate"/>
 /// по умолчанию, ставка передаётся вызывающим слоем). Если для позиции известна цена входа
-/// (<see cref="Bonds.Core.Analytics.PositionCostBasis"/>, plan/14) — дополнительно считает итоговый
+/// (<see cref="Bonds.Core.Analytics.PositionCostBasis"/>) — дополнительно считает итоговый
 /// P&amp;L при продаже: (чистая выручка − вложено) + уже полученные купоны.
 /// <para>
 /// Это НЕ анализ замены (<see cref="SwitchAnalysisService"/> — сравнение с альтернативной бумагой).
@@ -61,7 +61,7 @@ public static class IfSoldNowService
             totalReturnWithCouponsRub = realizedPnlRub + costBasis.CouponsReceivedRub;
         }
 
-        // Задача 25: оценка НДФЛ с продажи (average cost, без сальдирования/ЛДВ, плоские 13% —
+        // Оценка НДФЛ с продажи (average cost, без сальдирования/ЛДВ, плоские 13% —
         // см. doc-comment SaleTaxEstimator) поверх той же cost basis. Null у HasUnknownLots/нет
         // InvestedRub — "оценить нельзя", не "налог 0" (см. doc-comment SaleTaxEstimator.Estimate).
         var taxEstimate = SaleTaxEstimator.Estimate(
@@ -97,10 +97,10 @@ public sealed record IfSoldNowResult
     /// <summary>Рыночная стоимость всего остатка (грязная цена × количество) на момент расчёта.</summary>
     public required decimal MarketValueRub { get; init; }
 
-    /// <summary>Задача 24: MarketValueRub − AccruedTotalRub — «чистая» (без НКД) стоимость остатка.</summary>
+    /// <summary>MarketValueRub − AccruedTotalRub — «чистая» (без НКД) стоимость остатка.</summary>
     public decimal CleanValueRub { get; init; }
 
-    /// <summary>Задача 24: НКД на всю позицию, уже включённый в MarketValueRub (разложение, не добавка).</summary>
+    /// <summary>НКД на всю позицию, уже включённый в MarketValueRub (разложение, не добавка).</summary>
     public decimal AccruedTotalRub { get; init; }
 
     public required decimal CommissionRub { get; init; }
@@ -109,7 +109,7 @@ public sealed record IfSoldNowResult
     /// <summary>Выручка на руки = MarketValueRub − CommissionRub.</summary>
     public required decimal NetProceedsRub { get; init; }
 
-    /// <summary>NetProceedsRub − вложено (по средней цене входа). Null — cost basis недоступен (plan/14).</summary>
+    /// <summary>NetProceedsRub − вложено (по средней цене входа). Null — cost basis недоступен.</summary>
     public decimal? RealizedPnlRub { get; init; }
 
     /// <summary>RealizedPnlRub / InvestedRub — доля.</summary>
@@ -121,11 +121,11 @@ public sealed record IfSoldNowResult
     /// <summary>RealizedPnlRub + CouponsReceivedRub — итоговый результат владения бумагой при продаже сейчас.</summary>
     public decimal? TotalReturnWithCouponsRub { get; init; }
 
-    /// <summary>True — P&amp;L-поля посчитаны (cost basis известен, plan/14); false — доступна только выручка/комиссия.</summary>
+    /// <summary>True — P&amp;L-поля посчитаны (cost basis известен); false — доступна только выручка/комиссия.</summary>
     public required bool PnlAvailable { get; init; }
 
     /// <summary>
-    /// Задача 25: оценка НДФЛ с продажи (<see cref="SaleTaxEstimator"/>) — 13% с прибыли к средней
+    /// Оценка НДФЛ с продажи (<see cref="SaleTaxEstimator"/>) — 13% с прибыли к средней
     /// цене входа, average cost, без сальдирования/ЛДВ (см. doc-comment класса). Null — cost basis
     /// недоступен/журнал неполон (<c>HasUnknownLots</c>) — "оценить нельзя", НЕ "налог 0".
     /// </summary>

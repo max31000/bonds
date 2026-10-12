@@ -1,7 +1,7 @@
 namespace Bonds.Infrastructure.Connectors.Moex;
 
 /// <summary>
-/// Задача 26 часть B — простая классификация "Гособлигации"/"Муниципальные"/"Корпоративные" для
+/// Простая классификация "Гособлигации"/"Муниципальные"/"Корпоративные" для
 /// снимка вселенной облигаций по коду MOEX ISS SECTYPE (колонка <c>securities.SECTYPE</c> в ответе
 /// <c>/iss/engines/stock/markets/bonds/securities.json</c> — числовой код, НЕ строковый
 /// <c>MoexSecuritySearch.TypeCode</c> вида "ofz_bond" из другого эндпоинта поиска, для которого уже

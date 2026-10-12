@@ -2,7 +2,7 @@ using Bonds.Core.Models;
 
 namespace Bonds.Core.Interfaces.Repositories;
 
-/// <summary>Кэш дневной истории цены инструмента (plan/19 §A). См. doc-comment InstrumentPriceHistory.</summary>
+/// <summary>Кэш дневной истории цены инструмента. См. doc-comment InstrumentPriceHistory.</summary>
 public interface IInstrumentPriceHistoryRepository
 {
     /// <summary>Все точки инструмента в окне [from; to] включительно, по возрастанию даты.</summary>

@@ -16,7 +16,7 @@ public class CouponSchedule
     /// <summary>Размер купона в рублях на один номинал. Null, если неизвестен (флоатер, далёкий горизонт).</summary>
     public decimal? ValueRub { get; set; }
 
-    /// <summary>Длительность купонного периода в днях (нужна для НКД, этап 05).</summary>
+    /// <summary>Длительность купонного периода в днях (нужна для НКД).</summary>
     public int? PeriodDays { get; set; }
 
     /// <summary>

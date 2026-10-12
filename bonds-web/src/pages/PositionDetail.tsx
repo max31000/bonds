@@ -65,7 +65,7 @@ interface DetailFetchState {
 }
 
 /**
- * Карточка позиции (drill-down, plan/19) — график цены с маркерами сделок, метрики с
+ * Карточка позиции (drill-down) — график цены с маркерами сделок, метрики с
  * объяснениями, календарь бумаги (купоны/амортизации/оферты), журнал операций и оценка
  * «если продать сейчас». Открывается кликом по строке таблицы /positions.
  */
@@ -82,7 +82,7 @@ export function PositionDetail() {
 
     // setState здесь — не "синхронный setState в теле эффекта" (react-hooks/set-state-in-effect):
     // это подписка на внешнюю асинхронную операцию (fetch), setState вызывается только в её
-    // callback'ах (then/catch), тот же паттерн, что PortfolioIntradayChart (plan/16 часть B).
+    // callback'ах (then/catch), тот же паттерн, что PortfolioIntradayChart.
     void fetchPositionDetail(id, range)
       .then((response) => {
         if (!cancelled) setState({ detail: response, isLoading: false, error: null });

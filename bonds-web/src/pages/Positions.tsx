@@ -39,7 +39,7 @@ import { computePositionsTotals } from '../utils/positionsAggregation';
 import { buildYieldHeatmapScale } from '../utils/yieldHeatmap';
 
 /**
- * Главный экран приложения после логина — таблица позиций с расчётными метриками (этап 09a,
+ * Главный экран приложения после логина — таблица позиций с расчётными метриками (
  * цена входа/P&L — plan/14).
  * Графика/календарь/сигналы — 09b/09c.
  */
@@ -50,17 +50,17 @@ export function Positions() {
   const loadRelativeValue = useRelativeValueStore((s) => s.load);
   const navigate = useNavigate();
   const [sort, setSort] = useState<SortState>({ key: 'yield', direction: 'desc' });
-  // Plan/21 часть C.2: < 768px — карточки вместо таблицы (10+ колонок нечитаемы на телефоне).
+  // < 768px — карточки вместо таблицы (10+ колонок нечитаемы на телефоне).
   const isMobile = useMediaQuery('(max-width: 48em)');
 
-  // Plan/16 часть B: поллинг живых цен (только видимая вкладка + грубо торговые часы на клиенте) —
+  // Поллинг живых цен (только видимая вкладка + грубо торговые часы на клиенте) —
   // пишет в useLiveStore, откуда его читают LiveMarketValueCell ниже и PortfolioIntradayChart.
   useLiveQuotes();
 
   useEffect(() => {
     load();
     loadSettings();
-    // Задача 30 часть D.3: RV-индикатор грузится ленивым ОДНИМ запросом (не блокируя таблицу
+    // RV-индикатор грузится ленивым ОДНИМ запросом (не блокируя таблицу
     // позиций) — useRelativeValueStore.load() сам не даёт себе выполниться дважды и молча
     // проглатывает ошибку (индикатор просто не покажется, см. doc-comment стора).
     loadRelativeValue();
@@ -83,10 +83,10 @@ export function Positions() {
   const toggleSort = (key: SortKey) =>
     setSort((s) => (s.key === key ? { key, direction: s.direction === 'asc' ? 'desc' : 'asc' } : { key, direction: 'desc' }));
 
-  // Plan/21 часть B.3: строка «Итого» — суммарная стоимость и средневзвешенные доходность/дюрация.
+  // Строка «Итого» — суммарная стоимость и средневзвешенные доходность/дюрация.
   const totals = useMemo(() => computePositionsTotals(positions), [positions]);
 
-  // Plan/21 часть B.1: heatmap колонки «Доходность» — перцентиль считается только по сравнимым
+  // heatmap колонки «Доходность» — перцентиль считается только по сравнимым
   // доходностям (обычные бумаги, effectiveYield !== null для floater/indexed возвращает
   // currentYield, но красить его heatmap'ом некорректно — несравнимо с YTM обычных бумаг).
   const yieldHeatmapScale = useMemo(() => {

@@ -152,4 +152,58 @@ public class PortfolioHistoryRebuildServiceTests
 
         points.Should().BeEmpty();
     }
+
+    [Fact]
+    public void Rebuild_Redemption_ZeroesQuantity_NoValueAfterRedemption()
+    {
+        // plan/39 B1: куплено 10 шт, на 14-й день погашено. Чекпоинты ПОСЛЕ погашения не содержат
+        // стоимости бумаги (цена 1000 остаётся в карте, но количество = 0).
+        var operations = new[]
+        {
+            Op(OperationType.Buy, BaseDate, -10000m, quantity: 10m),
+            Op(OperationType.Redemption, BaseDate.AddDays(14), 10000m, quantity: null),
+        };
+        var prices = PriceMap(InstrumentId, (BaseDate, 1000m));
+
+        var points = PortfolioHistoryRebuildService.Rebuild(operations, prices, BaseDate.AddDays(28));
+
+        points.First(p => p.Date == BaseDate.AddDays(7)).MarketValueRub.Should().Be(10000m, "до погашения бумага в портфеле");
+        points.First(p => p.Date == BaseDate.AddDays(14)).MarketValueRub.Should().Be(0m, "в день погашения операция применена");
+        points.Where(p => p.Date > BaseDate.AddDays(14)).Should().OnlyContain(p => p.MarketValueRub == 0m);
+        points.Last().Xirr.Should().NotBeNull();
+        points.Last().Xirr!.Value.Should().BeApproximately(0m, 0.001m, "купили за 10000 — вернули 10000: нулевая доходность, без двойного учёта терминальной стоимости");
+    }
+
+    [Fact]
+    public void Rebuild_PriceNotForwardFilledPastMaturity()
+    {
+        // Погашение в журнале отсутствует (операция не пришла), но дата погашения прошла:
+        // последняя котировка не должна висеть в стоимости после MaturityDate.
+        var operations = new[] { Op(OperationType.Buy, BaseDate, -10000m, quantity: 10m) };
+        var prices = PriceMap(InstrumentId, (BaseDate, 1000m));
+        var maturity = new Dictionary<ulong, DateOnly> { [InstrumentId] = BaseDate.AddDays(10) };
+
+        var points = PortfolioHistoryRebuildService.Rebuild(operations, prices, BaseDate.AddDays(21), maturity);
+
+        points.First(p => p.Date == BaseDate.AddDays(7)).MarketValueRub.Should().Be(10000m);
+        points.First(p => p.Date == BaseDate.AddDays(14)).MarketValueRub.Should().Be(0m, "14-й день позже погашения (10-й)");
+        points.Last().MarketValueRub.Should().Be(0m);
+    }
+
+    [Fact]
+    public void Rebuild_SecurityTransfers_ChangeQuantity_AndUnpricedTransferMarksApproximate()
+    {
+        var operations = new[]
+        {
+            Op(OperationType.SecurityIn, BaseDate, 0m, quantity: 10m),
+            Op(OperationType.SecurityOut, BaseDate.AddDays(7), 0m, quantity: 4m),
+        };
+        var prices = PriceMap(InstrumentId, (BaseDate, 1000m));
+
+        var points = PortfolioHistoryRebuildService.Rebuild(operations, prices, BaseDate.AddDays(7));
+
+        points[0].MarketValueRub.Should().Be(10000m, "ввод 10 шт");
+        points[1].MarketValueRub.Should().Be(6000m, "вывод 4 шт");
+        points.Should().OnlyContain(p => p.IsApproximate, "перевод без суммы не попал в XIRR как внешний поток — точка приближённая");
+    }
 }

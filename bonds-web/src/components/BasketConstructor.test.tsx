@@ -140,7 +140,7 @@ describe('BasketConstructor', () => {
     await waitFor(() => expect(screen.getByTestId('basket-total-percent').textContent).toMatch(/100\.0%/));
   });
 
-  // Задача 35 §C.1: дефолт источника — "market", этот тест покрывает прежнее поведение source=portfolio.
+  // Дефолт источника — "market", этот тест покрывает прежнее поведение source=portfolio.
   it('fills the basket from the greedy allocation preset (source=portfolio)', async () => {
     let requestedSource: string | null = null;
     server.use(
@@ -255,7 +255,7 @@ describe('BasketConstructor', () => {
     // на резолвленный instrumentId=888, не на secid) — весовое поле по-прежнему ключуется instrumentId.
     expect(screen.getByTestId('basket-draft-weight-888')).toBeInTheDocument();
     expect(screen.getByTestId('risk-signal-liquidity-draft-MKT777')).toBeInTheDocument();
-    // Задача 38 часть C.2: светофор надёжности виден на строке аллокации блока 2 (агрегат goodSignals=Green).
+    // Светофор надёжности виден на строке аллокации блока 2 (агрегат goodSignals=Green).
     expect(screen.getByTestId('reliability-dot-draft-MKT777')).toHaveAttribute('data-reliability', 'Green');
     expect(screen.getByTestId('basket-preset-disclaimer').textContent).toMatch(/не рейтинг агентств/);
   });

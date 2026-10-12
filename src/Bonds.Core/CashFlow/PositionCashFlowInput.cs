@@ -3,7 +3,7 @@ using Bonds.Core.Models;
 namespace Bonds.Core.CashFlow;
 
 /// <summary>
-/// Вход для проекции денежного потока одной позиции (plan/06 Часть A) — агрегирует всё,
+/// Вход для проекции денежного потока одной позиции — агрегирует всё,
 /// что <see cref="CashFlowProjectionService"/> нужно знать о позиции и её инструменте.
 /// Сборка из репозиториев — ответственность вызывающего слоя (Infrastructure/API), не Core
 /// (тот же принцип, что у <see cref="Bonds.Core.Calculation.BondMetricsCalculatorInput"/>).

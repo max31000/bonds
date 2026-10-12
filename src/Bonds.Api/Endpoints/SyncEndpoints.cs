@@ -67,7 +67,7 @@ public sealed record SyncRunResultDto
     public required bool TokenMissingOrInvalid { get; init; }
     public required int InstrumentsSynced { get; init; }
 
-    /// <summary>Задача 20 часть A: сколько уникальных watchlist ISIN обновлено за цикл.</summary>
+    /// <summary>Сколько уникальных watchlist ISIN обновлено за цикл.</summary>
     public required int WatchlistInstrumentsSynced { get; init; }
     public required int OperationsUpserted { get; init; }
     public required bool YieldCurveUpdated { get; init; }

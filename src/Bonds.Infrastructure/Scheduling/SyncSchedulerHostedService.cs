@@ -9,7 +9,7 @@ using Microsoft.Extensions.Options;
 namespace Bonds.Infrastructure.Scheduling;
 
 /// <summary>
-/// Автосинк в окна торгов MOEX (plan/07 Часть B, spec §3/§11). <see cref="BackgroundService"/>
+/// Автосинк в окна торгов MOEX (spec §3/§11). <see cref="BackgroundService"/>
 /// (singleton) — тот же паттерн, что cashpulse <c>ExchangeRateRefreshService</c> (plan/00 "Эталон
 /// фоновых задач"): периодический опрос с try/catch вокруг каждого тика, без падения процесса.
 /// Не резолвит scoped-зависимости само — делегирует выполнение цикла <see cref="ISyncCycleRunner"/>
@@ -26,7 +26,7 @@ namespace Bonds.Infrastructure.Scheduling;
 /// <b>Не повторяет запуск в то же окно в тот же день.</b> Отслеживается через простую внутреннюю
 /// пару (Дата, Окно) — "последнее окно, в которое уже синканулись сегодня" (plan/07 предлагает
 /// этот вариант как самый простой). Не использует <see cref="ISyncCycleRunner.GetStatus"/> для
-/// этой цели, т.к. force-refresh (этап 08, через тот же <see cref="ISyncCycleRunner"/>) тоже
+/// этой цели, т.к. force-refresh (через тот же <see cref="ISyncCycleRunner"/>) тоже
 /// обновляет <c>LastRunStartedAtUtc</c> — смешивать источники привело бы к тому, что ручной
 /// force-refresh посреди дня "съедал" бы следующее плановое окно.
 /// </para>
@@ -44,11 +44,9 @@ public sealed class SyncSchedulerHostedService : BackgroundService
     private DateOnly? _lastTriggeredDate;
     private TimeOnly? _lastTriggeredWindow;
 
-    /// <summary>Порог plan/15 §B.4: если снапшотов меньше этого числа при старте приложения (а
+    /// <summary>Порог если снапшотов меньше этого числа при старте приложения (а
     /// операции в журнале есть), запускаем однократный бэкфилл истории XIRR — виджет иначе пуст
     /// неделями, пока не накопится история от одного лишь автосинка (2 снапшота/день).</summary>
-    private const int BackfillSnapshotThreshold = 5;
-
     public SyncSchedulerHostedService(
         ISyncCycleRunner runner,
         IOptions<SchedulerOptions> options,
@@ -74,16 +72,14 @@ public sealed class SyncSchedulerHostedService : BackgroundService
         }
         catch (TimeZoneNotFoundException)
         {
-            // Windows-фолбэк (plan/07) — IANA ID недоступен только в редких Windows-окружениях
-            // без обновлённых данных часовых зон; деплой — Linux (plan/00 §5), сюда дойдёт редко.
+            // Windows-фолбэк — IANA ID недоступен только в редких Windows-окружениях
+            // без обновлённых данных часовых зон; деплой — Linux, сюда дойдёт редко.
             return TimeZoneInfo.FindSystemTimeZoneById("Russian Standard Time");
         }
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        await RunStartupBackfillIfNeededAsync(stoppingToken);
-
         while (!stoppingToken.IsCancellationRequested)
         {
             try
@@ -119,7 +115,7 @@ public sealed class SyncSchedulerHostedService : BackgroundService
         var today = DateOnly.FromDateTime(nowMsk);
         var timeOfDay = TimeOnly.FromDateTime(nowMsk);
 
-        // Минимум по спеке — пропуск сб/вс (plan/07: праздники MOEX опциональны, идемпотентность
+        // Минимум по спеке — пропуск сб/вс (праздники MOEX опциональны, идемпотентность
         // нижних слоёв уже не даёт пустому/повторному синку испортить данные).
         if (nowMsk.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday)
         {
@@ -141,66 +137,7 @@ public sealed class SyncSchedulerHostedService : BackgroundService
     }
 
     /// <summary>
-    /// Plan/15 §B.4 housekeeping-хук: один раз при старте приложения — если у единственного счёта
-    /// продукта снапшотов истории меньше <see cref="BackfillSnapshotThreshold"/>, а операции в
-    /// журнале уже есть (значит, синк когда-то отработал и накопил историю операций, но график
-    /// XIRR почти пуст — типичный случай "автосинк долго не работал", plan/13), запускаем
-    /// ретроспективный бэкфилл <see cref="PortfolioHistoryBackfillService"/>. Не влияет на обычный
-    /// плановый цикл — выполняется до входа в цикл <see cref="ExecuteAsync"/>, максимум один раз за
-    /// время жизни процесса. Ошибка бэкфилла логируется и не мешает автосинку стартовать (та же
-    /// устойчивость "не падать", что у остального планировщика).
-    /// </summary>
-    private async Task RunStartupBackfillIfNeededAsync(CancellationToken ct)
-    {
-        try
-        {
-            using var scope = _scopeFactory.CreateScope();
-            var sp = scope.ServiceProvider;
-
-            var accountRepo = sp.GetRequiredService<IAccountRepository>();
-            var accountId = await accountRepo.GetPrimaryAccountIdAsync();
-            if (accountId is null)
-            {
-                return; // ещё нет онбординга — нечего бэкфиллить (та же логика, что TickAsync).
-            }
-
-            var snapshotRepo = sp.GetRequiredService<IPortfolioValueSnapshotRepository>();
-            var existingSnapshots = (await snapshotRepo.GetByAccountIdAsync(accountId.Value)).ToList();
-            if (existingSnapshots.Count >= BackfillSnapshotThreshold)
-            {
-                return; // истории уже достаточно — бэкфилл не нужен.
-            }
-
-            var operationRepo = sp.GetRequiredService<IOperationRepository>();
-            var hasOperations = (await operationRepo.GetByAccountIdAsync(accountId.Value)).Any();
-            if (!hasOperations)
-            {
-                return; // журнал операций пуст — бэкфиллить нечего (не первый синк ещё не прошёл).
-            }
-
-            _logger.LogInformation(
-                "Startup backfill: account {AccountId} has {SnapshotCount} snapshots (< {Threshold}) but operations exist — running history backfill",
-                accountId, existingSnapshots.Count, BackfillSnapshotThreshold);
-
-            var backfillService = sp.GetRequiredService<PortfolioHistoryBackfillService>();
-            var written = await backfillService.BackfillAsync(accountId.Value, BusinessClock.MoscowToday(), ct);
-
-            _logger.LogInformation("Startup backfill: wrote {Written} history points for account {AccountId}", written, accountId);
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            // Устойчивость: сбой одноразового бэкфилла при старте не должен мешать автосинку
-            // подняться и работать дальше (plan/07 "не падать").
-            _logger.LogError(ex, "Startup backfill failed — sync scheduler continues normally");
-        }
-    }
-
-    /// <summary>
-    /// Plan/13 часть D: только для ПЛАНОВОГО (не ручного force-refresh — этот метод вызывается
+    /// Только для ПЛАНОВОГО (не ручного force-refresh — этот метод вызывается
     /// исключительно из <see cref="TickAsync"/>) цикла — если он завершился с ошибками или
     /// протухшим/отсутствующим токеном, шлём Telegram-алерт владельцу, не чаще одного раза в
     /// сутки на уникальный набор ошибок (<see cref="SyncAlertThrottle"/>). Сбой отправки не

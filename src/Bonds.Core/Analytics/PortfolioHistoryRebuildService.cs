@@ -3,7 +3,7 @@ using Bonds.Core.Models;
 namespace Bonds.Core.Analytics;
 
 /// <summary>
-/// Ретроспективное восстановление истории стоимости/XIRR портфеля (plan/15 §B) — чистый Core-сервис,
+/// Ретроспективное восстановление истории стоимости/XIRR портфеля — чистый Core-сервис,
 /// без I/O. Вход: полный журнал <see cref="Operation"/> счёта + карта дневных грязных цен за бумагу
 /// в рублях (<c>instrumentId → (date → dirtyPriceRub)</c>), собранная вызывающим слоем (Infrastructure)
 /// из MOEX ISS history + номиналов инструментов. Выход — ряд <see cref="PortfolioHistoryPoint"/> с
@@ -20,7 +20,7 @@ namespace Bonds.Core.Analytics;
 /// </summary>
 public static class PortfolioHistoryRebuildService
 {
-    /// <summary>Шаг ряда — неделя (plan/15 §B.1). Обратимый дефолт: даёт ~52 точки/год — достаточно
+    /// <summary>Шаг ряда — неделя. Обратимый дефолт: даёт ~52 точки/год — достаточно
     /// плотно для графика, не перегружая бэкфилл ежедневным пересчётом XIRR по всему журналу.</summary>
     public static readonly int StepDays = 7;
 
@@ -34,14 +34,20 @@ public static class PortfolioHistoryRebuildService
     /// Карта дневных грязных цен за бумагу в рублях: instrumentId → (дата → цена). Может быть
     /// разреженной — дни без цены (в т.ч. дни без сделок на бирже) не обязаны присутствовать,
     /// сервис сам переносит последнюю известную цену вперёд по каждой бумаге независимо (forward
-    /// fill, plan/15 §B.1). Если для бумаги нет цены вообще ни на одну дату ≤ D — она исключается
+    /// fill). Если для бумаги нет цены вообще ни на одну дату ≤ D — она исключается
     /// из суммы стоимости на D, а точка помечается <see cref="PortfolioHistoryPoint.IsApproximate"/>.
     /// </param>
     /// <param name="asOf">Дата последней точки ряда (обычно "сегодня" по MSK, plan/00 BusinessClock).</param>
+    /// <param name="maturityDates">
+    /// Даты погашения бумаг (instrumentId → MaturityDate). Цена НЕ переносится вперёд
+    /// (forward fill) на контрольные даты строго после погашения — иначе погашенная бумага
+    /// «висела» бы в стоимости с последней котировкой навсегда. Бумага без записи — без ограничения.
+    /// </param>
     public static IReadOnlyList<PortfolioHistoryPoint> Rebuild(
         IEnumerable<Operation> operations,
         IReadOnlyDictionary<ulong, IReadOnlyDictionary<DateOnly, decimal>> priceHistory,
-        DateOnly asOf)
+        DateOnly asOf,
+        IReadOnlyDictionary<ulong, DateOnly>? maturityDates = null)
     {
         var allOps = operations.OrderBy(o => o.Date).ToList();
         if (allOps.Count == 0)
@@ -68,6 +74,9 @@ public static class PortfolioHistoryRebuildService
         var points = new List<PortfolioHistoryPoint>(checkpoints.Count);
         var opIndex = 0; // указатель на первую ещё не применённую операцию (операции отсортированы)
         var quantities = new Dictionary<ulong, decimal>();
+        // Переводы бумаг без суммы в журнале (AmountRub = 0) не попадают в XIRR как внешний поток
+        // (цены перевода нет) — точку помечаем приближённой с момента первого такого перевода.
+        var hasUnpricedTransfer = false;
 
         foreach (var checkpoint in checkpoints)
         {
@@ -75,7 +84,12 @@ public static class PortfolioHistoryRebuildService
             // операции монотонно возрастают по дате — как и checkpoints).
             while (opIndex < allOps.Count && DateOnly.FromDateTime(allOps[opIndex].Date) <= checkpoint)
             {
-                ApplyOperation(quantities, allOps[opIndex]);
+                var applied = allOps[opIndex];
+                ApplyOperation(quantities, applied);
+                if (applied.Type is OperationType.SecurityIn or OperationType.SecurityOut && applied.AmountRub == 0m)
+                {
+                    hasUnpricedTransfer = true;
+                }
                 opIndex++;
             }
 
@@ -94,16 +108,25 @@ public static class PortfolioHistoryRebuildService
             }
 
             decimal marketValue = 0m;
-            var approximate = false;
+            var approximate = hasUnpricedTransfer;
 
             foreach (var (instrumentId, quantity) in quantities)
             {
-                if (quantity == 0m) continue;
+                if (quantity <= 0m) continue;
+
+                // Погашенная бумага (дата погашения уже прошла) стоимости не имеет: брокер заплатил
+                // номинал (Redemption в журнале), а последняя котировка не должна жить дальше.
+                if (maturityDates is not null
+                    && maturityDates.TryGetValue(instrumentId, out var maturity)
+                    && checkpoint > maturity)
+                {
+                    continue;
+                }
 
                 if (!lastKnownPrice.TryGetValue(instrumentId, out var price) || price is null)
                 {
                     // Цены нет вообще (ни на checkpoint, ни раньше) — бумагу пропускаем из суммы,
-                    // точку помечаем приближённой, но не падаем (plan/15 §B.1).
+                    // точку помечаем приближённой, но не падаем.
                     approximate = true;
                     continue;
                 }
@@ -146,24 +169,34 @@ public static class PortfolioHistoryRebuildService
 
     private static void ApplyOperation(Dictionary<ulong, decimal> quantities, Operation op)
     {
-        if (op.InstrumentId is not { } instrumentId || op.Quantity is not { } qty) return;
+        if (op.InstrumentId is not { } instrumentId) return;
 
         switch (op.Type)
         {
-            case OperationType.Buy:
-                quantities[instrumentId] = quantities.GetValueOrDefault(instrumentId) + Math.Abs(qty);
+            case OperationType.Redemption:
+                // Полное погашение (BondRepaymentFull) — бумаги больше нет; количество в операции
+                // брокер может не указать, поэтому обнуляем остаток безусловно.
+                quantities[instrumentId] = 0m;
                 break;
-            case OperationType.Sell:
-                quantities[instrumentId] = quantities.GetValueOrDefault(instrumentId) - Math.Abs(qty);
+            case OperationType.Buy or OperationType.SecurityIn:
+                if (op.Quantity is { } inQty)
+                {
+                    quantities[instrumentId] = quantities.GetValueOrDefault(instrumentId) + Math.Abs(inQty);
+                }
                 break;
-            // Coupon/Amortization/Redemption/Tax/Fee не меняют количество бумаг в портфеле —
-            // купон/налог/комиссия не меняют остаток; амортизация/погашение снижают номинал per-unit,
-            // не количество штук (учитывается через цену, а не через это состояние).
+            case OperationType.Sell or OperationType.SecurityOut:
+                if (op.Quantity is { } outQty)
+                {
+                    quantities[instrumentId] = quantities.GetValueOrDefault(instrumentId) - Math.Abs(outQty);
+                }
+                break;
+            // Coupon/Amortization/Tax/Fee не меняют количество бумаг: амортизация снижает номинал
+            // per-unit (учитывается через цену), не количество штук.
         }
     }
 }
 
-/// <summary>Одна точка ретроспективного ряда стоимости/XIRR портфеля (plan/15 §B.1).</summary>
+/// <summary>Одна точка ретроспективного ряда стоимости/XIRR портфеля.</summary>
 public sealed record PortfolioHistoryPoint
 {
     public required DateOnly Date { get; init; }
@@ -172,6 +205,6 @@ public sealed record PortfolioHistoryPoint
 
     /// <summary>True — хотя бы одна бумага в портфеле на эту дату не имела исторической цены нигде
     /// в доступном диапазоне (ни на дату, ни раньше) и была исключена из суммы стоимости —
-    /// точка занижена/приближена (plan/15 §B.1, аналог DataIncomplete в остальном коде).</summary>
+    /// точка занижена/приближена (аналог DataIncomplete в остальном коде).</summary>
     public required bool IsApproximate { get; init; }
 }

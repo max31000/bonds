@@ -18,7 +18,7 @@ interface WatchlistStore {
 }
 
 /**
- * Секция «Watchlist» на странице «Рекомендации» (plan/20 §B.1). Отдельный стор (не часть
+ * Секция «Watchlist» на странице «Рекомендации». Отдельный стор (не часть
  * useRecommendationsStore) — watchlist также используется независимо на экране аналитики
  * (scatter watchlist-точки читаются из ответа /api/analytics/scatter напрямую, не отсюда).
  */

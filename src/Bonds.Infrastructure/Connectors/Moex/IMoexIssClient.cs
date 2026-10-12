@@ -27,7 +27,7 @@ public interface IMoexIssClient
     Task<MoexSecuritySearch?> GetSecuritySearchAsync(string isin, CancellationToken ct = default);
 
     /// <summary>
-    /// Дневные исторические цены (history.json, plan/15 Часть A) за период [from; to] включительно.
+    /// Дневные исторические цены (history.json) за период [from; to] включительно.
     /// Пагинация обязательна — ISS отдаёт страницы по 100 строк с блоком <c>history.cursor</c>;
     /// дочитывается тем же паттерном, что <see cref="GetBondizationAsync"/>. Дни без сделок дают
     /// строку с <see cref="MoexHistoryPricePoint.ClosePricePercent"/> = null — forward fill остаётся
@@ -37,7 +37,7 @@ public interface IMoexIssClient
     Task<IReadOnlyList<MoexHistoryPricePoint>> GetHistoryPricesAsync(string secid, DateOnly from, DateOnly to, CancellationToken ct = default);
 
     /// <summary>
-    /// Снимок ВСЕЙ рыночной вселенной облигаций MOEX (задача 26 часть A) —
+    /// Снимок ВСЕЙ рыночной вселенной облигаций MOEX —
     /// <c>/iss/engines/stock/markets/bonds/securities.json?iss.only=securities,marketdata</c>.
     /// Пагинация через <c>start</c> — тот же паттерн, что <see cref="GetHistoryPricesAsync"/>;
     /// эмпирически этот эндпоинт ISS отдаёт весь рынок (~3000-3500 строк) одной страницей и

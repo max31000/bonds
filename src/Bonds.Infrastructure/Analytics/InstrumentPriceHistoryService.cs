@@ -6,7 +6,7 @@ using Microsoft.Extensions.Logging;
 namespace Bonds.Infrastructure.Analytics;
 
 /// <summary>
-/// Кэш-обёртка над <see cref="IMoexIssClient.GetHistoryPricesAsync"/> (plan/19 §A) — карточка
+/// Кэш-обёртка над <see cref="IMoexIssClient.GetHistoryPricesAsync"/> — карточка
 /// позиции запрашивает дневную историю цены за произвольный диапазон (1м/6м/1г/всё), но не должна
 /// каждый раз ходить в MOEX ISS за одни и те же прошлые дни. Стратегия — "дозагрузить только
 /// недостающий хвост": если в <c>instrument_price_history</c> уже есть точки вплоть до даты X,

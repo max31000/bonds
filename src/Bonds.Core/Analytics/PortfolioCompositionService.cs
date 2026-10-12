@@ -3,7 +3,7 @@ using Bonds.Core.Models;
 namespace Bonds.Core.Analytics;
 
 /// <summary>
-/// Композиция портфеля (plan/06 B2, spec §9 «Композиция портфеля») — доли рыночной стоимости
+/// Композиция портфеля (spec §9 «Композиция портфеля») — доли рыночной стоимости
 /// по эмитенту, сектору, типу купона и корзинам дюрации. Сумма долей в каждом разрезе = 100%
 /// (с округлением последнего элемента, чтобы сумма не "уплывала" из-за округления каждой доли
 /// по отдельности — см. <see cref="NormalizeShares"/>). Чистый сервис, без I/O.
@@ -22,7 +22,7 @@ public static class PortfolioCompositionService
             ByIssuer = GroupByShare(holdings, totalMarketValue, h => h.Issuer ?? UnknownLabel),
             BySector = GroupByShare(holdings, totalMarketValue, h => h.Sector ?? UnknownLabel),
             ByCouponType = GroupByShare(holdings, totalMarketValue, h => h.CouponType.ToString()),
-            // Задача 30: границы корзин дюрации вынесены в общий DurationBucketClassifier (переиспользуется
+            // Границы корзин дюрации вынесены в общий DurationBucketClassifier (переиспользуется
             // RelativeValueService) — консистентность с разрезом композиции портфеля, не копипаста границ.
             ByDurationBucket = GroupByShare(holdings, totalMarketValue, h => DurationBucketClassifier.Label(h.ModifiedDuration)),
         };

@@ -1,6 +1,27 @@
 namespace Bonds.Infrastructure.Connectors.TInvest;
 
 /// <summary>
+/// Результат <c>Operations.GetPortfolio</c>: облигационные позиции + денежные итоги счёта.
+/// Все суммы — РУБЛИ (запрос идёт с валютой портфеля по умолчанию = RUB).
+/// </summary>
+public sealed class TInvestPortfolio
+{
+    public required IReadOnlyList<TInvestPortfolioPosition> Bonds { get; init; }
+
+    /// <summary>
+    /// Свободные деньги на счёте (<c>TotalAmountCurrencies</c> — все валюты, пересчитанные брокером
+    /// в рубли). Сюда, в частности, падают выплаты погашений/купонов/амортизаций. Null — брокер не отдал.
+    /// </summary>
+    public decimal? CashRub { get; init; }
+
+    /// <summary>
+    /// Полная стоимость счёта по оценке брокера (<c>TotalAmountPortfolio</c>: облигации + деньги +
+    /// любые другие активы, которые продукт не анализирует). Для сверки с тем, что видно в приложении.
+    /// </summary>
+    public decimal? TotalPortfolioRub { get; init; }
+}
+
+/// <summary>
 /// Холдинг портфеля, разобранный из <c>PortfolioResponse.Positions</c> (T-Invest gRPC,
 /// см. README.md этого каталога — верификация контракта §12.2). Только облигации
 /// интересны этому продукту (spec §3 "в скоупе"): другие типы инструментов отфильтровываются
@@ -15,10 +36,10 @@ public sealed class TInvestPortfolioPosition
     /// <summary>Средневзвешенная цена покупки (cost basis), в валюте инструмента за одну облигацию.</summary>
     public decimal AveragePositionPrice { get; init; }
 
-    /// <summary>Текущая чистая цена по данным брокера (T-Invest = "сейчас", plan/00 §4).</summary>
+    /// <summary>Текущая чистая цена по данным брокера (T-Invest = "сейчас").</summary>
     public decimal? CurrentPrice { get; init; }
 
-    /// <summary>Текущий НКД по позиции (T-Invest = первичный источник "сейчас" для движка, plan/00 §4).</summary>
+    /// <summary>Текущий НКД по позиции (T-Invest = первичный источник "сейчас" для движка).</summary>
     public decimal? CurrentNkd { get; init; }
 }
 
@@ -37,6 +58,15 @@ public sealed class TInvestOperation
     public DateTime Date { get; init; }
     public decimal PaymentRub { get; init; }
     public decimal? Quantity { get; init; }
+
+    /// <summary>
+    /// Тип инструмента операции — имя enum T-Invest <c>InstrumentType</c> ("Bond", "Share", "Currency",
+    /// "Etf", ...). Null — не указан (операции по счёту без инструмента). Облигационный журнал
+    /// сохраняет Buy/Sell/Coupon/Redemption/Amortization/SecurityIn/Out только для <see cref="IsBond"/>.
+    /// </summary>
+    public string? InstrumentKind { get; init; }
+
+    public bool IsBond => string.Equals(InstrumentKind, "Bond", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>НКД, относящийся к данной операции (если применимо, напр. покупка/продажа купонной бумаги).</summary>
     public decimal? AccruedInterest { get; init; }

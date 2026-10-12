@@ -12,8 +12,8 @@ using Microsoft.Extensions.Options;
 namespace Bonds.Api.Endpoints;
 
 /// <summary>
-/// GET/PUT /api/settings — пороги триггеров (Signals Engine, этап 07) и базовая валюта.
-/// PUT /api/settings/tinvest-token — ввод/замена read-only токена T-Invest (plan/08).
+/// GET/PUT /api/settings — пороги триггеров (Signals Engine) и базовая валюта.
+/// PUT /api/settings/tinvest-token — ввод/замена read-only токена T-Invest.
 /// <para>
 /// <b>Безопасность токена (spec §11, plan/08 "Токен T-Invest через UI").</b> Токен шифруется
 /// через <see cref="IDataProtectionProvider"/> (встроенный механизм ASP.NET Core — не требует
@@ -25,7 +25,7 @@ namespace Bonds.Api.Endpoints;
 /// который логирует только <c>ex.Message</c>/тип исключения, не тела запросов).
 /// </para>
 /// <para>
-/// <b>Валидация перед сохранением (plan/13 часть C).</b> PUT делает пробный вызов T-Invest
+/// <b>Валидация перед сохранением.</b> PUT делает пробный вызов T-Invest
 /// (<see cref="ITInvestTokenValidator"/>) ДО шифрования/записи в БД — невалидный токен не
 /// сохраняется и отвечает 422 с человекочитаемым сообщением, чтобы пользователь узнавал об
 /// опечатке/протухшем токене сразу, а не по тихо деградировавшему синку.
@@ -40,7 +40,7 @@ public static class SettingsEndpoints
         app.MapPut("/api/settings/tinvest-token", PutTInvestToken);
     }
 
-    /// <summary>Валидация override (plan/22 часть D): null допустим (сброс), иначе строго 0 &lt; x &lt; 0.05 — ставка ≥5% явно опечатка (ввод в % на фронте, доля на бэкенде).</summary>
+    /// <summary>Валидация override: null допустим (сброс), иначе строго 0 &lt; x &lt; 0.05 — ставка ≥5% явно опечатка (ввод в % на фронте, доля на бэкенде).</summary>
     private const decimal MaxCommissionRateOverride = 0.05m;
 
     private static async Task<IResult> GetSettings(
@@ -103,11 +103,7 @@ public static class SettingsEndpoints
 
         existing.UpcomingEventDaysThreshold = request.UpcomingEventDaysThreshold ?? existing.UpcomingEventDaysThreshold;
         existing.UninvestedCashThresholdRub = request.UninvestedCashThresholdRub ?? existing.UninvestedCashThresholdRub;
-        existing.UninvestedCashLookbackDays = request.UninvestedCashLookbackDays ?? existing.UninvestedCashLookbackDays;
-        existing.YieldBelowAlternativeBpsThreshold = request.YieldBelowAlternativeBpsThreshold ?? existing.YieldBelowAlternativeBpsThreshold;
-        existing.MaturityWindowDaysForAlternativeComparison = request.MaturityWindowDaysForAlternativeComparison ?? existing.MaturityWindowDaysForAlternativeComparison;
         existing.DefaultMaxConcentrationPercent = request.DefaultMaxConcentrationPercent ?? existing.DefaultMaxConcentrationPercent;
-        existing.DurationDriftToleranceYears = request.DurationDriftToleranceYears ?? existing.DurationDriftToleranceYears;
 
         // CommissionRateOverride — фронт всегда шлёт текущее значение поля формы целиком (как и
         // остальные пороги ниже в Settings.tsx), поэтому null здесь означает "убрать override",
@@ -122,7 +118,7 @@ public static class SettingsEndpoints
         return Results.Ok(BuildSettingsDto(user, existing, defaultSignalOptions.Value, context));
     }
 
-    /// <summary>Контекст комиссии для GET/PUT ответа (plan/22 часть D) — авто-оценка из журнала, тариф T-Invest, эффективная ставка+источник.</summary>
+    /// <summary>Контекст комиссии для GET/PUT ответа — авто-оценка из журнала, тариф T-Invest, эффективная ставка+источник.</summary>
     private sealed record CommissionContext(
         CommissionAutoEstimateDto? AutoEstimate,
         string? TInvestTariff,
@@ -148,7 +144,7 @@ public static class SettingsEndpoints
         }
         catch (Exception)
         {
-            // Проглатываем — тариф это необязательный контекст для UI (plan/22 часть B).
+            // Проглатываем — тариф это необязательный контекст для UI.
         }
 
         if (accountId is null)
@@ -184,11 +180,7 @@ public static class SettingsEndpoints
         TInvestTokenMasked = MaskToken(settings?.TInvestTokenLast4),
         UpcomingEventDaysThreshold = settings?.UpcomingEventDaysThreshold ?? defaults.UpcomingEventDaysThreshold,
         UninvestedCashThresholdRub = settings?.UninvestedCashThresholdRub ?? defaults.UninvestedCashThresholdRub,
-        UninvestedCashLookbackDays = settings?.UninvestedCashLookbackDays ?? defaults.UninvestedCashLookbackDays,
-        YieldBelowAlternativeBpsThreshold = settings?.YieldBelowAlternativeBpsThreshold ?? defaults.YieldBelowAlternativeBpsThreshold,
-        MaturityWindowDaysForAlternativeComparison = settings?.MaturityWindowDaysForAlternativeComparison ?? defaults.MaturityWindowDaysForAlternativeComparison,
         DefaultMaxConcentrationPercent = settings?.DefaultMaxConcentrationPercent ?? defaults.DefaultMaxConcentrationPercent,
-        DurationDriftToleranceYears = settings?.DurationDriftToleranceYears ?? defaults.DurationDriftToleranceYears,
         CommissionRateOverride = settings?.CommissionRateOverride,
         CommissionAutoEstimate = commission.AutoEstimate,
         TInvestTariff = commission.TInvestTariff,
@@ -200,6 +192,7 @@ public static class SettingsEndpoints
         TInvestTokenRequestDto request,
         ICurrentUser currentUser,
         IUserSettingsRepository settingsRepo,
+        IAccountRepository accountRepo,
         IDataProtectionProvider dataProtection,
         ITInvestTokenValidator tokenValidator,
         CancellationToken ct)
@@ -212,7 +205,7 @@ public static class SettingsEndpoints
         var userId = await ResolveUserIdAsync(currentUser);
         var token = request.Token.Trim();
 
-        // Пробный вызов T-Invest ДО шифрования/записи (plan/13 часть C) — невалидный токен не
+        // Пробный вызов T-Invest ДО шифрования/записи — невалидный токен не
         // должен попадать в БД молча.
         var validation = await tokenValidator.ValidateAsync(token, ct);
         if (!validation.IsValid)
@@ -227,13 +220,25 @@ public static class SettingsEndpoints
         var last4 = token.Length >= 4 ? token[^4..] : token;
 
         var existing = await settingsRepo.GetByUserIdAsync(userId) ?? new UserSettings { UserId = userId };
+        var tokenChanged = !IsSameToken(protector, existing.TInvestTokenEncrypted, token);
         existing.TInvestTokenEncrypted = encrypted;
         existing.TInvestTokenLast4 = last4;
 
         await settingsRepo.UpsertAsync(existing);
 
+        // Новый токен может смотреть на другой счёт — перепривязываем локальный счёт к тому, что
+        // подтвердила валидация (синк берёт брокерский счёт отсюда, см. BondSyncService). Тот же
+        // токен — привязку не трогаем: валидация берёт «первый открытый счёт», а владелец мог быть
+        // привязан ко второму, и сверка позиций стёрла бы его портфель.
+        var localAccountId = await PositionsEndpoints.ResolveAccountIdAsync(currentUser, accountRepo);
+        if (tokenChanged && localAccountId is > 0 && await accountRepo.GetByIdAsync(localAccountId.Value) is { } account)
+        {
+            account.BrokerAccountId = string.IsNullOrEmpty(validation.AccountId) ? null : validation.AccountId;
+            await accountRepo.UpdateAsync(account);
+        }
+
         // Намеренно НЕ возвращаем сам токен — только статус, маску и подтверждение счёта (spec §11,
-        // plan/13 часть C: "маскированный идентификатор счёта (последние 4 символа) как подтверждение").
+        // "маскированный идентификатор счёта (последние 4 символа) как подтверждение").
         var accountId = validation.AccountId ?? string.Empty;
         return Results.Ok(new TInvestTokenResponseDto
         {
@@ -241,6 +246,19 @@ public static class SettingsEndpoints
             TInvestTokenMasked = MaskToken(last4),
             ValidatedAccountIdMasked = MaskToken(accountId.Length >= 4 ? accountId[^4..] : accountId),
         });
+    }
+
+    private static bool IsSameToken(IDataProtector protector, string? previousEncrypted, string token)
+    {
+        if (string.IsNullOrEmpty(previousEncrypted)) return false;
+        try
+        {
+            return protector.Unprotect(previousEncrypted) == token;
+        }
+        catch (System.Security.Cryptography.CryptographicException)
+        {
+            return false; // ключи DataProtection сменились — считаем токен новым
+        }
     }
 
     private static string? MaskToken(string? last4) =>
@@ -258,13 +276,9 @@ public sealed record SettingsResponseDto
     public string? TInvestTokenMasked { get; init; }
     public required int UpcomingEventDaysThreshold { get; init; }
     public required decimal UninvestedCashThresholdRub { get; init; }
-    public required int UninvestedCashLookbackDays { get; init; }
-    public required int YieldBelowAlternativeBpsThreshold { get; init; }
-    public required int MaturityWindowDaysForAlternativeComparison { get; init; }
     public required decimal DefaultMaxConcentrationPercent { get; init; }
-    public required decimal DurationDriftToleranceYears { get; init; }
 
-    /// <summary>Plan/22 часть D: ручной override ставки комиссии — ДОЛЯ (0.0005 = 0.05%). Null — не задан.</summary>
+    /// <summary>Ручной override ставки комиссии — ДОЛЯ (0.0005 = 0.05%). Null — не задан.</summary>
     public decimal? CommissionRateOverride { get; init; }
 
     /// <summary>Read-only: авто-оценка ставки из журнала операций (часть A). Null — журнал не позволяет оценить (нет сделок/оборот 0).</summary>
@@ -280,7 +294,7 @@ public sealed record SettingsResponseDto
     public required string CommissionEffectiveSource { get; init; }
 }
 
-/// <summary>Read-only контекст авто-оценки ставки комиссии из журнала (plan/22 часть A/D) — см. <see cref="Bonds.Core.Analytics.CommissionEstimate"/>.</summary>
+/// <summary>Read-only контекст авто-оценки ставки комиссии из журнала — см. <see cref="Bonds.Core.Analytics.CommissionEstimate"/>.</summary>
 public sealed record CommissionAutoEstimateDto
 {
     /// <summary>Оценённая ставка — ДОЛЯ (0.00046 = 0.046%), не процент.</summary>
@@ -296,13 +310,9 @@ public sealed record SettingsUpdateRequestDto
     public string? BaseCurrency { get; init; }
     public int? UpcomingEventDaysThreshold { get; init; }
     public decimal? UninvestedCashThresholdRub { get; init; }
-    public int? UninvestedCashLookbackDays { get; init; }
-    public int? YieldBelowAlternativeBpsThreshold { get; init; }
-    public int? MaturityWindowDaysForAlternativeComparison { get; init; }
     public decimal? DefaultMaxConcentrationPercent { get; init; }
-    public decimal? DurationDriftToleranceYears { get; init; }
 
-    /// <summary>Plan/22 часть D: override ставки комиссии — ДОЛЯ (не процент; конвертация из % на фронте). Null — убрать override. Валидация: 0 &lt; x &lt; 0.05, иначе 422.</summary>
+    /// <summary>override ставки комиссии — ДОЛЯ (не процент; конвертация из % на фронте). Null — убрать override. Валидация: 0 &lt; x &lt; 0.05, иначе 422.</summary>
     public decimal? CommissionRateOverride { get; init; }
 }
 
@@ -317,7 +327,7 @@ public sealed record TInvestTokenResponseDto
     public string? TInvestTokenMasked { get; init; }
 
     /// <summary>
-    /// Plan/13 часть C: маскированный (последние 4 символа) Id брокерского счёта, к которому
+    /// Маскированный (последние 4 символа) Id брокерского счёта, к которому
     /// привязан только что провалидированный токен — подтверждение для пользователя, что
     /// проверка реально прошла, без раскрытия полного Id счёта.
     /// </summary>

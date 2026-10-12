@@ -1,6 +1,6 @@
 import type { UniverseHiddenReason, UniverseRow } from '../api/types';
 
-/** Русская подпись бейджа ликвидности (LiquidityScore, задача 26) — общая для MarketComparator (27) и Screener (28). */
+/** Русская подпись бейджа ликвидности (LiquidityScore) — общая для MarketComparator (27) и Screener (28). */
 export function liquidityLabel(score: UniverseRow['liquidityScore']): string {
   switch (score) {
     case 'High':
@@ -27,7 +27,7 @@ export function liquidityColor(score: UniverseRow['liquidityScore']): string {
   }
 }
 
-/** Русская подпись причины скрытия бумаги гигиеническим фильтром (задача 28, статусная строка/бейдж скринера). */
+/** Русская подпись причины скрытия бумаги гигиеническим фильтром (статусная строка/бейдж скринера). */
 export function hiddenReasonLabel(reason: UniverseHiddenReason | null): string {
   switch (reason) {
     case 'LowTurnover':

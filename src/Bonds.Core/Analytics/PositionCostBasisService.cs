@@ -3,10 +3,10 @@ using Bonds.Core.Models;
 namespace Bonds.Core.Analytics;
 
 /// <summary>
-/// Цена входа и P&amp;L по одной позиции (plan/14 §A, spec §9 "Таблица позиций") — считает,
+/// Цена входа и P&amp;L по одной позиции (spec §9 "Таблица позиций") — считает,
 /// сколько реально вложено в текущий остаток бумаги и сколько на ней заработано, отдельно от
 /// YTM/текущей доходности (те считаются от текущей рыночной цены и не отвечают на вопрос
-/// "от моей цены покупки" — см. tooltip у заголовка "Доходность" на фронте, plan/14 §C.3).
+/// "от моей цены покупки" — см. tooltip у заголовка "Доходность" на фронте).
 /// <para>
 /// <b>Метод — average cost (средневзвешенная цена), а не FIFO.</b> Брокерская отчётность
 /// Т-Инвестиций для целей НДФЛ использует FIFO (обязательное требование налогового учёта), но
@@ -25,14 +25,21 @@ namespace Bonds.Core.Analytics;
 /// для купонов, и с Math.Abs только там, где нужна именно величина вложенного при покупке.
 /// </para>
 /// <para>
-/// <b>Купоны:</b> суммируются как сумма всех операций <see cref="OperationType.Coupon"/>.
-/// <c>TInvestOperationMapper</c> (Bonds.Infrastructure) на момент написания не выделяет налог с
-/// купона в отдельный доменный тип — все налоговые операции (включая "TaxCorrectionCoupon")
-/// мапятся в общий <see cref="OperationType.Tax"/>, который в этом сервисе не участвует ни в
-/// купонах, ни в cost basis. Итог: "получено купонов" здесь — это сумма собственно купонных
-/// выплат (брокер обычно платит уже за вычетом НДФЛ, поэтому фактически это часто и есть чистая
-/// сумма; расхождение возможно только если налог с купона удержан отдельной операцией — она не
-/// вычитается, т.к. неотличима от прочих налоговых корректировок).
+/// <b>Купоны — НЕТТО налога.</b> T-Invest отдаёт купон (<c>Coupon</c>) брутто, а НДФЛ удерживает
+/// отдельной операцией (<c>BondTax</c>/<c>BondTaxProgressive</c>/<c>TaxCorrectionCoupon</c>, у неё
+/// есть FIGI бумаги). <c>TInvestOperationMapper</c> сворачивает все налоговые типы в
+/// <see cref="OperationType.Tax"/>, поэтому «получено купонов» = сумма <see cref="OperationType.Coupon"/>
+/// плюс сумма <see cref="OperationType.Tax"/> того же инструмента (знак брокера: удержание отрицательное,
+/// возврат/корректировка положительная — просто складываем). Налоги без FIGI (годовые, по счёту) в
+/// журнал инструмента не попадают и здесь не участвуют. Налог, привязанный к бумаге по иной причине
+/// (напр. НДФЛ с прибыли при продаже) тоже уменьшает доход по ней — для дисплейной метрики
+/// «сколько заработано по бумаге» это корректно.
+/// </para>
+/// <para>
+/// <b>Амортизация</b> (<see cref="OperationType.Amortization"/>, <c>BondRepayment</c>) — возврат
+/// капитала: уменьшает вложенное (<c>runningCost -= amount</c>), количество не меняется. Рыночная
+/// цена амортизируемой бумаги после выплаты считается от уменьшенного номинала, поэтому без этого
+/// шага P&amp;L показывал бы фиктивный убыток на сумму выплаченного тела.
 /// </para>
 /// </summary>
 public static class PositionCostBasisService
@@ -49,7 +56,7 @@ public static class PositionCostBasisService
         decimal currentMarketValueRub)
     {
         var ordered = operations
-            .Where(op => op.Type is OperationType.Buy or OperationType.Sell)
+            .Where(op => op.Type is OperationType.Buy or OperationType.Sell or OperationType.Amortization or OperationType.SecurityIn)
             .OrderBy(op => op.Date)
             .ThenBy(op => op.Id)
             .ToList();
@@ -60,8 +67,24 @@ public static class PositionCostBasisService
 
         foreach (var op in ordered)
         {
+            if (op.Type == OperationType.Amortization)
+            {
+                // Возврат капитала: тело погашено частично, штуки на месте. Не уходим ниже нуля
+                // (амортизация, пришедшая раньше известных покупок, — неполный журнал).
+                runningCost = Math.Max(0m, runningCost - Math.Abs(op.AmountRub));
+                continue;
+            }
+
             var qty = op.Quantity ?? 0m;
             if (qty <= 0m) continue; // без количества операция не может изменить лот — пропускаем, не падаем
+
+            if (op.Type == OperationType.SecurityIn)
+            {
+                // Ввод бумаг без цены покупки: себестоимость неизвестна — лот не учитываем в cost basis,
+                // но остаток по журналу вырастет, а позиция в итоге получит HasUnknownLots.
+                hasUnknownLots = true;
+                continue;
+            }
 
             if (op.Type == OperationType.Buy)
             {
@@ -94,8 +117,9 @@ public static class PositionCostBasisService
             hasUnknownLots = true;
         }
 
+        // Нетто: купоны брутто + налоговые операции инструмента (удержание отрицательное).
         var couponsReceivedRub = operations
-            .Where(op => op.Type == OperationType.Coupon)
+            .Where(op => op.Type is OperationType.Coupon or OperationType.Tax)
             .Sum(op => op.AmountRub);
 
         // Нет ни одного известного лота под текущим остатком — среднюю цену посчитать не из чего.
@@ -156,7 +180,7 @@ public sealed record PositionCostBasis
     /// <summary>UnrealizedPnlRub / InvestedRub — доля (0.12 = 12%), НЕ проценты (форматтер фронта делает *100).</summary>
     public decimal? UnrealizedPnlPercent { get; init; }
 
-    /// <summary>Сумма всех купонных операций по бумаге (см. doc-comment сервиса). Не null — 0, если купонов не было.</summary>
+    /// <summary>Купоны минус налоги по бумаге, нетто (см. doc-comment сервиса). Не null — 0, если купонов не было.</summary>
     public required decimal CouponsReceivedRub { get; init; }
 
     /// <summary>UnrealizedPnlRub + CouponsReceivedRub.</summary>

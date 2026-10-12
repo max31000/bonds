@@ -1,7 +1,7 @@
 import { apiClient } from './client';
 import type { SettingsResponse, SettingsUpdateRequest, TInvestTokenResponse } from './types';
 
-/** GET /api/settings — текущие пороги триггеров и статус токена T-Invest (plan/09c §B.8). */
+/** GET /api/settings — текущие пороги триггеров и статус токена T-Invest. */
 export function fetchSettings(): Promise<SettingsResponse> {
   return apiClient.get<SettingsResponse>('/settings');
 }

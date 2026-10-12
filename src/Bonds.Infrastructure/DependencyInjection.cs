@@ -41,11 +41,11 @@ public static class DependencyInjection
         // Repositories/Connectors/доменные сервисы регистрируются здесь по мере появления
         // (этапы 02-08): IInstrumentRepository, ITInvestClient, IMoexClient, ...
 
-        // Auth (этап 02)
+        // Auth
         services.AddScoped<IUserRepository>(sp => new UserRepository(GetConnStr(sp)));
         services.AddScoped<UserProvisioning>();
 
-        // Storage (этап 03) — справочник, котировки, позиции/операции, сигналы.
+        // Storage — справочник, котировки, позиции/операции, сигналы.
         services.AddScoped<IInstrumentRepository>(sp => new InstrumentRepository(GetConnStr(sp)));
         services.AddScoped<ICouponScheduleRepository>(sp => new CouponScheduleRepository(GetConnStr(sp)));
         services.AddScoped<IAmortizationScheduleRepository>(sp => new AmortizationScheduleRepository(GetConnStr(sp)));
@@ -60,20 +60,20 @@ public static class DependencyInjection
         services.AddScoped<ISignalRepository>(sp => new SignalRepository(GetConnStr(sp)));
         services.AddScoped<ITargetAllocationRepository>(sp => new TargetAllocationRepository(GetConnStr(sp)));
 
-        // Plan/16 часть A: тики лёгкого контура котировок (intraday_quotes).
+        // Тики лёгкого контура котировок (intraday_quotes).
         services.AddScoped<IIntradayQuoteRepository>(sp => new IntradayQuoteRepository(GetConnStr(sp)));
 
-        // Plan/19 часть A: кэш дневной истории цены инструмента (instrument_price_history) для
+        // Кэш дневной истории цены инструмента (instrument_price_history) для
         // графика цены карточки позиции.
         services.AddScoped<IInstrumentPriceHistoryRepository>(sp => new InstrumentPriceHistoryRepository(GetConnStr(sp)));
 
-        // Этап 08: настройки пользователя (пороги Signals Engine + токен T-Invest зашифрованный).
+        // Настройки пользователя (пороги Signals Engine + токен T-Invest зашифрованный).
         services.AddScoped<IUserSettingsRepository>(sp => new UserSettingsRepository(GetConnStr(sp)));
 
-        // Задача 20 часть A: ручной watchlist (бумаги вне текущих позиций, отслеживаемые по ISIN).
+        // Ручной watchlist (бумаги вне текущих позиций, отслеживаемые по ISIN).
         services.AddScoped<IWatchlistItemRepository>(sp => new WatchlistItemRepository(GetConnStr(sp)));
 
-        // Задача 26 часть B: банк облигаций MOEX — снимок всей рыночной вселенной + дневная история.
+        // Банк облигаций MOEX — снимок всей рыночной вселенной + дневная история.
         services.AddScoped<IBondUniverseRepository>(sp => new BondUniverseRepository(GetConnStr(sp)));
 
         // Migration runner
@@ -81,7 +81,7 @@ public static class DependencyInjection
             GetConnStr(sp),
             sp.GetRequiredService<ILogger<MigrationRunner>>()));
 
-        // Connectors (этап 04) — MOEX ISS (справочно-историческое) и T-Invest (истина про счёт,
+        // Connectors — MOEX ISS (справочно-историческое) и T-Invest (истина про счёт,
         // plan/00 §4 "Разделение источников данных").
 
         // MOEX ISS: бесплатный публичный API без авторизации — именованный HttpClient с базовым
@@ -93,7 +93,7 @@ public static class DependencyInjection
         });
         services.AddScoped<IMoexIssClient, MoexIssClient>();
 
-        // Telegram Bot API — алерт владельцу при падении автосинка (plan/13 часть D). Тот же бот,
+        // Telegram Bot API — алерт владельцу при падении автосинка. Тот же бот,
         // что и CI-алерты (Telegram:BotToken), base address без секрета в URL самого
         // клиента (токен подставляется в путь запроса на каждый вызов, см. TelegramAlertSender).
         services.AddHttpClient(TelegramAlertSender.HttpClientName, client =>
@@ -110,41 +110,41 @@ public static class DependencyInjection
         // (см. doc-comment TInvestPortfolioClient, BACKEND_DECISIONS.md решение 12).
         services.AddScoped<ITInvestPortfolioClient, TInvestPortfolioClient>();
 
-        // Валидация токена перед сохранением (plan/13 часть C) — не завязана на
+        // Валидация токена перед сохранением — не завязана на
         // ITInvestTokenProvider/БД, токен — явный аргумент вызова из PUT /api/settings/tinvest-token.
         services.AddScoped<ITInvestTokenValidator, TInvestTokenValidator>();
 
-        // Оркестрация синка (этап 04 Часть C) — без HTTP-эндпоинта/шедулера на этом этапе,
-        // вызывается программно/из тестов (см. plan/04).
+        // Оркестрация синка — без HTTP-эндпоинта/шедулера на этом этапе,
+        // вызывается программно/из тестов.
         services.AddScoped<BondSyncService>();
 
-        // Задача 27 часть A: единый путь "обогатить одну бумагу по ISIN" (резолв инструмента +
+        // Единый путь "обогатить одну бумагу по ISIN" (резолв инструмента +
         // MOEX-котировка), вынесенный из WatchlistSyncService — переиспользуется watchlist
-        // (задача 20) и материализацией из банка облигаций (POST /api/universe/{secid}/materialize).
+        // и материализацией из банка облигаций (POST /api/universe/{secid}/materialize).
         services.AddScoped<InstrumentEnrichmentService>();
 
-        // Задача 20 часть A: синк watchlist-бумаг (ISIN без позиции) — переиспользует
+        // Синк watchlist-бумаг (ISIN без позиции) — переиспользует
         // InstrumentEnrichmentService, отдельный шаг в SyncCycleService.
         services.AddScoped<WatchlistSyncService>();
 
-        // Cash-Flow Projection + Portfolio Analytics (этап 06) — координирующие сервисы поверх
-        // чистого Bonds.Core.CashFlow/Bonds.Core.Analytics; без HTTP-эндпоинта (этап 08) и без
-        // планирования по расписанию (этап 07) — вызываются программно/из тестов на этом этапе.
+        // Cash-Flow Projection + Portfolio Analytics — координирующие сервисы поверх
+        // чистого Bonds.Core.CashFlow/Bonds.Core.Analytics; без HTTP-эндпоинта и без
+        // планирования по расписанию — вызываются программно/из тестов на этом этапе.
         services.AddScoped<CashFlowProjectionOrchestrator>();
         services.AddScoped<PortfolioSnapshotService>();
 
-        // Plan/15: ретроспективный бэкфилл истории XIRR из журнала операций + дневных цен MOEX ISS.
+        // Ретроспективный бэкфилл истории XIRR из журнала операций + дневных цен MOEX ISS.
         services.AddScoped<PortfolioHistoryBackfillService>();
 
-        // Plan/19 часть A: график цены карточки позиции — та же дозагрузка хвоста, что и у
+        // График цены карточки позиции — та же дозагрузка хвоста, что и у
         // бэкфилла XIRR, но per-instrument и с персистентным кэшем (instrument_price_history).
         services.AddScoped<InstrumentPriceHistoryService>();
 
-        // Этап 08: сборщик holdings (между репозиториями и аналитическими сервисами) — общий
+        // Сборщик holdings (между репозиториями и аналитическими сервисами) — общий
         // вход для positions/composition/scatter/comparison/replacement эндпоинтов.
         services.AddScoped<PortfolioHoldingsBuilder>();
 
-        // Plan/22 часть C: резолвер эффективной ставки комиссии (override → оценка из журнала →
+        // Резолвер эффективной ставки комиссии (override → оценка из журнала →
         // дефолт) — потребляется replacement/allocation/ifSoldNow эндпоинтами.
         services.AddScoped<ICommissionRateProvider, CommissionRateProvider>();
 
@@ -172,29 +172,29 @@ public static class DependencyInjection
             }));
         services.AddScoped<ITInvestTokenProvider, TInvestTokenProvider>();
 
-        // Signals Engine + Scheduler (этап 07, plan/07) — options читаются из конфига с дефолтами
+        // Signals Engine + Scheduler — options читаются из конфига с дефолтами
         // самого класса опций, если секция не задана (см. doc-comment SignalEngineOptions/SchedulerOptions).
         services.Configure<SignalEngineOptions>(configuration.GetSection("Signals"));
         services.Configure<SchedulerOptions>(configuration.GetSection("Scheduler"));
 
         // ISyncCycleRunner — Singleton (держит статус последнего синка и семафор защиты от
-        // параллельного запуска между тиками хостед-сервиса и будущим HTTP force-refresh,
-        // этап 08), сам резолвит Scoped-зависимости через IServiceScopeFactory внутри RunCycleAsync
+        // параллельного запуска между тиками хостед-сервиса и HTTP force-refresh,
+        // сам резолвит Scoped-зависимости через IServiceScopeFactory внутри RunCycleAsync
         // (см. doc-comment SyncCycleService).
         services.AddSingleton<ISyncCycleRunner, SyncCycleService>();
         services.AddHostedService<SyncSchedulerHostedService>();
 
-        // Plan/16 часть A: лёгкий контур котировок — поллинг, НЕ gRPC-стриминг/SignalR (осознанное
+        // Лёгкий контур котировок — поллинг, НЕ gRPC-стриминг/SignalR (осознанное
         // ограничение плана). Options вынесены в конфиг с дефолтами самого класса опций.
         services.Configure<LiveQuotesOptions>(configuration.GetSection("LiveQuotes"));
         services.AddHostedService<LiveQuotesPollingService>();
 
-        // Задача 26 часть C: банк облигаций MOEX — снимок всей рыночной вселенной (не только
-        // позиций/watchlist), раз в час в торговые часы + дневная история для трендов (задача 30).
+        // Банк облигаций MOEX — снимок всей рыночной вселенной (не только
+        // позиций/watchlist), раз в час в торговые часы + дневная история для трендов.
         services.Configure<Bonds.Infrastructure.Universe.BondUniverseRefreshOptions>(configuration.GetSection("BondUniverse"));
         services.AddHostedService<Bonds.Infrastructure.Universe.BondUniverseRefreshService>();
 
-        // Задача 30 часть B: сглаженная (медиана дневных медиан за 5 торговых дней) статистика
+        // Сглаженная (медиана дневных медиан за 5 торговых дней) статистика
         // корзин relative value + кэш ~1 час в памяти — Singleton (кэш переживает HTTP-запросы),
         // резолвит Scoped IBondUniverseRepository через IServiceScopeFactory (см. doc-comment).
         services.AddSingleton<Bonds.Infrastructure.Universe.RelativeValueSnapshotBuilder>();

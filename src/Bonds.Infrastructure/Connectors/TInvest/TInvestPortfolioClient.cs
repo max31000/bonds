@@ -93,11 +93,12 @@ public sealed class TInvestPortfolioClient : ITInvestPortfolioClient
         return account.Id;
     }
 
-    public async Task<IReadOnlyList<TInvestPortfolioPosition>> GetBondPositionsAsync(string accountId, CancellationToken ct = default)
+    public async Task<TInvestPortfolio> GetPortfolioAsync(string accountId, CancellationToken ct = default)
     {
         var client = await GetClientAsync(ct);
         var response = await client.Operations.GetPortfolioAsync(
-            new PortfolioRequest { AccountId = accountId }, cancellationToken: ct);
+            new PortfolioRequest { AccountId = accountId, Currency = PortfolioRequest.Types.CurrencyRequest.Rub },
+            cancellationToken: ct);
 
         var result = new List<TInvestPortfolioPosition>();
         foreach (var position in response.Positions)
@@ -120,7 +121,12 @@ public sealed class TInvestPortfolioClient : ITInvestPortfolioClient
             });
         }
 
-        return result;
+        return new TInvestPortfolio
+        {
+            Bonds = result,
+            CashRub = response.TotalAmountCurrencies.ToNullableDecimal(),
+            TotalPortfolioRub = response.TotalAmountPortfolio.ToNullableDecimal(),
+        };
     }
 
     public async Task<IReadOnlyList<TInvestOperation>> GetOperationsAsync(string accountId, DateTime? from, CancellationToken ct = default)
@@ -131,7 +137,7 @@ public sealed class TInvestPortfolioClient : ITInvestPortfolioClient
 
         // GetOperationsByCursor — пагинированный курсорный эндпоинт (предпочтительнее устаревшего
         // GetOperations без курсора, verified §12.2): поддерживает инкрементальный синк через
-        // параметр From и постраничный обход через Cursor/HasNext (plan/04 Часть B п.6).
+        // параметр From и постраничный обход через Cursor/HasNext.
         do
         {
             var request = new GetOperationsByCursorRequest
@@ -160,6 +166,7 @@ public sealed class TInvestPortfolioClient : ITInvestPortfolioClient
                 {
                     Id = item.Id,
                     OperationType = item.Type.ToString(),
+                    InstrumentKind = ResolveInstrumentKind(item.InstrumentKind, item.InstrumentType),
                     Figi = string.IsNullOrEmpty(item.Figi) ? null : item.Figi,
                     InstrumentUid = string.IsNullOrEmpty(item.InstrumentUid) ? null : item.InstrumentUid,
                     Date = item.Date.ToDateTime(),
@@ -173,6 +180,20 @@ public sealed class TInvestPortfolioClient : ITInvestPortfolioClient
         } while (!string.IsNullOrEmpty(cursor));
 
         return result;
+    }
+
+    /// <summary>
+    /// Тип инструмента операции в виде имени enum <c>Tinkoff.InvestApi.V1.InstrumentType</c>
+    /// (Bond/Share/Currency/Etf/...; имена сверены рефлексией по сборке SDK 0.6.22). Если enum-поле
+    /// <c>InstrumentKind</c> не заполнено, берём строковое <c>InstrumentType</c> ("bond", "share"...)
+    /// и нормализуем регистр. Null — брокер тип не указал (операции по счёту: комиссии, пополнения).
+    /// </summary>
+    internal static string? ResolveInstrumentKind(Tinkoff.InvestApi.V1.InstrumentType kind, string? rawType)
+    {
+        if (kind != Tinkoff.InvestApi.V1.InstrumentType.Unspecified) return kind.ToString();
+        if (string.IsNullOrWhiteSpace(rawType)) return null;
+        var t = rawType.Trim();
+        return char.ToUpperInvariant(t[0]) + t[1..].ToLowerInvariant();
     }
 
     public async Task<string?> GetIsinByFigiAsync(string figi, CancellationToken ct = default)

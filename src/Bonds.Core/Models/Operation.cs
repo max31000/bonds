@@ -3,7 +3,7 @@ namespace Bonds.Core.Models;
 /// <summary>
 /// Событие журнала операций по счёту — источник истины для XIRR (spec §5, §6.9).
 /// <see cref="ExternalId"/> — идентификатор операции в T-Invest, используется для
-/// идемпотентного upsert при повторном синке (plan/03 §C).
+/// идемпотентного upsert при повторном синке.
 /// </summary>
 public class Operation
 {
@@ -19,7 +19,7 @@ public class Operation
     /// <summary>Сумма в рублях; знак отражает направление денежного потока (покупка — минус,
     /// поступление — плюс). Источник истины — T-Invest: брокер отдаёт <c>Payment</c> уже со
     /// знаком потока (см. Bonds.Infrastructure/Connectors/TInvest/README.md), синк копирует это
-    /// значение без модификации. <see cref="Bonds.Core.Analytics.PortfolioXirrService"/> (этап 06)
+    /// значение без модификации. <see cref="Bonds.Core.Analytics.PortfolioXirrService"/>
     /// использует это поле как есть для XIRR, не переписывая знак по <see cref="Type"/> (пересмотрено
     /// при ревью этапов 04-06 — раньше было два независимых источника знака, что было риском
     /// расхождения; теперь единственный источник истины — это поле).</summary>
@@ -42,4 +42,11 @@ public enum OperationType
     Redemption,
     Tax,
     Fee,
+
+    /// <summary>Ввод ценных бумаг на счёт (T-Invest <c>InputSecurities</c>) — перевод от другого брокера/счёта,
+    /// не покупка: количество растёт, денег не списано. Внешний приток капитала для XIRR.</summary>
+    SecurityIn,
+
+    /// <summary>Вывод ценных бумаг со счёта (T-Invest <c>OutputSecurities</c>) — симметрично <see cref="SecurityIn"/>.</summary>
+    SecurityOut,
 }

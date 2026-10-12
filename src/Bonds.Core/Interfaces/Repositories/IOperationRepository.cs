@@ -9,7 +9,7 @@ public interface IOperationRepository
     Task<IEnumerable<Operation>> GetByAccountIdAsync(ulong accountId, DateOnly? from = null, DateOnly? to = null);
 
     /// <summary>
-    /// Идемпотентный upsert по <see cref="Operation.ExternalId"/> (plan/03 §C, spec §5).
+    /// Идемпотентный upsert по <see cref="Operation.ExternalId"/> (spec §5).
     /// Повторный синк того же ExternalId обновляет запись, а не создаёт дубль.
     /// Возвращает Id вставленной/обновлённой строки.
     /// </summary>

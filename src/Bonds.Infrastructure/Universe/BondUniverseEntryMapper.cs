@@ -5,7 +5,7 @@ using Bonds.Infrastructure.Connectors.Moex;
 namespace Bonds.Infrastructure.Universe;
 
 /// <summary>
-/// Задача 26 часть B/C.3 — конвертирует сырую строку MOEX ISS (<see cref="MoexBondMarketRow"/>,
+/// Конвертирует сырую строку MOEX ISS (<see cref="MoexBondMarketRow"/>,
 /// единицы "как есть от биржи") в <see cref="BondUniverseEntry"/> (единицы этого сервиса).
 /// <para>
 /// <b>ЕДИНИЦЫ (plan/26 "ЕДИНИЦЫ" — главный класс багов в этом репо, дважды ловили):</b>

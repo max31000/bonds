@@ -16,6 +16,7 @@ public class AccountRepository : IAccountRepository
 
     private const string SelectColumns = @"
         id AS Id, user_id AS UserId, broker_account_id AS BrokerAccountId, name AS Name,
+        cash_rub AS CashRub, broker_total_rub AS BrokerTotalRub, balance_synced_at AS BalanceSyncedAt,
         created_at AS CreatedAt, updated_at AS UpdatedAt";
 
     public async Task<Account?> GetByIdAsync(ulong id, ulong userId)
@@ -71,6 +72,16 @@ public class AccountRepository : IAccountRepository
             account.Id,
             account.UserId,
         });
+    }
+
+    public async Task UpdateBalanceAsync(ulong accountId, decimal? cashRub, decimal? brokerTotalRub, DateTime syncedAtUtc)
+    {
+        using var conn = CreateConnection();
+        await conn.ExecuteAsync(
+            @"UPDATE accounts
+              SET cash_rub = @CashRub, broker_total_rub = @BrokerTotalRub, balance_synced_at = @SyncedAt
+              WHERE id = @Id",
+            new { Id = accountId, CashRub = cashRub, BrokerTotalRub = brokerTotalRub, SyncedAt = syncedAtUtc });
     }
 
     public async Task<ulong?> GetPrimaryAccountIdAsync()

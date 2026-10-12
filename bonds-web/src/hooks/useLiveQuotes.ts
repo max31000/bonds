@@ -6,7 +6,7 @@ import { isWithinMoexTradingHours } from '../utils/tradingHours';
 const POLL_INTERVAL_MS = 60_000;
 
 /**
- * Поллит GET /api/live/positions раз в 60 сек (plan/16 часть B) — но ТОЛЬКО когда вкладка видима
+ * Поллит GET /api/live/positions раз в 60 сек — но ТОЛЬКО когда вкладка видима
  * (`document.visibilityState`) и грубо в торговые часы MOEX на клиенте (см. isWithinMoexTradingHours),
  * чтобы не спамить бэкенд ночью/на скрытой вкладке. Результат пишется в useLiveStore, откуда его
  * читает Positions.tsx (merge по positionId) и PortfolioIntradayChart (перерисовка после тика).

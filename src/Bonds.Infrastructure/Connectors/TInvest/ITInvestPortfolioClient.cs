@@ -1,7 +1,7 @@
 namespace Bonds.Infrastructure.Connectors.TInvest;
 
 /// <summary>
-/// Обёртка над официальным gRPC SDK <c>Tinkoff.InvestApi</c> (plan/04 Часть B) — "истина про счёт"
+/// Обёртка над официальным gRPC SDK <c>Tinkoff.InvestApi</c> — "истина про счёт"
 /// (позиции, операции, текущие цены/НКД). Вынесена за интерфейс, чтобы:
 /// (1) тесты подставляли мок без реальных gRPC-вызовов (нет токена в этой среде, и в CI его
 ///     не будет — plan/04 Часть B п.7 "безопасность токена"); (2) <see cref="Bonds.Core.Sync.BondSyncService"/>
@@ -15,8 +15,11 @@ public interface ITInvestPortfolioClient
     /// <summary>Идентификатор брокерского счёта, привязанного к токену (первый/единственный счёт — MVP §2).</summary>
     Task<string?> GetPrimaryAccountIdAsync(CancellationToken ct = default);
 
-    /// <summary>Позиции портфеля (только облигации — другие типы инструментов отфильтрованы).</summary>
-    Task<IReadOnlyList<TInvestPortfolioPosition>> GetBondPositionsAsync(string accountId, CancellationToken ct = default);
+    /// <summary>
+    /// Снимок портфеля: облигационные позиции (другие типы инструментов отфильтрованы) + денежные
+    /// итоги счёта (свободные деньги, полная стоимость по оценке брокера) — один вызов GetPortfolio.
+    /// </summary>
+    Task<TInvestPortfolio> GetPortfolioAsync(string accountId, CancellationToken ct = default);
 
     /// <summary>
     /// Журнал операций постранично по курсору (GetOperationsByCursor — поддерживает инкрементальный
@@ -32,7 +35,7 @@ public interface ITInvestPortfolioClient
     Task<IReadOnlyDictionary<string, TInvestQuote>> GetQuotesAsync(IReadOnlyCollection<string> figis, CancellationToken ct = default);
 
     /// <summary>
-    /// Имя тарифа пользователя (<c>Users.GetInfo</c>, plan/22 часть B) — ТОЛЬКО для отображения в
+    /// Имя тарифа пользователя (<c>Users.GetInfo</c>) — ТОЛЬКО для отображения в
     /// настройках (контекст для пользователя, "у вас тариф X"). T-Invest НЕ отдаёт числовую ставку
     /// комиссии тарифа нигде в API — этот метод не участвует в расчёте эффективной ставки
     /// (см. <see cref="Bonds.Core.Interfaces.ICommissionRateProvider"/>, который использует только
@@ -42,7 +45,7 @@ public interface ITInvestPortfolioClient
     Task<TInvestTariffInfo?> GetUserTariffAsync(CancellationToken ct = default);
 }
 
-/// <summary>Тариф пользователя T-Invest (plan/22 часть B) — только контекст для UI, не влияет на расчёты.</summary>
+/// <summary>Тариф пользователя T-Invest — только контекст для UI, не влияет на расчёты.</summary>
 public sealed record TInvestTariffInfo
 {
     /// <summary>Имя тарифа (например, "Инвестор", "Трейдер") — как отдаёт GetInfoResponse.Tariff.</summary>

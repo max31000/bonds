@@ -10,7 +10,7 @@ using static Bonds.Core.Analytics.RelativeValueService;
 namespace Bonds.Infrastructure.Universe;
 
 /// <summary>
-/// Задача 30 часть B — оркестратор сглаженной статистики корзин relative value: медиана ДНЕВНЫХ
+/// Оркестратор сглаженной статистики корзин relative value: медиана ДНЕВНЫХ
 /// медиан корзины за последние <see cref="TradingDaysWindow"/> торговых дней (защита от однодневных
 /// выбросов, план часть B.1), а не статистика по одному снимку. Если истории меньше — считает по
 /// тому, что есть (в т.ч. по единственному текущему снимку bond_universe, если истории вообще нет),
@@ -114,7 +114,7 @@ public sealed class RelativeValueSnapshotBuilder
         var currentBySecid = currentEntries.ToDictionary(e => e.Secid, StringComparer.OrdinalIgnoreCase);
 
         var today = BusinessClock.MoscowToday();
-        // Задача 31 часть B.1: корпус RV-корзин исключает не только hygiene-hidden бумаги, но и
+        // Корпус RV-корзин исключает не только hygiene-hidden бумаги, но и
         // ФЛОАТЕРЫ — их биржевой YIELD — текущая доходность (не YTM), несравнима с фикс-купоном и
         // искажала бы медиану G-спреда корзины (см. doc-comment BasketMember.IsFloater про
         // null→false). Единая точка исключения — floater'ы никогда не становятся BasketMember, ни
@@ -167,7 +167,7 @@ public sealed class RelativeValueSnapshotBuilder
                     Sector = currentBySecid[h.Secid].Sector,
                     DurationYears = h.DurationYears,
                     GSpreadFraction = h.GspreadApproxFraction,
-                    // Задача 31: bond_universe_history не хранит is_floater (см. doc-comment
+                    // bond_universe_history не хранит is_floater (см. doc-comment
                     // BondUniverseHistoryPoint) — берём из ТЕКУЩЕГО снимка, как и Sector выше.
                     // На практике всегда false здесь: dayGroup уже отфильтрован eligibleSecids
                     // (флоатеры исключены до этой точки) — поле проставлено для инварианта записи.

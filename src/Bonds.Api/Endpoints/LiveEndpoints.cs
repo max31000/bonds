@@ -6,7 +6,7 @@ using Bonds.Core.Models;
 namespace Bonds.Api.Endpoints;
 
 /// <summary>
-/// Лёгкий контур "только цены" (plan/16 часть A) — намеренно НЕ переиспользует
+/// Лёгкий контур "только цены" — намеренно НЕ переиспользует
 /// <see cref="Bonds.Infrastructure.Analytics.PortfolioHoldingsBuilder"/> (тот тянет купоны/
 /// амортизации/оферты/движок метрик на каждую позицию — тяжело для поллинга раз в 60 сек с
 /// фронта). Здесь только Position + Instrument + последний тик <see cref="IntradayQuote"/> (с
@@ -79,7 +79,7 @@ public static class LiveEndpoints
             else
             {
                 // Нет ни одного intraday-тика ещё (только что открыт рынок / нет позиций для
-                // поллинга ранее) — fallback на последний снимок полного синка (plan/16: "isStale: true").
+                // поллинга ранее) — fallback на последний снимок полного синка ("isStale: true").
                 dirtyPrice = lastFullSyncQuote?.DirtyPrice;
                 asOfUtc = lastFullSyncQuote is not null
                     ? lastFullSyncQuote.AsOf.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc)
@@ -108,11 +108,16 @@ public static class LiveEndpoints
             });
         }
 
+        var account = await accountRepo.GetByIdAsync(accountId.Value);
+
         return Results.Ok(new LivePositionsResponseDto
         {
             Positions = rows,
             TotalMarketValueRub = total,
             AsOfUtc = latestTickUtc ?? DateTime.UtcNow,
+            CashRub = account?.CashRub,
+            BrokerTotalRub = account?.BrokerTotalRub,
+            BalanceSyncedAtUtc = account?.BalanceSyncedAt,
         });
     }
 
@@ -123,6 +128,7 @@ public static class LiveEndpoints
         IAccountRepository accountRepo,
         IPositionRepository positionRepo,
         IIntradayQuoteRepository intradayRepo,
+        IMarketQuoteRepository marketQuoteRepo,
         string? range)
     {
         var accountId = await PositionsEndpoints.ResolveAccountIdAsync(currentUser, accountRepo);
@@ -154,7 +160,15 @@ public static class LiveEndpoints
             id => id,
             id => (IReadOnlyList<IntradayQuote>)ticks.Where(t => t.InstrumentId == id).ToList());
 
-        var series = IntradaySeriesBuilder.Build(quotesByInstrument, quantityByInstrument);
+        // Посев последним дневным снимком — та же fallback-цена, что у GET /api/live/positions, чтобы
+        // бумага без тиков в окне (не торговалась сегодня) не выпадала из графика и итоги сходились.
+        var seedPrices = new Dictionary<ulong, decimal>();
+        foreach (var id in instrumentIds)
+        {
+            if (await marketQuoteRepo.GetLatestAsync(id) is { DirtyPrice: { } dirty }) seedPrices[id] = dirty;
+        }
+
+        var series = IntradaySeriesBuilder.Build(quotesByInstrument, quantityByInstrument, seedPrices);
 
         return Results.Ok(new PortfolioIntradayResponseDto
         {
@@ -189,8 +203,18 @@ public sealed record LivePositionRowDto
 public sealed record LivePositionsResponseDto
 {
     public required IReadOnlyList<LivePositionRowDto> Positions { get; init; }
+
+    /// <summary>Стоимость ОБЛИГАЦИЙ (грязная, руб.) — без свободных денег.</summary>
     public required decimal TotalMarketValueRub { get; init; }
     public required DateTime AsOfUtc { get; init; }
+
+    /// <summary>Свободные деньги на счёте по последнему синку (руб.). Null — ещё не синкались.</summary>
+    public decimal? CashRub { get; init; }
+
+    /// <summary>Полная стоимость счёта по оценке брокера на момент синка (руб.) — для сверки.</summary>
+    public decimal? BrokerTotalRub { get; init; }
+
+    public DateTime? BalanceSyncedAtUtc { get; init; }
 }
 
 public sealed record IntradaySeriesPointDto
