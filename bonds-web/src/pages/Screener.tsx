@@ -19,9 +19,9 @@ import {
   Collapse,
   Pagination,
 } from '@mantine/core';
-import { Page, Section } from '@mvv42/kit';
+import { HelpHint, Page, Section } from '@mvv42/kit';
 import { useDebouncedValue, useDisclosure, useMediaQuery } from '@mantine/hooks';
-import { ChartExplainIcon } from '../components/charts';
+
 import { Disclaimer } from '../components/Disclaimer';
 import { ReliabilityDot, RiskSignalsCaption } from '../components/RiskSignalBadges';
 import { ReliabilityFilterControl } from '../components/ReliabilityFilterControl';
@@ -449,7 +449,7 @@ export function Screener() {
       title={
         <Group gap={6} component="span" wrap="nowrap">
           Скринер
-          <ChartExplainIcon title="Скринер" explanation={PAGE_EXPLANATION} data-testid="screener-explain-icon" />
+          <HelpHint label="Пояснение: Скринер" data-testid="screener-explain-icon">{PAGE_EXPLANATION}</HelpHint>
         </Group>
       }
       description="Облигации MOEX: фильтры по доходности, сроку, ликвидности и надёжности"

@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Security.Claims;
 using Bonds.Infrastructure.Services;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Authorization.Policy;
 using Microsoft.Extensions.Caching.Memory;
 using Mvv42.Auth.Client;
 
@@ -80,6 +81,29 @@ public sealed class CurrentUser(
     }
 }
 
+/// <summary>
+/// Authorization failures as JSON the frontend can tell apart: a forbidden request (authenticated, but not the
+/// owner or without the bonds app) → 403 <c>{"error":"access_denied"}</c> → global «Нет доступа» screen.
+/// Other 403s (the SDK's <c>origin_not_allowed</c>, business rules) keep their own codes. 401 stays as is.
+/// </summary>
+public sealed class AccessDeniedResultHandler : IAuthorizationMiddlewareResultHandler
+{
+    public const string Code = "access_denied";
+
+    private readonly AuthorizationMiddlewareResultHandler _default = new();
+
+    public async Task HandleAsync(RequestDelegate next, HttpContext context, AuthorizationPolicy policy, PolicyAuthorizationResult authorizeResult)
+    {
+        if (authorizeResult.Forbidden)
+        {
+            context.Response.StatusCode = StatusCodes.Status403Forbidden;
+            await context.Response.WriteAsJsonAsync(new { error = Code });
+            return;
+        }
+        await _default.HandleAsync(next, context, policy, authorizeResult);
+    }
+}
+
 public static class BondsAuthExtensions
 {
     public const string AppId = "bonds";
@@ -94,6 +118,7 @@ public static class BondsAuthExtensions
         services.AddMvv42Auth(AppId, o => configuration.GetSection("Mvv42Auth").Bind(o));
         services.AddSingleton<IOwnerAccess, ConfigurationOwnerAccess>();
         services.AddSingleton<IAuthorizationHandler, OwnerRequirementHandler>();
+        services.AddSingleton<IAuthorizationMiddlewareResultHandler, AccessDeniedResultHandler>();
         services.AddAuthorization(o =>
         {
             var policy = new AuthorizationPolicyBuilder()

@@ -11,6 +11,23 @@ export const SERVICE_ID = 'bonds';
 let loginRequested = false;
 
 /**
+ * 403 уровня доступа к сервису (политика mvv42:app / владелец) — бэкенд отвечает `{ "error": "access_denied" }`
+ * (`BondsAuth`). Другие 403 — `origin_not_allowed` от CSRF-фильтра SDK и будущие бизнес-запреты — остаются
+ * локальными ошибками виджета, а не глобальным «Нет доступа».
+ */
+export const ACCESS_DENIED_CODE = 'access_denied';
+
+function isAccessDenied(err: ApiError): boolean {
+  return err.status === 403 && err.code === ACCESS_DENIED_CODE;
+}
+
+/** Новая сессия (вошёл / сменился пользователь / AUTH_CHANGED): снова можно запросить вход и показать данные. */
+export function resetAuthState(): void {
+  loginRequested = false;
+  useAccessStore.getState().reset();
+}
+
+/**
  * JSON-запрос к API сервиса через `apiJson` кита: cookie, при 401 — один общий refresh сессии и
  * повтор. Финальный 401 → вход через shell (`requestLogin`), 403 (не владелец) → глобальный
  * экран «Нет доступа». Ошибка пробрасывается как `ApiError` (message = `error` из тела ответа),
@@ -24,7 +41,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       if (err.status === 401 && !loginRequested) {
         loginRequested = true;
         requestLogin(SERVICE_ID);
-      } else if (err.status === 403) {
+      } else if (isAccessDenied(err)) {
         useAccessStore.getState().deny(err);
       }
     }
@@ -46,4 +63,9 @@ export const apiClient = {
 /** Тесты: сбросить флаг «вход уже запрошен». */
 export function __resetLoginRequestForTests(): void {
   loginRequested = false;
+}
+
+/** Тесты: запрошен ли уже вход. */
+export function __loginRequestedForTests(): boolean {
+  return loginRequested;
 }

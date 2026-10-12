@@ -6,11 +6,14 @@ name: Deploy
 on:
   push:
     branches: [main]
+  # PRs run the test/check steps only; every build-push/deploy/notify step is gated on event != pull_request.
+  pull_request:
   workflow_dispatch:
 
 concurrency:
   group: deploy-${{ github.ref }}
-  cancel-in-progress: false
+  # A superseded PR run can be cancelled; a deploy on main never is.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -23,7 +26,7 @@ jobs:
       contents: read
       pull-requests: read
     outputs:
-      # workflow_dispatch forces both halves.
+      # workflow_dispatch forces both halves (a PR is filtered against its base like a push).
       backend: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.backend == 'true' }}
       frontend: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.frontend == 'true' }}
     steps:
@@ -81,9 +84,11 @@ jobs:
           DOTNET_ENVIRONMENT: Testing
 
       - name: Set up Docker Buildx
+        if: github.event_name != 'pull_request'
         uses: docker/setup-buildx-action@v3
 
       - name: Login to GHCR
+        if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -93,6 +98,7 @@ jobs:
       # Only the immutable sha tag: the container runs exactly this image, and with the watchtower opt-out
       # label below nothing re-pulls a moving tag behind CI's back.
       - name: Build and push Docker image
+        if: github.event_name != 'pull_request'
         uses: docker/build-push-action@v6
         with:
           push: true
@@ -106,6 +112,7 @@ jobs:
       # cashpulse-network) — no JWT secret of our own. Telegram__BotToken / Telegram__OwnerId stay: sync
       # alerts go to the owner, and only the owner's Telegram id is admitted to the API.
       - name: Deploy on VDS
+        if: github.event_name != 'pull_request'
         uses: appleboy/ssh-action@v1
         env:
           DB_CONNECTION_STRING: ${{ secrets.DB_CONNECTION_STRING }}
@@ -123,27 +130,49 @@ jobs:
             [ -n "$OWNER_TELEGRAM_ID" ] || { echo "OWNER_TELEGRAM_ID is missing - refusing to deploy"; exit 1; }
             mkdir -p /var/lib/bonds/dataprotection-keys
             docker pull "$IMAGE"
+
+            # Image of the running container = rollback target (empty on the very first deploy).
+            PREV=$(docker inspect --format '{{.Config.Image}}' bonds-api 2>/dev/null || true)
+            echo "previous image: ${PREV:-<none>}"
+
+            run_api() {
+              docker run -d                 --name bonds-api                 --network cashpulse-network                 --restart unless-stopped                 --label com.centurylinklabs.watchtower.enable=false                 -p 127.0.0.1:5001:5001                 -v /var/lib/bonds/dataprotection-keys:/app/dataprotection-keys                 -e "ConnectionStrings__DefaultConnection=${DB_CONNECTION_STRING}"                 -e "Telegram__BotToken=${TELEGRAM_BOT_TOKEN}"                 -e "Telegram__OwnerId=${OWNER_TELEGRAM_ID}"                 "$1"
+            }
+
+            healthy() {
+              for i in $(seq 1 15); do
+                curl -sf http://localhost:5001/health > /dev/null && return 0
+                sleep 2
+              done
+              return 1
+            }
+
+            # The API validates every request against the shared auth's JWKS over cashpulse-network.
+            jwks_reachable() {
+              docker run --rm --network cashpulse-network curlimages/curl:8.10.1                 -sf http://mvv42-auth:8080/auth/.well-known/jwks.json > /dev/null
+            }
+
             docker stop bonds-api && docker rm bonds-api || true
-            docker run -d \
-              --name bonds-api \
-              --network cashpulse-network \
-              --restart unless-stopped \
-              --label com.centurylinklabs.watchtower.enable=false \
-              -p 127.0.0.1:5001:5001 \
-              -v /var/lib/bonds/dataprotection-keys:/app/dataprotection-keys \
-              -e "ConnectionStrings__DefaultConnection=${DB_CONNECTION_STRING}" \
-              -e "Telegram__BotToken=${TELEGRAM_BOT_TOKEN}" \
-              -e "Telegram__OwnerId=${OWNER_TELEGRAM_ID}" \
-              "$IMAGE"
-            for i in $(seq 1 15); do
-              curl -sf http://localhost:5001/health > /dev/null && break
-              [ "$i" = 15 ] && { echo "Health check failed!"; docker logs --tail 50 bonds-api; exit 1; }
-              sleep 2
-            done
+            run_api "$IMAGE"
+
+            if ! healthy || ! jwks_reachable; then
+              echo "New bonds-api failed health or JWKS check - rolling back"
+              docker logs --tail 80 bonds-api || true
+              docker stop bonds-api || true
+              docker rm bonds-api || true
+              if [ -n "$PREV" ]; then
+                run_api "$PREV"
+                healthy && echo "Rolled back to $PREV" || echo "Rollback to $PREV is not healthy either"
+              fi
+              exit 1
+            fi
+
+            # Keep only the current and the previous image (the next rollback target).
+            docker images --format '{{.Repository}}:{{.Tag}}'               | grep "/bonds-api:"               | grep -vxF "$IMAGE"               | { if [ -n "$PREV" ]; then grep -vxF "$PREV"; else cat; fi; }               | xargs -r docker rmi || true
             docker image prune -f
 
       - name: Notify on failure
-        if: failure()
+        if: failure() && github.event_name != 'pull_request'
         run: |
           curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
             -d chat_id=${{ secrets.TELEGRAM_CHAT_ID }} \
@@ -188,6 +217,7 @@ jobs:
           VITE_API_BASE: ${{ vars.VITE_API_BASE || '/bonds/api' }}
 
       - name: Deploy to VDS via SCP
+        if: github.event_name != 'pull_request'
         uses: appleboy/scp-action@v1
         with:
           host: ${{ secrets.VDS_HOST }}
@@ -199,6 +229,7 @@ jobs:
           rm: true
 
       - name: Verify deployment
+        if: github.event_name != 'pull_request'
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.VDS_HOST }}
@@ -208,7 +239,7 @@ jobs:
             curl -sf https://mvv42.ru/bonds/ > /dev/null
 
       - name: Notify on failure
-        if: failure()
+        if: failure() && github.event_name != 'pull_request'
         run: |
           curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
             -d chat_id=${{ secrets.TELEGRAM_CHAT_ID }} \

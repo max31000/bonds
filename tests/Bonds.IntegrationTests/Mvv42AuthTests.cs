@@ -101,6 +101,7 @@ public class Mvv42AuthTests
         var response = await client.GetAsync(ProtectedPath);
 
         response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        (await response.Content.ReadAsStringAsync()).Should().Contain("\"error\":\"access_denied\"");
     }
 
     [Fact]
@@ -123,6 +124,7 @@ public class Mvv42AuthTests
         var response = await client.GetAsync(ProtectedPath);
 
         response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        (await response.Content.ReadAsStringAsync()).Should().Contain("\"error\":\"access_denied\"");
     }
 
     [Fact]

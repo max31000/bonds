@@ -155,12 +155,6 @@
   color: var(--mvv-accent);
 }
 
-/* Button under an empty-state description (ChartFrame has no empty action slot). */
-.bonds-state-action {
-  display: flex;
-  justify-content: center;
-  margin-top: var(--mvv-sp-3);
-}
 
 /* Month drill-down under the cash-flow chart. */
 .bonds-drilldown {
@@ -203,10 +197,3 @@
   margin-top: var(--mvv-sp-2);
 }
 
-/* Kit gap (v0.1.1): standalone AppLayout hides `actions` under 640px. Bonds' only action is «Обновить
-   данные», so keep it (compact icon form, see SyncActions) next to the theme toggle. */
-@media (max-width: 640px) {
-  .mvv-topbar-actions {
-    display: flex;
-  }
-}

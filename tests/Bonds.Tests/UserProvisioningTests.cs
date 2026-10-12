@@ -30,6 +30,30 @@ public class UserProvisioningTests
     }
 
     [Fact]
+    public async Task ExistingUser_WithChangedTelegramName_IsUpdated()
+    {
+        var user = new User { Id = 7, TelegramId = 42, FirstName = "Старое Имя" };
+        _users.Setup(u => u.GetByTelegramIdAsync(42)).ReturnsAsync(user);
+        _accounts.Setup(a => a.GetPrimaryAccountIdAsync()).ReturnsAsync(3UL);
+
+        await Sut().GetOrCreateAsync(42, "Новое Имя");
+
+        _users.Verify(u => u.UpdateAsync(It.Is<User>(x => x.Id == 7 && x.FirstName == "Новое Имя")), Times.Once);
+    }
+
+    [Fact]
+    public async Task ExistingUser_WithSameOrEmptyName_IsNotUpdated()
+    {
+        _users.Setup(u => u.GetByTelegramIdAsync(42)).ReturnsAsync(new User { Id = 7, TelegramId = 42, FirstName = "Owner" });
+        _accounts.Setup(a => a.GetPrimaryAccountIdAsync()).ReturnsAsync(3UL);
+
+        await Sut().GetOrCreateAsync(42, "Owner");
+        await Sut().GetOrCreateAsync(42, "  ");
+
+        _users.Verify(u => u.UpdateAsync(It.IsAny<User>()), Times.Never);
+    }
+
+    [Fact]
     public async Task NewUser_IsCreatedWithTelegramIdAndName_AndPrimaryAccountOnboarded()
     {
         _users.Setup(u => u.GetByTelegramIdAsync(42)).ReturnsAsync((User?)null);

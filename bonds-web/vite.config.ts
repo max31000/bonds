@@ -13,5 +13,12 @@ export default defineConfig({
   },
   server: {
     port: 5174,
+    // Same-origin like prod: the shared-auth cookie (`mvv42_at` in Development) is sent to the API only when
+    // the browser talks to one origin. API: `dotnet run` (appsettings.Development: :5001); auth: mvv42-auth
+    // `dotnet run` (:5010). The page origin (http://localhost:5174) is in Mvv42Auth:AllowedOrigins.
+    proxy: {
+      '/bonds/api': { target: 'http://localhost:5001', rewrite: (path) => path.replace(/^\/bonds\/api/, '/api') },
+      '/auth': { target: 'http://localhost:5010' },
+    },
   },
 });

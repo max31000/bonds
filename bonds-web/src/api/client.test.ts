@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { ApiError } from '@mvv42/kit/platform';
 import { server } from '../test/msw-handlers';
-import { apiClient, __resetLoginRequestForTests } from './client';
+import { apiClient, resetAuthState, __resetLoginRequestForTests } from './client';
 import { useAccessStore } from '../store/useAccessStore';
 
 describe('apiClient', () => {
@@ -62,13 +62,36 @@ describe('apiClient', () => {
     expect(assign).not.toHaveBeenCalled();
   });
 
-  it('flags «no access» on 403 and keeps the server message', async () => {
-    server.use(http.get('*/api/positions', () => HttpResponse.json({ error: 'forbidden' }, { status: 403 })));
+  it('flags «no access» on the service-level 403 (access_denied)', async () => {
+    server.use(http.get('*/api/positions', () => HttpResponse.json({ error: 'access_denied' }, { status: 403 })));
 
-    await expect(apiClient.get('/positions')).rejects.toThrow('forbidden');
+    await expect(apiClient.get('/positions')).rejects.toThrow('access_denied');
 
     expect(useAccessStore.getState().denied?.status).toBe(403);
     expect(assign).not.toHaveBeenCalled();
+  });
+
+  it.each(['origin_not_allowed', 'some_business_rule'])('keeps other 403s (%s) local to the widget', async (code) => {
+    server.use(http.post('*/api/sync', () => HttpResponse.json({ error: code }, { status: 403 })));
+
+    await expect(apiClient.post('/sync')).rejects.toThrow(code);
+
+    expect(useAccessStore.getState().denied).toBeNull();
+  });
+
+  it('asks for a login only once per session; a new session (resetAuthState) re-arms it and clears «no access»', async () => {
+    server.use(http.get('*/api/positions', () => HttpResponse.json({ error: 'unauthorized' }, { status: 401 })));
+
+    await apiClient.get('/positions').catch(() => undefined);
+    await apiClient.get('/positions').catch(() => undefined);
+    expect(assign).toHaveBeenCalledTimes(1);
+
+    useAccessStore.getState().deny(new ApiError(403, 'access_denied'));
+    resetAuthState();
+    expect(useAccessStore.getState().denied).toBeNull();
+
+    await apiClient.get('/positions').catch(() => undefined);
+    expect(assign).toHaveBeenCalledTimes(2);
   });
 
   it('surfaces the backend error text for other failures', async () => {

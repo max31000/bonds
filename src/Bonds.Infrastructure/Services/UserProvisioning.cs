@@ -21,10 +21,18 @@ public sealed class UserProvisioning(IUserRepository users, IAccountRepository a
         await Gate.WaitAsync(ct);
         try
         {
+            var displayName = string.IsNullOrWhiteSpace(name) ? null : name;
             ulong userId;
             if (await users.GetByTelegramIdAsync(telegramId) is { } existing)
             {
                 userId = existing.Id;
+                // The token carries the current Telegram name: keep the local row in step (callers cache the
+                // result for 10 minutes, so this runs at most that often). Only the name travels in the token.
+                if (displayName is not null && existing.FirstName != displayName)
+                {
+                    existing.FirstName = displayName;
+                    await users.UpdateAsync(existing);
+                }
             }
             else
             {
@@ -33,7 +41,7 @@ public sealed class UserProvisioning(IUserRepository users, IAccountRepository a
                     userId = await users.CreateAsync(new User
                     {
                         TelegramId = telegramId,
-                        FirstName = string.IsNullOrWhiteSpace(name) ? null : name,
+                        FirstName = displayName,
                     });
                 }
                 catch (MySqlException ex) when (ex.ErrorCode == MySqlErrorCode.DuplicateKeyEntry)

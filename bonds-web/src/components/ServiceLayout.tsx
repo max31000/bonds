@@ -1,16 +1,15 @@
 import { useEffect } from 'react';
-import { ActionIcon, Badge, Button, Group, Text, Tooltip } from '@mantine/core';
-import { useMediaQuery } from '@mantine/hooks';
+import { Badge, Button, Group, Text, Tooltip } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { ErrorState, LoginRequired } from '@mvv42/kit';
-import { useMe } from '@mvv42/kit/platform';
+import { AUTH_CHANGED_EVENT, onShellMessage, useMe } from '@mvv42/kit/platform';
 import { AppLayout, type NavItem } from '@mvv42/kit/router';
 import { IconChartCandle, IconRefresh } from '@tabler/icons-react';
 import { Outlet, useNavigate } from 'react-router-dom';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import 'dayjs/locale/ru';
-import { SERVICE_ID } from '../api/client';
+import { resetAuthState, SERVICE_ID } from '../api/client';
 import { useAccessStore } from '../store/useAccessStore';
 import { useSignalsStore } from '../store/useSignalsStore';
 import { useSyncStore } from '../store/useSyncStore';
@@ -51,7 +50,7 @@ function useHasAccess(): boolean {
  * 2. Бейдж «Ошибка синка» с tooltip первой ошибки — последний прогон упал позже последнего успеха.
  * 3. Точка + «синк N назад» — здоровое состояние.
  */
-export function SyncHealthIndicator({ compact = false }: { compact?: boolean }) {
+export function SyncHealthIndicator() {
   const navigate = useNavigate();
   const status = useSyncStore((s) => s.status);
 
@@ -68,7 +67,7 @@ export function SyncHealthIndicator({ compact = false }: { compact?: boolean }) 
           style={{ cursor: 'pointer' }}
           data-testid="sync-health-token-badge"
         >
-          {compact ? 'Токен' : 'Токен не подключён / недействителен'}
+          Токен не подключён / недействителен
         </Badge>
       </Tooltip>
     );
@@ -82,20 +81,13 @@ export function SyncHealthIndicator({ compact = false }: { compact?: boolean }) 
     return (
       <Tooltip label={status.lastRunErrors[0] ?? 'Подробности — в логах сервера.'}>
         <Badge color="red" data-testid="sync-health-error-badge">
-          {compact ? 'Ошибка' : 'Ошибка синка'}
+          Ошибка синка
         </Badge>
       </Tooltip>
     );
   }
 
   if (lastSuccess) {
-    if (compact) {
-      return (
-        <Tooltip label={`синк ${lastSuccess.fromNow()}`}>
-          <span className="bonds-status-dot" data-testid="sync-health-ok" role="img" aria-label={`синк ${lastSuccess.fromNow()}`} />
-        </Tooltip>
-      );
-    }
     return (
       <Group gap={6} wrap="nowrap" data-testid="sync-health-ok" className="bonds-sync-ok">
         <span className="bonds-status-dot" aria-hidden="true" />
@@ -131,8 +123,6 @@ export function SyncActions() {
   const isRunning = useSyncStore((s) => s.isRunning);
   const triggerSync = useSyncStore((s) => s.triggerSync);
   const loadSignals = useSignalsStore((s) => s.load);
-  // Телефон (кит переключает шапку на 640px): иконка вместо кнопки с текстом, точка вместо «синк N назад».
-  const compact = useMediaQuery('(max-width: 40em)') ?? false;
 
   const handleSync = async () => {
     const result = await triggerSync();
@@ -141,31 +131,18 @@ export function SyncActions() {
   };
 
   return (
-    <Group gap={compact ? 6 : 'sm'} wrap="nowrap">
-      <SyncHealthIndicator compact={compact} />
-      {compact ? (
-        <ActionIcon
-          variant="default"
-          size="md"
-          loading={isRunning}
-          onClick={handleSync}
-          aria-label="Обновить данные"
-          data-testid="force-sync-button"
-        >
-          <IconRefresh size={16} />
-        </ActionIcon>
-      ) : (
-        <Button
-          variant="default"
-          size="xs"
-          leftSection={<IconRefresh size={14} />}
-          loading={isRunning}
-          onClick={handleSync}
-          data-testid="force-sync-button"
-        >
-          Обновить данные
-        </Button>
-      )}
+    <Group gap="sm" wrap="nowrap">
+      <SyncHealthIndicator />
+      <Button
+        variant="default"
+        size="xs"
+        leftSection={<IconRefresh size={14} />}
+        loading={isRunning}
+        onClick={handleSync}
+        data-testid="force-sync-button"
+      >
+        Обновить данные
+      </Button>
     </Group>
   );
 }
@@ -221,7 +198,8 @@ function Content() {
       <div className="bonds-gate">
         <ErrorState
           title="Нет доступа"
-          error="Bond Analytics — личный сервис владельца портфеля. Ваш аккаунт вошёл, но доступа к данным у него нет."
+          error={denied}
+          description="Bond Analytics — личный сервис владельца портфеля. Ваш аккаунт вошёл, но доступа к данным у него нет."
           data-testid="access-denied"
         />
       </div>
@@ -240,7 +218,29 @@ function Content() {
  * аккаунтом; внутри shell — только полоса разделов) + весь контент за `LoginRequired`.
  * Навигация и действия шапки показываются только пользователю с доступом.
  */
+/**
+ * Сброс «Нет доступа» и флага «вход уже запрошен», когда меняется сессия: другой пользователь в `/me`
+ * (вошёл/вышел/сменил аккаунт) или `AUTH_CHANGED` от shell / локального logout.
+ */
+function useResetOnSessionChange() {
+  const userId = useMe().user?.id ?? null;
+  useEffect(() => {
+    resetAuthState();
+  }, [userId]);
+  useEffect(() => {
+    const off = onShellMessage((m) => {
+      if (m.type === 'AUTH_CHANGED') resetAuthState();
+    });
+    window.addEventListener(AUTH_CHANGED_EVENT, resetAuthState);
+    return () => {
+      off();
+      window.removeEventListener(AUTH_CHANGED_EVENT, resetAuthState);
+    };
+  }, []);
+}
+
 export function ServiceLayout() {
+  useResetOnSessionChange();
   const hasAccess = useHasAccess();
   const denied = useAccessStore((s) => s.denied);
   const unreadCount = useSignalsStore((s) => s.signals.filter((x) => !x.isRead).length);

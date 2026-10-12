@@ -260,21 +260,17 @@ function XirrWidget({ xirr }: { xirr: { currentXirr: number | null; history: Xir
       }
       empty={xirr.history.length === 0}
       emptyTitle={<span data-testid="xirr-empty">Недостаточно данных для графика</span>}
-      emptyDescription={
-        <>
-          История копится с первого синка. Можно восстановить её ретроспективно по журналу операций и дневным ценам MOEX.
-          <span className="bonds-state-action">
-            <Button
-              size="xs"
-              variant="default"
-              loading={isBackfilling}
-              onClick={() => void runXirrBackfill()}
-              data-testid="xirr-backfill-button"
-            >
-              Восстановить историю
-            </Button>
-          </span>
-        </>
+      emptyDescription="История копится с первого синка. Можно восстановить её ретроспективно по журналу операций и дневным ценам MOEX."
+      emptyAction={
+        <Button
+          size="xs"
+          variant="default"
+          loading={isBackfilling}
+          onClick={() => void runXirrBackfill()}
+          data-testid="xirr-backfill-button"
+        >
+          Восстановить историю
+        </Button>
       }
       footer={
         <p className="bonds-note">

@@ -47,6 +47,47 @@ public class Mvv42ProvisioningTests
     }
 
     [Fact]
+    public async Task Onboarding_CreatesThePrimaryAccount_ForTheProvisionedUser_WhenNoneExists()
+    {
+        // Onboarding is global (single-user product): it creates the primary account only when none exists. The
+        // container is shared, so both branches are asserted precisely; the unit test pins the empty-table case.
+        var accountRepo = new AccountRepository(_factory.Database.ConnectionString);
+        var userRepo = new UserRepository(_factory.Database.ConnectionString);
+
+        var telegramId = Random.Shared.NextInt64(1, long.MaxValue);
+        var client = Mvv42TestAuth.WithToken(_factory.CreateClient(), Mvv42TestAuth.CreateToken(telegramId, authUserId: "888"));
+        var hadPrimary = await accountRepo.GetPrimaryAccountIdAsync() is not null;
+
+        (await client.GetAsync("/api/watchlist")).StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var user = await userRepo.GetByTelegramIdAsync(telegramId);
+        user.Should().NotBeNull();
+        var own = (await accountRepo.GetByUserIdAsync(user!.Id)).ToList();
+        if (hadPrimary)
+        {
+            own.Should().BeEmpty("onboarding is global: an existing primary account is reused, none is created");
+        }
+        else
+        {
+            own.Should().ContainSingle("onboarding creates the primary account for the provisioned user");
+            (await accountRepo.GetPrimaryAccountIdAsync()).Should().Be(own[0].Id);
+        }
+    }
+
+    [Fact]
+    public async Task ChangedTelegramName_IsWrittenToTheLocalUser()
+    {
+        var userRepo = new UserRepository(_factory.Database.ConnectionString);
+        var telegramId = Random.Shared.NextInt64(1, long.MaxValue);
+        await userRepo.CreateAsync(new User { TelegramId = telegramId, FirstName = "Старое Имя" });
+
+        var client = Mvv42TestAuth.WithToken(_factory.CreateClient(), Mvv42TestAuth.CreateToken(telegramId, name: "Новое Имя"));
+        (await client.GetAsync("/api/watchlist")).StatusCode.Should().Be(HttpStatusCode.OK);
+
+        (await userRepo.GetByTelegramIdAsync(telegramId))!.FirstName.Should().Be("Новое Имя");
+    }
+
+    [Fact]
     public async Task LocalUser_IsResolvedByTelegramId_NotByAuthSub()
     {
         var userRepo = new UserRepository(_factory.Database.ConnectionString);

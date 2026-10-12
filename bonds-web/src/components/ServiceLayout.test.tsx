@@ -311,7 +311,7 @@ describe('ServiceLayout', () => {
   });
 
   it('replaces the screens with «Нет доступа» when the API answers 403', async () => {
-    server.use(http.get('*/api/echo-403', () => HttpResponse.json({ error: 'forbidden' }, { status: 403 })));
+    server.use(http.get('*/api/echo-403', () => HttpResponse.json({ error: 'access_denied' }, { status: 403 })));
 
     renderLayout();
     await waitFor(() => expect(screen.getByText('Контент')).toBeInTheDocument());

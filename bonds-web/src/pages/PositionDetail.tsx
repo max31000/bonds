@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Badge, Button, Group, Loader, SegmentedControl, Table } from '@mantine/core';
-import { EmptyState, ErrorState, Metric, MetricGrid, Page, Section } from '@mvv42/kit';
+import { EmptyState, ErrorState, HelpHint, Metric, MetricGrid, Page, Section } from '@mvv42/kit';
 import { ChartFrame, ChartTooltip, chartColors, pickAxisTicks, useChartTheme } from '@mvv42/kit/charts';
 import { IconArrowLeft } from '@tabler/icons-react';
 import { CartesianGrid, Line, LineChart, ReferenceDot, ReferenceLine, Tooltip, XAxis, YAxis } from 'recharts';
 import { fetchPositionDetail } from '../api/positions';
 import { Disclaimer } from '../components/Disclaimer';
-import { ChartExplainIcon } from '../components/charts';
+
 import type { PositionDetail as PositionDetailDto, PriceHistoryRange } from '../api/types';
 import { formatRub, formatPercent, formatBp, formatNumber, formatDate, commissionSourceLabel, formatDaysUntil } from '../utils/format';
 
@@ -49,7 +49,7 @@ function MetricCard({ label, value, explanation, extra }: MetricCardProps) {
       label={
         <Group gap={4} wrap="nowrap" component="span">
           {label}
-          <ChartExplainIcon title={label} explanation={explanation} data-testid={`metric-explain-${label}`} />
+          <HelpHint label={`Пояснение: ${label}`} data-testid={`metric-explain-${label}`}>{explanation}</HelpHint>
         </Group>
       }
       value={value}

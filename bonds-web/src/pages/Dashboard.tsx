@@ -1,6 +1,6 @@
 import { useEffect, useMemo } from 'react';
 import { Badge, Group, Loader, Table, UnstyledButton } from '@mantine/core';
-import { EmptyState, ErrorState, Metric, MetricGrid, Page, Section } from '@mvv42/kit';
+import { EmptyState, ErrorState, HelpHint, Metric, MetricGrid, Page, Section } from '@mvv42/kit';
 import { ChartFrame, ChartTooltip, CHART_HEIGHT_COMPACT, seriesColor, useChartTheme } from '@mvv42/kit/charts';
 import { useNavigate } from 'react-router-dom';
 import { Cell, Legend, Pie, PieChart, Tooltip } from 'recharts';
@@ -13,7 +13,7 @@ import { useLiveQuotes } from '../hooks/useLiveQuotes';
 import { useWidgetData } from '../hooks/useWidgetData';
 import { Disclaimer } from '../components/Disclaimer';
 import { PortfolioIntradayChart } from '../components/PortfolioIntradayChart';
-import { ChartExplainIcon, CHART_EXPLANATIONS } from '../components/charts';
+import { CHART_EXPLANATIONS } from '../components/charts';
 import { DIRTY_PRICE_TOOLTIP_TEXT } from '../utils/positionsDisplay';
 import type { CompositionSlice, XirrResponse, CashflowResponse, PositionsResponse } from '../api/types';
 import { formatRub, formatPercent, formatSharePercent, formatDate } from '../utils/format';
@@ -53,11 +53,7 @@ function PortfolioValueKpi({ positions }: { positions: PositionsResponse | null 
       label={
         <Group gap={4} wrap="nowrap" component="span">
           Стоимость портфеля
-          <ChartExplainIcon
-            title="Стоимость портфеля"
-            explanation={DIRTY_PRICE_EXPLANATION}
-            data-testid="kpi-portfolio-value-explain-icon"
-          />
+          <HelpHint label="Пояснение: Стоимость портфеля" data-testid="kpi-portfolio-value-explain-icon">{DIRTY_PRICE_EXPLANATION}</HelpHint>
         </Group>
       }
       value={displayValue === null ? '—' : formatRub(displayValue)}
