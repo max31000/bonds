@@ -31,6 +31,7 @@ public sealed class BondSyncService
     private readonly IYieldCurveRepository _yieldCurve;
     private readonly IPositionRepository _positions;
     private readonly IOperationRepository _operations;
+    private readonly IAccountRepository _accounts;
     private readonly ILogger<BondSyncService> _logger;
 
     public BondSyncService(
@@ -44,6 +45,7 @@ public sealed class BondSyncService
         IYieldCurveRepository yieldCurve,
         IPositionRepository positions,
         IOperationRepository operations,
+        IAccountRepository accounts,
         ILogger<BondSyncService> logger)
     {
         _tInvest = tInvest;
@@ -56,6 +58,7 @@ public sealed class BondSyncService
         _yieldCurve = yieldCurve;
         _positions = positions;
         _operations = operations;
+        _accounts = accounts;
         _logger = logger;
     }
 
@@ -63,18 +66,32 @@ public sealed class BondSyncService
     {
         var result = new SyncResult();
 
-        var brokerAccountId = await _tInvest.GetPrimaryAccountIdAsync(ct);
-        if (brokerAccountId is null)
+        // Брокерский счёт закрепляется за локальным при первом синке: «первый открытый счёт» может
+        // смениться (открыли ИИС/второй счёт), а сверка позиций ниже удаляет всё, чего нет на
+        // синкаемом счёте, — переключение счёта молча стёрло бы портфель.
+        var account = await _accounts.GetByIdAsync(accountId);
+        var brokerAccountId = account?.BrokerAccountId;
+        if (string.IsNullOrEmpty(brokerAccountId))
         {
-            result.Errors.Add("T-Invest: не удалось определить брокерский счёт (нет открытых счетов для токена)");
-            return result;
+            brokerAccountId = await _tInvest.GetPrimaryAccountIdAsync(ct);
+            if (brokerAccountId is null)
+            {
+                result.Errors.Add("T-Invest: не удалось определить брокерский счёт (нет открытых счетов для токена)");
+                return result;
+            }
+
+            if (account is not null)
+            {
+                account.BrokerAccountId = brokerAccountId;
+                await _accounts.UpdateAsync(account);
+            }
         }
 
         // --- (1) Позиции + операции из T-Invest ---
-        IReadOnlyList<TInvestPortfolioPosition> tInvestPositions;
+        TInvestPortfolio portfolio;
         try
         {
-            tInvestPositions = await _tInvest.GetBondPositionsAsync(brokerAccountId, ct);
+            portfolio = await _tInvest.GetPortfolioAsync(brokerAccountId, ct);
         }
         catch (Exception ex)
         {
@@ -83,6 +100,18 @@ public sealed class BondSyncService
             _logger.LogError(ex, "T-Invest: failed to fetch portfolio positions");
             result.Errors.Add("T-Invest: не удалось получить позиции портфеля");
             return result;
+        }
+
+        var tInvestPositions = portfolio.Bonds;
+        try
+        {
+            // Свободные деньги: сюда приходят погашения/купоны — без них итог не сходится с брокером.
+            await _accounts.UpdateBalanceAsync(accountId, portfolio.CashRub, portfolio.TotalPortfolioRub, DateTime.UtcNow);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to store account cash balance");
+            result.Errors.Add("Не удалось сохранить денежный баланс счёта");
         }
 
         try
@@ -127,17 +156,26 @@ public sealed class BondSyncService
 
         // --- (2)+(4) Для каждой позиции — резолв инструмента + догрузка MOEX + upsert позиции ---
         var resolvedInstruments = new List<(ulong InstrumentId, string Figi)>();
+        // Инструменты, которые брокер СЕЙЧАС держит на счёте, — всё остальное в positions после цикла
+        // удаляется (сверка). Если хоть одну бумагу брокера не удалось сопоставить с инструментом,
+        // сверку пропускаем целиком: лучше один цикл показать лишнюю позицию, чем удалить живую.
+        var heldInstrumentIds = new HashSet<ulong>();
+        var reconciliationSafe = true;
         foreach (var tip in tInvestPositions)
         {
             ct.ThrowIfCancellationRequested();
+            ulong? instrumentId = null;
             try
             {
-                var instrumentId = await ResolveOrCreateInstrumentAsync(tip.Figi, ct);
+                instrumentId = await ResolveOrCreateInstrumentAsync(tip.Figi, ct);
                 if (instrumentId is null)
                 {
+                    reconciliationSafe = false;
                     result.Errors.Add($"Не удалось определить инструмент для FIGI {tip.Figi} — позиция пропущена");
                     continue;
                 }
+
+                heldInstrumentIds.Add(instrumentId.Value);
 
                 await EnrichFromMoexAsync(instrumentId.Value, ct);
 
@@ -187,6 +225,27 @@ public sealed class BondSyncService
                 // не должен ронять синк остальных позиций портфеля.
                 _logger.LogWarning(ex, "Failed to sync instrument for FIGI {Figi} — skipping, continuing with the rest", tip.Figi);
                 result.Errors.Add($"Инструмент FIGI {tip.Figi}: ошибка синка ({ex.GetType().Name})");
+                if (instrumentId is null) reconciliationSafe = false;
+            }
+        }
+
+        // --- Сверка: позиции, которых у брокера больше нет (погашение, оферта, полная продажа,
+        // вывод бумаг), удаляются. Без этого погашенная бумага навсегда оставалась в списке и итогах
+        // с последней известной ценой (баг ОФЗ 26226, 2026-10).
+        if (reconciliationSafe)
+        {
+            try
+            {
+                result.PositionsClosed = await _positions.DeleteAllExceptAsync(accountId, heldInstrumentIds);
+                if (result.PositionsClosed > 0)
+                {
+                    _logger.LogInformation("Sync: closed {Count} position(s) no longer held at the broker", result.PositionsClosed);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to reconcile closed positions");
+                result.Errors.Add("Не удалось убрать закрытые позиции (погашенные/проданные)");
             }
         }
 
@@ -467,6 +526,9 @@ public sealed class SyncResult
 {
     public int InstrumentsSynced { get; set; }
     public int OperationsUpserted { get; set; }
+
+    /// <summary>Сколько позиций удалено сверкой (у брокера их больше нет: погашены/проданы).</summary>
+    public int PositionsClosed { get; set; }
     public bool YieldCurveUpdated { get; set; }
     public List<string> Errors { get; } = [];
 

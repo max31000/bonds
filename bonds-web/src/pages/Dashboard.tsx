@@ -7,6 +7,7 @@ import { Cell, Legend, Pie, PieChart, Tooltip } from 'recharts';
 import { fetchPositions } from '../api/positions';
 import { fetchXirr, fetchComposition } from '../api/analytics';
 import { fetchCashflow } from '../api/cashflow';
+import { fetchLivePositions } from '../api/live';
 import { useLiveStore } from '../store/useLiveStore';
 import { useSignalsStore } from '../store/useSignalsStore';
 import { useLiveQuotes } from '../hooks/useLiveQuotes';
@@ -15,7 +16,7 @@ import { Disclaimer } from '../components/Disclaimer';
 import { PortfolioIntradayChart } from '../components/PortfolioIntradayChart';
 import { CHART_EXPLANATIONS } from '../components/charts';
 import { DIRTY_PRICE_TOOLTIP_TEXT } from '../utils/positionsDisplay';
-import type { CompositionSlice, XirrResponse, CashflowResponse, PositionsResponse } from '../api/types';
+import type { CompositionSlice, XirrResponse, CashflowResponse, LivePositionsResponse, PositionsResponse } from '../api/types';
 import { formatRub, formatPercent, formatSharePercent, formatDate } from '../utils/format';
 
 /** Задача 24: та же подсказка про «грязные» цены, что и у таблицы позиций (positionsDisplay.ts) — один источник текста. */
@@ -52,8 +53,8 @@ function PortfolioValueKpi({ positions }: { positions: PositionsResponse | null 
       data-testid="kpi-portfolio-value"
       label={
         <Group gap={4} wrap="nowrap" component="span">
-          Стоимость портфеля
-          <HelpHint label="Пояснение: Стоимость портфеля" data-testid="kpi-portfolio-value-explain-icon">{DIRTY_PRICE_EXPLANATION}</HelpHint>
+          Стоимость облигаций
+          <HelpHint label="Пояснение: Стоимость облигаций" data-testid="kpi-portfolio-value-explain-icon">{DIRTY_PRICE_EXPLANATION}</HelpHint>
         </Group>
       }
       value={displayValue === null ? '—' : formatRub(displayValue)}
@@ -71,6 +72,23 @@ function PortfolioValueKpi({ positions }: { positions: PositionsResponse | null 
           : undefined
       }
       hint={deltaPercent !== null ? 'за день' : 'по последнему синку'}
+    />
+  );
+}
+
+/**
+ * Свободные деньги на счёте (T-Invest GetPortfolio, последний синк) и итог «облигации + деньги» —
+ * сюда приходят погашения и купоны; без них итог сервиса не сходился с приложением брокера.
+ */
+function CashKpi({ live, bondsTotal }: { live: LivePositionsResponse | null; bondsTotal: number | null }) {
+  const cash = live?.cashRub ?? null;
+  const accountTotal = cash !== null && bondsTotal !== null ? bondsTotal + cash : null;
+  return (
+    <Metric
+      data-testid="kpi-cash"
+      label="Деньги на счёте"
+      value={cash === null ? '—' : formatRub(cash)}
+      hint={accountTotal !== null ? `итого со счётом: ${formatRub(accountTotal)}` : 'появится после синка'}
     />
   );
 }
@@ -288,6 +306,12 @@ export function Dashboard() {
   useLiveQuotes();
 
   const { data: positions } = useWidgetData(fetchPositions, []);
+  const { data: live } = useWidgetData(fetchLivePositions, []);
+  const liveTotal = useLiveStore((s) => s.totalMarketValueRub);
+  const bondsTotal = useMemo(
+    () => liveTotal ?? live?.totalMarketValueRub ?? (positions ? positions.positions.reduce((sum, p) => sum + p.marketValueRub, 0) : null),
+    [liveTotal, live, positions],
+  );
   const { data: xirr, error: xirrError } = useWidgetData(fetchXirr, []);
   const { data: cashflow, error: cashflowError } = useWidgetData(fetchCashflow, []);
 
@@ -295,6 +319,7 @@ export function Dashboard() {
     <Page title="Обзор" description="Стоимость, доходность и ближайшие поступления портфеля" width="wide">
       <MetricGrid data-testid="dashboard-kpi-row">
         <PortfolioValueKpi positions={positions} />
+        <CashKpi live={live} bondsTotal={bondsTotal} />
         <XirrKpi xirr={xirr} error={xirrError} />
         <NextPaymentKpi cashflow={cashflow} error={cashflowError} />
         <UnreadSignalsKpi />

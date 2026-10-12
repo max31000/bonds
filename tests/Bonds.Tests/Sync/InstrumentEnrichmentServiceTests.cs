@@ -29,6 +29,7 @@ public class InstrumentEnrichmentServiceTests
     private readonly Mock<IYieldCurveRepository> _yieldCurve = new();
     private readonly Mock<IPositionRepository> _positions = new();
     private readonly Mock<IOperationRepository> _operations = new();
+    private readonly Mock<IAccountRepository> _accounts = new();
 
     private const string Isin = "RU000A1038V6";
     private const string Secid = "SU26238RMFS4";
@@ -45,6 +46,7 @@ public class InstrumentEnrichmentServiceTests
         _yieldCurve.Object,
         _positions.Object,
         _operations.Object,
+        _accounts.Object,
         NullLogger<BondSyncService>.Instance);
 
     private InstrumentEnrichmentService CreateService() => new(

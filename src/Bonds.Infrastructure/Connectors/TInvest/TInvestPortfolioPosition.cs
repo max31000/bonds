@@ -1,6 +1,27 @@
 namespace Bonds.Infrastructure.Connectors.TInvest;
 
 /// <summary>
+/// Результат <c>Operations.GetPortfolio</c>: облигационные позиции + денежные итоги счёта.
+/// Все суммы — РУБЛИ (запрос идёт с валютой портфеля по умолчанию = RUB).
+/// </summary>
+public sealed class TInvestPortfolio
+{
+    public required IReadOnlyList<TInvestPortfolioPosition> Bonds { get; init; }
+
+    /// <summary>
+    /// Свободные деньги на счёте (<c>TotalAmountCurrencies</c> — все валюты, пересчитанные брокером
+    /// в рубли). Сюда, в частности, падают выплаты погашений/купонов/амортизаций. Null — брокер не отдал.
+    /// </summary>
+    public decimal? CashRub { get; init; }
+
+    /// <summary>
+    /// Полная стоимость счёта по оценке брокера (<c>TotalAmountPortfolio</c>: облигации + деньги +
+    /// любые другие активы, которые продукт не анализирует). Для сверки с тем, что видно в приложении.
+    /// </summary>
+    public decimal? TotalPortfolioRub { get; init; }
+}
+
+/// <summary>
 /// Холдинг портфеля, разобранный из <c>PortfolioResponse.Positions</c> (T-Invest gRPC,
 /// см. README.md этого каталога — верификация контракта §12.2). Только облигации
 /// интересны этому продукту (spec §3 "в скоупе"): другие типы инструментов отфильтровываются

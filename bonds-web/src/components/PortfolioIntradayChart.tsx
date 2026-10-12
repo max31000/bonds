@@ -102,7 +102,7 @@ export function PortfolioIntradayChart({ explanation }: { explanation?: ReactNod
 
   return (
     <ChartFrame
-      title="Стоимость портфеля сегодня"
+      title="Стоимость облигаций"
       data-testid="portfolio-intraday-chart"
       explanation={explanation}
       height={CHART_HEIGHT_COMPACT}

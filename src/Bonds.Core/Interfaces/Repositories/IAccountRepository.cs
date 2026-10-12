@@ -18,6 +18,9 @@ public interface IAccountRepository
     Task<ulong> CreateAsync(Account account);
     Task UpdateAsync(Account account);
 
+    /// <summary>Сохраняет денежный баланс счёта из последнего синка с брокером (суммы в рублях).</summary>
+    Task UpdateBalanceAsync(ulong accountId, decimal? cashRub, decimal? brokerTotalRub, DateTime syncedAtUtc);
+
     /// <summary>
     /// Возвращает Id единственного брокерского счёта продукта (plan/00 §2: single-user, один
     /// счёт на MVP) — самый старый (по Id) существующий <see cref="Account"/>, без привязки к

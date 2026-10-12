@@ -15,8 +15,11 @@ public interface ITInvestPortfolioClient
     /// <summary>Идентификатор брокерского счёта, привязанного к токену (первый/единственный счёт — MVP §2).</summary>
     Task<string?> GetPrimaryAccountIdAsync(CancellationToken ct = default);
 
-    /// <summary>Позиции портфеля (только облигации — другие типы инструментов отфильтрованы).</summary>
-    Task<IReadOnlyList<TInvestPortfolioPosition>> GetBondPositionsAsync(string accountId, CancellationToken ct = default);
+    /// <summary>
+    /// Снимок портфеля: облигационные позиции (другие типы инструментов отфильтрованы) + денежные
+    /// итоги счёта (свободные деньги, полная стоимость по оценке брокера) — один вызов GetPortfolio.
+    /// </summary>
+    Task<TInvestPortfolio> GetPortfolioAsync(string accountId, CancellationToken ct = default);
 
     /// <summary>
     /// Журнал операций постранично по курсору (GetOperationsByCursor — поддерживает инкрементальный

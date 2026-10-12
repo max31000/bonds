@@ -58,8 +58,8 @@ public class SyncCycleServiceTests
             .ReturnsAsync(TInvestTokenStatus.Valid);
 
         _tInvest.Setup(c => c.GetPrimaryAccountIdAsync(It.IsAny<CancellationToken>())).ReturnsAsync(BrokerAccountId);
-        _tInvest.Setup(c => c.GetBondPositionsAsync(BrokerAccountId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<TInvestPortfolioPosition>());
+        _tInvest.Setup(c => c.GetPortfolioAsync(BrokerAccountId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TInvestPortfolio { Bonds = [] });
         _tInvest.Setup(c => c.GetOperationsAsync(BrokerAccountId, It.IsAny<DateTime?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<TInvestOperation>());
         _tInvest.Setup(c => c.GetQuotesAsync(It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>()))

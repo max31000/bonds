@@ -93,11 +93,12 @@ public sealed class TInvestPortfolioClient : ITInvestPortfolioClient
         return account.Id;
     }
 
-    public async Task<IReadOnlyList<TInvestPortfolioPosition>> GetBondPositionsAsync(string accountId, CancellationToken ct = default)
+    public async Task<TInvestPortfolio> GetPortfolioAsync(string accountId, CancellationToken ct = default)
     {
         var client = await GetClientAsync(ct);
         var response = await client.Operations.GetPortfolioAsync(
-            new PortfolioRequest { AccountId = accountId }, cancellationToken: ct);
+            new PortfolioRequest { AccountId = accountId, Currency = PortfolioRequest.Types.CurrencyRequest.Rub },
+            cancellationToken: ct);
 
         var result = new List<TInvestPortfolioPosition>();
         foreach (var position in response.Positions)
@@ -120,7 +121,12 @@ public sealed class TInvestPortfolioClient : ITInvestPortfolioClient
             });
         }
 
-        return result;
+        return new TInvestPortfolio
+        {
+            Bonds = result,
+            CashRub = response.TotalAmountCurrencies.ToNullableDecimal(),
+            TotalPortfolioRub = response.TotalAmountPortfolio.ToNullableDecimal(),
+        };
     }
 
     public async Task<IReadOnlyList<TInvestOperation>> GetOperationsAsync(string accountId, DateTime? from, CancellationToken ct = default)

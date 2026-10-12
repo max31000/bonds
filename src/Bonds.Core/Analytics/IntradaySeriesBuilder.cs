@@ -30,9 +30,15 @@ public static class IntradaySeriesBuilder
     /// </summary>
     /// <param name="quotesByInstrument">Тики по каждому инструменту, в любом порядке внутри списка.</param>
     /// <param name="quantityByInstrument">Количество облигаций на инструмент (для перевода цены за бумагу в рыночную стоимость позиции).</param>
+    /// <param name="seedPriceByInstrument">
+    /// Грязная цена (руб. за бумагу), действующая ДО первого тика инструмента в окне (последний
+    /// дневной снимок). Без неё бумага, не торговавшаяся в окне, выпадала из суммы целиком и график
+    /// показывал портфель дешевле списка позиций. Null/нет ключа — старое поведение «не участвует».
+    /// </param>
     public static IReadOnlyList<IntradaySeriesPoint> Build(
         IReadOnlyDictionary<ulong, IReadOnlyList<IntradayQuote>> quotesByInstrument,
-        IReadOnlyDictionary<ulong, decimal> quantityByInstrument)
+        IReadOnlyDictionary<ulong, decimal> quantityByInstrument,
+        IReadOnlyDictionary<ulong, decimal>? seedPriceByInstrument = null)
     {
         // Отсортированные тики на инструмент — нужны для forward-fill бинарным/линейным проходом.
         var sortedByInstrument = quotesByInstrument.ToDictionary(
@@ -68,10 +74,22 @@ public static class IntradaySeriesBuilder
                 }
                 cursor[instrumentId] = idx;
 
-                if (idx < 0) continue; // ещё не было ни одного тика этого инструмента к этому моменту — не участвует в сумме
+                decimal price;
+                if (idx >= 0)
+                {
+                    price = ticks[idx].DirtyPriceRub;
+                }
+                else if (seedPriceByInstrument is not null && seedPriceByInstrument.TryGetValue(instrumentId, out var seed))
+                {
+                    price = seed;
+                }
+                else
+                {
+                    continue; // ни тика, ни посевной цены — не участвует в сумме (не подставляем 0)
+                }
 
                 var quantity = quantityByInstrument.GetValueOrDefault(instrumentId, 0m);
-                total += ticks[idx].DirtyPriceRub * quantity;
+                total += price * quantity;
             }
 
             points.Add(new IntradaySeriesPoint { TsUtc = ts, TotalMarketValueRub = total });

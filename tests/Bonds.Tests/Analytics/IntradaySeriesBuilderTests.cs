@@ -146,4 +146,38 @@ public class IntradaySeriesBuilderTests
         result.Should().HaveCount(1);
         result[0].TotalMarketValueRub.Should().Be(0m);
     }
+
+    [Fact]
+    public void InstrumentWithoutTicksInWindow_UsesSeedPrice_SoChartMatchesPositionsTotal()
+    {
+        // Бумага не торговалась в окне (нет тиков) — раньше выпадала из суммы, и график показывал
+        // портфель дешевле списка позиций. С посевной ценой (последний дневной снимок) участвует.
+        var quotes = new Dictionary<ulong, IReadOnlyList<IntradayQuote>>
+        {
+            [1] = [Tick(1, T0, 1000m), Tick(1, T0.AddMinutes(1), 1010m)],
+            [2] = [],
+        };
+        var quantities = new Dictionary<ulong, decimal> { [1] = 10m, [2] = 5m };
+        var seeds = new Dictionary<ulong, decimal> { [2] = 900m };
+
+        var result = IntradaySeriesBuilder.Build(quotes, quantities, seeds);
+
+        result.Select(p => p.TotalMarketValueRub).Should().Equal(14500m, 14600m);
+    }
+
+    [Fact]
+    public void SeedPrice_AppliesOnlyBeforeFirstTick()
+    {
+        var quotes = new Dictionary<ulong, IReadOnlyList<IntradayQuote>>
+        {
+            [1] = [Tick(1, T0, 1000m), Tick(1, T0.AddMinutes(2), 1000m)],
+            [2] = [Tick(2, T0.AddMinutes(1), 950m)],
+        };
+        var quantities = new Dictionary<ulong, decimal> { [1] = 1m, [2] = 1m };
+        var seeds = new Dictionary<ulong, decimal> { [1] = 1m, [2] = 900m };
+
+        var result = IntradaySeriesBuilder.Build(quotes, quantities, seeds);
+
+        result.Select(p => p.TotalMarketValueRub).Should().Equal(1900m, 1950m, 1950m);
+    }
 }

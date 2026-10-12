@@ -98,6 +98,26 @@ describe('Dashboard', () => {
     vi.useRealTimers();
   });
 
+  it('shows free cash and the account total (bonds + cash) so it reconciles with the broker', async () => {
+    server.use(
+      http.get('*/api/positions', () => HttpResponse.json(basePositions)),
+      http.get('*/api/live/positions', () =>
+        HttpResponse.json({
+          positions: [],
+          totalMarketValueRub: 165_000,
+          asOfUtc: new Date().toISOString(),
+          cashRub: 8_000,
+          brokerTotalRub: 173_000,
+        }),
+      ),
+    );
+
+    renderDashboard();
+
+    await waitFor(() => expect(screen.getByTestId('kpi-cash')).toHaveTextContent('8 000'));
+    expect(screen.getByTestId('kpi-cash')).toHaveTextContent('173 000');
+  });
+
   it('renders the KPI row from MSW data', async () => {
     server.use(
       http.get('*/api/positions', () => HttpResponse.json(basePositions)),

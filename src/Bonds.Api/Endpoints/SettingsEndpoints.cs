@@ -200,6 +200,7 @@ public static class SettingsEndpoints
         TInvestTokenRequestDto request,
         ICurrentUser currentUser,
         IUserSettingsRepository settingsRepo,
+        IAccountRepository accountRepo,
         IDataProtectionProvider dataProtection,
         ITInvestTokenValidator tokenValidator,
         CancellationToken ct)
@@ -231,6 +232,15 @@ public static class SettingsEndpoints
         existing.TInvestTokenLast4 = last4;
 
         await settingsRepo.UpsertAsync(existing);
+
+        // Новый токен может смотреть на другой счёт — перепривязываем локальный счёт к тому, что
+        // подтвердила валидация (синк берёт брокерский счёт отсюда, см. BondSyncService).
+        var localAccountId = await PositionsEndpoints.ResolveAccountIdAsync(currentUser, accountRepo);
+        if (localAccountId is not null && await accountRepo.GetByIdAsync(localAccountId.Value) is { } account)
+        {
+            account.BrokerAccountId = string.IsNullOrEmpty(validation.AccountId) ? null : validation.AccountId;
+            await accountRepo.UpdateAsync(account);
+        }
 
         // Намеренно НЕ возвращаем сам токен — только статус, маску и подтверждение счёта (spec §11,
         // plan/13 часть C: "маскированный идентификатор счёта (последние 4 символа) как подтверждение").

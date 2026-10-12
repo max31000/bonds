@@ -108,11 +108,16 @@ public static class LiveEndpoints
             });
         }
 
+        var account = await accountRepo.GetByIdAsync(accountId.Value);
+
         return Results.Ok(new LivePositionsResponseDto
         {
             Positions = rows,
             TotalMarketValueRub = total,
             AsOfUtc = latestTickUtc ?? DateTime.UtcNow,
+            CashRub = account?.CashRub,
+            BrokerTotalRub = account?.BrokerTotalRub,
+            BalanceSyncedAtUtc = account?.BalanceSyncedAt,
         });
     }
 
@@ -123,6 +128,7 @@ public static class LiveEndpoints
         IAccountRepository accountRepo,
         IPositionRepository positionRepo,
         IIntradayQuoteRepository intradayRepo,
+        IMarketQuoteRepository marketQuoteRepo,
         string? range)
     {
         var accountId = await PositionsEndpoints.ResolveAccountIdAsync(currentUser, accountRepo);
@@ -154,7 +160,15 @@ public static class LiveEndpoints
             id => id,
             id => (IReadOnlyList<IntradayQuote>)ticks.Where(t => t.InstrumentId == id).ToList());
 
-        var series = IntradaySeriesBuilder.Build(quotesByInstrument, quantityByInstrument);
+        // Посев последним дневным снимком — та же fallback-цена, что у GET /api/live/positions, чтобы
+        // бумага без тиков в окне (не торговалась сегодня) не выпадала из графика и итоги сходились.
+        var seedPrices = new Dictionary<ulong, decimal>();
+        foreach (var id in instrumentIds)
+        {
+            if (await marketQuoteRepo.GetLatestAsync(id) is { DirtyPrice: { } dirty }) seedPrices[id] = dirty;
+        }
+
+        var series = IntradaySeriesBuilder.Build(quotesByInstrument, quantityByInstrument, seedPrices);
 
         return Results.Ok(new PortfolioIntradayResponseDto
         {
@@ -189,8 +203,18 @@ public sealed record LivePositionRowDto
 public sealed record LivePositionsResponseDto
 {
     public required IReadOnlyList<LivePositionRowDto> Positions { get; init; }
+
+    /// <summary>Стоимость ОБЛИГАЦИЙ (грязная, руб.) — без свободных денег.</summary>
     public required decimal TotalMarketValueRub { get; init; }
     public required DateTime AsOfUtc { get; init; }
+
+    /// <summary>Свободные деньги на счёте по последнему синку (руб.). Null — ещё не синкались.</summary>
+    public decimal? CashRub { get; init; }
+
+    /// <summary>Полная стоимость счёта по оценке брокера на момент синка (руб.) — для сверки.</summary>
+    public decimal? BrokerTotalRub { get; init; }
+
+    public DateTime? BalanceSyncedAtUtc { get; init; }
 }
 
 public sealed record IntradaySeriesPointDto

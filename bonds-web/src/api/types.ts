@@ -983,8 +983,14 @@ export interface LivePositionRow {
 /** Ответ GET /api/live/positions. */
 export interface LivePositionsResponse {
   positions: LivePositionRow[];
+  /** Стоимость облигаций (грязная), без свободных денег. */
   totalMarketValueRub: number;
   asOfUtc: string;
+  /** Свободные деньги на счёте по последнему синку (руб.); null — ещё не синкались. */
+  cashRub?: number | null;
+  /** Полная стоимость счёта по оценке брокера на момент синка (руб.) — для сверки. */
+  brokerTotalRub?: number | null;
+  balanceSyncedAtUtc?: string | null;
 }
 
 /** Диапазон интрадей-графика стоимости портфеля. */
