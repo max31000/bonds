@@ -2,7 +2,7 @@
 name: pre-push-check
 description: >
   Run BEFORE every `git push` to origin (and before opening or updating a PR) on the
-  BondAnalytics repo, to make sure the GitHub Actions pipelines (backend.yml + frontend.yml)
+  BondAnalytics repo, to make sure the GitHub Actions pipeline (deploy.yml: backend → frontend jobs)
   go green. Use this whenever you are about to push, are preparing to push, just finished a
   change you intend to push, the user says "push", "запушить", "залить", "отправить в origin",
   "make CI pass", "пайплайн", "проверь перед пушем", or asks why CI is red. It mirrors CI
@@ -16,9 +16,9 @@ description: >
 
 ## Why this exists
 
-Pushing to `main` triggers two GitHub Actions pipelines that **build, test, AND deploy** to the
-VDS ([.github/workflows/backend.yml](../../../.github/workflows/backend.yml),
-[frontend.yml](../../../.github/workflows/frontend.yml)). A red pipeline means no deploy and a
+Pushing to `main` triggers the GitHub Actions pipeline that **builds, tests, AND deploys** to the
+VDS ([.github/workflows/deploy.yml](../../../.github/workflows/deploy.yml), backend job then
+frontend job). A red pipeline means no deploy and a
 Telegram failure alert. The most common breakage is the **frontend TypeScript type check**
 (`yarn typecheck`), which `vite` does not catch during `yarn dev`, so it only blows up in CI.
 
@@ -51,7 +51,7 @@ git diff --name-only origin/main...HEAD HEAD | grep -q '^bonds-web/package\.json
   || echo "OK: lockfile in sync"
 ```
 
-### 1. Backend — run if `src/**`, `tests/**`, or `Bonds.sln` changed (mirrors backend.yml)
+### 1. Backend — run if `src/**`, `tests/**`, or `Bonds.sln` changed (mirrors deploy.yml → backend)
 
 ```bash
 dotnet restore Bonds.sln
@@ -60,7 +60,7 @@ dotnet test tests/Bonds.Tests/Bonds.Tests.csproj --no-build -c Release --verbosi
 DOTNET_ENVIRONMENT=Testing dotnet test tests/Bonds.IntegrationTests/Bonds.IntegrationTests.csproj --no-build -c Release --verbosity normal
 ```
 
-### 2. Frontend — run if `bonds-web/**` changed (mirrors frontend.yml; uses yarn + frozen lockfile)
+### 2. Frontend — run if `bonds-web/**` changed (mirrors deploy.yml → frontend; uses yarn + frozen lockfile)
 
 ```bash
 cd bonds-web
