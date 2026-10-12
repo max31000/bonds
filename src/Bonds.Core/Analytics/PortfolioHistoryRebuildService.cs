@@ -34,12 +34,12 @@ public static class PortfolioHistoryRebuildService
     /// Карта дневных грязных цен за бумагу в рублях: instrumentId → (дата → цена). Может быть
     /// разреженной — дни без цены (в т.ч. дни без сделок на бирже) не обязаны присутствовать,
     /// сервис сам переносит последнюю известную цену вперёд по каждой бумаге независимо (forward
-    /// fill, plan/15 §B.1). Если для бумаги нет цены вообще ни на одну дату ≤ D — она исключается
+    /// fill). Если для бумаги нет цены вообще ни на одну дату ≤ D — она исключается
     /// из суммы стоимости на D, а точка помечается <see cref="PortfolioHistoryPoint.IsApproximate"/>.
     /// </param>
     /// <param name="asOf">Дата последней точки ряда (обычно "сегодня" по MSK, plan/00 BusinessClock).</param>
     /// <param name="maturityDates">
-    /// Даты погашения бумаг (instrumentId → MaturityDate; plan/39 B1). Цена НЕ переносится вперёд
+    /// Даты погашения бумаг (instrumentId → MaturityDate). Цена НЕ переносится вперёд
     /// (forward fill) на контрольные даты строго после погашения — иначе погашенная бумага
     /// «висела» бы в стоимости с последней котировкой навсегда. Бумага без записи — без ограничения.
     /// </param>
@@ -175,7 +175,7 @@ public static class PortfolioHistoryRebuildService
         {
             case OperationType.Redemption:
                 // Полное погашение (BondRepaymentFull) — бумаги больше нет; количество в операции
-                // брокер может не указать, поэтому обнуляем остаток безусловно (plan/39 B1).
+                // брокер может не указать, поэтому обнуляем остаток безусловно.
                 quantities[instrumentId] = 0m;
                 break;
             case OperationType.Buy or OperationType.SecurityIn:
@@ -205,6 +205,6 @@ public sealed record PortfolioHistoryPoint
 
     /// <summary>True — хотя бы одна бумага в портфеле на эту дату не имела исторической цены нигде
     /// в доступном диапазоне (ни на дату, ни раньше) и была исключена из суммы стоимости —
-    /// точка занижена/приближена (plan/15 §B.1, аналог DataIncomplete в остальном коде).</summary>
+    /// точка занижена/приближена (аналог DataIncomplete в остальном коде).</summary>
     public required bool IsApproximate { get; init; }
 }

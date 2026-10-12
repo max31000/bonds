@@ -4,7 +4,7 @@ using Bonds.Core.Models;
 namespace Bonds.Core.Signals;
 
 /// <summary>
-/// Движок событий (plan/40, spec §8) — чистый, без I/O. Каждый вызов возвращает ПОЛНЫЙ набор
+/// Движок событий (spec §8) — чистый, без I/O. Каждый вызов возвращает ПОЛНЫЙ набор
 /// активных событий на дату <see cref="SignalEvaluationInput.AsOf"/> («текущее состояние»), а не
 /// «новые к вставке»: что вставить/обновить/закрыть решает <see cref="SignalSetSynchronizer"/>,
 /// сравнивая этот набор с таблицей по ключу <see cref="Signal.EventKey"/>.

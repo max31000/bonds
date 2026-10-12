@@ -10,10 +10,10 @@ using Bonds.Infrastructure.Analytics;
 namespace Bonds.Api.Endpoints;
 
 /// <summary>
-/// GET /api/positions — таблица позиций с метриками (plan/08, spec §9 "Таблица позиций").
+/// GET /api/positions — таблица позиций с метриками (spec §9 "Таблица позиций").
 /// GET /api/positions/{id} — детальная карточка позиции/инструмента (расписания, метрики, флаги).
-/// Holdings собираются через <see cref="PortfolioHoldingsBuilder"/> (этап 08 — сборщик,
-/// закрывающий пробел между репозиториями и аналитическими сервисами).
+/// Holdings собираются через <see cref="PortfolioHoldingsBuilder"/> (сборщик между
+/// репозиториями и аналитическими сервисами).
 /// </summary>
 public static class PositionsEndpoints
 {
@@ -215,7 +215,7 @@ public static class PositionsEndpoints
     }
 
     /// <summary>
-    /// Начало окна графика цены по параметру `range` (plan/19 §B.2: 1м/6м/1г/всё). "Всё" — от
+    /// Начало окна графика цены по параметру `range` (1м/6м/1г/всё). "Всё" — от
     /// сегодняшней даты минус 10 лет ИЛИ от даты погашения минус 10 лет, если бумага короче
     /// (не уходим в бесконечное прошлое без причины — MOEX history всё равно не хранит вечность,
     /// а более длинный запрос — просто больше сетевого трафика без пользы для UI-графика).
@@ -424,7 +424,7 @@ public sealed record PositionDetailDto
     /// <summary>True — журнал операций не покрывает весь текущий остаток; метрики выше приблизительны.</summary>
     public required bool CostBasisIncomplete { get; init; }
 
-    // ---- plan/19: график цены, календарь бумаги, журнал операций, «если продать сейчас». ----
+    // ---- график цены, календарь бумаги, журнал операций, «если продать сейчас». ----
 
     /// <summary>Дневная история цены за запрошенный `range` — из кэша instrument_price_history.</summary>
     public required IReadOnlyList<PriceHistoryPointDto> PriceHistory { get; init; }
@@ -441,7 +441,7 @@ public sealed record PositionDetailDto
     /// <summary>Журнал операций пользователя по этому инструменту, новые сверху.</summary>
     public required IReadOnlyList<OperationItemDto> Operations { get; init; }
 
-    /// <summary>«Если продать сейчас» — выручка минус комиссия (+P&L при известном cost basis, plan/14).</summary>
+    /// <summary>«Если продать сейчас» — выручка минус комиссия (+P&L при известном cost basis).</summary>
     public required IfSoldNowDto IfSoldNow { get; init; }
 
     public required string Disclaimer { get; init; }

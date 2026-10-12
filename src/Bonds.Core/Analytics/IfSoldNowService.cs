@@ -6,7 +6,7 @@ namespace Bonds.Core.Analytics;
 /// НКД — см. doc-comment <see cref="PortfolioHoldingsBuilder"/> про DirtyPrice × Quantity) минус
 /// комиссия брокера (<see cref="Bonds.Core.Analytics.SwitchAnalysisService.DefaultCommissionRate"/>
 /// по умолчанию, ставка передаётся вызывающим слоем). Если для позиции известна цена входа
-/// (<see cref="Bonds.Core.Analytics.PositionCostBasis"/>, plan/14) — дополнительно считает итоговый
+/// (<see cref="Bonds.Core.Analytics.PositionCostBasis"/>) — дополнительно считает итоговый
 /// P&amp;L при продаже: (чистая выручка − вложено) + уже полученные купоны.
 /// <para>
 /// Это НЕ анализ замены (<see cref="SwitchAnalysisService"/> — сравнение с альтернативной бумагой).
@@ -121,7 +121,7 @@ public sealed record IfSoldNowResult
     /// <summary>RealizedPnlRub + CouponsReceivedRub — итоговый результат владения бумагой при продаже сейчас.</summary>
     public decimal? TotalReturnWithCouponsRub { get; init; }
 
-    /// <summary>True — P&amp;L-поля посчитаны (cost basis известен, plan/14); false — доступна только выручка/комиссия.</summary>
+    /// <summary>True — P&amp;L-поля посчитаны (cost basis известен); false — доступна только выручка/комиссия.</summary>
     public required bool PnlAvailable { get; init; }
 
     /// <summary>

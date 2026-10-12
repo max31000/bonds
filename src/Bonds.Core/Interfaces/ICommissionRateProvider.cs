@@ -8,10 +8,10 @@ namespace Bonds.Core.Interfaces;
 /// <para>
 /// Приоритет источника ставки (первый применимый побеждает):
 /// 1. <see cref="CommissionRateSource.UserOverride"/> — ручной override в настройках пользователя
-///    (<c>UserSettings.CommissionRateOverride</c>, plan/22 часть D) — пользователь явно указал
+/// (<c>UserSettings.CommissionRateOverride</c>) — пользователь явно указал
 ///    свою реальную ставку, доверяем ей безусловно.
 /// 2. <see cref="CommissionRateSource.EstimatedFromTrades"/> — автоматическая оценка из журнала
-///    операций счёта (<see cref="CommissionRateEstimator"/>, plan/22 часть A) — используется, если
+/// операций счёта (<see cref="CommissionRateEstimator"/>) — используется, если
 ///    override не задан, но журнал позволяет оценить ставку (см. doc-comment estimator'а про
 ///    условия null).
 /// 3. <see cref="CommissionRateSource.Default"/> — захардкоженный дефолт

@@ -283,7 +283,7 @@ export interface ScatterPoint {
   name: string | null;
   issuer: string | null;
   modifiedDuration: number;
-  /** T-7/L-1: дюрация Маколея — по ней строится ось X scatter (согласована с G-спредом). */
+  /** дюрация Маколея — по ней строится ось X scatter (согласована с G-спредом). */
   macaulayDuration: number;
   effectiveYield: number;
   yieldKind: YieldKind;
@@ -350,7 +350,7 @@ export interface XirrBackfillResponse {
   pointsWritten: number;
 }
 
-// ---- GET /api/signals, POST /api/signals/{id}/read, POST /api/signals/read-all (plan/40: «События») ----
+// ---- GET /api/signals, POST /api/signals/{id}/read, POST /api/signals/read-all («События») ----
 
 /** Важность события — буквально enum бэка `SignalSeverity`. */
 export type SignalSeverity = 'Info' | 'Warning' | 'Critical';
@@ -408,7 +408,7 @@ export interface SignalsReadAllResponse {
 export interface SyncRunResult {
   alreadyRunning: boolean;
   noAccountConfigured: boolean;
-  /** T-13/B: токен T-Invest не задан или не расшифровался — синк деградировал на этом шаге. */
+  /** токен T-Invest не задан или не расшифровался — синк деградировал на этом шаге. */
   tokenMissingOrInvalid: boolean;
   instrumentsSynced: number;
   operationsUpserted: number;
@@ -428,7 +428,7 @@ export interface SyncStatus {
   lastSuccessAtUtc: string | null;
   lastFailureAtUtc: string | null;
   lastRunErrors: string[];
-  /** T-13/B: токен T-Invest не задан или не расшифровался (см. SyncRunResult). */
+  /** токен T-Invest не задан или не расшифровался (см. SyncRunResult). */
   tokenMissingOrInvalid: boolean;
 }
 
@@ -542,7 +542,7 @@ export interface ReplacementResponse {
   targetRiskSignals?: RiskSignals | null;
 }
 
-// ---- GET /api/analytics/replacement-candidates (задача 33 часть B, фронт — задача 35 §A) ----
+// ---- GET /api/analytics/replacement-candidates (фронт — задача 35 §A) ----
 
 /** Уровень информационного риск-сигнала кандидата — НЕ рейтинг кредитного качества/агентства. */
 export type RiskSignalLevel = 'Good' | 'Neutral' | 'Caution';
@@ -608,7 +608,7 @@ export interface ReplacementCandidatesResponse {
   disclaimer: string;
 }
 
-// ---- GET /api/analytics/allocation (plan/17 §B, задача 34 — source=market/recommended) ----
+// ---- GET /api/analytics/allocation (задача 34 — source=market/recommended) ----
 
 /** Причина, по которой кандидат не получил докупку. Зеркалит CashAllocationSkipReason бэкенда. */
 export type AllocationSkipReason = 'NoYield' | 'ConcentrationLimit' | 'NoPrice' | 'NotComparable' | 'InsufficientFunds';
@@ -982,7 +982,7 @@ export type SettingsUpdateRequest = Omit<
 export interface TInvestTokenResponse {
   tInvestTokenConfigured: boolean;
   tInvestTokenMasked: string | null;
-  /** T-13/C: маска (последние 4 символа) Id счёта, к которому привязан провалидированный токен. */
+  /** маска (последние 4 символа) Id счёта, к которому привязан провалидированный токен. */
   validatedAccountIdMasked: string | null;
 }
 
@@ -1041,7 +1041,7 @@ export interface RelativeValueBasket {
   confidence: RelativeValueConfidence;
 }
 
-/** Дешёвый кандидат из ТОЙ ЖЕ корзины, что Rich-позиция (топ-3, задача 30 часть C.2). */
+/** Дешёвый кандидат из ТОЙ ЖЕ корзины, что Rich-позиция (топ-3). */
 export interface RelativeValueCandidate {
   secid: string;
   name: string | null;

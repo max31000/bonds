@@ -66,7 +66,7 @@ function OutOfComparisonRow({ row }: { row: ComparisonRow }) {
   );
 }
 
-/** Одна строка кандидата-замены (mode=market/rv, задача 33) — имя, доходность, дюрация, риск-бейджи. */
+/** Одна строка кандидата-замены (mode=market/rv) — имя, доходность, дюрация, риск-бейджи. */
 function ReplacementCandidateRow({
   candidate,
   onSelect,
@@ -122,7 +122,7 @@ const MODE_OPTIONS: { label: string; value: ReplacementCandidatesMode | 'search'
 ];
 
 /**
- * Панель подбора замены на карточке слабой позиции (plan/35 §B, задача 37 переносит карточку
+ * Панель подбора замены на карточке слабой позиции (задача 37 переносит карточку
  * выгоды под выбранную строку + добавляет фильтр «похожая дюрация») — три режима: «доходные
  * рынка»/«дешёвые соседи (RV)» читают банк-кандидатов через GET /replacement-candidates
  * и рендерят их с риск-сигналами; «поиск» переиспользует существующий <see>MarketComparator</see>
@@ -130,7 +130,7 @@ const MODE_OPTIONS: { label: string; value: ReplacementCandidatesMode | 'search'
  * (POST /universe/{secid}/materialize, тот же путь, что MarketComparator.handleSelect/ручное
  * добавление в BasketConstructor) и считает точную выгоду через POST /analytics/replacement —
  * результат рендерится тем же <see>ReplacementBreakdown</see>, что MarketComparator,
- * непосредственно под строкой выбранного кандидата (задача 37 часть B, было — после всего списка).
+ * непосредственно под строкой выбранного кандидата (было — после всего списка).
  * Отказ GET /replacement-candidates не роняет карточку/страницу — просто показывает ошибку в панели.
  * <para><b>holdDurationYears</b> — дюрация заменяемой позиции
  * (<c>ComparisonRow.modifiedDuration</c>), нужна фильтру «похожая дюрация» для окна вокруг неё.</para>
@@ -170,7 +170,7 @@ function ReplacementPanel({
   // быть у нижнего края списка) — scrollIntoView с block:'nearest' не скроллит, если уже видна.
   const resultRef = useRef<HTMLDivElement>(null);
 
-  // T-37 fix (ревью): generation-токен гонки клика по кандидату — клик по строке A запускает
+  // generation-токен гонки клика по кандидату — клик по строке A запускает
   // postMaterialize/postReplacement, но клик по строке B до резолва A должен инвалидировать
   // результат A: без токена более поздний resolve A перезаписывал бы materialized/replacement уже
   // выбранной B (тот же класс бага, что cancelled-флаг в GET-эффекте кандидатов выше). Каждый вызов
@@ -220,7 +220,7 @@ function ReplacementPanel({
   const handleSelectCandidate = async (secid: string) => {
     if (selectedSecid === secid) {
       // Повторный клик по уже выбранной строке сворачивает карточку выгоды.
-      // T-37 fix: инкремент токена инвалидирует уже летящий запрос выбора этой же строки — иначе
+      // инкремент токена инвалидирует уже летящий запрос выбора этой же строки — иначе
       // его поздний resolve мог бы снова раскрыть только что свёрнутую карточку.
       selectRequestIdRef.current += 1;
       setSelectedSecid(null);
@@ -417,8 +417,8 @@ function ReplacementPanel({
 }
 
 /**
- * Карточка одной слабой позиции (plan/35 §B, было `SellCandidateCard`) — бейджи-причины
- * (оценочные, «кандидат», не «продайте»), RV-бейдж (задача 30, отказ GET /relative-value не роняет
+ * Карточка одной слабой позиции (было `SellCandidateCard`) — бейджи-причины
+ * (оценочные, «кандидат», не «продайте»), RV-бейдж (отказ GET /relative-value не роняет
  * карточку — undefined просто не рендерится), раскрывашка «подобрать замену» → <see>ReplacementPanel</see>.
  */
 function WeakPositionCard({ row, reasons }: { row: ComparisonRow; reasons: { kind: string; label: string }[] }) {
@@ -654,7 +654,7 @@ function WatchlistSection() {
 }
 
 /**
- * Страница «Рекомендации» (plan/17, задача 35 — переработка в два главных блока, один сценарий =
+ * Страница «Рекомендации» (задача 35 — переработка в два главных блока, один сценарий =
  * один блок): Блок 1 «Слабые позиции → подобрать замену» (<see>WeakLinksSection</see>, поглощает
  * прежние «слабые звенья»+«матрица замен»+«RV дешёвые соседи») и Блок 2 «Куда вложить сумму»
  * (<see>BasketConstructor</see>, задача 35 добавила переключатель источника кандидатов). Watchlist —

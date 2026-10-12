@@ -8,7 +8,7 @@ namespace Bonds.Infrastructure.Sync;
 /// Общий путь «обогатить одну бумагу вне позиции по ISIN» — вынесен из
 /// <see cref="WatchlistSyncService"/> (где раньше жил как приватный <c>SyncOneAsync</c>/
 /// <c>RefreshQuoteAsync</c>), чтобы watchlist и материализация из банка облигаций
-/// (<c>POST /api/universe/{secid}/materialize</c>, задача 27) переиспользовали ОДИН путь, а не
+/// (<c>POST /api/universe/{secid}/materialize</c>) переиспользовали ОДИН путь, а не
 /// дублировали резолв/котировку каждый по-своему.
 /// <para>
 /// Заводит/находит <see cref="Instrument"/> через

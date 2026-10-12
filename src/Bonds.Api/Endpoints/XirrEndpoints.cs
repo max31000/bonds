@@ -68,7 +68,7 @@ public static class XirrEndpoints
     /// стоимости/XIRR из журнала операций + дневных исторических цен MOEX ISS и дозаполняет
     /// <c>portfolio_value_snapshots</c> (идемпотентно — не трогает уже существующие даты, живые
     /// или от предыдущего запуска, см. doc-comment <see cref="PortfolioHistoryBackfillService"/>).
-    /// Single-user, длительная операция — выполняется синхронно (портфель маленький, plan/15 §B.4);
+    /// Single-user, длительная операция — выполняется синхронно (портфель маленький);
     /// вызывающий (фронт) ждёт ответа и сам решает, показывать ли индикатор загрузки.
     /// </summary>
     private static async Task<IResult> PostXirrBackfill(

@@ -17,7 +17,7 @@ public static class PortfolioTrajectoryService
         var monthFlows = monthlySummaries
             .ToDictionary(m => m.Month, m => m);
 
-        // T-5/M-3: «сегодня» приходит извне (московская бизнес-дата), а не из DateTime.Today —
+        // «сегодня» приходит извне (московская бизнес-дата), а не из DateTime.Today —
         // так горизонт траектории согласован с остальными расчётными путями.
         var firstOfCurrentMonth = new DateOnly(asOf.Year, asOf.Month, 1);
 

@@ -1,7 +1,7 @@
--- Банк облигаций MOEX - дешёвый снимок всей рыночной вселенной со статистикой,
+-- Задача 26 часть B: банк облигаций MOEX - дешёвый снимок всей рыночной вселенной со статистикой,
 -- которую биржа отдаёт готовой (YIELD/DURATION/обороты/листинг). Двухъярусная архитектура (не
 -- нарушать): эта таблица НЕ прогоняется через точный движок BondMetricsCalculator - только
--- избранные бумаги. bond_universe - текущий снимок upsert по secid, bond_universe_history
+-- избранные бумаги (задача 27). bond_universe - текущий снимок upsert по secid, bond_universe_history
 -- - дневные срезы для трендов/медиан по корзинам (задача 30 B3), retention ~400 дней.
 -- Единицы (см. doc-comment BondUniverseEntry): yield_fraction - ДОЛЯ (MOEX YIELD в % / 100),
 -- duration_years - ГОДЫ (MOEX DURATION в днях / 365), *_percent - % от номинала как отдаёт MOEX.

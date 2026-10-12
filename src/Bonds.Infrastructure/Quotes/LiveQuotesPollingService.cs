@@ -22,7 +22,7 @@ namespace Bonds.Infrastructure.Quotes;
 /// <para>
 /// <b>Устойчивость.</b> Тот же паттерн, что <see cref="Scheduling.SyncSchedulerHostedService"/>:
 /// try/catch вокруг каждого тика, ошибка (нет токена, нет позиций, сбой сети/API) — Warning-лог и
-/// пропуск итерации, без падения процесса (plan/16: "молча пропустить итерацию, не падать").
+/// пропуск итерации, без падения процесса ("молча пропустить итерацию, не падать").
 /// </para>
 /// </summary>
 public sealed class LiveQuotesPollingService : BackgroundService
@@ -99,7 +99,7 @@ public sealed class LiveQuotesPollingService : BackgroundService
         var utcNow = DateTime.UtcNow;
         if (!IsWithinTradingHours(utcNow))
         {
-            return; // Вне торговых часов MOEX (plan/16: "не торговые часы — молча пропустить").
+            return; // Вне торговых часов MOEX ("не торговые часы — молча пропустить").
         }
 
         using var scope = _scopeFactory.CreateScope();

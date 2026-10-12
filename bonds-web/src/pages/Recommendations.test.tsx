@@ -261,7 +261,7 @@ function mockReplacementFlow() {
 }
 
 /** Промис с внешним resolve — управляет моментом резолва materialize/replacement в тестах гонки
- * выбора кандидата (T-37 fix). */
+ * выбора кандидата. */
 function createDeferred<T = void>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
   const promise = new Promise<T>((res) => {
@@ -710,7 +710,7 @@ describe('Recommendations', () => {
     await waitFor(() => expect(screen.getAllByTestId('disclaimer').length).toBeGreaterThan(0));
   });
 
-  // ─── T-37 fix (ревью): гонка запросов при быстром переключении выбранного кандидата ─────────
+  // ─── гонка запросов при быстром переключении выбранного кандидата ─────────
 
   it('does not let a stale response for candidate A overwrite the card after candidate B was selected and resolved', async () => {
     const materializeDeferreds: Record<string, ReturnType<typeof createDeferred>> = {

@@ -12,7 +12,7 @@ using Microsoft.Extensions.Options;
 namespace Bonds.Api.Endpoints;
 
 /// <summary>
-/// GET/PUT /api/settings — пороги триггеров (Signals Engine, этап 07) и базовая валюта.
+/// GET/PUT /api/settings — пороги триггеров (Signals Engine) и базовая валюта.
 /// PUT /api/settings/tinvest-token — ввод/замена read-only токена T-Invest.
 /// <para>
 /// <b>Безопасность токена (spec §11, plan/08 "Токен T-Invest через UI").</b> Токен шифруется

@@ -50,7 +50,7 @@ public sealed class TInvestTokenProvider : ITInvestTokenProvider
 
     /// <summary>
     /// Единая точка резолва — и <see cref="GetTokenAsync"/>, и <see cref="GetTokenStatusAsync"/>
-    /// (plan/13 часть B: "различать эти два случая текстом ошибки") идут через неё, чтобы не
+    /// ("различать эти два случая текстом ошибки") идут через неё, чтобы не
     /// дублировать логику расшифровки/её try-catch.
     /// </summary>
     private async Task<(TInvestTokenStatus Status, string? Token)> ResolveAsync()

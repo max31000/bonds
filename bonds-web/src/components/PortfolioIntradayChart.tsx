@@ -78,7 +78,7 @@ export function PortfolioIntradayChart({ explanation }: { explanation?: ReactNod
   );
 
   // min/max сырых значений ряда (без отступа) — нужны и для домена оси (с паддингом ниже), и для
-  // range-aware форматтера подписей (formatRubCompactRange, plan/16 §5): на узком диапазоне
+  // range-aware форматтера подписей (formatRubCompactRange): на узком диапазоне
   // обычный formatRubCompact схлопывает все деления оси в одну и ту же подпись ("15,5 тыс ₽"
   // четыре раза подряд), formatRubCompactRange переключается на точные рубли в этом случае.
   const valueRange = useMemo((): [number, number] | undefined => {

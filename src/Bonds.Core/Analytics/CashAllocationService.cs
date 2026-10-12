@@ -21,7 +21,7 @@ public enum CashAllocationConcentrationAxis
     /// ТОЛЬКО вносимых денег между секторами кандидатов, не всего портфеля.</summary>
     Sector,
 
-    /// <summary>Без лимита концентрации вовсе — source=market (задача 34, принятый дефолт NEEDS
+    /// <summary>Без лимита концентрации вовсе — source=market (принятый дефолт NEEDS
     /// DECISION plan/34 часть B.3): "весь рынок" должен честно показывать самые доходные бумаги без
     /// диверсификационных искажений; диверсификация в этом режиме — только через
     /// <c>maxLotsPerCandidate</c> (не более 1 лота на кандидата).</summary>
@@ -29,7 +29,7 @@ public enum CashAllocationConcentrationAxis
 }
 
 /// <summary>
-/// «Куда вложить сумму» (plan/17 §B, задача 34 §B — источники кандидатов). Жадное распределение
+/// «Куда вложить сумму» (задача 34 §B — источники кандидатов). Жадное распределение
 /// свободных денег между кандидатами: для source=portfolio — текущими позициями портфеля (НЕ
 /// скринер по всей вселенной бумаг — та же граница MVP, что у <see cref="SwitchAnalysisService"/>,
 /// spec §3 «Вне скоупа»); для source=market/recommended — кандидатами всей
@@ -94,7 +94,7 @@ public static class CashAllocationService
     /// Если ни одного лота купить не удалось: для оси Issuer (обратная совместимость source=portfolio,
     /// поведение НЕ менялось задачей 34) причина всегда <see cref="CashAllocationSkipReason.ConcentrationLimit"/>
     /// — так было исторически, даже когда истинная причина "не хватило денег на первый лот"; для
-    /// осей Sector/None (задача 34, новый код, ничьё поведение не ломает) причина различается честно:
+    /// осей Sector/None (новый код, ничьё поведение не ломает) причина различается честно:
     /// <see cref="CashAllocationSkipReason.InsufficientFunds"/>, если денег не хватило бы даже без
     /// учёта лимита концентрации, иначе <see cref="CashAllocationSkipReason.ConcentrationLimit"/>.
     /// </summary>

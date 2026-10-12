@@ -7,7 +7,7 @@ using Microsoft.Extensions.Logging;
 namespace Bonds.Infrastructure.Analytics;
 
 /// <summary>
-/// Оркестратор ретроспективного бэкфилла истории XIRR (plan/15 §B.3-4). Собирает входы для чистого
+/// Оркестратор ретроспективного бэкфилла истории XIRR. Собирает входы для чистого
 /// <see cref="PortfolioHistoryRebuildService"/> (журнал операций счёта + карта дневных грязных цен
 /// в рублях за каждую бумагу, встречавшуюся в журнале) и upsert'ит результат в
 /// <see cref="IPortfolioValueSnapshotRepository"/>.
@@ -133,7 +133,7 @@ public sealed class PortfolioHistoryBackfillService
             var instrument = await _instruments.GetByIdAsync(instrumentId);
             if (instrument is null) continue;
 
-            // Даты погашения нужны, чтобы не тянуть котировку вперёд после погашения (plan/39 B1).
+            // Даты погашения нужны, чтобы не тянуть котировку вперёд после погашения.
             // FaceValue = 0 — заготовка без обогащения (MaturityDate там заглушка «сегодня»), ей не верим.
             if (instrument.FaceValue > 0m && instrument.MaturityDate != default)
             {

@@ -28,7 +28,7 @@ public static class AllocationEndpoints
     // ─── GET /api/analytics/allocation ──────────────────────────────────────────────────────
 
     /// <summary>
-    /// «Куда вложить сумму» (plan/17 §B, задача 34 — источники кандидатов). Жадное распределение
+    /// «Куда вложить сумму» (задача 34 — источники кандидатов). Жадное распределение
     /// <paramref name="amountRub"/> через <see cref="CashAllocationService"/>. <paramref name="source"/>
     /// выбирает кандидатов: <c>portfolio</c> (дефолт, обратная совместимость — прежнее поведение)
     /// строит кандидатов из <see cref="PortfolioHoldingsBuilder"/> holdings — тот же вход, что у
@@ -284,11 +284,11 @@ public static class AllocationEndpoints
     /// принцип "двухъярусной архитектуры", что <see cref="GetReplacementCandidates"/> mode=market;
     /// план явно запрещает материализовывать вселенную через движок). <paramref name="source"/>=
     /// <c>recommended</c> дополнительно исключает кандидатов с Caution-сигналом ликвидности ИЛИ
-    /// спреда (<see cref="CandidateRiskSignalService"/>, задача 33) и ограничивает концентрацию по
+    /// спреда (<see cref="CandidateRiskSignalService"/>) и ограничивает концентрацию по
     /// СЕКТОРУ (<see cref="CashAllocationConcentrationAxis.Sector"/> — issuer на банк-слое
     /// недоступен, см. doc-comment <see cref="Core.Analytics.CashAllocationCandidate.Sector"/>);
     /// <paramref name="source"/>=<c>market</c> — честный greedy по доходности БЕЗ секторного лимита
-    /// (принятый дефолт NEEDS DECISION plan/34 часть B.3: "весь рынок" должен показывать самое
+    /// (принятый дефолт NEEDS DECISION "весь рынок" должен показывать самое
     /// доходное без искажений диверсификацией). Обе ветки жёстко ограничивают 1 лот на кандидата
     /// (<c>maxLotsPerCandidate=1</c> — диверсификация "не больше 1 позиции на secid", план часть B.3)
     /// и потолок пула кандидатов <see cref="MarketAllocationCandidatePoolLimit"/> — потолок применяется

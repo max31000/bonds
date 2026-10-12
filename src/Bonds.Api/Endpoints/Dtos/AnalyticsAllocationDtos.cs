@@ -83,7 +83,7 @@ public sealed record AllocationLineDto
     /// <summary>Комиссия покупки в составе EstimatedCostRub.</summary>
     public decimal CommissionCostRub { get; init; }
 
-    /// <summary>Риск-сигналы (см. <see cref="RiskSignalsDto"/>, задача 33) —
+    /// <summary>Риск-сигналы (см. <see cref="RiskSignalsDto"/>) —
     /// заполнены для Source=market/recommended, null для Source=portfolio (план допускает эту
     /// более простую альтернативу вместо resolve-по-ISIN на каждую строку портфеля).</summary>
     public RiskSignalsDto? RiskSignals { get; init; }

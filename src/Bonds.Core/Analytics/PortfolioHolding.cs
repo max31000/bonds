@@ -3,7 +3,7 @@ using Bonds.Core.Models;
 namespace Bonds.Core.Analytics;
 
 /// <summary>
-/// Один holding для расчёта композиции/сравнения портфеля (plan/06 B2/B3) — объединяет позицию,
+/// Один holding для расчёта композиции/сравнения портфеля — объединяет позицию,
 /// справочные данные инструмента и (опционально) уже посчитанные метрики движка
 /// (<see cref="Bonds.Core.Calculation.BondMetrics"/>). Сборка из репозиториев + вызов
 /// <see cref="Bonds.Core.Calculation.BondMetricsCalculator"/> — ответственность вызывающего

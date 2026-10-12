@@ -83,7 +83,7 @@ describe('Settings', () => {
     expect(screen.queryByText('secret-token-value')).not.toBeInTheDocument();
   });
 
-  // T-13/C: PUT /api/settings/tinvest-token валидирует токен перед сохранением — 422 не должен
+  // PUT /api/settings/tinvest-token валидирует токен перед сохранением — 422 не должен
   // отображаться как "задан", и текст ошибки от бэкенда должен дойти до пользователя.
   it('shows a validation error notification and does not mark the token as configured on 422', async () => {
     server.use(
@@ -142,7 +142,7 @@ describe('Settings', () => {
   });
 
   // Блок «Комиссия брокера» — тариф T-Invest, авто-оценка из журнала, применённая ставка+источник.
-  describe('commission section (plan/22)', () => {
+  describe('commission section', () => {
     it('shows tariff, auto-estimate, and effective rate from the journal', async () => {
       server.use(
         http.get('*/api/settings', () =>

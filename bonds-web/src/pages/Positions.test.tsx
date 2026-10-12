@@ -98,7 +98,7 @@ describe('Positions', () => {
     renderPositions();
 
     await waitFor(() => expect(screen.getByText('Минфин РФ')).toBeInTheDocument());
-    // T-21/B: строка «Итого» показывает средневзвешенную доходность, которая для единственной
+    // строка «Итого» показывает средневзвешенную доходность, которая для единственной
     // позиции портфеля численно совпадает со значением её собственной ячейки — поэтому "12.50%"
     // теперь легитимно встречается дважды (ячейка доходности + строка «Итого»).
     expect(screen.getByTestId('yield-cell-1')).toHaveTextContent('12.50%');
@@ -332,7 +332,7 @@ describe('Positions', () => {
     await waitFor(() => expect(screen.getByTestId('positions-error')).toBeInTheDocument());
   });
 
-  // ─── T-16/B: live-merge рыночной стоимости поверх статичных данных GET /api/positions ────
+  // ─── live-merge рыночной стоимости поверх статичных данных GET /api/positions ────
 
   it('shows the static market value when no live price has arrived yet', async () => {
     server.use(
@@ -375,7 +375,7 @@ describe('Positions', () => {
     expect(screen.getByText('+0.95%')).toBeInTheDocument();
   });
 
-  // ─── T-19: клик по строке ведёт на карточку позиции ───────────────────────────────────────
+  // ─── клик по строке ведёт на карточку позиции ───────────────────────────────────────
 
   it('navigates to the position detail page when a row is clicked', async () => {
     server.use(
@@ -430,7 +430,7 @@ describe('Positions', () => {
     await waitFor(() => expect(screen.getByTestId('live-stale-1')).toBeInTheDocument());
   });
 
-  // ─── T-21/B.3: строка «Итого» ──────────────────────────────────────────────────────────────
+  // ─── строка «Итого» ──────────────────────────────────────────────────────────────
 
   it('renders a totals row with the summed market value and weighted-average yield/duration', async () => {
     const positionA: PositionRow = { ...basePosition, positionId: 21, marketValueRub: 100_000, ytmEffective: 0.1, modifiedDuration: 2 };
@@ -460,7 +460,7 @@ describe('Positions', () => {
     expect(screen.getByText(/без флоатеров/)).toBeInTheDocument();
   });
 
-  // ─── T-21/B.1: heatmap колонки «Доходность» ────────────────────────────────────────────────
+  // ─── heatmap колонки «Доходность» ────────────────────────────────────────────────
 
   it('gives the highest-yield regular bond a more saturated heatmap background than the lowest', async () => {
     const low: PositionRow = { ...basePosition, positionId: 31, issuer: 'Низкая', ytmEffective: 0.05 };
@@ -491,7 +491,7 @@ describe('Positions', () => {
     expect(style ?? '').not.toContain('color-mix');
   });
 
-  // ─── T-21/C.2: карточки вместо таблицы на мобиле ───────────────────────────────────────────
+  // ─── карточки вместо таблицы на мобиле ───────────────────────────────────────────
 
   describe('mobile layout (< 768px)', () => {
     it('renders position cards instead of the table when the viewport is narrow', async () => {
@@ -568,7 +568,7 @@ describe('Positions', () => {
     });
   });
 
-  // ─── T-24: подпись «в т.ч. НКД» ─────────────────────────────────────────────────────────────
+  // ─── подпись «в т.ч. НКД» ─────────────────────────────────────────────────────────────
 
   it('shows the "в т.ч. НКД" caption under market value when accruedTotalRub is positive', async () => {
     const withAccrued: PositionRow = { ...basePosition, positionId: 41, accruedPerBondRub: 12.5, accruedTotalRub: 1250 };

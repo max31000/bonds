@@ -15,7 +15,7 @@ namespace Bonds.Infrastructure.Universe;
 /// <see cref="Bonds.Infrastructure.Quotes.LiveQuotesPollingService"/>: try/catch вокруг тика,
 /// ошибка (сеть недоступна, БД недоступна) — Warning-лог и пропуск итерации, без падения процесса.
 /// <para>
-/// <b>Двухъярусная архитектура (plan/26, не нарушать).</b> Здесь НЕ вызывается точный движок
+/// <b>Двухъярусная архитектура (не нарушать).</b> Здесь НЕ вызывается точный движок
 /// <see cref="Bonds.Core.Calculation.BondMetricsCalculator"/> — только дешёвая биржевая статистика
 /// MOEX (YIELD/DURATION/обороты) + приближённый G-спред по сохранённой безрисковой кривой.
 /// </para>

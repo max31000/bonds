@@ -416,7 +416,7 @@ describe('MarketComparator', () => {
     await waitFor(() => expect(postedIsin).toBe(gazpromRow.isin));
   });
 
-  // ─── T-37 fix (ревью): гонка запросов при быстром переключении выбора в выпадашке ───────────
+  // ─── гонка запросов при быстром переключении выбора в выпадашке ───────────
 
   /** Промис с внешним resolve — управляет моментом резолва materialize/replacement (тест гонки). */
   function createDeferred<T = void>() {

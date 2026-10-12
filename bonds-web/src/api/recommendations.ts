@@ -12,7 +12,7 @@ import type {
   RelativeValueResponse,
 } from './types';
 
-/** GET /api/analytics/comparison — сравнительная таблица позиций (plan/17 §A, секция «Слабые звенья»). */
+/** GET /api/analytics/comparison — сравнительная таблица позиций (секция «Слабые звенья»). */
 export function fetchComparison(): Promise<ComparisonResponse> {
   return apiClient.get<ComparisonResponse>('/analytics/comparison');
 }
@@ -45,7 +45,7 @@ export function fetchReplacementCandidates(
 
 /**
  * GET /api/analytics/allocation?amountRub=&source=&includeWatchlist= — «куда вложить сумму»
- * (plan/17 §A/§B, задача 34 добавила source). source по умолчанию "portfolio" (прежнее поведение —
+ * (задача 34 добавила source). source по умолчанию "portfolio" (прежнее поведение —
  * докупка только позиций счёта); "market"/"recommended" — вся биржа/отфильтрованная выборка банка,
  * не зависят от includeWatchlist (бэкенд игнорирует его вне source=portfolio).
  */

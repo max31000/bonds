@@ -36,10 +36,10 @@ public sealed class TInvestPortfolioPosition
     /// <summary>Средневзвешенная цена покупки (cost basis), в валюте инструмента за одну облигацию.</summary>
     public decimal AveragePositionPrice { get; init; }
 
-    /// <summary>Текущая чистая цена по данным брокера (T-Invest = "сейчас", plan/00 §4).</summary>
+    /// <summary>Текущая чистая цена по данным брокера (T-Invest = "сейчас").</summary>
     public decimal? CurrentPrice { get; init; }
 
-    /// <summary>Текущий НКД по позиции (T-Invest = первичный источник "сейчас" для движка, plan/00 §4).</summary>
+    /// <summary>Текущий НКД по позиции (T-Invest = первичный источник "сейчас" для движка).</summary>
     public decimal? CurrentNkd { get; init; }
 }
 

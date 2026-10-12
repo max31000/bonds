@@ -79,7 +79,7 @@ public static class LiveEndpoints
             else
             {
                 // Нет ни одного intraday-тика ещё (только что открыт рынок / нет позиций для
-                // поллинга ранее) — fallback на последний снимок полного синка (plan/16: "isStale: true").
+                // поллинга ранее) — fallback на последний снимок полного синка ("isStale: true").
                 dirtyPrice = lastFullSyncQuote?.DirtyPrice;
                 asOfUtc = lastFullSyncQuote is not null
                     ? lastFullSyncQuote.AsOf.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc)

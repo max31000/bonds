@@ -6,7 +6,7 @@ using Microsoft.Extensions.Logging;
 namespace Bonds.Infrastructure.Analytics;
 
 /// <summary>
-/// Снимок портфеля "на сейчас" (plan/06 B1, spec §6.9/§9) — координирует репозитории (позиции,
+/// Снимок портфеля "на сейчас" (spec §6.9/§9) — координирует репозитории (позиции,
 /// котировки, журнал операций) и считает <see cref="PortfolioValueSnapshot"/> через чистый
 /// <see cref="PortfolioXirrService"/>. Этот класс НЕ планирует себя по расписанию и НЕ пишет
 /// в <see cref="IPortfolioValueSnapshotRepository"/> автоматически — он просто умеет посчитать

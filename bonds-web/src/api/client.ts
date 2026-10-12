@@ -1,7 +1,7 @@
 import { ApiError, apiJson, requestLogin } from '@mvv42/kit/platform';
 import { useAccessStore } from '../store/useAccessStore';
 
-// nginx проксирует /bonds/api/ → :5001/api/ (см. plan/01, часть C3). Относительный путь того же
+// nginx проксирует /bonds/api/ →:5001/api/ (часть C3). Относительный путь того же
 // origin: общий mvv42-auth кладёт access-cookie на mvv42.ru, браузер сам отправит её с запросом.
 const BASE_URL = import.meta.env.VITE_API_BASE ?? '/bonds/api';
 

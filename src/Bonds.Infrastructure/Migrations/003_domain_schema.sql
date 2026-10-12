@@ -1,4 +1,4 @@
--- Доменная схема Bond Portfolio Analytics (spec §5).
+-- Этап 03: доменная схема Bond Portfolio Analytics (spec §5).
 -- Разрез: справочные данные инструмента (instruments, *_schedules) — общие для всех,
 -- рыночные котировки (market_quotes, yield_curve_snapshots) — временные ряды,
 -- позиции/операции (accounts, positions, operations) — cost basis и журнал пользователя.
@@ -123,7 +123,7 @@ CREATE TABLE IF NOT EXISTS yield_curve_snapshots (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 7. accounts — брокерский счёт (агрегат портфеля). MVP — один счёт на пользователя
--- (spec §2), UserId — точка расширения под мультисчёт, не реализуется.
+-- (spec §2), UserId — точка расширения под мультисчёт (plan/00 §11), не реализуется.
 CREATE TABLE IF NOT EXISTS accounts (
     id                BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     user_id           BIGINT UNSIGNED NOT NULL,
@@ -159,7 +159,7 @@ CREATE TABLE IF NOT EXISTS positions (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 9. operations — журнал операций, истина для XIRR (spec §5/§6.9).
--- external_id unique — идемпотентность повторного синка.
+-- external_id unique — идемпотентность повторного синка (plan/03 §B/§C).
 CREATE TABLE IF NOT EXISTS operations (
     id            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     account_id    BIGINT UNSIGNED NOT NULL,

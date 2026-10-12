@@ -27,7 +27,7 @@ public interface IMoexIssClient
     Task<MoexSecuritySearch?> GetSecuritySearchAsync(string isin, CancellationToken ct = default);
 
     /// <summary>
-    /// Дневные исторические цены (history.json, plan/15 Часть A) за период [from; to] включительно.
+    /// Дневные исторические цены (history.json) за период [from; to] включительно.
     /// Пагинация обязательна — ISS отдаёт страницы по 100 строк с блоком <c>history.cursor</c>;
     /// дочитывается тем же паттерном, что <see cref="GetBondizationAsync"/>. Дни без сделок дают
     /// строку с <see cref="MoexHistoryPricePoint.ClosePricePercent"/> = null — forward fill остаётся

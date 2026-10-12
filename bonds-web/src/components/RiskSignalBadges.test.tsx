@@ -39,7 +39,7 @@ const yellowSignals: RiskSignals = {
   reliabilityReason: 'Жёлтый: листинг неизвестен (для зелёного нужен листинг 1 или 2).',
 };
 
-describe('RiskSignalBadges — светофор надёжности (задача 38)', () => {
+describe('RiskSignalBadges — светофор надёжности', () => {
   it('renders the reliability dot alongside the existing liquidity/spread badges (additive, not replacing)', () => {
     renderBadges(greenSignals);
 

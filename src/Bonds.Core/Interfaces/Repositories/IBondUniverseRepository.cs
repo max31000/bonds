@@ -16,7 +16,7 @@ public interface IBondUniverseRepository
     Task UpsertSnapshotBatchAsync(IReadOnlyList<BondUniverseEntry> entries, CancellationToken ct = default);
 
     /// <summary>Все строки текущего снимка — используется API-эндпоинтом (фильтрация/сортировка/
-    /// пагинация выполняются в вызывающем коде поверх гигиенического фильтра, см. plan/26 часть D)
+    /// пагинация выполняются в вызывающем коде поверх гигиенического фильтра)
     /// и refresh-сервисом (перед записью дневного среза).</summary>
     Task<IReadOnlyList<BondUniverseEntry>> GetAllAsync(CancellationToken ct = default);
 

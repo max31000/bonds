@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { fetchSettings, updateSettings, updateTInvestToken } from '../api/settings';
 import type { SettingsResponse, SettingsUpdateRequest } from '../api/types';
 
-/** T-13/C: результат сохранения токена — успех несёт маску счёта-подтверждения, ошибка — сообщение. */
+/** результат сохранения токена — успех несёт маску счёта-подтверждения, ошибка — сообщение. */
 export type SaveTokenResult = { ok: true; validatedAccountIdMasked: string | null } | { ok: false; error: string };
 
 interface SettingsStore {
@@ -53,7 +53,7 @@ export const useSettingsStore = create<SettingsStore>()((set) => ({
       }));
       return { ok: true, validatedAccountIdMasked };
     } catch (err) {
-      // 422 (plan/13 часть C: токен не прошёл проверку T-Invest) приходит тем же {error} телом,
+      // 422 (токен не прошёл проверку T-Invest) приходит тем же {error} телом,
       // что и прочие ошибки apiClient — сообщение уже человекочитаемое, эхо не содержит токен.
       const message = err instanceof Error ? err.message : 'Не удалось сохранить токен';
       set({ error: message });

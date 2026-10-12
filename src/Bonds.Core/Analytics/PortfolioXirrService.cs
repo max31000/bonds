@@ -4,7 +4,7 @@ using Bonds.Core.Models;
 namespace Bonds.Core.Analytics;
 
 /// <summary>
-/// XIRR портфеля (plan/06 B1, spec §6.9) — внутренняя норма доходности по журналу
+/// XIRR портфеля (spec §6.9) — внутренняя норма доходности по журналу
 /// <see cref="Operation"/> владельца (фактические налоги/комиссии из T-Invest) плюс терминальный
 /// поток текущей рыночной стоимости. Чистый сервис над <see cref="XirrCalculator"/> движка
 /// — не пересчитывает решатель, только выставляет конвенцию знака денежного потока
@@ -66,7 +66,7 @@ public static class PortfolioXirrService
     /// <b>Пересмотрено при ревью этапов 04-06.</b> Раньше эта функция игнорировала фактический
     /// знак <c>AmountRub</c> через <c>Math.Abs()</c> и принудительно переписывала его по типу
     /// операции (Buy/Tax/Fee → минус, остальное → плюс). Это было избыточно и рискованно:
-    /// синк T-Invest (<see cref="Bonds.Infrastructure.Sync.BondSyncService"/>, этап 04) пишет
+    /// синк T-Invest (<see cref="Bonds.Infrastructure.Sync.BondSyncService"/>) пишет
     /// <c>AmountRub = op.PaymentRub</c> — поле <c>Payment</c> протобуф-контракта T-Invest,
     /// которое брокер **уже отдаёт со знаком потока** (см.
     /// Bonds.Infrastructure/Connectors/TInvest/README.md, раздел "Журнал операций": "Payment

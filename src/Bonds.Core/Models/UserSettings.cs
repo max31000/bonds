@@ -1,7 +1,7 @@
 namespace Bonds.Core.Models;
 
 /// <summary>
-/// Настройки пользователя (этап 08, GET/PUT /api/settings + PUT /api/settings/tinvest-token).
+/// Настройки пользователя (GET/PUT /api/settings + PUT /api/settings/tinvest-token).
 /// Single-user продукт — одна строка на пользователя (см. doc-comment <see cref="User"/>).
 /// <see cref="TInvestTokenEncrypted"/> хранит токен ЗАШИФРОВАННЫМ через
 /// <c>Microsoft.AspNetCore.DataProtection.IDataProtectionProvider</c> (см.

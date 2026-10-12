@@ -9,7 +9,7 @@ using Microsoft.Extensions.Options;
 namespace Bonds.Infrastructure.Scheduling;
 
 /// <summary>
-/// Автосинк в окна торгов MOEX (plan/07 Часть B, spec §3/§11). <see cref="BackgroundService"/>
+/// Автосинк в окна торгов MOEX (spec §3/§11). <see cref="BackgroundService"/>
 /// (singleton) — тот же паттерн, что cashpulse <c>ExchangeRateRefreshService</c> (plan/00 "Эталон
 /// фоновых задач"): периодический опрос с try/catch вокруг каждого тика, без падения процесса.
 /// Не резолвит scoped-зависимости само — делегирует выполнение цикла <see cref="ISyncCycleRunner"/>
@@ -26,7 +26,7 @@ namespace Bonds.Infrastructure.Scheduling;
 /// <b>Не повторяет запуск в то же окно в тот же день.</b> Отслеживается через простую внутреннюю
 /// пару (Дата, Окно) — "последнее окно, в которое уже синканулись сегодня" (plan/07 предлагает
 /// этот вариант как самый простой). Не использует <see cref="ISyncCycleRunner.GetStatus"/> для
-/// этой цели, т.к. force-refresh (этап 08, через тот же <see cref="ISyncCycleRunner"/>) тоже
+/// этой цели, т.к. force-refresh (через тот же <see cref="ISyncCycleRunner"/>) тоже
 /// обновляет <c>LastRunStartedAtUtc</c> — смешивать источники привело бы к тому, что ручной
 /// force-refresh посреди дня "съедал" бы следующее плановое окно.
 /// </para>
@@ -44,7 +44,7 @@ public sealed class SyncSchedulerHostedService : BackgroundService
     private DateOnly? _lastTriggeredDate;
     private TimeOnly? _lastTriggeredWindow;
 
-    /// <summary>Порог plan/15 §B.4: если снапшотов меньше этого числа при старте приложения (а
+    /// <summary>Порог если снапшотов меньше этого числа при старте приложения (а
     /// операции в журнале есть), запускаем однократный бэкфилл истории XIRR — виджет иначе пуст
     /// неделями, пока не накопится история от одного лишь автосинка (2 снапшота/день).</summary>
     public SyncSchedulerHostedService(
@@ -115,7 +115,7 @@ public sealed class SyncSchedulerHostedService : BackgroundService
         var today = DateOnly.FromDateTime(nowMsk);
         var timeOfDay = TimeOnly.FromDateTime(nowMsk);
 
-        // Минимум по спеке — пропуск сб/вс (plan/07: праздники MOEX опциональны, идемпотентность
+        // Минимум по спеке — пропуск сб/вс (праздники MOEX опциональны, идемпотентность
         // нижних слоёв уже не даёт пустому/повторному синку испортить данные).
         if (nowMsk.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday)
         {

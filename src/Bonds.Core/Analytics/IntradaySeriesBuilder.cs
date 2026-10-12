@@ -2,7 +2,7 @@ using Bonds.Core.Models;
 
 namespace Bonds.Core.Analytics;
 
-/// <summary>Одна точка интрадей-ряда суммарной стоимости портфеля (GET /api/live/portfolio-intraday, plan/16).</summary>
+/// <summary>Одна точка интрадей-ряда суммарной стоимости портфеля (GET /api/live/portfolio-intraday).</summary>
 public sealed record IntradaySeriesPoint
 {
     public required DateTime TsUtc { get; init; }

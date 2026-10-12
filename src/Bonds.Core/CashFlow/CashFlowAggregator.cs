@@ -3,7 +3,7 @@ using Bonds.Core.Models;
 namespace Bonds.Core.CashFlow;
 
 /// <summary>
-/// Агрегации спроецированного денежного потока для виджета-календаря (plan/06 A4, spec §7.4):
+/// Агрегации спроецированного денежного потока для виджета-календаря (spec §7.4):
 /// по месяцам и по позициям (брутто/налог/нетто), плюс отдельный список дат освобождения тела
 /// (погашение/крупная амортизация) — когда в портфеле появится свободная ликвидность. Чистые
 /// функции над уже построенными <see cref="ProjectedCashFlow"/> — не знает, откуда они взялись
@@ -49,7 +49,7 @@ public static class CashFlowAggregator
             .ToList();
     }
 
-    /// <summary>Разбивка по месяцу+позиции+типу потока — для drill-down из месячного бара (plan/11 A4).</summary>
+    /// <summary>Разбивка по месяцу+позиции+типу потока — для drill-down из месячного бара.</summary>
     public static IReadOnlyList<MonthlyPositionFlow> ByMonthPosition(IEnumerable<ProjectedCashFlow> flows)
     {
         return flows

@@ -4,7 +4,7 @@ namespace Bonds.Infrastructure.Connectors.Moex;
 
 /// <summary>
 /// Параметры выпуска, разобранные из MOEX ISS
-/// <c>/iss/engines/stock/markets/bonds/securities/{SECID}.json</c> (plan/04 Часть A, §4.2 таблица).
+/// <c>/iss/engines/stock/markets/bonds/securities/{SECID}.json</c> (§4.2 таблица).
 /// Один SECID может торговаться на нескольких BOARDID одновременно (например, основной режим
 /// торгов и режим переговорных сделок) — резолвер берёт строку с самым "торговым" board
 /// (см. <see cref="MoexIssClient"/>), здесь хранится уже выбранная строка.

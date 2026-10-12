@@ -7,7 +7,7 @@ public interface IAccountRepository
     Task<Account?> GetByIdAsync(ulong id, ulong userId);
 
     /// <summary>
-    /// Возвращает счёт по Id без привязки к пользователю (plan/22 часть C: <c>ICommissionRateProvider</c>
+    /// Возвращает счёт по Id без привязки к пользователю (<c>ICommissionRateProvider</c>
     /// резолвит эффективную ставку по AccountId и должен сам найти UserId для override из настроек —
     /// вызывающий HTTP-слой уже проверил принадлежность счёта пользователю на входе запроса, здесь
     /// повторная проверка избыточна, single-user MVP §2). Null — счёт не найден.
@@ -22,9 +22,9 @@ public interface IAccountRepository
     Task UpdateBalanceAsync(ulong accountId, decimal? cashRub, decimal? brokerTotalRub, DateTime syncedAtUtc);
 
     /// <summary>
-    /// Возвращает Id единственного брокерского счёта продукта (plan/00 §2: single-user, один
+    /// Возвращает Id единственного брокерского счёта продукта (single-user, один
     /// счёт на MVP) — самый старый (по Id) существующий <see cref="Account"/>, без привязки к
-    /// конкретному пользователю/сессии. Используется планировщиком (этап 07, plan/07
+    /// конкретному пользователю/сессии. Используется планировщиком (plan/07
     /// "Single-user продукт... используй тот же способ в Scheduler") и будущим HTTP force-refresh
     ///, которым неоткуда взять AccountId иначе, чем из единственной существующей
     /// записи (фоновый цикл не имеет HTTP-контекста/JWT с UserId). Null — если ни одного счёта ещё

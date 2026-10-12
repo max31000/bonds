@@ -12,7 +12,7 @@ public interface IUserRepository
     /// <summary>
     /// Id единственного владельца продукта (см. doc-comment <see cref="IAccountRepository.GetPrimaryAccountIdAsync"/>
     /// для того же паттерна с Account) — самый старый (по Id) существующий <see cref="User"/>.
-    /// Используется не-HTTP кодом (этап 08: <c>ITInvestTokenProvider</c>), которому неоткуда
+    /// Используется не-HTTP кодом (<c>ITInvestTokenProvider</c>), которому неоткуда
     /// взять UserId иначе, чем из единственной существующей записи. Null — если ни один
     /// пользователь ещё не залогинился (чистая БД до первого Telegram-логина).
     /// </summary>

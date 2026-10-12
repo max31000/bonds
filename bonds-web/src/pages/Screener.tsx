@@ -155,7 +155,7 @@ function AddToWatchlistButton({ row }: { row: UniverseRow }) {
   );
 }
 
-/** Панель серверных фильтров — общая для десктопа (открыта) и мобилы (в Collapse, plan/28 часть B). */
+/** Панель серверных фильтров — общая для десктопа (открыта) и мобилы (в Collapse). */
 function FilterPanel() {
   const filters = useScreenerStore((s) => s.filters);
   const setFilters = useScreenerStore((s) => s.setFilters);
@@ -286,7 +286,7 @@ function StatusBar() {
   );
 }
 
-/** Мобильная карточка строки скринера (паттерн PositionCard, plan/28 часть B). */
+/** Мобильная карточка строки скринера (паттерн PositionCard). */
 function ScreenerCard({ row }: { row: UniverseRow }) {
   const [expanded, { toggle }] = useDisclosure(false);
 
@@ -412,11 +412,11 @@ function SortableHeader({ sortKey, label }: { sortKey: ScreenerSortBy; label: st
 
 /**
  * Страница «Скринер» — весь банк облигаций MOEX таблицей: серверные фильтры/поиск/
- * сортировка/пагинация по 50 (GET /api/universe, задача 26), статусная строка (GET
+ * сортировка/пагинация по 50 (GET /api/universe), статусная строка (GET
  * /api/universe/status), метки «в портфеле»/«в watchlist», действие «+ watchlist». Мобильная
  * версия — карточки (паттерн PositionCard из задачи 21) с накопительной пагинацией «показать
  * ещё». Сравнение с рынком уже живёт в MarketComparator на «Рекомендациях» — здесь намеренно нет
- * второй точки входа в сравнение (YAGNI, см. plan/28).
+ * второй точки входа в сравнение (YAGNI).
  */
 export function Screener() {
   const { rows, total, disclaimer, isLoading, error, offset, load, loadStatus, setOffset, filters } =

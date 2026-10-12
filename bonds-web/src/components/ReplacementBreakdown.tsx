@@ -4,7 +4,7 @@ import type { CommissionRateSource } from '../api/types';
 
 /**
  * Поля построчной формулы «держать vs переложиться», общие для карточки матрицы замен
- * (задача 23, MatrixPair) и карточки market-сравнивалки (задача 27, ReplacementResponse) — вытащено
+ * (MatrixPair) и карточки market-сравнивалки (ReplacementResponse) — вытащено
  * в один компонент, чтобы обе карточки рендерили ОДИНАКОВУЮ формулу без копипасты.
  */
 export interface ReplacementBreakdownData {

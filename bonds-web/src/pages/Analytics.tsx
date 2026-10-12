@@ -429,7 +429,7 @@ function TrajectoryWidget({ trajectory }: { trajectory: TrajectoryResponse }) {
 
 /**
  * Экран аналитики: scatter «дюрация × доходность», композиция портфеля, кривая XIRR во времени,
- * сценарии ставок и траектория (этап 09b §B.3–B.5). Календарь поступлений — `/cashflow` (§B.2).
+ * сценарии ставок и траектория. Календарь поступлений — `/cashflow` (§B.2).
  */
 export function Analytics() {
   const { scatter, composition, xirr, rateScenario, trajectory, isLoading, error, load } = useAnalyticsStore();

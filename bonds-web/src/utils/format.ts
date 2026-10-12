@@ -14,7 +14,7 @@ export function formatRub(value: number | null | undefined): string {
 }
 
 /**
- * Компактный формат рублёвой суммы для тесных мест (ось графика, plan/15 §C.1) — "1,2 млн ₽",
+ * Компактный формат рублёвой суммы для тесных мест (ось графика) — "1,2 млн ₽",
  * "850 тыс. ₽", "999 ₽". Округляет до 1 знака после запятой у млн/тыс. (без хвоста ",0").
  */
 export function formatRubCompact(value: number | null | undefined): string {

@@ -5,8 +5,8 @@ namespace Bonds.Infrastructure.Scheduling;
 /// Интерфейс выделен отдельно (а не просто конкретный класс, как у BondSyncService/
 /// CashFlowProjectionOrchestrator/PortfolioSnapshotService) потому что: (1) этот сервис должен
 /// быть Singleton (держит статус и семафор между тиками — см. doc-comment SyncCycleService), тогда
-/// как остальные оркестраторы Scoped; (2) этап 08 будет резолвить его и из HostedService, и из
-/// HTTP-контроллера force-refresh — интерфейс упрощает мокирование в тестах эндпоинта на этапе 08.
+/// как остальные оркестраторы Scoped; (2) его резолвят и HostedService, и
+/// эндпоинт force-refresh — интерфейс упрощает мокирование в тестах эндпоинта.
 /// </summary>
 public interface ISyncCycleRunner
 {

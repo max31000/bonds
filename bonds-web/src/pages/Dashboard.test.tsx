@@ -265,7 +265,7 @@ describe('Dashboard', () => {
     await waitFor(() => expect(screen.getByText(/Как стоимость портфеля распределена/)).toBeInTheDocument());
   });
 
-  // ─── T-24: глобальная подсказка про "грязные" цены на KPI «Стоимость портфеля» ─────────────
+  // ─── глобальная подсказка про "грязные" цены на KPI «Стоимость портфеля» ─────────────
 
   it('opens the dirty-price explanation popover for the portfolio value KPI', async () => {
     server.use(

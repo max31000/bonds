@@ -14,7 +14,7 @@ import type { UniverseRow, MaterializeResponse, ReplacementResponse } from '../a
 const SEARCH_DEBOUNCE_MS = 300;
 const REPLACEMENT_HORIZON_YEARS = 2;
 
-/** Одна опция выпадашки — карточка с именем/YTM/дюрацией/бейджами (renderOption, plan/27 §B.1). */
+/** Одна опция выпадашки — карточка с именем/YTM/дюрацией/бейджами (renderOption). */
 function UniverseOptionLabel({ row }: { row: UniverseRow }) {
   return (
     <Stack gap={2}>
@@ -88,7 +88,7 @@ export function MarketComparator({ holdPositionId, initialSecid }: { holdPositio
   const [isAddingToWatchlist, setIsAddingToWatchlist] = useState(false);
   const [addedToWatchlist, setAddedToWatchlist] = useState(false);
 
-  // T-37 fix (ревью): тот же класс гонки, что в Recommendations.ReplacementPanel.handleSelectCandidate
+  // тот же класс гонки, что в Recommendations.ReplacementPanel.handleSelectCandidate
   // — выбор новой бумаги в выпадашке до резолва предыдущего сравнения не должен позволить более
   // позднему resolve старого выбора перезаписать карточку уже выбранной бумаги. Генерация
   // инкрементируется на каждый вызов handleSelect (включая очистку selectedSecid=null); перед

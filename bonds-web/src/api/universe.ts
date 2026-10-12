@@ -26,7 +26,7 @@ export function fetchUniverse(query: UniverseQuery): Promise<UniverseResponse> {
   return apiClient.get<UniverseResponse>(`/universe?${params.toString()}`);
 }
 
-/** GET /api/universe/status — сводка банка облигаций (задача 28, статусная строка скринера). */
+/** GET /api/universe/status — сводка банка облигаций (статусная строка скринера). */
 export function fetchUniverseStatus(): Promise<UniverseStatus> {
   return apiClient.get<UniverseStatus>('/universe/status');
 }

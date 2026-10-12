@@ -136,7 +136,7 @@ describe('Analytics', () => {
     expect(screen.getByTestId('xirr-current')).toHaveTextContent('13.20%');
   });
 
-  it('renders the scatter widget without crashing when a watchlist point is present (plan/20 §B.2)', async () => {
+  it('renders the scatter widget without crashing when a watchlist point is present', async () => {
     server.use(
       http.get('*/api/analytics/scatter', () =>
         HttpResponse.json({
@@ -170,7 +170,7 @@ describe('Analytics', () => {
     await waitFor(() => expect(screen.getByTestId('scatter-widget')).toBeInTheDocument());
   });
 
-  it('opens the explanation popover for the scatter widget (plan/18 part C)', async () => {
+  it('opens the explanation popover for the scatter widget', async () => {
     server.use(
       http.get('*/api/analytics/scatter', () => HttpResponse.json(baseScatter)),
       http.get('*/api/analytics/composition', () => HttpResponse.json(baseComposition)),
@@ -394,7 +394,7 @@ describe('Analytics', () => {
   });
 });
 
-describe('buildScatterChartData (T-7/L-1)', () => {
+describe('buildScatterChartData', () => {
   it('plots points by Macaulay duration, not modified duration', () => {
     const { points } = buildScatterChartData(baseScatter);
 

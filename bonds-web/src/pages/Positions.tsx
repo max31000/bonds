@@ -39,7 +39,7 @@ import { computePositionsTotals } from '../utils/positionsAggregation';
 import { buildYieldHeatmapScale } from '../utils/yieldHeatmap';
 
 /**
- * Главный экран приложения после логина — таблица позиций с расчётными метриками (этап 09a,
+ * Главный экран приложения после логина — таблица позиций с расчётными метриками (
  * цена входа/P&L — plan/14).
  * Графика/календарь/сигналы — 09b/09c.
  */

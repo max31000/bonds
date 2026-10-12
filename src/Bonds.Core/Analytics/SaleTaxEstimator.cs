@@ -39,7 +39,7 @@ public static class SaleTaxEstimator
     /// продажи (ПОСЛЕ комиссии брокера, та же величина, что <see cref="IfSoldNowResult.NetProceedsRub"/>
     /// или <c>netProceedsAfterSale</c> в <see cref="SwitchAnalysisService"/>).
     /// <paramref name="investedRub"/> — вложено в продаваемое количество по средней цене входа
-    /// (<see cref="PositionCostBasis.InvestedRub"/>, задача 14). <paramref name="hasUnknownLots"/> —
+    /// (<see cref="PositionCostBasis.InvestedRub"/>). <paramref name="hasUnknownLots"/> —
     /// <see cref="PositionCostBasis.HasUnknownLots"/>: журнал операций не покрывает весь остаток.
     /// <para>
     /// Возвращает <c>null</c> (НЕ ноль), если <paramref name="hasUnknownLots"/> = true или

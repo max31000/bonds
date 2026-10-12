@@ -55,7 +55,7 @@ public sealed record ScatterPointDto
     public string? Issuer { get; init; }
     public required decimal ModifiedDuration { get; init; }
 
-    /// <summary>T-7/L-1: дюрация Маколея — ось X scatter строится по ней, чтобы визуальное «над/под
+    /// <summary>дюрация Маколея — ось X scatter строится по ней, чтобы визуальное «над/под
     /// кривой» совпадало со знаком G-спреда (он тоже считается по Маколею).</summary>
     public required decimal MacaulayDuration { get; init; }
     public decimal? EffectiveYield { get; init; }

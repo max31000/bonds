@@ -3,7 +3,7 @@ namespace Bonds.Core.Models;
 /// <summary>
 /// Дневной срез снимка вселенной облигаций (одна строка на secid в день).
 /// Пишется идемпотентно один раз в день (первый тик после закрытия торгов, ~19:00 МСК) хостед-
-/// сервисом <c>BondUniverseRefreshService</c>. Основа для медиан по корзинам/трендов (задача 30 B3).
+/// сервисом <c>BondUniverseRefreshService</c>. Основа для медиан по корзинам/трендов.
 /// Retention ~400 дней — старые строки чистятся при каждой записи. Единицы — те же, что
 /// <see cref="BondUniverseEntry"/> (YieldFraction — доля, DurationYears — годы).
 /// </summary>

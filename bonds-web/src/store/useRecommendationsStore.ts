@@ -18,7 +18,7 @@ export interface SellCandidate {
 const TOP_SELL_CANDIDATES = 3;
 const UPCOMING_HORIZON_DAYS = 90;
 
-/** Позиция несравнима по доходности «вне сравнения» (plan/17 §A.1: floater/indexed/dataIncomplete). */
+/** Позиция несравнима по доходности «вне сравнения» (floater/indexed/dataIncomplete). */
 function isOutOfComparison(row: ComparisonRow): boolean {
   // `'CurrentYield'`, не `'Current'` — зеркалит сериализацию бэкенд-enum
   // YieldKind.ToString() (было расхождение, из-за которого флоатеры протекали в sell-кандидаты).
@@ -92,7 +92,7 @@ interface RecommendationsStore {
 /**
  * Стор экрана «Рекомендации». Задача 35 часть D.2 — переработка на два главных блока:
  * секция «Замены» (GET /replacement-matrix) удалена со страницы (поглощена блоком 1 — подбор
- * замены на карточке слабой позиции через GET /replacement-candidates, задача 33), поэтому
+ * замены на карточке слабой позиции через GET /replacement-candidates), поэтому
  * `fetchReplacementMatrix`/`bestPairs`/`rejectedPairs`/`positionNamesById` здесь больше не нужны —
  * `load()` теперь собирает только «слабые звенья» (comparison) + композицию портфеля (для причин
  * концентрации). Блок 2 «куда вложить сумму» (<see>BasketConstructor</see>) и RV-бейджи

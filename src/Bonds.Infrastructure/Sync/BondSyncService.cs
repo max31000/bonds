@@ -123,7 +123,7 @@ public sealed class BondSyncService
             var tInvestOperations = await _tInvest.GetOperationsAsync(brokerAccountId, operationsFrom, ct);
             var domainOperations = new List<Operation>();
             // Резолв FIGI → инструмент кэшируется в пределах синка: историческая бумага с десятком
-            // операций не должна давать десять походов в справочник/T-Invest/MOEX (plan/39 M6).
+            // операций не должна давать десять походов в справочник/T-Invest/MOEX.
             var figiCache = new Dictionary<string, ulong?>();
             foreach (var op in tInvestOperations)
             {
@@ -365,7 +365,7 @@ public sealed class BondSyncService
     }
 
     /// <summary>
-    /// Инструмент для облигационной операции журнала (plan/39 M6). Бумага, купленная и погашенная/
+    /// Инструмент для облигационной операции журнала. Бумага, купленная и погашенная/
     /// проданная до первого синка, в справочнике отсутствует — создаём её тем же
     /// <see cref="ResolveOrCreateInstrumentAsync"/> и по возможности обогащаем из MOEX, чтобы
     /// <see cref="Operation.InstrumentId"/> не был null (иначе операция выпадает из истории и cost basis).
@@ -516,7 +516,7 @@ public sealed class BondSyncService
         {
             instrument.FaceValue = info.FaceValue ?? instrument.FaceValue;
             instrument.MaturityDate = info.MatDate ?? instrument.MaturityDate;
-            // T-2/N-2: валюту номинала берём из MOEX FACEUNIT и нормализуем (SUR/RUR→RUB; иначе как
+            // валюту номинала берём из MOEX FACEUNIT и нормализуем (SUR/RUR→RUB; иначе как
             // есть и вне скоупа). Раньше Currency не обновлялась и оставалась "RUB" даже для USD-бумаг.
             if (info.FaceUnit is not null)
             {
@@ -580,7 +580,7 @@ public sealed class BondSyncService
     /// расчёта доходности (spec §7.3), но не для классификации купонов: в окне
     /// [оферта−14д, оферта] <c>Resolve</c> считал оферту "слишком близкой" и откатывался к
     /// горизонту погашения, из-за чего баг Брус 2Р06 воспроизводился заново каждые две недели перед
-    /// офертой (см. ревью T-36, plan/36-offer-bonds-not-floaters.md). <c>ResolveNearestOfferDate</c>
+    /// офертой (см. ревью T-36). <c>ResolveNearestOfferDate</c>
     /// ищет ближайшую будущую оферту исключительно по календарю, без этой отсечки.
     /// Если релевантной будущей оферты нет (нет оферт вовсе или все уже прошли) — правило
     /// откатывается к прежнему поведению: любой неизвестный купон = Floating.

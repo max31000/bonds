@@ -17,24 +17,22 @@ namespace Bonds.Infrastructure.Scheduling;
 /// <summary>
 /// Полный цикл "синк → пересчёт → сигналы": синк T-Invest/MOEX
 /// (<see cref="BondSyncService"/>) → построение holdings с метриками inline (БЕЗ отдельной
-/// персистентности снимка метрик — см. plan/07 преамбула: "пересчитывай on-demand при каждом
-/// тике") → проекция денежного потока (<see cref="CashFlowProjectionOrchestrator"/>) → снимок
+/// персистентности снимка метрик) → проекция денежного потока (<see cref="CashFlowProjectionOrchestrator"/>) → снимок
 /// NAV/XIRR (<see cref="PortfolioSnapshotService"/>) → прогон <see cref="SignalsEngine"/> и
-/// синхронизация набора активных событий с БД (plan/40: insert/refresh/resolve, без дублей).
+/// синхронизация набора активных событий с БД (insert/refresh/resolve, без дублей).
 /// <para>
 /// <b>Lifetime: Singleton.</b> Должен переживать отдельные HTTP-запросы/тики хостед-сервиса,
 /// чтобы статус (<see cref="GetStatus"/>) и защита от параллельного запуска (семафор) были
-/// общими для вызовов из <see cref="SyncSchedulerHostedService"/> и будущего
+/// общими для вызовов из <see cref="SyncSchedulerHostedService"/> и эндпоинта
 /// <c>POST /api/sync</c>. Поэтому scoped-зависимости (репозитории, BondSyncService и
 /// другие Scoped-сервисы) резолвятся ВНУТРИ <see cref="RunCycleAsync"/> через
-/// <see cref="IServiceScopeFactory.CreateScope"/> — тот же паттерн, что у cashpulse
-/// ExchangeRateRefreshService (plan/00 "Эталон фоновых задач").
+/// <see cref="IServiceScopeFactory.CreateScope"/> — стандартный паттерн фоновых сервисов.
 /// </para>
 /// <para>
 /// <b>Защита от параллельного запуска.</b> <see cref="SemaphoreSlim"/> с неблокирующим
 /// <c>WaitAsync(0, ct)</c> (НЕ ожидание занятого слота) — если цикл уже идёт, повторный вызов
 /// немедленно возвращает <see cref="SyncCycleResult.AlreadyRunning"/> = true, не блокируя вызывающий
-/// HTTP-запрос (plan/07: "так HTTP POST /api/sync не подвисает").
+/// HTTP-запрос ("так HTTP POST /api/sync не подвисает").
 /// </para>
 /// </summary>
 public sealed class SyncCycleService : ISyncCycleRunner
@@ -137,7 +135,7 @@ public sealed class SyncCycleService : ISyncCycleRunner
         if (accountId is null)
         {
             // Single-user продукт без онбординга (ни одного Account не создано) — не ошибка,
-            // цикл просто нет смысла выполнять (plan/07: "используй тот же способ в Scheduler").
+            // цикл просто нет смысла выполнять ("используй тот же способ в Scheduler").
             _logger.LogInformation("No account configured yet — skipping sync cycle");
             result.NoAccountConfigured = true;
             return result;
@@ -292,7 +290,7 @@ public sealed class SyncCycleService : ISyncCycleRunner
 
         var targetAllocations = (await targetAllocationRepo.GetByAccountIdAsync(accountId)).ToList();
 
-        // Позиции уже сверены с брокером (закрытые удалены, plan/39) — Quantity > 0 страхует от остатков.
+        // Позиции уже сверены с брокером (закрытые удалены) — Quantity > 0 страхует от остатков.
         var holdings = (await holdingsBuilder.BuildForAccountAsync(accountId, asOf, ct))
             .Where(h => h.Quantity > 0m)
             .ToList();

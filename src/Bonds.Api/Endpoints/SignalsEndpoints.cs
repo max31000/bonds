@@ -6,7 +6,7 @@ using Bonds.Core.Models;
 namespace Bonds.Api.Endpoints;
 
 /// <summary>
-/// «События» портфеля (plan/40, spec §8; маршрут исторически /api/signals):
+/// «События» портфеля (spec §8; маршрут исторически /api/signals):
 /// GET /api/signals — АКТИВНЫЕ события счёта (по умолчанию), <c>?include=resolved</c> — вместе с историей;
 /// POST /api/signals/{id}/read — подтвердить («прочитано») событие;
 /// POST /api/signals/read-all — подтвердить все активные.

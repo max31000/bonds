@@ -178,8 +178,8 @@ public static class DependencyInjection
         services.Configure<SchedulerOptions>(configuration.GetSection("Scheduler"));
 
         // ISyncCycleRunner — Singleton (держит статус последнего синка и семафор защиты от
-        // параллельного запуска между тиками хостед-сервиса и будущим HTTP force-refresh,
-        // этап 08), сам резолвит Scoped-зависимости через IServiceScopeFactory внутри RunCycleAsync
+        // параллельного запуска между тиками хостед-сервиса и HTTP force-refresh,
+        // сам резолвит Scoped-зависимости через IServiceScopeFactory внутри RunCycleAsync
         // (см. doc-comment SyncCycleService).
         services.AddSingleton<ISyncCycleRunner, SyncCycleService>();
         services.AddHostedService<SyncSchedulerHostedService>();

@@ -35,7 +35,7 @@ public interface ITInvestPortfolioClient
     Task<IReadOnlyDictionary<string, TInvestQuote>> GetQuotesAsync(IReadOnlyCollection<string> figis, CancellationToken ct = default);
 
     /// <summary>
-    /// Имя тарифа пользователя (<c>Users.GetInfo</c>, plan/22 часть B) — ТОЛЬКО для отображения в
+    /// Имя тарифа пользователя (<c>Users.GetInfo</c>) — ТОЛЬКО для отображения в
     /// настройках (контекст для пользователя, "у вас тариф X"). T-Invest НЕ отдаёт числовую ставку
     /// комиссии тарифа нигде в API — этот метод не участвует в расчёте эффективной ставки
     /// (см. <see cref="Bonds.Core.Interfaces.ICommissionRateProvider"/>, который использует только

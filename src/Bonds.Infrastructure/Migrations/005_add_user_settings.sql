@@ -1,4 +1,4 @@
--- Настройки пользователя (GET/PUT /api/settings, PUT /api/settings/tinvest-token).
+-- Этап 08: настройки пользователя (GET/PUT /api/settings, PUT /api/settings/tinvest-token).
 -- Single-user продукт (spec §2) — таблица физически допускает несколько строк (одна на user_id),
 -- но реально существует ровно одна строка владельца, как и users/accounts.
 --
@@ -9,7 +9,7 @@
 -- ITInvestTokenProvider в Bonds.Infrastructure/Services).
 --
 -- Пороги Signals Engine (spec §8) персистируются per-user, чтобы PUT /api/settings мог их менять
--- без редеплоя. NULL-колонки означают "использовать дефолт SignalEngineOptions".
+-- без редеплоя. NULL-колонки означают "использовать дефолт SignalEngineOptions" (этап 07).
 CREATE TABLE IF NOT EXISTS user_settings (
     id                              BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     user_id                         BIGINT UNSIGNED NOT NULL,

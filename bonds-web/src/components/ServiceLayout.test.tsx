@@ -134,7 +134,7 @@ describe('ServiceLayout', () => {
     await waitFor(() => expect(screen.getByText('Обновление завершилось с ошибками')).toBeInTheDocument());
   });
 
-  // ─── T-13/B: индикатор здоровья синка в шапке (три состояния) ─────────────────────────────
+  // ─── индикатор здоровья синка в шапке (три состояния) ─────────────────────────────
 
   it('shows a green dot with relative time when the last sync succeeded', async () => {
     server.use(
@@ -201,7 +201,7 @@ describe('ServiceLayout', () => {
     await waitFor(() => expect(screen.getByText('Экран настроек')).toBeInTheDocument());
   });
 
-  // ─── T-16/B: тихий фоновый синк при открытии после долгого перерыва ────────────────────────
+  // ─── тихий фоновый синк при открытии после долгого перерыва ────────────────────────
 
   it('triggers a background sync on mount when the last success is older than 12 hours', async () => {
     let syncCalled = false;
