@@ -424,6 +424,7 @@ public class ReplacementCandidatesEndpointTests
 
         var universeRepo = new BondUniverseRepository(_factory.Database.ConnectionString);
         await universeRepo.UpsertSnapshotBatchAsync(ReliabilityProbeEntries(marker, sector, baseYield: 0.44m));
+        await ReliabilitySeed.SeedHealthyIssuerAsync(_factory.Database.ConnectionString, $"GRN{marker}", $"IGRN{marker}");
 
         async Task<List<string>> OwnSecidsAsync(string? reliability)
         {
@@ -463,6 +464,7 @@ public class ReplacementCandidatesEndpointTests
         var probes = ReliabilityProbeEntries(marker, sector, baseYield: 0.30m).Select(e => { e.YieldFraction = 0.30m; e.GspreadApproxFraction = 0.20m; return e; }).ToArray();
         var filler = Enumerable.Range(0, 2).Select(i => HealthyEntry($"F{i}{marker}", sector, 0.30m, 2m)).ToArray();
         await universeRepo.UpsertSnapshotBatchAsync(probes.Concat(filler).ToArray());
+        await ReliabilitySeed.SeedHealthyIssuerAsync(_factory.Database.ConnectionString, $"GRN{marker}", $"IGRN{marker}");
 
         async Task<List<string>> OwnSecidsAsync(string? reliability)
         {

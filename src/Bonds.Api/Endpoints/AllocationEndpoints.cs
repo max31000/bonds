@@ -57,6 +57,7 @@ public static class AllocationEndpoints
         ICommissionRateProvider commissionRateProvider,
         IBondUniverseRepository universeRepo,
         RelativeValueSnapshotBuilder snapshotBuilder,
+        ReliabilityScoreProvider scoreProvider,
         IOptions<Bonds.Infrastructure.Universe.BondUniverseRefreshOptions> universeOptions,
         decimal amountRub,
         string source = "portfolio",
@@ -89,7 +90,7 @@ public static class AllocationEndpoints
         if (source is "market" or "recommended")
         {
             return await BuildMarketAllocationResponseAsync(
-                amountRub, source, commissionRate, resolvedRate, universeRepo, universeOptions.Value.Hygiene, snapshotBuilder, ct);
+                amountRub, source, commissionRate, resolvedRate, universeRepo, universeOptions.Value.Hygiene, snapshotBuilder, scoreProvider, ct);
         }
 
         // ─── source=portfolio (прежнее поведение, обратная совместимость дефолта) ──────────────
@@ -272,9 +273,10 @@ public static class AllocationEndpoints
 
     public const string RecommendedAllocationDisclaimer =
         "Оценка распределения свободных средств по кандидатам вселенной банка облигаций MOEX, " +
-        "отфильтрованным по позитивным риск-сигналам (ликвидность+листинг, спред к рынку — " +
-        "информационные сигналы биржевой статистики, НЕ рейтинг рейтинговых агентств) и " +
-        "диверсифицированным по секторам. Оценки — по биржевой статистике, не является " +
+        "из которых исключены бумаги с красным светофором скоркарты надёжности (оценка по открытым данным: " +
+        "структура выпуска, отчётность эмитента, динамика рынка — НЕ рейтинг рейтинговых агентств) и " +
+        "с низкой ликвидностью, с диверсификацией по секторам. «Дешёвая» бумага (спред выше медианы корзины) " +
+        "не исключается — это ось цены, а не риска. Оценки — по биржевой статистике, не является " +
         "индивидуальной инвестиционной рекомендацией.";
 
     /// <summary>
@@ -283,8 +285,9 @@ public static class AllocationEndpoints
     /// НЕ holdings портфеля — точный движок здесь не вызывается, только банк-статистика (тот же
     /// принцип "двухъярусной архитектуры", что <see cref="GetReplacementCandidates"/> mode=market;
     /// план явно запрещает материализовывать вселенную через движок). <paramref name="source"/>=
-    /// <c>recommended</c> дополнительно исключает кандидатов с Caution-сигналом ликвидности ИЛИ
-    /// спреда (<see cref="CandidateRiskSignalService"/>) и ограничивает концентрацию по
+    /// <c>recommended</c> дополнительно исключает кандидатов с Caution-сигналом ликвидности ИЛИ красным
+    /// светофором скоркарты (<see cref="ReliabilityScoreService"/>, задача 46; Spread=Caution больше НЕ исключает —
+    /// дешевизна не риск) и ограничивает концентрацию по
     /// СЕКТОРУ (<see cref="CashAllocationConcentrationAxis.Sector"/> — issuer на банк-слое
     /// недоступен, см. doc-comment <see cref="Core.Analytics.CashAllocationCandidate.Sector"/>);
     /// <paramref name="source"/>=<c>market</c> — честный greedy по доходности БЕЗ секторного лимита
@@ -304,6 +307,7 @@ public static class AllocationEndpoints
         IBondUniverseRepository universeRepo,
         UniverseHygieneOptions hygieneOptions,
         RelativeValueSnapshotBuilder snapshotBuilder,
+        ReliabilityScoreProvider scoreProvider,
         CancellationToken ct)
     {
         var asOf = BusinessClock.MoscowToday();
@@ -320,9 +324,9 @@ public static class AllocationEndpoints
             .ToList();
 
         var snapshot = await snapshotBuilder.GetSnapshotAsync(ct);
-        // Словарь хранит уже готовый RiskSignalsDto (не "сырой" CandidateRiskSignals)
-        // — светофор надёжности (ToRiskSignalsDto→Aggregate) нуждается в ListLevel/Sector банк-записи,
-        // которые есть здесь (entry), но не были бы доступны в точке потребления ниже (a.Secid).
+        var book = await scoreProvider.GetBookAsync(ct);
+        // Словарь хранит уже готовый RiskSignalsDto (сигналы + скоркарта + ось Value) — банк-запись (entry)
+        // есть здесь, но не в точке потребления ниже (a.Secid).
         var signalsBySecid = new Dictionary<string, RiskSignalsDto>(StringComparer.OrdinalIgnoreCase);
 
         List<BondUniverseEntry> pool;
@@ -330,14 +334,17 @@ public static class AllocationEndpoints
 
         if (source == "recommended")
         {
+            // Задача 46: фильтр recommended = «ликвидность не Caution И светофор скоркарты не Red». Spread=Caution
+            // больше НЕ исключает: дешевизна (спред выше медианы корзины) — ось Value, а не риск; риск расширения
+            // спреда ловит SpreadShock скоркарты (динамика к собственной медиане), а не уровень.
             var withSignals = eligible
-                .Select(e => (Entry: e, Signals: AssessEntryRiskSignals(e, snapshot)))
-                .Where(x => x.Signals.Liquidity != SignalLevel.Caution && x.Signals.Spread != SignalLevel.Caution)
+                .Select(e => (Entry: e, Signals: AssessEntryRiskSignals(e, snapshot), Score: book.Get(e.Secid)))
+                .Where(x => x.Signals.Liquidity != SignalLevel.Caution && x.Score.Level != ReliabilityLight.Red)
                 .ToList();
 
-            foreach (var (entry, signals) in withSignals)
+            foreach (var (entry, signals, score) in withSignals)
             {
-                signalsBySecid[entry.Secid] = ToRiskSignalsDto(signals, entry.ListLevel, entry.Sector);
+                signalsBySecid[entry.Secid] = ToRiskSignalsDto(signals, score, AssessValueVerdict(entry, snapshot));
             }
 
             poolAvailable = withSignals.Count;
@@ -357,7 +364,7 @@ public static class AllocationEndpoints
 
             foreach (var entry in pool)
             {
-                signalsBySecid[entry.Secid] = ToRiskSignalsDto(AssessEntryRiskSignals(entry, snapshot), entry.ListLevel, entry.Sector);
+                signalsBySecid[entry.Secid] = BuildRiskSignalsDto(entry, snapshot, book);
             }
         }
 

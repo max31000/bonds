@@ -92,6 +92,7 @@ public static class ReplacementEndpoints
         PortfolioHoldingsBuilder holdingsBuilder,
         ICommissionRateProvider commissionRateProvider,
         RelativeValueSnapshotBuilder snapshotBuilder,
+        ReliabilityScoreProvider scoreProvider,
         CancellationToken ct)
     {
         var accountId = await PositionsEndpoints.ResolveAccountIdAsync(currentUser, accountRepo);
@@ -192,8 +193,9 @@ public static class ReplacementEndpoints
         // бумага не найдена в банке (не покрыта биржевой статистикой MOEX — например, только что
         // купленный внебиржевой инструмент) — тогда фронт просто не показывает сигналы, это не ошибка.
         var snapshotForTarget = await snapshotBuilder.GetSnapshotAsync(ct);
+        var bookForTarget = await scoreProvider.GetBookAsync(ct);
         var targetRiskSignals = targetPosition.Isin is { } targetIsin
-            ? BuildRiskSignalsForIsin(targetIsin, snapshotForTarget)
+            ? BuildRiskSignalsForIsin(targetIsin, snapshotForTarget, bookForTarget)
             : null;
 
         var dto = new ReplacementResponseDto
@@ -418,6 +420,7 @@ public static class ReplacementEndpoints
         PortfolioHoldingsBuilder holdingsBuilder,
         IBondUniverseRepository universeRepo,
         RelativeValueSnapshotBuilder snapshotBuilder,
+        ReliabilityScoreProvider scoreProvider,
         IOptions<Bonds.Infrastructure.Universe.BondUniverseRefreshOptions> universeOptions,
         ulong positionId,
         string mode,
@@ -445,10 +448,11 @@ public static class ReplacementEndpoints
 
         var effectiveLimit = Math.Clamp(limit ?? DefaultReplacementCandidatesLimit, 1, MaxReplacementCandidatesLimit);
         var snapshot = await snapshotBuilder.GetSnapshotAsync(ct);
+        var book = await scoreProvider.GetBookAsync(ct);
 
         var candidates = mode == "market"
-            ? await BuildMarketCandidates(position, universeRepo, universeOptions.Value.Hygiene, asOf, snapshot, effectiveLimit, reliability)
-            : BuildRvModeCandidates(position, snapshot, effectiveLimit, reliability);
+            ? await BuildMarketCandidates(position, universeRepo, universeOptions.Value.Hygiene, asOf, snapshot, book, effectiveLimit, reliability)
+            : BuildRvModeCandidates(position, snapshot, book, effectiveLimit, reliability);
 
         return Results.Ok(new ReplacementCandidatesResponseDto
         {
@@ -485,6 +489,7 @@ public static class ReplacementEndpoints
         UniverseHygieneOptions hygieneOptions,
         DateOnly asOf,
         RelativeValueSnapshotBuilder.RelativeValueSnapshot snapshot,
+        ReliabilityBook book,
         int limit,
         string? reliabilityFilter)
     {
@@ -499,11 +504,11 @@ public static class ReplacementEndpoints
 
         if (string.IsNullOrWhiteSpace(reliabilityFilter))
         {
-            return eligible.Take(limit).Select(e => ToReplacementCandidateDto(e, snapshot)).ToList();
+            return eligible.Take(limit).Select(e => ToReplacementCandidateDto(e, snapshot, book)).ToList();
         }
 
         return eligible
-            .Select(e => ToReplacementCandidateDto(e, snapshot))
+            .Select(e => ToReplacementCandidateDto(e, snapshot, book))
             .Where(dto => ReliabilityMeetsFilter(dto.RiskSignals.Reliability, reliabilityFilter))
             .Take(limit)
             .ToList();
@@ -527,6 +532,7 @@ public static class ReplacementEndpoints
     private static List<ReplacementCandidateDto> BuildRvModeCandidates(
         Core.Analytics.PortfolioHolding position,
         RelativeValueSnapshotBuilder.RelativeValueSnapshot snapshot,
+        ReliabilityBook book,
         int limit,
         string? reliabilityFilter)
     {
@@ -544,7 +550,7 @@ public static class ReplacementEndpoints
         var take = string.IsNullOrWhiteSpace(reliabilityFilter) ? limit : snapshot.AllMembers.Count;
         var basketMembers = ResolveCheapBasketMembers(effectiveBasket, basketMedian, snapshot, position.Isin, take);
 
-        var dtos = basketMembers.Select(m => ToReplacementCandidateDto(m, basketStats, snapshot));
+        var dtos = basketMembers.Select(m => ToReplacementCandidateDto(m, basketStats, snapshot, book));
         if (!string.IsNullOrWhiteSpace(reliabilityFilter))
         {
             dtos = dtos.Where(dto => ReliabilityMeetsFilter(dto.RiskSignals.Reliability, reliabilityFilter));
@@ -555,10 +561,8 @@ public static class ReplacementEndpoints
 
     /// <summary>mode=market: обогащает банк-запись кандидата риск-сигналами.</summary>
     private static ReplacementCandidateDto ToReplacementCandidateDto(
-        BondUniverseEntry entry, RelativeValueSnapshotBuilder.RelativeValueSnapshot snapshot)
+        BondUniverseEntry entry, RelativeValueSnapshotBuilder.RelativeValueSnapshot snapshot, ReliabilityBook book)
     {
-        var signals = AssessEntryRiskSignals(entry, snapshot);
-
         return new ReplacementCandidateDto
         {
             Secid = entry.Secid,
@@ -572,7 +576,7 @@ public static class ReplacementEndpoints
             DurationYears = entry.DurationYears,
             GSpreadFraction = entry.EffectiveGspreadFraction,
             OfferDate = entry.OfferDate,
-            RiskSignals = ToRiskSignalsDto(signals, entry.ListLevel, entry.Sector),
+            RiskSignals = BuildRiskSignalsDto(entry, snapshot, book),
         };
     }
 
@@ -581,7 +585,7 @@ public static class ReplacementEndpoints
     /// медианы корзины позиции (все RV-кандидаты — из ОДНОЙ эффективной корзины, поэтому медиана
     /// одна на всех, в отличие от mode=market).</summary>
     private static ReplacementCandidateDto ToReplacementCandidateDto(
-        BasketMember member, BasketStats basketStats, RelativeValueSnapshotBuilder.RelativeValueSnapshot snapshot)
+        BasketMember member, BasketStats basketStats, RelativeValueSnapshotBuilder.RelativeValueSnapshot snapshot, ReliabilityBook book)
     {
         snapshot.CurrentEntriesBySecid.TryGetValue(member.Secid, out var entry);
         var liquidity = entry is null
@@ -600,11 +604,9 @@ public static class ReplacementEndpoints
             DurationYears = member.DurationYears,
             GSpreadFraction = member.GSpreadFraction,
             OfferDate = entry?.OfferDate,
-            // Светофор по листингу/сектору ЗАПИСИ банка (не сектору члена корзины —
-            // member.Sector может быть недоступен для гособлигаций-фоллбэка UnknownSector, entry —
-            // тот же банк-снимок, что несёт ListLevel; entry может быть null, если secid не резолвится
-            // в текущем снимке банка — тогда листинг/сектор неизвестны, Aggregate трактует как Yellow).
-            RiskSignals = ToRiskSignalsDto(signals, entry?.ListLevel, entry?.Sector ?? member.Sector),
+            // Светофор — скоркарта по банк-записи (entry — тот же банк-снимок, что несёт листинг/сектор/эмитента);
+            // entry может быть null, если secid не резолвится в текущем снимке банка — тогда Unknown (Yellow).
+            RiskSignals = ToRiskSignalsDto(signals, book.Get(member.Secid), AssessValueVerdict(entry, snapshot)),
         };
     }
 
@@ -615,12 +617,13 @@ public static class ReplacementEndpoints
     /// один раз за запрос не оправдывает отдельный индекс/репозиторный метод ради единственного
     /// потребителя). Null, если ISIN не найден в банке (бумага вне биржевой статистики MOEX).
     /// </summary>
-    private static RiskSignalsDto? BuildRiskSignalsForIsin(string isin, RelativeValueSnapshotBuilder.RelativeValueSnapshot snapshot)
+    private static RiskSignalsDto? BuildRiskSignalsForIsin(
+        string isin, RelativeValueSnapshotBuilder.RelativeValueSnapshot snapshot, ReliabilityBook book)
     {
         var entry = snapshot.CurrentEntriesBySecid.Values
             .FirstOrDefault(e => string.Equals(e.Isin, isin, StringComparison.OrdinalIgnoreCase));
         if (entry is null) return null;
 
-        return ToReplacementCandidateDto(entry, snapshot).RiskSignals;
+        return ToReplacementCandidateDto(entry, snapshot, book).RiskSignals;
     }
 }

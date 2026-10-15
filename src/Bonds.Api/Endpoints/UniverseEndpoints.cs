@@ -24,6 +24,7 @@ public static class UniverseEndpoints
     {
         app.MapGet("/api/universe", GetUniverse);
         app.MapGet("/api/universe/status", GetUniverseStatus);
+        app.MapGet("/api/universe/{secid}/reliability", GetReliability);
         app.MapPost("/api/universe/{secid}/materialize", PostMaterialize);
     }
 
@@ -41,6 +42,7 @@ public static class UniverseEndpoints
         IInstrumentRepository instrumentRepo,
         IWatchlistItemRepository watchlistRepo,
         RelativeValueSnapshotBuilder snapshotBuilder,
+        ReliabilityScoreProvider scoreProvider,
         IOptions<Bonds.Infrastructure.Universe.BondUniverseRefreshOptions> universeOptions,
         string? search,
         decimal? minDurationYears,
@@ -70,6 +72,8 @@ public static class UniverseEndpoints
         // (см. AnalyticsSupport.AssessEntryRiskSignals) — singleton-кэш (см. doc-comment
         // RelativeValueSnapshotBuilder), лишнего I/O на каждый вызов не добавляет.
         var snapshot = await snapshotBuilder.GetSnapshotAsync(ct);
+        // Скоркарта надёжности всего банка (задача 46) — батчевая сборка и кэш в провайдере, не N+1.
+        var book = await scoreProvider.GetBookAsync(ct);
 
         // Флаги причины скрытия И светофор надёжности считаются на ВСЕЙ вселенной (до текстового/
         // числового фильтра) — hiddenCount в ответе должен отражать реальную гигиену банка, а не
@@ -81,9 +85,8 @@ public static class UniverseEndpoints
             .Select(e =>
             {
                 var hiddenReason = UniverseHygieneFilter.Evaluate(e, hygieneOptions, today);
-                var signals = AnalyticsSupport.AssessEntryRiskSignals(e, snapshot);
-                var (reliabilityLevel, reliabilityReason) = CandidateRiskSignalService.Aggregate(signals, e.ListLevel, e.Sector);
-                return (Entry: e, HiddenReason: hiddenReason, Reliability: reliabilityLevel, ReliabilityReason: reliabilityReason);
+                var score = book.Get(e.Secid);
+                return (Entry: e, HiddenReason: hiddenReason, Reliability: score.Level, ReliabilityReason: score.Reason);
             })
             .ToList();
         var hiddenCount = withHygiene.Count(x => x.HiddenReason != HygieneHiddenReason.None);
@@ -126,7 +129,7 @@ public static class UniverseEndpoints
         var portfolioIsins = await ResolvePortfolioIsinsAsync(accountRepo, positionRepo, instrumentRepo);
         var watchlistIsins = await ResolveWatchlistIsinsAsync(currentUser, watchlistRepo);
 
-        var rows = page.Select(x => ToRowDto(x.Entry, x.HiddenReason, x.Reliability, x.ReliabilityReason, portfolioIsins, watchlistIsins, snapshot)).ToList();
+        var rows = page.Select(x => ToRowDto(x.Entry, x.HiddenReason, book.Get(x.Entry.Secid), portfolioIsins, watchlistIsins, snapshot)).ToList();
 
         return Results.Ok(new UniverseResponseDto
         {
@@ -193,7 +196,7 @@ public static class UniverseEndpoints
     }
 
     private static UniverseRowDto ToRowDto(
-        BondUniverseEntry entry, HygieneHiddenReason hiddenReason, ReliabilityLight reliability, string reliabilityReason,
+        BondUniverseEntry entry, HygieneHiddenReason hiddenReason, ReliabilityScore score,
         HashSet<string> portfolioIsins, HashSet<string> watchlistIsins,
         RelativeValueSnapshotBuilder.RelativeValueSnapshot snapshot)
     {
@@ -233,12 +236,57 @@ public static class UniverseEndpoints
             // Проброс признака флоатера для скринера — не скрываем и
             // не фильтруем здесь (владелец выбрал "пометка + фильтр на фронте", не hygiene-hide).
             IsFloater = entry.IsFloater,
-            // Светофор надёжности банк-записи (по остальным осям, если G-спред
-            // отсутствует — см. doc-comment CandidateRiskSignalService.Aggregate/AssessSpread).
-            Reliability = reliability.ToString(),
-            ReliabilityReason = reliabilityReason,
+            // Светофор надёжности v2 — скоркарта (задача 46); полная разбивка по компонентам — GET /api/universe/{secid}/reliability.
+            Reliability = score.Level.ToString(),
+            ReliabilityReason = score.Reason,
+            Score = score.Score,
+            Coverage = score.Coverage,
+            CriticalFlags = score.CriticalFlags,
+            ValueVerdict = AnalyticsSupport.AssessValueVerdict(entry, snapshot),
         };
     }
+
+    // ─── GET /api/universe/{secid}/reliability ────────────────────────────────────────────────
+
+    /// <summary>
+    /// Полная карточка скоркарты надёжности одной бумаги банка (задача 46): светофор, score, coverage, ВСЕ
+    /// компоненты с подписями/источниками/Missing, флаги + ось Value + сигналы ликвидности/спреда. Адресуется по
+    /// SECID или ISIN. 404 — бумаги нет в банке (внебиржевая/погашенная). Строки списка /api/universe несут только
+    /// свёртку (score/coverage/флаги) — компоненты тяжёлые для 500 строк.
+    /// </summary>
+    private static async Task<IResult> GetReliability(
+        string secid,
+        RelativeValueSnapshotBuilder snapshotBuilder,
+        ReliabilityScoreProvider scoreProvider,
+        CancellationToken ct)
+    {
+        var snapshot = await snapshotBuilder.GetSnapshotAsync(ct);
+        if (!snapshot.CurrentEntriesBySecid.TryGetValue(secid, out var entry))
+        {
+            entry = snapshot.CurrentEntriesBySecid.Values
+                .FirstOrDefault(e => string.Equals(e.Isin, secid, StringComparison.OrdinalIgnoreCase));
+        }
+
+        if (entry is null)
+        {
+            throw new Bonds.Api.Middleware.NotFoundException($"Бумага {secid} не найдена в банке облигаций");
+        }
+
+        var book = await scoreProvider.GetBookAsync(ct);
+        return Results.Ok(new ReliabilityResponseDto
+        {
+            Secid = entry.Secid,
+            Isin = entry.Isin,
+            Name = entry.ShortName ?? entry.SecName,
+            RiskSignals = AnalyticsSupport.BuildRiskSignalsDto(entry, snapshot, book),
+            Disclaimer = ReliabilityDisclaimer,
+        });
+    }
+
+    public const string ReliabilityDisclaimer =
+        "Скоркарта надёжности — эвристическая оценка по открытым данным (структура выпуска MOEX, отчётность эмитента " +
+        "ГИР БО/ручной ввод, динамика рынка). Это не кредитный рейтинг и не инвестиционная рекомендация; " +
+        "«нет данных» означает пробел в источниках, а не хороший или плохой результат.";
 
     // ─── GET /api/universe/status ─────────────────────────────────────────────────────────────
 
@@ -427,15 +475,35 @@ public sealed record UniverseRowDto
     /// тот же осознанный дефолт, что и в бэкенд-исключениях.</summary>
     public bool? IsFloater { get; init; }
 
-    /// <summary>Светофор надёжности по банк-записи (см.
-    /// <see cref="Bonds.Core.Analytics.ReliabilityLight"/>/<see cref="Bonds.Core.Analytics.CandidateRiskSignalService.Aggregate"/>):
-    /// "Green"|"Yellow"|"Red". Для записей без G-спреда считается по остальным осям (листинг/
-    /// ликвидность) — см. doc-comment <see cref="Bonds.Core.Analytics.CandidateRiskSignalService.AssessSpread"/>.
+    /// <summary>Светофор надёжности по банк-записи — результат скоркарты (<see cref="Bonds.Core.Analytics.ReliabilityScoreService"/>,
+    /// задача 46): "Green"|"Yellow"|"Red". Контракт значений и фильтра <c>reliability=</c> прежний.
     /// <b>НЕ кредитный рейтинг.</b></summary>
     public required string Reliability { get; init; }
 
-    /// <summary>Человекочитаемое обоснование <see cref="Reliability"/> — задача 38 часть B.2.</summary>
+    /// <summary>Человекочитаемое обоснование <see cref="Reliability"/>.</summary>
     public required string ReliabilityReason { get; init; }
+
+    /// <summary>Скор 0–100 (по компонентам с данными); не из G-спреда.</summary>
+    public required decimal Score { get; init; }
+
+    /// <summary>Покрытие данными 0–1.</summary>
+    public required decimal Coverage { get; init; }
+
+    /// <summary>Критические флаги (IssuerDefaulted, InterestUncovered, NegativeEquity, SpreadShock).</summary>
+    public required IReadOnlyList<string> CriticalFlags { get; init; }
+
+    /// <summary>Ось Value: "Cheap"|"Fair"|"Rich"|"InsufficientData" — отдельно от риска.</summary>
+    public required string ValueVerdict { get; init; }
+}
+
+/// <summary>Ответ GET /api/universe/{secid}/reliability: полная карточка скоркарты одной бумаги.</summary>
+public sealed record ReliabilityResponseDto
+{
+    public required string Secid { get; init; }
+    public string? Isin { get; init; }
+    public string? Name { get; init; }
+    public required RiskSignalsDto RiskSignals { get; init; }
+    public required string Disclaimer { get; init; }
 }
 
 public sealed record UniverseStatusDto
