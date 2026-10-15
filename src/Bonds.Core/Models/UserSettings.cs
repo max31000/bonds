@@ -42,6 +42,18 @@ public class UserSettings
     /// <summary>Дефолт горизонта анализа замены, годы (совпадает с DEFAULT колонки в миграции 021).</summary>
     public const decimal DefaultReplacementHorizonYears = 2.0m;
 
+    /// <summary>
+    /// Порог события SpreadWidening, ДОЛЯ (0.0050 = 50 б.п.; задача 49). Null — дефолт
+    /// <see cref="Bonds.Core.Signals.SignalEngineOptions.SpreadWideningThresholdFraction"/>. Диапазон — на границе API.
+    /// </summary>
+    public decimal? SpreadWideningThresholdFraction { get; set; }
+
+    /// <summary>
+    /// Порог события PriceDrawdown, ДОЛЯ (0.05 = 5%; задача 49). Null — дефолт
+    /// <see cref="Bonds.Core.Signals.SignalEngineOptions.PriceDrawdownThresholdFraction"/>. Диапазон — на границе API.
+    /// </summary>
+    public decimal? PriceDrawdownThresholdFraction { get; set; }
+
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
 }

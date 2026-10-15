@@ -22,6 +22,8 @@ public class UserSettingsRepository : IUserSettingsRepository
         default_max_concentration_pct AS DefaultMaxConcentrationPercent,
         commission_rate_override AS CommissionRateOverride,
         replacement_horizon_years AS ReplacementHorizonYears,
+        spread_widening_threshold_fraction AS SpreadWideningThresholdFraction,
+        price_drawdown_threshold_fraction AS PriceDrawdownThresholdFraction,
         created_at AS CreatedAt, updated_at AS UpdatedAt";
 
     public async Task<UserSettings?> GetByUserIdAsync(ulong userId)
@@ -38,11 +40,13 @@ public class UserSettingsRepository : IUserSettingsRepository
             INSERT INTO user_settings (
                 user_id, tinvest_token_encrypted, tinvest_token_last4,
                 upcoming_event_days_threshold, uninvested_cash_threshold_rub, default_max_concentration_pct,
-                commission_rate_override, replacement_horizon_years)
+                commission_rate_override, replacement_horizon_years,
+                spread_widening_threshold_fraction, price_drawdown_threshold_fraction)
             VALUES (
                 @UserId, @TInvestTokenEncrypted, @TInvestTokenLast4,
                 @UpcomingEventDaysThreshold, @UninvestedCashThresholdRub, @DefaultMaxConcentrationPercent,
-                @CommissionRateOverride, @ReplacementHorizonYears)
+                @CommissionRateOverride, @ReplacementHorizonYears,
+                @SpreadWideningThresholdFraction, @PriceDrawdownThresholdFraction)
             ON DUPLICATE KEY UPDATE
                 tinvest_token_encrypted = @TInvestTokenEncrypted,
                 tinvest_token_last4 = @TInvestTokenLast4,
@@ -50,7 +54,9 @@ public class UserSettingsRepository : IUserSettingsRepository
                 uninvested_cash_threshold_rub = @UninvestedCashThresholdRub,
                 default_max_concentration_pct = @DefaultMaxConcentrationPercent,
                 commission_rate_override = @CommissionRateOverride,
-                replacement_horizon_years = @ReplacementHorizonYears";
+                replacement_horizon_years = @ReplacementHorizonYears,
+                spread_widening_threshold_fraction = @SpreadWideningThresholdFraction,
+                price_drawdown_threshold_fraction = @PriceDrawdownThresholdFraction";
 
         await conn.ExecuteAsync(sql, settings);
     }

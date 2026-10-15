@@ -293,4 +293,53 @@ public class BondUniverseRepository : IBondUniverseRepository
         var rows = await conn.QueryAsync<BondUniverseHistoryPoint>(sql, new { TradingDaysBack = tradingDaysBack });
         return rows.ToList();
     }
+
+    public async Task<IReadOnlyList<BondUniverseEntry>> GetByIsinsAsync(IReadOnlyCollection<string> isins, CancellationToken ct = default)
+    {
+        if (isins.Count == 0) return [];
+
+        using var conn = CreateConnection();
+        var rows = new List<BondUniverseEntry>();
+        foreach (var chunk in isins.Distinct(StringComparer.OrdinalIgnoreCase).Chunk(1000))
+        {
+            rows.AddRange(await conn.QueryAsync<BondUniverseEntry>(
+                $"SELECT {SelectColumns} FROM bond_universe WHERE isin IN @Isins", new { Isins = chunk }));
+        }
+
+        return rows;
+    }
+
+    public async Task<IReadOnlyList<BondUniverseHistoryPoint>> GetRecentHistoryForSecidsAsync(
+        IReadOnlyCollection<string> secids, int tradingDaysBack, CancellationToken ct = default)
+    {
+        if (secids.Count == 0 || tradingDaysBack <= 0) return [];
+
+        using var conn = CreateConnection();
+
+        // Даты — топ-N отличных snapshot_date по ВСЕЙ таблице (общий календарь торговых дней, не зависит от набора
+        // бумаг), строки — только запрошенных secid. Один запрос на чанк secid.
+        const string sql = @"
+            SELECT snapshot_date AS SnapshotDate, secid AS Secid, yield_fraction AS YieldFraction,
+                   duration_years AS DurationYears, gspread_approx_fraction AS GspreadApproxFraction,
+                   turnover_rub AS TurnoverRub, price_percent AS PricePercent,
+                   bid AS Bid, offer AS Offer, list_level AS ListLevel,
+                   gspread_effective_fraction AS GspreadEffectiveFraction
+            FROM bond_universe_history
+            WHERE secid IN @Secids
+              AND snapshot_date IN (
+                SELECT snapshot_date FROM (
+                    SELECT DISTINCT snapshot_date FROM bond_universe_history
+                    ORDER BY snapshot_date DESC
+                    LIMIT @TradingDaysBack
+                ) AS recent_dates
+            )";
+
+        var rows = new List<BondUniverseHistoryPoint>();
+        foreach (var chunk in secids.Distinct(StringComparer.OrdinalIgnoreCase).Chunk(1000))
+        {
+            rows.AddRange(await conn.QueryAsync<BondUniverseHistoryPoint>(sql, new { Secids = chunk, TradingDaysBack = tradingDaysBack }));
+        }
+
+        return rows;
+    }
 }

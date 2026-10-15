@@ -8,6 +8,7 @@ using Bonds.Infrastructure.Analytics;
 using Bonds.Infrastructure.CashFlow;
 using Bonds.Infrastructure.Services;
 using Bonds.Infrastructure.Sync;
+using Bonds.Infrastructure.Universe;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -294,7 +295,7 @@ public sealed class SyncCycleService : ISyncCycleRunner
     /// <c>accounts.cash_rub</c>), прогоняет <see cref="SignalsEngine.Evaluate"/> (ПОЛНЫЙ набор активных
     /// событий) и синхронизирует его с таблицей через <see cref="SignalSetSynchronizer"/>: новое —
     /// insert, прежнее — refresh, исчезнувшее — resolved, закрытые старше 90 дней — удаляются.
-    /// Для НОВЫХ Critical-событий (put-оферта) шлёт одно Telegram-сообщение на цикл. Троттлинг —
+    /// Для НОВЫХ Critical-событий (put-оферта, дефолт/техдефолт эмитента) шлёт одно Telegram-сообщение на цикл. Троттлинг —
     /// естественный: событие вставляется один раз по ключу, повторные синки его не «создают» заново.
     /// Возвращает число вставленных (новых) событий.
     /// </summary>
@@ -314,7 +315,9 @@ public sealed class SyncCycleService : ISyncCycleRunner
         var options = _signalOptions.WithOverrides(
             userSettings?.UpcomingEventDaysThreshold,
             userSettings?.UninvestedCashThresholdRub,
-            userSettings?.DefaultMaxConcentrationPercent);
+            userSettings?.DefaultMaxConcentrationPercent,
+            userSettings?.SpreadWideningThresholdFraction,
+            userSettings?.PriceDrawdownThresholdFraction);
 
         var targetAllocations = (await targetAllocationRepo.GetByAccountIdAsync(accountId)).ToList();
 
@@ -343,12 +346,25 @@ public sealed class SyncCycleService : ISyncCycleRunner
             });
         }
 
+        // Задача 49: рыночные (SpreadWidening/PriceDrawdown) и кредитное (IssuerDefaultEvent) входы — батчево
+        // (банк по ISIN, история 20 дней, карточки/дефолт-агрегаты эмитентов). Сбой чтения НЕ глотаем: пустой набор
+        // был бы принят за «события исчезли» — закрыл бы активные и повторно разослал Critical.
+        // GetService (не Required): юнит-тесты цикла без банка/карточек работают с пустым входом.
+        var marketInputs = PositionMarketInputs.Empty;
+        var marketBuilder = sp.GetService<PositionMarketContextBuilder>();
+        if (marketBuilder is not null)
+        {
+            marketInputs = await marketBuilder.BuildAsync(holdings, asOf, ct);
+        }
+
         var produced = SignalsEngine.Evaluate(new SignalEvaluationInput
         {
             AccountId = accountId,
             AsOf = asOf,
             Positions = positionContexts,
             Holdings = holdings,
+            MarketContexts = marketInputs.Market,
+            IssuerDefaults = marketInputs.IssuerDefaults,
             CashRub = account?.CashRub,
             TargetAllocations = targetAllocations,
             Options = options,
@@ -384,8 +400,8 @@ public sealed class SyncCycleService : ISyncCycleRunner
     internal const int ResolvedRetentionDays = 90;
 
     /// <summary>
-    /// Одно Telegram-сообщение на цикл о НОВЫХ Critical-событиях (put-оферта — требует решения
-    /// владельца). Купоны/Info/Warning не пушатся. Сбой отправки не роняет цикл
+    /// Одно Telegram-сообщение на цикл о НОВЫХ Critical-событиях (put-оферта и дефолт/техдефолт эмитента
+    /// — требуют решения владельца; ключ дефолта без даты — алерт один раз, пока флаг есть). Купоны/Info/Warning не пушатся. Сбой отправки не роняет цикл
     /// (<see cref="ITelegramAlertSender.SendAsync"/> не бросает).
     /// </summary>
     private static async Task NotifyNewCriticalAsync(IServiceProvider sp, IReadOnlyList<Signal> inserted, CancellationToken ct)

@@ -79,6 +79,15 @@ public enum SignalType
     FloaterRateReset,
     UninvestedCashThreshold,
     ConcentrationLimitBreached,
+
+    /// <summary>Задача 49: G-спред бумаги позиции шире своей 20-дневной медианы больше чем на порог (Warning).</summary>
+    SpreadWidening,
+
+    /// <summary>Задача 49: чистая цена бумаги позиции ниже максимума за 20 торговых дней больше чем на порог (Warning).</summary>
+    PriceDrawdown,
+
+    /// <summary>Задача 49: у эмитента позиции в карточках бумаг MOEX есть признак дефолта/техдефолта (Critical).</summary>
+    IssuerDefaultEvent,
 }
 
 public enum SignalSeverity

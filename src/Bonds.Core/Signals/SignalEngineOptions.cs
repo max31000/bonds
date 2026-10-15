@@ -28,14 +28,40 @@ public sealed class SignalEngineOptions
     public decimal DefaultMaxConcentrationPercent { get; set; } = 25m;
 
     /// <summary>
+    /// Задача 49: порог события <see cref="Bonds.Core.Models.SignalType.SpreadWidening"/> — расширение эффективного
+    /// G-спреда бумаги сегодня к МЕДИАНЕ её же спреда за 20 торговых дней. ДОЛЯ (0.0050 = 50 б.п.), условие строгое «&gt;».
+    /// </summary>
+    public decimal SpreadWideningThresholdFraction { get; set; } = 0.0050m;
+
+    /// <summary>
+    /// Задача 49: порог события <see cref="Bonds.Core.Models.SignalType.PriceDrawdown"/> — просадка чистой цены
+    /// от максимума за 20 торговых дней. ДОЛЯ (0.05 = 5%), условие строгое «&gt;».
+    /// </summary>
+    public decimal PriceDrawdownThresholdFraction { get; set; } = 0.05m;
+
+    /// <summary>
+    /// Минимум торговых дней истории для рыночных событий: меньше — не генерировать (шум на короткой выборке).
+    /// Совпадает с порогом скоркарты (<see cref="Bonds.Core.Analytics.ReliabilityScoreOptions.MinHistoryDays"/>).
+    /// </summary>
+    public int MarketHistoryMinDays { get; set; } = Bonds.Core.Analytics.ReliabilityScoreOptions.MinHistoryDays;
+
+    /// <summary>
     /// Накладывает пользовательские пороги (null = «не задан, оставить дефолт») на дефолты этого
     /// экземпляра. Возвращает НОВЫЙ объект — singleton-опции не мутируются.
     /// </summary>
-    public SignalEngineOptions WithOverrides(int? upcomingEventDays, decimal? uninvestedCashRub, decimal? maxConcentrationPercent) =>
+    public SignalEngineOptions WithOverrides(
+        int? upcomingEventDays,
+        decimal? uninvestedCashRub,
+        decimal? maxConcentrationPercent,
+        decimal? spreadWideningFraction = null,
+        decimal? priceDrawdownFraction = null) =>
         new()
         {
             UpcomingEventDaysThreshold = upcomingEventDays ?? UpcomingEventDaysThreshold,
             UninvestedCashThresholdRub = uninvestedCashRub ?? UninvestedCashThresholdRub,
             DefaultMaxConcentrationPercent = maxConcentrationPercent ?? DefaultMaxConcentrationPercent,
+            SpreadWideningThresholdFraction = spreadWideningFraction ?? SpreadWideningThresholdFraction,
+            PriceDrawdownThresholdFraction = priceDrawdownFraction ?? PriceDrawdownThresholdFraction,
+            MarketHistoryMinDays = MarketHistoryMinDays,
         };
 }

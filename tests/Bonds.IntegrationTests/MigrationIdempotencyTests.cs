@@ -71,6 +71,7 @@ public class MigrationIdempotencyTests : IAsyncLifetime
             "019_issuer_financials.sql",
             "020_instrument_risk_levels_and_issuer_ratings.sql",
             "021_replacement_horizon_setting.sql",
+            "022_market_credit_events.sql",
         });
 
         var expectedTables = new[]
@@ -106,7 +107,7 @@ public class MigrationIdempotencyTests : IAsyncLifetime
         await conn.OpenAsync();
 
         var migrationCount = await conn.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM _migrations");
-        migrationCount.Should().Be(21, "повторный запуск не должен заново применять уже применённые миграции");
+        migrationCount.Should().Be(22, "повторный запуск не должен заново применять уже применённые миграции");
 
         // users.base_currency существует ровно один раз (ALTER ... ADD COLUMN IF NOT EXISTS не падает повторно).
         var columnCount = await conn.ExecuteScalarAsync<long>(
@@ -309,5 +310,32 @@ public class MigrationIdempotencyTests : IAsyncLifetime
         var act = async () => await secondRunner.RunAsync();
 
         await act.Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task RunAsync_Migration022_SignalsTypeEnumAcceptsMarketAndCreditEvents_AndThresholdColumnsExist()
+    {
+        var connectionString = _container.GetConnectionString();
+        await new MigrationRunner(connectionString, NullLogger<MigrationRunner>.Instance).RunAsync();
+
+        await using var conn = new MySqlConnection(connectionString);
+        await conn.OpenAsync();
+
+        var columnType = await conn.ExecuteScalarAsync<string>(
+            @"SELECT column_type FROM information_schema.columns
+              WHERE table_schema = DATABASE() AND table_name = 'signals' AND column_name = 'type'");
+        foreach (var type in new[] { "SpreadWidening", "PriceDrawdown", "IssuerDefaultEvent", "UpcomingOffer" })
+        {
+            columnType.Should().Contain($"'{type}'", $"ENUM signals.type должен содержать {type} (миграция 022)");
+        }
+
+        foreach (var column in new[] { "spread_widening_threshold_fraction", "price_drawdown_threshold_fraction" })
+        {
+            var nullable = await conn.ExecuteScalarAsync<string>(
+                @"SELECT is_nullable FROM information_schema.columns
+                  WHERE table_schema = DATABASE() AND table_name = 'user_settings' AND column_name = @Column",
+                new { Column = column });
+            nullable.Should().Be("YES", $"user_settings.{column} nullable: NULL = дефолт движка событий");
+        }
     }
 }

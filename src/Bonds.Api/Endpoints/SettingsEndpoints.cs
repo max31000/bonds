@@ -53,6 +53,16 @@ public static class SettingsEndpoints
         years >= MinReplacementHorizonYears && years <= MaxReplacementHorizonYears
         && years % ReplacementHorizonStepYears == 0m;
 
+    /// <summary>
+    /// Допустимые диапазоны порогов рыночных событий (задача 49), ДОЛИ: спред — (0, 0.05] (до 500 б.п.), просадка цены — (0, 0.5].
+    /// Ввод в б.п./% и конверсия в долю — на фронте.
+    /// </summary>
+    public const decimal MaxSpreadWideningThresholdFraction = 0.05m;
+    public const decimal MaxPriceDrawdownThresholdFraction = 0.5m;
+
+    private static IResult ValidationFailure(string error) =>
+        Results.Json(new { error, type = "ValidationException" }, statusCode: StatusCodes.Status422UnprocessableEntity);
+
     private static async Task<IResult> GetSettings(
         ICurrentUser currentUser,
         IUserRepository userRepo,
@@ -114,6 +124,18 @@ public static class SettingsEndpoints
                 statusCode: StatusCodes.Status422UnprocessableEntity);
         }
 
+        if (request.SpreadWideningThresholdFraction is decimal spreadFraction
+            && (spreadFraction <= 0m || spreadFraction > MaxSpreadWideningThresholdFraction))
+        {
+            return ValidationFailure($"Порог расширения спреда должен быть в диапазоне (0; {MaxSpreadWideningThresholdFraction * 10000m:0} б.п.]");
+        }
+
+        if (request.PriceDrawdownThresholdFraction is decimal drawdownFraction
+            && (drawdownFraction <= 0m || drawdownFraction > MaxPriceDrawdownThresholdFraction))
+        {
+            return ValidationFailure($"Порог просадки цены должен быть в диапазоне (0; {MaxPriceDrawdownThresholdFraction * 100m:0}%]");
+        }
+
         if (request.BaseCurrency is not null)
         {
             user.BaseCurrency = request.BaseCurrency;
@@ -133,6 +155,10 @@ public static class SettingsEndpoints
 
         // Горизонт замены — колонка NOT NULL, поэтому null в запросе = «не менять» (частичное обновление).
         existing.ReplacementHorizonYears = request.ReplacementHorizonYears ?? existing.ReplacementHorizonYears;
+
+        // Пороги рыночных событий (задача 49) — nullable-колонки: null в запросе = «не менять» (как пороги выше).
+        existing.SpreadWideningThresholdFraction = request.SpreadWideningThresholdFraction ?? existing.SpreadWideningThresholdFraction;
+        existing.PriceDrawdownThresholdFraction = request.PriceDrawdownThresholdFraction ?? existing.PriceDrawdownThresholdFraction;
 
         await settingsRepo.UpsertAsync(existing);
 
@@ -207,6 +233,8 @@ public static class SettingsEndpoints
         DefaultMaxConcentrationPercent = settings?.DefaultMaxConcentrationPercent ?? defaults.DefaultMaxConcentrationPercent,
         CommissionRateOverride = settings?.CommissionRateOverride,
         ReplacementHorizonYears = settings?.ReplacementHorizonYears ?? UserSettings.DefaultReplacementHorizonYears,
+        SpreadWideningThresholdFraction = settings?.SpreadWideningThresholdFraction ?? defaults.SpreadWideningThresholdFraction,
+        PriceDrawdownThresholdFraction = settings?.PriceDrawdownThresholdFraction ?? defaults.PriceDrawdownThresholdFraction,
         CommissionAutoEstimate = commission.AutoEstimate,
         TInvestTariff = commission.TInvestTariff,
         CommissionEffectiveRate = commission.CommissionEffectiveRate,
@@ -309,6 +337,12 @@ public sealed record SettingsResponseDto
     /// <summary>Горизонт анализа замены, ГОДЫ (0.5–10, шаг 0.5; дефолт 2.0) — задача 48.</summary>
     public required decimal ReplacementHorizonYears { get; init; }
 
+    /// <summary>Порог события «расширение G-спреда», ДОЛЯ (0.0050 = 50 б.п.; задача 49) — эффективное значение (настройка либо дефолт).</summary>
+    public required decimal SpreadWideningThresholdFraction { get; init; }
+
+    /// <summary>Порог события «просадка цены», ДОЛЯ (0.05 = 5%; задача 49) — эффективное значение (настройка либо дефолт).</summary>
+    public required decimal PriceDrawdownThresholdFraction { get; init; }
+
     /// <summary>Read-only: авто-оценка ставки из журнала операций (часть A). Null — журнал не позволяет оценить (нет сделок/оборот 0).</summary>
     public CommissionAutoEstimateDto? CommissionAutoEstimate { get; init; }
 
@@ -345,6 +379,12 @@ public sealed record SettingsUpdateRequestDto
 
     /// <summary>Горизонт анализа замены, ГОДЫ. Null — не менять. Валидация: 0.5–10 с шагом 0.5, иначе 422.</summary>
     public decimal? ReplacementHorizonYears { get; init; }
+
+    /// <summary>Порог SpreadWidening, ДОЛЯ (0.0050 = 50 б.п.). Null — не менять. Валидация: (0; 0.05], иначе 422.</summary>
+    public decimal? SpreadWideningThresholdFraction { get; init; }
+
+    /// <summary>Порог PriceDrawdown, ДОЛЯ (0.05 = 5%). Null — не менять. Валидация: (0; 0.5], иначе 422.</summary>
+    public decimal? PriceDrawdownThresholdFraction { get; init; }
 }
 
 public sealed record TInvestTokenRequestDto

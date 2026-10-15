@@ -1,3 +1,4 @@
+using System.Globalization;
 using Bonds.Core.Analytics;
 using Bonds.Core.Models;
 
@@ -28,6 +29,9 @@ public static class SignalsEngine
         candidates.AddRange(FloaterRateResetRule(input));
         candidates.AddRange(ConcentrationLimitRule(input));
         candidates.AddRange(UninvestedCashRule(input));
+        candidates.AddRange(SpreadWideningRule(input));
+        candidates.AddRange(PriceDrawdownRule(input));
+        candidates.AddRange(IssuerDefaultRule(input));
 
         // Ключ уникален в БД: если два правила дали один ключ (put и call одной даты по одной бумаге),
         // оставляем более важное событие.
@@ -192,4 +196,132 @@ public static class SignalsEngine
                               "кандидат на реинвестирование.",
         };
     }
+    // ─── Рыночные события (задача 49): расширение G-спреда и просадка цены — Warning, по неделе ──────
+
+    private static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
+
+    /// <summary>
+    /// SpreadWidening: эффективный G-спред бумаги сегодня − МЕДИАНА его же значений за прошлые торговые дни
+    /// (до 20; сегодняшняя строка истории не участвует) строго больше
+    /// <see cref="SignalEngineOptions.SpreadWideningThresholdFraction"/>. Меньше
+    /// <see cref="SignalEngineOptions.MarketHistoryMinDays"/> дней истории — молчим. Флоатеры и бумаги вне банка
+    /// (нет <see cref="PositionMarketContext"/>) пропускаются. Единицы: спред и порог — ДОЛИ; б.п. в тексте = доля × 10000.
+    /// </summary>
+    private static IEnumerable<Signal> SpreadWideningRule(SignalEvaluationInput input)
+    {
+        foreach (var position in OpenPositions(input))
+        {
+            var market = MarketOf(input, position);
+            if (market is null || market.IsFloater || market.GSpreadFraction is not { } today) continue;
+            if (market.GSpreadHistory.Count < input.Options.MarketHistoryMinDays) continue;
+
+            var median = ReliabilityScoreService.Median(market.GSpreadHistory);
+            var shift = today - median;
+            if (shift <= input.Options.SpreadWideningThresholdFraction) continue;
+
+            yield return ForMarket(input, position, market, SignalType.SpreadWidening,
+                $"G-спред бумаги расширился на {(shift * 10000m).ToString("0", Inv)} б.п. к медиане за {market.GSpreadHistory.Count} торговых дн. " +
+                $"(порог {(input.Options.SpreadWideningThresholdFraction * 10000m).ToString("0", Inv)} б.п.) — рынок закладывает больший риск или бумага подешевела: " +
+                "рассмотрите состояние эмитента и вердикт позиции (оценка).");
+        }
+    }
+
+    /// <summary>
+    /// PriceDrawdown: чистая цена сегодня ниже максимума (история ∪ сегодня) за прошлые торговые дни строго более чем на
+    /// <see cref="SignalEngineOptions.PriceDrawdownThresholdFraction"/> (ДОЛЯ от максимума). Та же формула, что
+    /// у компонента price_drawdown скоркарты. Применима и к флоатерам.
+    /// </summary>
+    private static IEnumerable<Signal> PriceDrawdownRule(SignalEvaluationInput input)
+    {
+        foreach (var position in OpenPositions(input))
+        {
+            var market = MarketOf(input, position);
+            if (market is null || market.PricePercent is not { } price) continue;
+            if (market.PriceHistory.Count < input.Options.MarketHistoryMinDays) continue;
+
+            var peak = Math.Max(market.PriceHistory.Max(), price);
+            if (peak <= 0m) continue;
+            var drawdown = (peak - price) / peak;
+            if (drawdown <= input.Options.PriceDrawdownThresholdFraction) continue;
+
+            yield return ForMarket(input, position, market, SignalType.PriceDrawdown,
+                $"Цена бумаги {price.ToString("0.##", Inv)}% номинала — на {(drawdown * 100m).ToString("0.0", Inv)}% ниже максимума за {market.PriceHistory.Count} торговых дн. " +
+                $"(порог {(input.Options.PriceDrawdownThresholdFraction * 100m).ToString("0.#", Inv)}%) — рассмотрите причину просадки и вердикт позиции (оценка).");
+        }
+    }
+
+    private static PositionMarketContext? MarketOf(SignalEvaluationInput input, SignalPositionContext position) =>
+        input.MarketContexts.FirstOrDefault(m => m.InstrumentId == position.InstrumentId);
+
+    /// <summary>
+    /// Событие по бумаге с ключом «ISIN + ISO-неделя» (без ISIN — «#id инструмента»): внутри недели ключ постоянен,
+    /// событие не мигает день-к-дню; при нормализации оно исчезает из набора и закрывается синхронизатором.
+    /// </summary>
+    private static Signal ForMarket(SignalEvaluationInput input, SignalPositionContext position, PositionMarketContext market,
+        SignalType type, string action)
+    {
+        var subject = $"{market.Isin ?? $"#{position.InstrumentId}"}|{IsoWeekLabel(input.AsOf)}";
+        return new Signal
+        {
+            AccountId = input.AccountId,
+            EventKey = Signal.BuildKey(type, subject, null),
+            Type = type,
+            Severity = SignalSeverity.Warning,
+            InstrumentId = position.InstrumentId,
+            Subject = Name(position),
+            EventDate = null,
+            SuggestedAction = action,
+        };
+    }
+
+    /// <summary>ISO-неделя даты: «2026-W42» (год ISO-недели, а не календарный — на стыке лет неделя не рвётся).</summary>
+    internal static string IsoWeekLabel(DateOnly date)
+    {
+        var dateTime = date.ToDateTime(TimeOnly.MinValue);
+        return string.Create(Inv, $"{ISOWeek.GetYear(dateTime)}-W{ISOWeek.GetWeekOfYear(dateTime):00}");
+    }
+
+    // ─── Кредитное событие (задача 49): дефолт/техдефолт эмитента — Critical, состояние ───────────────
+
+    /// <summary>
+    /// IssuerDefaultEvent: у эмитента открытой позиции в карточках бумаг MOEX (по ВСЕМ его выпускам) стоит
+    /// <c>has_default</c> и/или <c>has_technical_default</c>. Ключ — emitent_id + вид («default»/«technical»), без даты:
+    /// событие живёт, пока флаг есть, и закрывается, когда он исчез. Два флага — два события. Critical (Telegram-алерт —
+    /// в <c>SyncCycleService</c>, как у put-оферты). Эмитенты без открытых позиций сюда не попадают (контекст строит вызывающий слой).
+    /// </summary>
+    private static IEnumerable<Signal> IssuerDefaultRule(SignalEvaluationInput input)
+    {
+        var openInstruments = OpenPositions(input).Select(p => p.InstrumentId).ToHashSet();
+
+        foreach (var issuer in input.IssuerDefaults)
+        {
+            if (!openInstruments.Contains(issuer.InstrumentId)) continue;
+
+            if (issuer.HasDefault)
+            {
+                yield return IssuerDefault(input, issuer, "default",
+                    $"У эмитента «{issuer.Subject}» в карточках бумаг MOEX отмечен дефолт по облигациям — " +
+                    "проверьте раскрытие информации эмитента и рассмотрите вердикт позиции (оценка, не рекомендация).");
+            }
+
+            if (issuer.HasTechnicalDefault)
+            {
+                yield return IssuerDefault(input, issuer, "technical",
+                    $"У эмитента «{issuer.Subject}» в карточках бумаг MOEX отмечен технический дефолт — " +
+                    "проверьте раскрытие информации эмитента и рассмотрите вердикт позиции (оценка, не рекомендация).");
+            }
+        }
+    }
+
+    private static Signal IssuerDefault(SignalEvaluationInput input, IssuerDefaultContext issuer, string kind, string action) => new()
+    {
+        AccountId = input.AccountId,
+        EventKey = Signal.BuildKey(SignalType.IssuerDefaultEvent, $"{issuer.EmitentId}:{kind}", null),
+        Type = SignalType.IssuerDefaultEvent,
+        Severity = SignalSeverity.Critical,
+        InstrumentId = issuer.InstrumentId,
+        Subject = issuer.Subject,
+        EventDate = null,
+        SuggestedAction = action,
+    };
 }
