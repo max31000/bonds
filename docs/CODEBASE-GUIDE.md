@@ -154,6 +154,15 @@ API — `api/client.ts` поверх `apiJson` кита (cookie, refresh; фин
 (`AppLayout` кита, `LoginRequired`, индикатор синка + «Обновить данные», автосинк — не ломать).
 Тесты страниц рендерят их в `MantineProvider`; `/auth/api/me` владельца — `OWNER_ME` в MSW.
 
+**UI скоркарты (задача 47).** `ReliabilityScoreCard` — чистый рендер `RiskSignals` (светофор + балл + `coverage` ДОЛЯ→«данных: N%»
++ флаги по словарю `reliabilityCopy.ts` + компоненты по слоям A/B/C + ось Value + дисклеймер `RELIABILITY_DISCLAIMER`). Точка входа —
+`ReliabilityDot` с `details`: клик открывает карточку в `Popover` (desktop) / `Drawer` (< 48em); строки без `components`
+(скринер) лениво грузят `GET /api/universe/{secid|isin}/reliability` (`useReliability`). Risk и Value — ДВА независимых бейджа
+(`ReliabilityDot` + `ValueBadge`; тултип Value: G-спред / `valueMedianFraction` / `valueThresholdFraction` — ДОЛИ, б.п. рисует
+`formatBp`). Ручной ввод — `IssuerDataBlock` (рейтинги + отчётность в РУБЛЯХ; ИНН = `emitentInn` карточки скоркарты или ввод
+вручную; страница Настроек), после сохранения родитель рефетчит скоркарту (`refreshToken`). Вложенные `<button>` недопустимы:
+строка кандидата-замены — `div[role=button]`, а содержимое попапа гасит всплытие клика (React-события идут через портал).
+
 ## Продуктовые константы
 
 Single-user, один счёт. Т-Invest токен — read-only секрет: не логировать, не отдавать на фронт,

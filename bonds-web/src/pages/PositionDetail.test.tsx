@@ -1,10 +1,11 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
 import { describe, it, expect, beforeEach } from 'vitest';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { MantineProvider } from '@mantine/core';
 import { http, HttpResponse } from 'msw';
 import { server } from '../test/msw-handlers';
 import { PositionDetail } from './PositionDetail';
+import { greenFairSignals, reliabilityResponse } from '../test/scorecardFixtures';
 import type { PositionDetail as PositionDetailDto } from '../api/types';
 
 function renderDetail(positionId = '1') {
@@ -268,5 +269,62 @@ describe('PositionDetail', () => {
     renderDetail();
 
     await waitFor(() => expect(screen.getByTestId('back-to-positions')).toBeInTheDocument());
+  });
+
+  // ─── Задача 47: секция «Надёжность» (развёрнутая скоркарта + ручной ввод эмитента) ──────
+
+  it('renders the expanded scorecard in the "Надёжность" section and prefills the issuer INN for manual input', async () => {
+    server.use(
+      http.get('*/api/positions/1', () => HttpResponse.json(baseDetail)),
+      http.get('*/api/universe/:isin/reliability', ({ params }) => {
+        expect(params.isin).toBe(baseDetail.isin);
+        return HttpResponse.json(reliabilityResponse({ emitentInn: '7707083893' }));
+      }),
+    );
+
+    renderDetail();
+
+    const section = await screen.findByTestId('position-reliability');
+    const card = await within(section).findByTestId('reliability-score-card-position');
+    expect(within(card).getByTestId('score-card-score-position')).toHaveTextContent('42');
+    expect(within(card).getByTestId('score-component-interest_coverage-position')).toBeInTheDocument();
+    expect(within(card).getByTestId('score-card-coverage-position')).toHaveTextContent('данных: 78%');
+    expect(await within(section).findByTestId('issuer-inn-input')).toHaveValue('7707083893');
+  });
+
+  it('refetches the scorecard after a manual rating is saved, so the new score is shown immediately', async () => {
+    let reliabilityCalls = 0;
+    server.use(
+      http.get('*/api/positions/1', () => HttpResponse.json(baseDetail)),
+      http.get('*/api/universe/:isin/reliability', () => {
+        reliabilityCalls += 1;
+        return HttpResponse.json(
+          reliabilityResponse({ riskSignals: reliabilityCalls === 1 ? reliabilityResponse().riskSignals : greenFairSignals }),
+        );
+      }),
+      http.post('*/api/issuers/:inn/ratings', async ({ request }) => HttpResponse.json(await request.json())),
+    );
+
+    renderDetail();
+
+    await waitFor(() => expect(screen.getByTestId('score-card-score-position')).toHaveTextContent('42'));
+    fireEvent.click(await screen.findByTestId('issuer-ratings-toggle'));
+    fireEvent.change(await screen.findByTestId('issuer-rating-value'), { target: { value: 'AA' } });
+    fireEvent.change(screen.getByTestId('issuer-rating-date'), { target: { value: new Date().toISOString().slice(0, 10) } });
+    fireEvent.click(screen.getByTestId('issuer-rating-save'));
+
+    await waitFor(() => expect(screen.getByTestId('score-card-score-position')).toHaveTextContent('88'));
+    expect(reliabilityCalls).toBe(2);
+  });
+
+  it('keeps the page working when the bond is not in the bank (scorecard 404): error note, INN entered manually', async () => {
+    server.use(http.get('*/api/positions/1', () => HttpResponse.json(baseDetail)));
+
+    renderDetail();
+
+    const section = await screen.findByTestId('position-reliability');
+    expect(await within(section).findByTestId('position-reliability-error')).toBeInTheDocument();
+    expect(within(section).getByTestId('issuer-inn-input')).toHaveValue('');
+    expect(screen.getByTestId('position-detail-metrics')).toBeInTheDocument();
   });
 });

@@ -592,6 +592,10 @@ export interface RiskSignals {
   warningFlags?: string[];
   /** Ось Value (цена, НЕ риск) — отдельно от `reliability`. */
   valueVerdict?: ValueVerdict;
+  /** Задача 47: ДОЛЯ (0.003 = 30 б.п.) — медиана G-спреда корзины бумаги, для тултипа Value; null — у бумаги нет спреда. */
+  valueMedianFraction?: number | null;
+  /** Задача 47: ДОЛЯ — порог вердикта Value, max(20 б.п., 0.25 × IQR корзины); null вместе с медианой. */
+  valueThresholdFraction?: number | null;
 }
 
 /** Ось Value: G-спред бумаги против медианы её корзины. `InsufficientData` — корзина нерепрезентативна. */
@@ -967,6 +971,10 @@ export interface UniverseRow {
   criticalFlags?: string[];
   /** Задача 46: ось Value отдельным полем. */
   valueVerdict?: ValueVerdict;
+  /** Задача 47: ДОЛЯ — медиана G-спреда корзины (тултип Value); null — у бумаги нет спреда. */
+  valueMedianFraction?: number | null;
+  /** Задача 47: ДОЛЯ — порог вердикта Value; null вместе с медианой. */
+  valueThresholdFraction?: number | null;
 }
 
 /** Ответ GET /api/universe. */
@@ -1148,3 +1156,92 @@ export interface RelativeValueResponse {
 export interface PortfolioIntradayResponse {
   points: IntradaySeriesPoint[];
 }
+
+// ---- Скоркарта надёжности: полная карточка и ручной ввод данных эмитента (задача 47) ----
+
+/** Ответ GET /api/universe/{secid|isin}/reliability — полная карточка скоркарты (зеркалит `ReliabilityResponseDto`). */
+export interface ReliabilityResponse {
+  secid: string;
+  isin: string | null;
+  name: string | null;
+  /** ИНН эмитента (строка, ведущие нули значимы) — для форм ручного ввода; null — эмитент ещё не определён. */
+  emitentInn: string | null;
+  emitentTitle: string | null;
+  riskSignals: RiskSignals;
+  disclaimer: string;
+}
+
+/** Один введённый вручную рейтинг агентства (зеркалит `IssuerRatingDto`). */
+export interface IssuerRating {
+  agency: string;
+  rating: string;
+  /** ISO-дата "2026-03-01". */
+  ratingDate: string;
+  note: string | null;
+  /** `true` — старше срока годности (`freshMonths`): в скоркарте считается «нет данных». */
+  isStale: boolean;
+}
+
+/** Ответ GET /api/issuers/{inn}/ratings. */
+export interface IssuerRatingsResponse {
+  inn: string;
+  ratings: IssuerRating[];
+  /** Срок годности рейтинга, месяцы. */
+  freshMonths: number;
+  disclaimer: string;
+}
+
+/** Тело POST /api/issuers/{inn}/ratings (upsert по (inn, agency)). */
+export interface IssuerRatingRequest {
+  agency: string;
+  rating: string;
+  /** ISO-дата, не в будущем. */
+  ratingDate: string;
+  note?: string | null;
+}
+
+/** Один отчётный год эмитента — все суммы РУБЛИ (не тысячи). `source`: "girbo" | "manual". */
+export interface IssuerFinancialsYear {
+  period: number;
+  source: string;
+  revenue: number | null;
+  operatingProfit: number | null;
+  interestPaid: number | null;
+  netProfit: number | null;
+  equity: number | null;
+  totalAssets: number | null;
+  currentAssets: number | null;
+  currentLiabilities: number | null;
+  cash: number | null;
+  longDebt: number | null;
+  shortDebt: number | null;
+  retainedEarnings: number | null;
+  hasAudit: boolean | null;
+}
+
+/** Ответ GET /api/issuers/{inn}/financials. */
+export interface IssuerFinancialsResponse {
+  inn: string;
+  /** Статус последней проверки ГИР БО: ok | not_found | hidden | cb | error; null — не проверялся. */
+  girBoStatus: string | null;
+  years: IssuerFinancialsYear[];
+  disclaimer: string;
+}
+
+/** Строки отчётности, принимаемые POST /api/issuers/{inn}/financials. Все суммы — РУБЛИ; не заданное = «не заполнено». */
+export type IssuerFinancialsAmountKey =
+  | 'revenue'
+  | 'operatingProfit'
+  | 'interestPaid'
+  | 'netProfit'
+  | 'equity'
+  | 'totalAssets'
+  | 'currentAssets'
+  | 'currentLiabilities'
+  | 'cash'
+  | 'longDebt'
+  | 'shortDebt'
+  | 'retainedEarnings';
+
+/** Тело POST /api/issuers/{inn}/financials. */
+export type IssuerFinancialsRequest = { period: number } & Partial<Record<IssuerFinancialsAmountKey, number>>;

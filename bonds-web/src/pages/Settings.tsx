@@ -3,6 +3,7 @@ import { Badge, Button, Group, Loader, NumberInput, PasswordInput, SimpleGrid, S
 import { ErrorState, Page, Section } from '@mvv42/kit';
 import { useForm } from '@mantine/form';
 import { notifications } from '@mantine/notifications';
+import { IssuerDataBlock } from '../components/IssuerDataBlock';
 import { useSettingsStore } from '../store/useSettingsStore';
 import { commissionSourceLabel, formatPercent, formatRub } from '../utils/format';
 import type { SettingsUpdateRequest } from '../api/types';
@@ -256,6 +257,14 @@ export function Settings() {
           </Section>
         </>
       )}
+
+      <Section
+        title="Данные эмитента"
+        description="Рейтинги агентств и отчётность, введённые вручную, учитываются в скоркарте надёжности (бесплатного источника рейтингов нет; у банков отчётность в ГИР БО скрыта)"
+        data-testid="issuer-data-section"
+      >
+        <IssuerDataBlock />
+      </Section>
     </Page>
   );
 }

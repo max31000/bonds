@@ -1,5 +1,5 @@
 import { apiClient } from './client';
-import type { MaterializeResponse, UniverseQuery, UniverseResponse, UniverseStatus } from './types';
+import type { MaterializeResponse, ReliabilityResponse, UniverseQuery, UniverseResponse, UniverseStatus } from './types';
 
 /**
  * GET /api/universe — банк облигаций MOEX. Изначально использовалась
@@ -38,4 +38,13 @@ export function fetchUniverseStatus(): Promise<UniverseStatus> {
  */
 export function postMaterialize(secid: string): Promise<MaterializeResponse> {
   return apiClient.post<MaterializeResponse>(`/universe/${encodeURIComponent(secid)}/materialize`);
+}
+
+/**
+ * GET /api/universe/{secid|isin}/reliability — полная карточка скоркарты (все компоненты, флаги, ось Value, ИНН
+ * эмитента). Строки списка `/api/universe` несут только свёртку (score/coverage/флаги), разбивка грузится по клику.
+ * 404 — бумаги нет в банке (внебиржевая/погашенная).
+ */
+export function fetchReliability(secidOrIsin: string): Promise<ReliabilityResponse> {
+  return apiClient.get<ReliabilityResponse>(`/universe/${encodeURIComponent(secidOrIsin)}/reliability`);
 }

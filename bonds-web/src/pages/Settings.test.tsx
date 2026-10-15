@@ -233,4 +233,19 @@ describe('Settings', () => {
       await waitFor(() => expect(screen.getByText('Не удалось сохранить комиссию')).toBeInTheDocument());
     });
   });
+
+  it('shows the "Данные эмитента" block even without an INN and opens the forms after a valid INN is entered (task 47)', async () => {
+    server.use(http.get('*/api/settings', () => HttpResponse.json(baseSettings)));
+
+    renderSettings();
+
+    const section = await screen.findByTestId('issuer-data-section');
+    expect(section).toBeInTheDocument();
+    const { default: userEvent } = await import('@testing-library/user-event');
+    await userEvent.type(screen.getByTestId('issuer-inn-input'), '7707083893');
+    await userEvent.click(screen.getByTestId('issuer-inn-apply'));
+
+    expect(await screen.findByTestId('issuer-ratings-toggle')).toBeInTheDocument();
+    expect(screen.getByTestId('issuer-financials-toggle')).toBeInTheDocument();
+  });
 });
