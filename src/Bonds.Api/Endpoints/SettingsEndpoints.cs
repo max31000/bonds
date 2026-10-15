@@ -54,6 +54,14 @@ public static class SettingsEndpoints
         && years % ReplacementHorizonStepYears == 0m;
 
     /// <summary>
+    /// true — горизонт ЯВНОГО запроса анализа замены в допустимом диапазоне 0 &lt; h ≤ <see cref="MaxReplacementHorizonYears"/>, ГОДЫ.
+    /// Верхняя граница общая с настройкой; шаг <see cref="ReplacementHorizonStepYears"/> и нижняя граница настройки (0.5) для
+    /// запроса не требуются — API-клиент вправе спросить, например, 0.25 г.
+    /// </summary>
+    public static bool IsValidReplacementHorizonRequest(decimal years) =>
+        years > 0m && years <= MaxReplacementHorizonYears;
+
+    /// <summary>
     /// Допустимые диапазоны порогов рыночных событий (задача 49), ДОЛИ: спред — (0, 0.05] (до 500 б.п.), просадка цены — (0, 0.5].
     /// Ввод в б.п./% и конверсия в долю — на фронте.
     /// </summary>
@@ -337,7 +345,7 @@ public sealed record SettingsResponseDto
     /// <summary>Горизонт анализа замены, ГОДЫ (0.5–10, шаг 0.5; дефолт 2.0) — задача 48.</summary>
     public required decimal ReplacementHorizonYears { get; init; }
 
-    /// <summary>Порог события «расширение G-спреда», ДОЛЯ (0.0050 = 50 б.п.; задача 49) — эффективное значение (настройка либо дефолт).</summary>
+    /// <summary>Порог события «расширение G-спреда», ДОЛЯ (0.0030 = 30 б.п. по умолчанию; задача 49) — эффективное значение (настройка либо дефолт).</summary>
     public required decimal SpreadWideningThresholdFraction { get; init; }
 
     /// <summary>Порог события «просадка цены», ДОЛЯ (0.05 = 5%; задача 49) — эффективное значение (настройка либо дефолт).</summary>
@@ -380,7 +388,7 @@ public sealed record SettingsUpdateRequestDto
     /// <summary>Горизонт анализа замены, ГОДЫ. Null — не менять. Валидация: 0.5–10 с шагом 0.5, иначе 422.</summary>
     public decimal? ReplacementHorizonYears { get; init; }
 
-    /// <summary>Порог SpreadWidening, ДОЛЯ (0.0050 = 50 б.п.). Null — не менять. Валидация: (0; 0.05], иначе 422.</summary>
+    /// <summary>Порог SpreadWidening, ДОЛЯ (0.0030 = 30 б.п. по умолчанию). Null — не менять. Валидация: (0; 0.05], иначе 422.</summary>
     public decimal? SpreadWideningThresholdFraction { get; init; }
 
     /// <summary>Порог PriceDrawdown, ДОЛЯ (0.05 = 5%). Null — не менять. Валидация: (0; 0.5], иначе 422.</summary>

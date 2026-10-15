@@ -20,7 +20,7 @@ MySQL для интеграционных), vitest + Testing Library + MSW.
 | Деньги | везде | `decimal`, рубли за одну бумагу если не сказано иное |
 | Дюрация | движок/модели | годы (`decimal`) |
 | Горизонт анализа замены | `user_settings.replacement_horizon_years`, DTO `horizonYears`/`effectiveHorizonYears` | годы (`decimal`, 0.5–10) |
-| Пороги рыночных событий | `SignalEngineOptions.SpreadWideningThresholdFraction` (0.0050 = 50 б.п.), `PriceDrawdownThresholdFraction` (0.05 = 5%), `user_settings.spread_widening_threshold_fraction`/`price_drawdown_threshold_fraction`, DTO настроек | **ДОЛИ**; Settings-UI вводит б.п./% и конвертирует один раз на границе API |
+| Пороги рыночных событий | `SignalEngineOptions.SpreadWideningThresholdFraction` (0.0030 = 30 б.п.), `PriceDrawdownThresholdFraction` (0.05 = 5%), `user_settings.spread_widening_threshold_fraction`/`price_drawdown_threshold_fraction`, DTO настроек | **ДОЛИ**; Settings-UI вводит б.п./% и конвертирует один раз на границе API |
 | Вердикт позиции | `PositionVerdictService.MinReplacementBenefitFraction` (0.005 = 50 б.п. годовых), `ReplacementOption.AnnualizedBenefitFraction` — **ДОЛИ**; `IssuerSharePercentAfterBuy`/`ConcentrationLimitPercent` — **ПРОЦЕНТЫ** (как `SharePercent`) | не смешивать: сравнение долей портфеля идёт в процентах с обеих сторон |
 | Какая дюрация | сравнение позиции с банком/корзинами (бакет RV, фильтр «похожая дюрация», `macaulayDurationYears` в `/comparison`) | **Маколей** — банк хранит MOEX DURATION = Маколей; модифицированная — только мера чувствительности (сценарии ставок, PVBP, композиция портфеля) |
 | MOEX ISS: YIELD | вход | **проценты** → храним долю (÷100) |
@@ -78,9 +78,9 @@ DTO этих эндпоинтов — `Endpoints/Dtos/Analytics*Dtos.cs`; общ
 `EventKey` (insert/refresh/resolve); лимит концентрации — из `UserSettings`
 (`DefaultMaxConcentrationPercent`), индивидуальный лимит по эмитенту — `target_allocations`.
 **Рыночные и кредитные события (задача 49).** Три правила `SignalsEngine` поверх позиций Quantity > 0: `SpreadWidening` (Warning:
-эффективный G-спред сегодня − МЕДИАНА его же значений за прошлые ≤ 20 торговых дней > порога 50 б.п., флоатеры/бумаги вне банка
+эффективный G-спред сегодня − МЕДИАНА его же значений за прошлые ≤ 20 торговых дней > порога 30 б.п. (раннее предупреждение; критический `SpreadShock` скоркарты — отдельная, более высокая ступень 50 б.п.), флоатеры/бумаги вне банка
 пропускаются), `PriceDrawdown` (Warning: чистая цена ниже максимума за 20 дней > 5%; формула та же, что компонент `price_drawdown`
-скоркарты) и `IssuerDefaultEvent` (Critical: у эмитента позиции в `security_details` по ВСЕМ выпускам `has_default`/`has_technical_default`
+скоркарты) и `IssuerDefaultEvent` (Critical: у эмитента позиции в `security_details` хотя бы по одному выпуску `has_default`/`has_technical_default`
 = 1; `null` = неизвестно — не событие). Ключи: рыночные — `Type|ISIN|ISO-неделя` (событие не мигает день-к-дню, при нормализации
 исчезает из набора и закрывается синхронизатором; < 10 дней истории — молчат), кредитное — `Type|emitent_id:default|technical` без даты
 (живёт, пока флаг есть). Входы (`SignalEvaluationInput.MarketContexts`/`IssuerDefaults`) собирает БАТЧЕВО `PositionMarketContextBuilder`
@@ -96,7 +96,7 @@ Red / активное `IssuerDefaultEvent`) → Hold при Coverage 0 («ма�
 собирает входы разом: holdings, `ReliabilityBook`, снимок банка, активные события, цели концентрации, настройки, ставка комиссии; лучшая
 замена = топ-3 RV-кандидата корзины позиции (`ResolveCheapBasketMembers`, как `mode=rv`) → `SwitchAnalysisService.Compare` v2 с ногой цели из
 БАНК-записи (доходность MOEX YIELD, Маколей, полуспред стакана, оферта/погашение) → `SelectBestReplacement`; Red/критические/без данных/
-несравнимые позиции замену не считают. UI: `PositionVerdictBadge` (таблица/карточка), блок «Вердикт» в карточке позиции, ссылка
+несравнимые позиции замену не считают. Нога hold в расчёте замены — доходность БАНК-записи позиции (`YieldFraction`, одна методика с ногами-целями; YTM движка — только fallback, если позиции нет в банке), поэтому цифры вердикта могут отличаться от ручного `POST /replacement`. Дефолт эмитента — флаг уровня эмитента (`PositionVerdictInput.HasIssuerDefaultEvent`): событие привязано к одной позиции, а вердикт `ConsiderExit` получают ВСЕ позиции того же `emitent_id`. Сбой расчёта одной позиции даёт ей Hold «не удалось оценить» (LogWarning), остальные считаются; группировка эмитентов для концентрации — регистронезависимая, с суммированием. UI: `PositionVerdictBadge` (таблица/карточка), блок «Вердикт» в карточке позиции, ссылка
 `/recommendations?positionId=` раскрывает панель подбора замены (позиция вне топ-3 слабых показывается отдельной карточкой).
 
 **Auth** (`Bonds.Api/Auth`): только общий mvv42-auth — `Mvv42Auth.cs` (copy-in SDK, не править),

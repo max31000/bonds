@@ -120,7 +120,7 @@ public class MarketCreditEventsTests
         var repo = new BondUniverseRepository(Conn);
         var today = BusinessClock.MoscowToday();
 
-        // Сегодня спред 0.0300; в истории (12 прошлых дней) был 0.0200 → расширение +100 б.п. > 50 б.п.
+        // Сегодня спред 0.0300; в истории (12 прошлых дней) был 0.0200 → расширение +100 б.п. > 30 б.п.
         await repo.UpsertSnapshotBatchAsync([Bond(secid, isin, gspread: 0.0200m, price: 100m)]);
         var emitentId = ReliabilitySeed.NewEmitentId();
         await ReliabilitySeed.AttachIssuerAsync(Conn, secid, emitentId, null);
@@ -193,7 +193,7 @@ public class MarketCreditEventsTests
 
         var body = await (await client.GetAsync("/api/settings")).Content.ReadFromJsonAsync<JsonElement>();
 
-        body.GetProperty("spreadWideningThresholdFraction").GetDecimal().Should().Be(0.0050m, "ДОЛЯ: 50 б.п.");
+        body.GetProperty("spreadWideningThresholdFraction").GetDecimal().Should().Be(0.0030m, "ДОЛЯ: 30 б.п. — раннее предупреждение, ступень ниже SpreadShock скоркарты (50 б.п.)");
         body.GetProperty("priceDrawdownThresholdFraction").GetDecimal().Should().Be(0.05m, "ДОЛЯ: 5%");
     }
 

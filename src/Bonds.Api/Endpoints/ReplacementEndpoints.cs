@@ -142,7 +142,12 @@ public static class ReplacementEndpoints
         string horizonSource;
         if (request.HorizonYears is { } requestedHorizon)
         {
-            if (requestedHorizon <= 0m) throw new ValidationException("HorizonYears должен быть положительным");
+            if (!SettingsEndpoints.IsValidReplacementHorizonRequest(requestedHorizon))
+            {
+                return ValidationError(
+                    $"HorizonYears должен быть больше 0 и не больше {SettingsEndpoints.MaxReplacementHorizonYears:0.#} лет");
+            }
+
             horizonYears = requestedHorizon;
             horizonSource = "Request";
         }

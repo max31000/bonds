@@ -1,7 +1,10 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Bonds.Core.Analytics;
 using Bonds.Core.Models;
+using Bonds.Core.Time;
+using Bonds.Core.Universe;
 using Bonds.Infrastructure.Repositories;
 using Bonds.IntegrationTests.Infrastructure;
 using FluentAssertions;
@@ -47,12 +50,12 @@ public class PositionVerdictEndpointTests
     /// <summary>Позиция с купоном/котировкой (сходящийся YTM, дюрация и G-спред движка). Эмитент уникален на позицию.</summary>
     private async Task<(ulong InstrumentId, ulong PositionId, string Isin)> SeedPositionAsync(
         ulong accountId, string sector, decimal cleanPrice, decimal couponValueRub, int maturityYears = 2, decimal quantity = 10m,
-        CouponType couponType = CouponType.Fixed)
+        CouponType couponType = CouponType.Fixed, string? issuer = null)
     {
         var isin = $"RU{Guid.NewGuid():N}"[..12];
         var instrumentId = await new InstrumentRepository(Conn).UpsertAsync(new Instrument
         {
-            Isin = isin, Issuer = "Эмитент " + isin, Sector = sector, FaceValue = 1000m, Currency = "RUB", CouponType = couponType,
+            Isin = isin, Issuer = issuer ?? "Эмитент " + isin, Sector = sector, FaceValue = 1000m, Currency = "RUB", CouponType = couponType,
             MaturityDate = DateOnly.FromDateTime(DateTime.UtcNow.AddYears(maturityYears)),
         });
 
@@ -106,10 +109,11 @@ public class PositionVerdictEndpointTests
     /// Корзина «дёшево»: позиция с высоким купоном (G-спред движка ≈ +490 б.п. к кривой) против пяти бумаг банка со спредом
     /// 200 б.п. Бумага позиции — тоже в банке (здоровый эмитент → Green). Возвращает ID и ISIN позиции.
     /// </summary>
-    private async Task<(ulong InstrumentId, ulong PositionId, string Isin, string Secid)> SeedCheapGreenPositionAsync(ulong accountId, string marker)
+    private async Task<(ulong InstrumentId, ulong PositionId, string Isin, string Secid)> SeedCheapGreenPositionAsync(
+        ulong accountId, string marker, string? issuer = null)
     {
         var sector = $"Sector{marker}";
-        var (instrumentId, positionId, isin) = await SeedPositionAsync(accountId, sector, cleanPrice: 1000m, couponValueRub: 60m);
+        var (instrumentId, positionId, isin) = await SeedPositionAsync(accountId, sector, cleanPrice: 1000m, couponValueRub: 60m, issuer: issuer);
         var secid = $"CG{marker}";
         var universe = new BondUniverseRepository(Conn);
         var peers = Enumerable.Range(0, 5).Select(i => Bond($"PE{i}{marker}", $"IPE{i}{marker}", sector, 0.0200m)).ToList();
@@ -258,26 +262,38 @@ public class PositionVerdictEndpointTests
 
     // ─── ConsiderReplace ──────────────────────────────────────────────────────────────────
 
-    [Fact]
-    public async Task GreenPosition_WithMuchHigherYieldingGreenNeighbors_IsConsiderReplace_WithBenefitFigures()
+    /// <summary>
+    /// Сценарий «замена выгодна»: позиция с купоном 4% против пяти Green-соседей банка с доходностью 30–38%. Нога hold в расчёте
+    /// замены — доходность БАНК-записи (<paramref name="holdBankYield"/>), поэтому её можно варьировать независимо от YTM движка.
+    /// </summary>
+    private async Task<(ulong PositionId, string OwnIsin, BondUniverseEntry BestNeighbor, BondUniverseEntry Own)> SeedReplaceScenarioAsync(
+        ulong accountId, decimal holdBankYield = 0.04m)
     {
-        await SeedYieldCurveAsync();
-        var (client, accountId) = await CreateAuthorizedClientAsync();
         var marker = Marker();
         var sector = $"Sector{marker}";
-        // Позиция: купон 4% годовых при номинале (YTM ≈ 4%) → G-спред ниже корзины (Rich); соседи — 30-38% доходности, Green.
         var (_, positionId, isin) = await SeedPositionAsync(accountId, sector, cleanPrice: 1000m, couponValueRub: 20m);
         var universe = new BondUniverseRepository(Conn);
         var ownSecid = $"HD{marker}";
         var neighbors = new[] { (0, 0.30m), (1, 0.32m), (2, 0.34m), (3, 0.36m), (4, 0.38m) }
             .Select(x => Bond($"NB{x.Item1}{marker}", $"INB{x.Item1}{marker}", sector, gspread: 0.15m + x.Item1 * 0.01m, yield: x.Item2))
             .ToList();
-        await universe.UpsertSnapshotBatchAsync([.. neighbors, Bond(ownSecid, isin, sector, 0.0050m, yield: 0.04m)]);
+        var own = Bond(ownSecid, isin, sector, 0.0050m, yield: holdBankYield);
+        await universe.UpsertSnapshotBatchAsync([.. neighbors, own]);
         await ReliabilitySeed.SeedHealthyIssuerAsync(Conn, ownSecid, isin);
         foreach (var neighbor in neighbors)
         {
             await ReliabilitySeed.SeedHealthyIssuerAsync(Conn, neighbor.Secid, neighbor.Isin!);
         }
+
+        return (positionId, isin, neighbors[^1], own);
+    }
+
+    [Fact]
+    public async Task GreenPosition_WithMuchHigherYieldingGreenNeighbors_IsConsiderReplace_WithBenefitFigures()
+    {
+        await SeedYieldCurveAsync();
+        var (client, accountId) = await CreateAuthorizedClientAsync();
+        var (positionId, _, _, _) = await SeedReplaceScenarioAsync(accountId);
 
         var verdict = VerdictOf(await GetVerdictsAsync(client), positionId);
 
@@ -288,6 +304,48 @@ public class PositionVerdictEndpointTests
         best.GetProperty("targetReliability").GetString().Should().Be("Green");
         best.GetProperty("annualizedBenefitFraction").GetDecimal().Should().BeGreaterThanOrEqualTo(0.005m, "порог выгоды 50 б.п. годовых — ДОЛЯ");
         best.GetProperty("effectiveHorizonYears").GetDecimal().Should().BeGreaterThan(0m);
+    }
+
+    /// <summary>
+    /// Одна методика в ногах (ревью В3): hold-нога берёт YIELD банка (0.10), а не YTM движка (≈0.04, купон 4%) — годовая выгода
+    /// совпадает с прямым расчётом SwitchAnalysisService с доходностью банка и ОТЛИЧАЕТСЯ от расчёта с YTM движка.
+    /// Параметры эталона: MV = 10 × 1000 = 10 000 ₽, комиссия — override 0.3% (ДОЛЯ), горизонт 2 г., налог не оценён (журнала нет).
+    /// </summary>
+    [Fact]
+    public async Task ConsiderReplace_HoldLegUsesBankYield_NotEngineYtm()
+    {
+        await SeedYieldCurveAsync();
+        var (client, accountId) = await CreateAuthorizedClientAsync();
+        var userId = (await new AccountRepository(Conn).GetByIdAsync(accountId))!.UserId;
+        await new UserSettingsRepository(Conn).UpsertAsync(new UserSettings
+        {
+            UserId = userId, CommissionRateOverride = 0.003m, ReplacementHorizonYears = 2.0m,
+        });
+        const decimal bankYield = 0.10m;
+        var (positionId, _, bestNeighbor, own) = await SeedReplaceScenarioAsync(accountId, holdBankYield: bankYield);
+
+        var verdict = VerdictOf(await GetVerdictsAsync(client), positionId);
+
+        verdict.GetProperty("verdict").GetString().Should().Be("ConsiderReplace");
+        var actual = verdict.GetProperty("bestReplacement").GetProperty("annualizedBenefitFraction").GetDecimal();
+
+        decimal Expected(decimal holdYield) => SwitchAnalysisService.Compare(
+            new SwitchCandidate
+            {
+                PositionId = positionId, MarketValueRub = 10_000m, EffectiveYield = holdYield,
+                MacaulayDurationYears = own.DurationYears, HalfSpreadFraction = LiquidityScoreCalculator.HalfSpreadFraction(own.BidPercent, own.OfferPercent),
+                InvestedRub = null, HasUnknownLots = true,
+            },
+            new SwitchCandidate
+            {
+                PositionId = 0, MarketValueRub = 0m, EffectiveYield = bestNeighbor.YieldFraction, MacaulayDurationYears = bestNeighbor.DurationYears,
+                HalfSpreadFraction = LiquidityScoreCalculator.HalfSpreadFraction(bestNeighbor.BidPercent, bestNeighbor.OfferPercent),
+                TargetHorizonDate = bestNeighbor.MaturityDate,
+            },
+            2.0m, 0.003m, 0.003m, BusinessClock.MoscowToday()).AnnualizedBenefitFraction!.Value;
+
+        actual.Should().BeApproximately(Expected(bankYield), 0.0001m, "нога hold — доходность банка (MOEX YIELD), как у ног-целей");
+        actual.Should().NotBeApproximately(Expected(0.04m), 0.005m, "YTM движка (≈4%) — другая методика, в вердикте не используется");
     }
 
     [Fact]
@@ -310,6 +368,100 @@ public class PositionVerdictEndpointTests
 
         verdict.GetProperty("verdict").GetString().Should().NotBe("ConsiderReplace");
         verdict.GetProperty("bestReplacement").ValueKind.Should().Be(JsonValueKind.Null);
+    }
+
+    // ─── Устойчивость (ревью В3) ──────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Эмитенты, различающиеся только регистром, не роняют запрос (раньше ToDictionary(OrdinalIgnoreCase) падал на дубликате ключа → 500)
+    /// и СУММИРУЮТСЯ для концентрации: «Emit» (1/6) + «EMIT» (1/6) = 33% > лимита 25% → докупка упирается в лимит.
+    /// </summary>
+    [Fact]
+    public async Task IssuersDifferingOnlyByCase_DoNotBreakRequest_AndConcentrationIsSummed()
+    {
+        await SeedYieldCurveAsync();
+        var (client, accountId) = await CreateAuthorizedClientAsync();
+        var issuer = $"Emit{Marker()}";
+        var (_, cheapPositionId, _, _) = await SeedCheapGreenPositionAsync(accountId, Marker(), issuer: issuer);
+        var (_, sameIssuerOtherCasePositionId, _) = await SeedPositionAsync(accountId, $"S{Marker()}", 1000m, 40m, issuer: issuer.ToUpperInvariant());
+        await SeedFillerPositionsAsync(accountId, 4); // 6 позиций поровну: каждый «регистр» ≈ 16.7%, вместе ≈ 33%
+
+        var body = await GetVerdictsAsync(client);
+
+        body.GetProperty("verdicts").GetArrayLength().Should().Be(6);
+        VerdictOf(body, sameIssuerOtherCasePositionId).GetProperty("verdict").GetString().Should().Be("Hold");
+        var cheap = VerdictOf(body, cheapPositionId);
+        cheap.GetProperty("verdict").GetString().Should().Be("Hold", "доля эмитента с учётом обоих регистров превышает лимит 25%");
+        Reasons(cheap).Should().Contain(r => r.Contains("лимит"));
+    }
+
+    /// <summary>
+    /// Сбой расчёта одной позиции не роняет остальные: горизонт 0 в настройках (записан в обход валидации API) бросает
+    /// ArgumentOutOfRange в SwitchAnalysisService ровно для позиции, которой считается замена; позиция вне банка считается как обычно.
+    /// </summary>
+    [Fact]
+    public async Task FailureOfOnePosition_DegradesToHoldNotEvaluated_OthersStillComputed()
+    {
+        await SeedYieldCurveAsync();
+        var (client, accountId) = await CreateAuthorizedClientAsync();
+        var userId = (await new AccountRepository(Conn).GetByIdAsync(accountId))!.UserId;
+        await new UserSettingsRepository(Conn).UpsertAsync(new UserSettings { UserId = userId, ReplacementHorizonYears = 0m });
+        var (failingPositionId, _, _, _) = await SeedReplaceScenarioAsync(accountId);
+        var (_, outsideBankPositionId, _) = await SeedPositionAsync(accountId, $"S{Marker()}", 1000m, 40m);
+
+        var body = await GetVerdictsAsync(client);
+
+        var failed = VerdictOf(body, failingPositionId);
+        failed.GetProperty("verdict").GetString().Should().Be("Hold");
+        failed.GetProperty("confidence").GetString().Should().Be("Low");
+        Reasons(failed).Should().ContainSingle().Which.Should().Contain("Не удалось оценить");
+        failed.GetProperty("bestReplacement").ValueKind.Should().Be(JsonValueKind.Null);
+
+        var healthy = VerdictOf(body, outsideBankPositionId);
+        Reasons(healthy).Should().ContainSingle().Which.Should().Contain("мало данных");
+    }
+
+    /// <summary>
+    /// Дефолт эмитента — на ВСЕ его позиции (ревью В3): событие привязано к первой бумаге, вторая бумага того же emitent_id тоже
+    /// получает ConsiderExit; бумага другого эмитента — нет.
+    /// </summary>
+    [Fact]
+    public async Task IssuerDefaultEvent_AppliesToAllPositionsOfSameIssuer_NotOtherIssuers()
+    {
+        await SeedYieldCurveAsync();
+        var (client, accountId) = await CreateAuthorizedClientAsync();
+        var marker = Marker();
+        var sector = $"Sector{marker}";
+        var emitentId = ReliabilitySeed.NewEmitentId();
+        var universe = new BondUniverseRepository(Conn);
+
+        var (firstInstrumentId, firstPositionId, firstIsin) = await SeedPositionAsync(accountId, sector, 1000m, 40m);
+        var (_, secondPositionId, secondIsin) = await SeedPositionAsync(accountId, sector, 1000m, 40m);
+        var (_, otherPositionId, otherIsin) = await SeedPositionAsync(accountId, sector, 1000m, 40m);
+        var bonds = new[] { ($"DA{marker}", firstIsin), ($"DB{marker}", secondIsin), ($"DC{marker}", otherIsin) };
+        await universe.UpsertSnapshotBatchAsync(bonds.Select(b => Bond(b.Item1, b.Item2, sector, 0.0200m)).ToList());
+        foreach (var (secid, isin) in bonds.Take(2))
+        {
+            // два выпуска ОДНОГО эмитента, оба в банке с emitent_id (карточки без флагов: событие — отдельной строкой)
+            await ReliabilitySeed.AttachIssuerAsync(Conn, secid, emitentId, null);
+            await ReliabilitySeed.SeedCardAsync(Conn, secid, isin, emitentId, hasDefault: false, hasTechnicalDefault: false);
+        }
+
+        await ReliabilitySeed.SeedHealthyIssuerAsync(Conn, bonds[2].Item1, bonds[2].Item2);
+        await new SignalRepository(Conn).InsertAsync(new Signal
+        {
+            AccountId = accountId, Type = SignalType.IssuerDefaultEvent, Severity = SignalSeverity.Critical, InstrumentId = firstInstrumentId,
+            EventKey = Signal.BuildKey(SignalType.IssuerDefaultEvent, $"{emitentId}:default", null), Subject = "Эмитент",
+            FirstSeenAt = DateTime.UtcNow, LastSeenAt = DateTime.UtcNow,
+        });
+
+        var body = await GetVerdictsAsync(client);
+
+        VerdictOf(body, firstPositionId).GetProperty("verdict").GetString().Should().Be("ConsiderExit");
+        var second = VerdictOf(body, secondPositionId);
+        second.GetProperty("verdict").GetString().Should().Be("ConsiderExit", "дефолт относится ко всем выпускам эмитента");
+        Reasons(second).Should().Contain(r => r.Contains("дефолт"));
+        VerdictOf(body, otherPositionId).GetProperty("verdict").GetString().Should().NotBe("ConsiderExit");
     }
 
     [Fact]

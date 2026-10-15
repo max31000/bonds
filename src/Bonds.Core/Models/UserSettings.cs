@@ -43,7 +43,7 @@ public class UserSettings
     public const decimal DefaultReplacementHorizonYears = 2.0m;
 
     /// <summary>
-    /// Порог события SpreadWidening, ДОЛЯ (0.0050 = 50 б.п.; задача 49). Null — дефолт
+    /// Порог события SpreadWidening, ДОЛЯ (0.0030 = 30 б.п. по умолчанию; задача 49). Null — дефолт
     /// <see cref="Bonds.Core.Signals.SignalEngineOptions.SpreadWideningThresholdFraction"/>. Диапазон — на границе API.
     /// </summary>
     public decimal? SpreadWideningThresholdFraction { get; set; }

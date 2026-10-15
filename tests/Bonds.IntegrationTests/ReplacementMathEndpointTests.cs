@@ -215,17 +215,41 @@ public class ReplacementMathEndpointTests
         body.GetProperty("horizonSource").GetString().Should().Be("Request");
     }
 
-    [Fact]
-    public async Task PostReplacement_NonPositiveExplicitHorizon_Returns400()
+    /// <summary>Горизонт запроса вне (0, 10] лет (ГОДЫ) → 422 (ревью В3: раньше 400 для ≤ 0 и никакой верхней границы).</summary>
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    [InlineData(10.5)]
+    [InlineData(1000)]
+    public async Task PostReplacement_ExplicitHorizonOutOfRange_Returns422(double years)
     {
         var (client, accountId) = await CreateAuthorizedClientAsync();
         var (_, holdId, _) = await SeedPositionAsync(accountId, 365 * 5);
         var (_, targetId, _) = await SeedPositionAsync(accountId, 365 * 6);
 
         var response = await client.PostAsJsonAsync("/api/analytics/replacement",
-            new { holdPositionId = holdId, targetPositionId = targetId, horizonYears = 0 });
+            new { holdPositionId = holdId, targetPositionId = targetId, horizonYears = years });
 
-        response.StatusCode.Should().Be(HttpStatusCode.BadRequest, "ValidationException -> 400 (существующее поведение)");
+        response.StatusCode.Should().Be((HttpStatusCode)422);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        body.GetProperty("type").GetString().Should().Be("ValidationException");
+    }
+
+    /// <summary>Границы и шаг: 0.25 (< мин. настройки 0.5) и 10 допустимы в запросе — шаг 0.5 требуется только от настройки.</summary>
+    [Theory]
+    [InlineData(0.25)]
+    [InlineData(2.25)]
+    [InlineData(10)]
+    public async Task PostReplacement_ExplicitHorizonInRange_NoStepRequired_Returns200(double years)
+    {
+        var (client, accountId) = await CreateAuthorizedClientAsync();
+        var (_, holdId, _) = await SeedPositionAsync(accountId, 365 * 5);
+        var (_, targetId, _) = await SeedPositionAsync(accountId, 365 * 12);
+
+        var response = await client.PostAsJsonAsync("/api/analytics/replacement",
+            new { holdPositionId = holdId, targetPositionId = targetId, horizonYears = years });
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
     }
 
     [Fact]

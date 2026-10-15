@@ -70,6 +70,14 @@ public sealed record PositionVerdictInput
     /// <summary>Типы АКТИВНЫХ событий по этой позиции (из таблицы событий).</summary>
     public IReadOnlyList<SignalType> ActiveEventTypes { get; init; } = [];
 
+    /// <summary>
+    /// Флаг уровня ЭМИТЕНТА: у эмитента позиции активно событие <see cref="SignalType.IssuerDefaultEvent"/>. Дефолт относится ко
+    /// всем выпускам эмитента, поэтому вызывающий слой раскрывает событие по <c>emitent_id</c> на ВСЕ его позиции (само событие
+    /// привязано к одной из них и попадает в <see cref="ActiveEventTypes"/> только у неё). Эквивалентно наличию
+    /// <see cref="SignalType.IssuerDefaultEvent"/> в <see cref="ActiveEventTypes"/> — достаточно любого из двух.
+    /// </summary>
+    public bool HasIssuerDefaultEvent { get; init; }
+
     /// <summary>Лучшая замена (см. <see cref="PositionVerdictService.SelectBestReplacement"/>); null — кандидатов нет/посчитать нельзя.</summary>
     public ReplacementOption? BestReplacement { get; init; }
 
@@ -138,7 +146,7 @@ public static class PositionVerdictService
         var confidence = ConfidenceFor(score.Coverage);
 
         // 1. Выход: критические флаги / Red / дефолт эмитента.
-        var hasDefaultEvent = input.ActiveEventTypes.Contains(SignalType.IssuerDefaultEvent);
+        var hasDefaultEvent = input.HasIssuerDefaultEvent || input.ActiveEventTypes.Contains(SignalType.IssuerDefaultEvent);
         if (score.CriticalFlags.Count > 0 || score.Level == ReliabilityLight.Red || hasDefaultEvent)
         {
             return new PositionVerdict(PositionVerdictKind.ConsiderExit, ExitReasons(input, hasDefaultEvent), confidence);

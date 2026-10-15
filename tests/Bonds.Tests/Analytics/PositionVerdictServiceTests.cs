@@ -83,6 +83,16 @@ public class PositionVerdictServiceTests
         verdict.Reasons.Should().Contain(r => r.Contains("дефолт"));
     }
 
+    /// <summary>Флаг уровня эмитента (ревью В3): дефолт эмитента раскрыт на позицию, у которой само событие не привязано.</summary>
+    [Fact]
+    public void HasIssuerDefaultEvent_Flag_GivesConsiderExit_WithoutEventInActiveTypes()
+    {
+        var verdict = Evaluate(Input() with { HasIssuerDefaultEvent = true });
+
+        verdict.Verdict.Should().Be(PositionVerdictKind.ConsiderExit);
+        verdict.Reasons.Should().Contain(r => r.Contains("дефолт"));
+    }
+
     [Fact]
     public void ConsiderExit_MultipleFlags_ReasonsCappedAtThree()
     {

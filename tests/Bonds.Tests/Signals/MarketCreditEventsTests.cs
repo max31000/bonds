@@ -10,7 +10,7 @@ namespace Bonds.Tests.Signals;
 
 /// <summary>
 /// Задача 49 часть B: рыночные (SpreadWidening, PriceDrawdown) и кредитное (IssuerDefaultEvent) события.
-/// Единицы: G-спред и порог — ДОЛИ (0.0050 = 50 б.п.), просадка — ДОЛЯ (0.05 = 5%), цена — % от номинала.
+/// Единицы: G-спред и порог — ДОЛИ (0.0030 = 30 б.п. по умолчанию), просадка — ДОЛЯ (0.05 = 5%), цена — % от номинала.
 /// Даты — относительно «сегодня».
 /// </summary>
 public class MarketCreditEventsTests
@@ -69,7 +69,7 @@ public class MarketCreditEventsTests
     [Fact]
     public void SpreadWidening_AboveThreshold_IsWarning_WithIsinAndIsoWeekKey()
     {
-        // медиана 0.0200, сегодня 0.0260 → +60 б.п. > 50 б.п.
+        // медиана 0.0200, сегодня 0.0260 → +60 б.п. > 30 б.п.
         var signals = SignalsEngine.Evaluate(Input(market: [Market(gSpread: 0.0260m)]));
 
         var signal = Of(signals, SignalType.SpreadWidening).Should().ContainSingle().Subject;
@@ -83,8 +83,8 @@ public class MarketCreditEventsTests
     [Fact]
     public void SpreadWidening_ExactlyAtThreshold_DoesNotFire()
     {
-        // сдвиг ровно 50 б.п.: условие строгое «>», граница не срабатывает
-        var signals = SignalsEngine.Evaluate(Input(market: [Market(gSpread: 0.0250m)]));
+        // сдвиг ровно 30 б.п. (дефолт): условие строгое «>», граница не срабатывает
+        var signals = SignalsEngine.Evaluate(Input(market: [Market(gSpread: 0.0230m)]));
 
         Of(signals, SignalType.SpreadWidening).Should().BeEmpty();
     }
@@ -92,7 +92,7 @@ public class MarketCreditEventsTests
     [Fact]
     public void SpreadWidening_JustAboveThreshold_Fires()
     {
-        var signals = SignalsEngine.Evaluate(Input(market: [Market(gSpread: 0.025001m)]));
+        var signals = SignalsEngine.Evaluate(Input(market: [Market(gSpread: 0.023001m)]));
 
         Of(signals, SignalType.SpreadWidening).Should().ContainSingle();
     }
@@ -100,10 +100,11 @@ public class MarketCreditEventsTests
     [Fact]
     public void SpreadWidening_UsesMedianOfHistory_NotMeanOrLast()
     {
-        // 19 дней по 0.0200 и один выброс 0.0900: медиана 0.0200; сегодня 0.0240 (+40 б.п.) — не срабатывает
-        var history = Flat(0.0200m, 19).Append(0.0900m).ToList();
+        // 19 дней по 0.0200 и один выброс 0.0000: медиана 0.0200, среднее 0.0190; сегодня 0.0225 (+25 б.п. к медиане < 30 б.п.,
+        // но +35 б.п. к среднему) — по медиане не срабатывает
+        var history = Flat(0.0200m, 19).Append(0.0000m).ToList();
 
-        var signals = SignalsEngine.Evaluate(Input(market: [Market(gSpread: 0.0240m, gSpreadHistory: history)]));
+        var signals = SignalsEngine.Evaluate(Input(market: [Market(gSpread: 0.0225m, gSpreadHistory: history)]));
 
         Of(signals, SignalType.SpreadWidening).Should().BeEmpty();
     }
