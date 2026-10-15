@@ -32,7 +32,7 @@ import {
   DEFAULT_SCREENER_FILTERS,
   type ScreenerSortBy,
 } from '../store/useScreenerStore';
-import { liquidityLabel, liquidityColor, hiddenReasonLabel } from '../utils/universeDisplay';
+import { liquidityLabel, liquidityColor, hiddenReasonLabel, gspreadSourceLabel } from '../utils/universeDisplay';
 import { formatPercent, formatNumber, formatBp, formatRubCompact, formatDate, formatDateTime } from '../utils/format';
 import type { UniverseRow } from '../api/types';
 
@@ -75,8 +75,34 @@ function maturityOrOfferLabel(row: UniverseRow): string {
 function screenerReliabilityDetailLines(row: UniverseRow): string[] {
   return [
     `Ликвидность: ${liquidityLabel(row.liquidityScore)}${row.listLevel ? `, листинг ${row.listLevel}` : ''}`,
-    `G-спред (прибл.): ${formatBp(row.gspreadApproxFraction)}`,
+    `G-спред${gspreadSourceSuffix(row)}: ${formatBp(row.gspreadApproxFraction)}`,
   ];
+}
+
+/** « (биржевой)»/« (расчётный (по кривой))» — пометка источника G-спреда в строках деталей (задача 42). */
+function gspreadSourceSuffix(row: UniverseRow): string {
+  const label = gspreadSourceLabel(row.gspreadSource);
+  return label ? ` (${label})` : '';
+}
+
+/**
+ * Значение G-спреда с тултипом «Источник: биржевой / расчётный» (задача 42). Без источника
+ * (спреда нет либо старый ответ без `gspreadSource`) — просто значение. Имя поля данных
+ * `gspreadApproxFraction` историческое: там эффективный спред, а не только приближённый.
+ */
+function GspreadValue({ row }: { row: UniverseRow }) {
+  const label = gspreadSourceLabel(row.gspreadSource);
+  const value = (
+    <span data-testid={`screener-gspread-${row.secid}`} data-gspread-source={row.gspreadSource ?? undefined}>
+      {formatBp(row.gspreadApproxFraction)}
+    </span>
+  );
+  if (!label || row.gspreadApproxFraction === null) return value;
+  return (
+    <Tooltip label={`Источник: ${label}`} withArrow>
+      {value}
+    </Tooltip>
+  );
 }
 
 /**
@@ -286,6 +312,25 @@ function StatusBar() {
   );
 }
 
+/** Задача 43: подпись тултипа ячейки названия — ISIN, а при известном эмитенте ещё и эмитент с ИНН. */
+function nameTooltipLabel(row: UniverseRow): string {
+  const parts = [row.isin ?? '—'];
+  if (row.emitentTitle) {
+    parts.push(`Эмитент: ${row.emitentTitle}${row.emitentInn ? ` (ИНН ${row.emitentInn})` : ''}`);
+  }
+  return parts.join(' · ');
+}
+
+/** Задача 43: эмитент под названием бумаги (только отображение). Нет данных — ничего не рисуем. */
+function EmitentLine({ row }: { row: UniverseRow }) {
+  if (!row.emitentTitle) return null;
+  return (
+    <Text size="xs" c="dimmed" lineClamp={1} data-testid={`screener-emitent-${row.secid}`}>
+      {row.emitentTitle}
+    </Text>
+  );
+}
+
 /** Мобильная карточка строки скринера (паттерн PositionCard). */
 function ScreenerCard({ row }: { row: UniverseRow }) {
   const [expanded, { toggle }] = useDisclosure(false);
@@ -304,6 +349,7 @@ function ScreenerCard({ row }: { row: UniverseRow }) {
             <Text fw={600} size="sm" lineClamp={2}>
               {row.name ?? row.secid}
             </Text>
+            <EmitentLine row={row} />
             <Text size="xs" c="dimmed">
               {row.sector ?? '—'}
             </Text>
@@ -362,9 +408,11 @@ function ScreenerCard({ row }: { row: UniverseRow }) {
           <Stack gap={4} data-testid={`screener-card-details-${row.secid}`}>
             <Group justify="space-between">
               <Text size="xs" c="dimmed">
-                G-спред (прибл.), б.п.
+                G-спред, б.п.
               </Text>
-              <Text size="xs">{formatBp(row.gspreadApproxFraction)}</Text>
+              <Text size="xs">
+                <GspreadValue row={row} />
+              </Text>
             </Group>
             <Group justify="space-between">
               <Text size="xs" c="dimmed">
@@ -525,7 +573,7 @@ export function Screener() {
                       <Table.Th>Цена, %</Table.Th>
                       <Table.Th>
                         <Group gap={4} wrap="nowrap">
-                          <SortableHeader sortKey="gspread" label="G-спред (прибл.), б.п." />
+                          <SortableHeader sortKey="gspread" label="G-спред, б.п." />
                           <Tooltip label={GSPREAD_TOOLTIP} multiline w={280} withArrow>
                             <Text size="xs" c="dimmed" span>
                               ⓘ
@@ -550,9 +598,10 @@ export function Screener() {
                         style={row.isHidden ? { opacity: 0.6 } : undefined}
                       >
                         <Table.Td>
-                          <Tooltip label={row.isin ?? '—'} withArrow>
+                          <Tooltip label={nameTooltipLabel(row)} withArrow>
                             <Stack gap={2}>
                               <Text size="sm">{row.name ?? row.secid}</Text>
+                              <EmitentLine row={row} />
                               <Group gap={4} wrap="wrap">
                                 <OwnershipBadges row={row} />
                                 {row.isHidden && (
@@ -575,7 +624,9 @@ export function Screener() {
                         </Table.Td>
                         <Table.Td>{row.durationYears !== null ? formatNumber(row.durationYears, 1) : '—'}</Table.Td>
                         <Table.Td>{row.pricePercent !== null ? formatNumber(row.pricePercent, 2) : '—'}</Table.Td>
-                        <Table.Td>{formatBp(row.gspreadApproxFraction)}</Table.Td>
+                        <Table.Td>
+                          <GspreadValue row={row} />
+                        </Table.Td>
                         <Table.Td>{formatRubCompact(row.turnoverRub)}</Table.Td>
                         <Table.Td>
                           <Badge size="sm" color={liquidityColor(row.liquidityScore)} variant="light">

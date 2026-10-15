@@ -70,6 +70,26 @@ public sealed class RelativeValueSnapshotBuilder
         /// кандидатов именем/доходностью/ликвидностью (план часть C.2), которых нет в
         /// <see cref="BasketMember"/> (тот несёт только поля, нужные для статистики корзин).</summary>
         public required IReadOnlyDictionary<string, BondUniverseEntry> CurrentEntriesBySecid { get; init; }
+
+        /// <summary>
+        /// Задача 44: медиана <c>turnover_rub</c> за последние <see cref="TradingDaysWindow"/> торговых
+        /// дней истории по secid (РУБЛИ за день) — ВСЕ бумаги истории, не только hygiene-чистые (ликвидность
+        /// считается и для скрытых строк скринера). Построена из того же батчевого чтения истории, что и
+        /// корзины (<see cref="IBondUniverseRepository.GetRecentHistoryAsync"/>), — без запроса на бумагу.
+        /// Пусто, если истории нет (молодой банк): тогда <see cref="LiquidityTurnoverRub"/> берёт
+        /// сегодняшний VALTODAY.
+        /// </summary>
+        public IReadOnlyDictionary<string, decimal> MedianTurnoverBySecid { get; init; } =
+            new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// Оборот для оценки ликвидности (РУБЛИ за день): медиана за 5 торговых дней, а при её
+        /// отсутствии — сегодняшний <see cref="BondUniverseEntry.TurnoverRub"/> (VALTODAY «на сейчас»).
+        /// Медиана делает оценку одинаковой в утреннем и вечернем прогоне. Гигиену банка (порог оборота
+        /// скрытия) НЕ затрагивает — она по-прежнему на сегодняшнем обороте.
+        /// </summary>
+        public decimal? LiquidityTurnoverRub(BondUniverseEntry entry) =>
+            MedianTurnoverBySecid.TryGetValue(entry.Secid, out var median) ? median : entry.TurnoverRub;
     }
 
     /// <summary>Возвращает закэшированный снимок либо строит новый, если кэш пуст/протух.
@@ -127,6 +147,7 @@ public sealed class RelativeValueSnapshotBuilder
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         var history = await repo.GetRecentHistoryAsync(TradingDaysWindow, ct);
+        var medianTurnover = ComputeMedianTurnover(history);
         var historyByDate = history
             .Where(h => eligibleSecids.Contains(h.Secid))
             .GroupBy(h => h.SnapshotDate)
@@ -144,6 +165,7 @@ public sealed class RelativeValueSnapshotBuilder
                 AllMembers = members,
                 BasedOnDays = 0,
                 CurrentEntriesBySecid = currentBySecid,
+                MedianTurnoverBySecid = medianTurnover,
             };
         }
 
@@ -166,7 +188,7 @@ public sealed class RelativeValueSnapshotBuilder
                     Secid = h.Secid,
                     Sector = currentBySecid[h.Secid].Sector,
                     DurationYears = h.DurationYears,
-                    GSpreadFraction = h.GspreadApproxFraction,
+                    GSpreadFraction = h.ResolvedGspreadFraction,
                     // bond_universe_history не хранит is_floater (см. doc-comment
                     // BondUniverseHistoryPoint) — берём из ТЕКУЩЕГО снимка, как и Sector выше.
                     // На практике всегда false здесь: dayGroup уже отфильтрован eligibleSecids
@@ -220,7 +242,7 @@ public sealed class RelativeValueSnapshotBuilder
                 Secid = h.Secid,
                 Sector = currentBySecid[h.Secid].Sector,
                 DurationYears = h.DurationYears,
-                GSpreadFraction = h.GspreadApproxFraction,
+                GSpreadFraction = h.ResolvedGspreadFraction,
                 IsFloater = currentBySecid[h.Secid].IsFloater == true,
             })
             .ToList();
@@ -231,7 +253,24 @@ public sealed class RelativeValueSnapshotBuilder
             AllMembers = latestMembers,
             BasedOnDays = historyByDate.Count,
             CurrentEntriesBySecid = currentBySecid,
+            MedianTurnoverBySecid = medianTurnover,
         };
+    }
+
+    /// <summary>Медиана оборота (РУБЛИ) по secid из строк истории (уже ограничены последними
+    /// <see cref="TradingDaysWindow"/> датами); null-обороты пропускаются, secid без единого значения
+    /// в словарь не попадает (→ fallback на сегодняшний VALTODAY).</summary>
+    private static Dictionary<string, decimal> ComputeMedianTurnover(IReadOnlyList<BondUniverseHistoryPoint> history)
+    {
+        var result = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase);
+        foreach (var group in history.GroupBy(h => h.Secid, StringComparer.OrdinalIgnoreCase))
+        {
+            if (LiquidityScoreCalculator.MedianTurnover(group.Select(h => h.TurnoverRub)) is { } median)
+            {
+                result[group.Key] = median;
+            }
+        }
+        return result;
     }
 
     private static List<BasketMember> BuildMembersFromCurrent(
@@ -246,7 +285,7 @@ public sealed class RelativeValueSnapshotBuilder
                 Secid = e.Secid,
                 Sector = e.Sector,
                 DurationYears = e.DurationYears,
-                GSpreadFraction = e.GspreadApproxFraction,
+                GSpreadFraction = e.EffectiveGspreadFraction,
                 IsFloater = e.IsFloater == true,
             })
             .ToList();

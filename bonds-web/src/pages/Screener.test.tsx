@@ -282,6 +282,55 @@ describe('Screener', () => {
 
   // ─── Задача 32 часть B: пометка флоатера + фильтр «только фикс-купон» ─────────────────────
 
+  it('marks the G-spread source (биржевой / расчётный) on each row — task 42', async () => {
+    const moexRow: UniverseRow = { ...gazpromRow, secid: 'RU000MOEX001', name: 'Спред от биржи', gspreadApproxFraction: 0.0035, gspreadSource: 'moex' };
+    const approxRow: UniverseRow = { ...gazpromRow, secid: 'RU000APRX001', name: 'Спред по кривой', gspreadApproxFraction: 0.01, gspreadSource: 'approx' };
+    const noneRow: UniverseRow = { ...gazpromRow, secid: 'RU000NONE001', name: 'Без спреда', gspreadApproxFraction: null, gspreadSource: null };
+    server.use(http.get('*/api/universe', () => HttpResponse.json(universeResponse([moexRow, approxRow, noneRow]))));
+    renderScreener();
+
+    await waitFor(() => expect(screen.getByTestId(`screener-row-${moexRow.secid}`)).toBeInTheDocument());
+
+    const moexCell = within(screen.getByTestId(`screener-row-${moexRow.secid}`)).getByTestId(`screener-gspread-${moexRow.secid}`);
+    expect(moexCell.textContent).toBe('35 б.п.');
+    expect(moexCell).toHaveAttribute('data-gspread-source', 'moex');
+    const approxCell = within(screen.getByTestId(`screener-row-${approxRow.secid}`)).getByTestId(`screener-gspread-${approxRow.secid}`);
+    expect(approxCell.textContent).toBe('100 б.п.');
+    expect(approxCell).toHaveAttribute('data-gspread-source', 'approx');
+    const noneCell = within(screen.getByTestId(`screener-row-${noneRow.secid}`)).getByTestId(`screener-gspread-${noneRow.secid}`);
+    expect(noneCell.textContent).toBe('—');
+
+    // Тултип «источник: …» появляется при наведении.
+    fireEvent.mouseEnter(moexCell);
+    await waitFor(() => expect(screen.getByText('Источник: биржевой')).toBeInTheDocument());
+    fireEvent.mouseEnter(approxCell);
+    await waitFor(() => expect(screen.getByText('Источник: расчётный (по кривой)')).toBeInTheDocument());
+  });
+
+  it('shows the issuer under the bond name and its INN in the tooltip — task 43', async () => {
+    const withIssuer: UniverseRow = {
+      ...gazpromRow,
+      secid: 'RU000EMIT001',
+      name: 'Селектел БО-01',
+      emitentTitle: 'Акционерное общество "Селектел"',
+      emitentInn: '7810962785',
+    };
+    const noIssuer: UniverseRow = { ...gazpromRow, secid: 'RU000EMIT002', name: 'Старый выпуск', emitentTitle: null, emitentInn: null };
+    const legacy: UniverseRow = { ...gazpromRow, secid: 'RU000EMIT003', name: 'Ответ без полей эмитента' };
+    server.use(http.get('*/api/universe', () => HttpResponse.json(universeResponse([withIssuer, noIssuer, legacy]))));
+    renderScreener();
+
+    await waitFor(() => expect(screen.getByTestId(`screener-row-${withIssuer.secid}`)).toBeInTheDocument());
+
+    const issuerLine = within(screen.getByTestId(`screener-row-${withIssuer.secid}`)).getByTestId(`screener-emitent-${withIssuer.secid}`);
+    expect(issuerLine.textContent).toBe('Акционерное общество "Селектел"');
+    expect(within(screen.getByTestId(`screener-row-${noIssuer.secid}`)).queryByTestId(`screener-emitent-${noIssuer.secid}`)).toBeNull();
+    expect(within(screen.getByTestId(`screener-row-${legacy.secid}`)).queryByTestId(`screener-emitent-${legacy.secid}`)).toBeNull();
+
+    fireEvent.mouseEnter(issuerLine.parentElement as HTMLElement); // Tooltip висит на Stack ячейки названия
+    await waitFor(() => expect(screen.getByText(/ИНН 7810962785/)).toBeInTheDocument());
+  });
+
   it('shows a floater badge instead of a YTM number for floater rows', async () => {
     server.use(http.get('*/api/universe', () => HttpResponse.json(universeResponse([gazpromRow, floaterRow]))));
     renderScreener();

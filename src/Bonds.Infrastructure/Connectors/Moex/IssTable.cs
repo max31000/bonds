@@ -113,6 +113,19 @@ public readonly struct IssRow
         };
     }
 
+    /// <summary>Целое 64-бит (например ISSUESIZE — объём выпуска, может не помещаться в int32).</summary>
+    public long? GetLong(string column)
+    {
+        var el = Get(column);
+        if (el is null) return null;
+        return el.Value.ValueKind switch
+        {
+            JsonValueKind.Number when el.Value.TryGetInt64(out var v) => v,
+            JsonValueKind.String when long.TryParse(el.Value.GetString(), out var v) => v,
+            _ => null,
+        };
+    }
+
     public DateOnly? GetDateOnly(string column)
     {
         var s = GetString(column);

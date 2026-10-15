@@ -19,9 +19,14 @@ MySQL для интеграционных), vitest + Testing Library + MSW.
 | Исключения из «долей» | `RateScenarioService.DeltaPercent`, `PortfolioCompositionService.SharePercent` (+их DTO) — уже В ПРОЦЕНТАХ | задокументировано на полях, закреплено тестами; новых исключений не заводить |
 | Деньги | везде | `decimal`, рубли за одну бумагу если не сказано иное |
 | Дюрация | движок/модели | годы (`decimal`) |
+| Какая дюрация | сравнение позиции с банком/корзинами (бакет RV, фильтр «похожая дюрация», `macaulayDurationYears` в `/comparison`) | **Маколей** — банк хранит MOEX DURATION = Маколей; модифицированная — только мера чувствительности (сценарии ставок, PVBP, композиция портфеля) |
 | MOEX ISS: YIELD | вход | **проценты** → храним долю (÷100) |
 | MOEX ISS: DURATION | вход | **дни** → храним годы (÷365) |
 | MOEX ISS: цены (PREVPRICE/LAST/CLOSE) | вход | **% от номинала** → рубли = `pct/100 × FaceValue` |
+| MOEX ISS `marketdata_yields`: EFFECTIVEYIELD, YIELDTOOFFER | вход | **проценты** → доля (÷100) |
+| MOEX ISS `marketdata_yields`: GSPREADBP, ZSPREADBP | вход | **базисные пункты** → доля (÷10000: 35 б.п. = 0.0035) |
+| MOEX ISS карточка `description`: COUPON_BENCHMARK_SPREAD | вход | **проценты** (строка "1.90") → доля (÷100: 0.019), `security_details.coupon_benchmark_spread_fraction` |
+| MOEX ISS `securities`: ACCRUEDINT (НКД) | вход | **рубли на одну бумагу** (не %, не на лот) — конверсии нет |
 | T-Invest `GetPortfolio` (CurrentPrice/CurrentNkd/AveragePositionPrice) | вход | **рубли** за бумагу — конверсия не нужна |
 | T-Invest `GetLastPrices` (marketdata `LastPrice`) | вход | **ПУНКТЫ** (% от номинала) → рубли = `pts/100 × FaceValue` (см. `LiveQuoteConverter`) |
 | `MarketQuote.CleanPrice/DirtyPrice/Accrued`, `intraday_quotes.dirty_price_rub` | БД | всегда рубли за бумагу (контракт в doc-comment модели) |
@@ -102,8 +107,12 @@ XIRR), дата погашения прошла, а выплаты нет — н
 `Analytics/*` (cost basis, сравнение/замена `SwitchAnalysisService`, аллокация/корзина, what-if,
 налог продажи `SaleTaxEstimator`, RV `RelativeValueService`, бакеты — `DurationBucketClassifier`).
 Правило сравнимости доходностей: floater/indexed/dataIncomplete — «вне сравнения»
-(`YieldComparability.IsComparable`). Порог отклонения спреда (RV-вердикт и риск-сигнал кандидата) —
-одна константа `SpreadThresholds.DeviationFraction` (0.0020 = 20 б.п.). Ставка комиссии — ТОЛЬКО через
+(`YieldComparability.IsComparable`). Порог отклонения спреда (RV-вердикт и ось спреда
+светофора) — `SpreadThresholds.ForBasket(P25, P75)` = max(`DeviationFraction` 0.0020 = 20 б.п., `IqrMultiplier` 0.25 × IQR корзины);
+вердикт `RelativeValueService.ResolveVerdict` при Confidence Low (откат на «весь рынок») — `InsufficientData`, не Cheap/Rich.
+Ликвидность (`LiquidityScoreCalculator`) считается по МЕДИАНЕ оборота за 5 торговых дней из `bond_universe_history`
+(`RelativeValueSnapshot.LiquidityTurnoverRub`, fallback — сегодняшний VALTODAY; всегда через `AnalyticsSupport.AssessEntryLiquidity`,
+а не с `entry.TurnoverRub` напрямую); отсутствие bid/offer не даёт Low при живом обороте (High требует известного узкого спреда). Ставка комиссии — ТОЛЬКО через
 `ICommissionRateProvider` (override → оценка из журнала → дефолт), не константа.
 
 ## Тесты
@@ -150,7 +159,16 @@ Single-user, один счёт. Т-Invest токен — read-only секрет:
 хранится шифрованным (DataProtection, ключи на volume). Все аналитики — «оценки, не
 инвестрекомендации»: дисклеймеры обязательны (`components/Disclaimer.tsx`), формулировки
 «кандидат/оценка», не «купите». Двухъярусная архитектура данных: банк (`bond_universe`) —
-дешёвая статистика MOEX для ранжирования; точный движок — по требованию через
+дешёвая статистика MOEX для ранжирования (биржевые G-/Z-спред, эффективная доходность и НКД —
+блок ISS `marketdata_yields`; внутри кода спред банка читать ТОЛЬКО через
+`BondUniverseEntry.EffectiveGspreadFraction` = биржевой ?? наше приближение по кривой,
+источник — `GspreadSource` "moex"/"approx"; DTO-поле `gspreadApproxFraction` историческое имя,
+наполняется эффективным); эмитент выпуска (`emitent_id/inn/title`) — отдельный суточный UPDATE из bulk-справочника ISS
+(`UniverseEmitentEnricher`, часовой upsert снимка эти колонки не трогает); карточки бумаг (флаги
+`HASDEFAULT`/`HASTECHNICALDEFAULT`, квал-инвесторы, бенчмарк купона) — персистентный кэш
+`security_details` (`SecurityDetailsRepository`, наполняет `SecurityDetailsEnricher` по 200 бумаг в сутки:
+портфель/watchlist → банк без карточки → старше 30 дней); флаги `null` = «неизвестно», НЕ «нет»; дефолт-история
+эмитента — `GetEmitentDefaultHistoryAsync` (потребители — светофор, задача 46); точный движок — по требованию через
 `POST /api/universe/{secid}/materialize` (единый путь обогащения —
 `InstrumentEnrichmentService`).
 

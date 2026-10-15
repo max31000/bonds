@@ -15,6 +15,12 @@ namespace Bonds.Core.Models;
 /// разделено на 365). <see cref="PricePercent"/>/<see cref="BidPercent"/>/<see cref="OfferPercent"/> —
 /// % от номинала, КАК ПРИШЛИ от MOEX (суффикс _percent — не переведены в доли/рубли).
 /// </para>
+/// <para>
+/// <b>Биржевые расчёты (задача 42, блок ISS <c>marketdata_yields</c>):</b>
+/// <see cref="EffectiveYieldFraction"/>/<see cref="YieldToOfferFraction"/> — ДОЛИ (MOEX отдаёт %, ÷100);
+/// <see cref="GspreadOfficialFraction"/>/<see cref="ZspreadOfficialFraction"/> — ДОЛИ (MOEX отдаёт
+/// базисные пункты, ÷10000: 35 б.п. = 0.0035); <see cref="AccruedRub"/> — РУБЛИ на одну бумагу.
+/// </para>
 /// </summary>
 public class BondUniverseEntry
 {
@@ -66,6 +72,63 @@ public class BondUniverseEntry
     /// <c>BondUniverseRefreshService</c>. Null, если кривая/дюрация недоступны.
     /// </summary>
     public decimal? GspreadApproxFraction { get; set; }
+
+    /// <summary>Задача 42: НКД в РУБЛЯХ на одну бумагу (MOEX ACCRUEDINT). Null — биржа не отдала
+    /// (старый снимок до миграции 017 или бумага без данных); потребители трактуют как "НКД неизвестен".</summary>
+    public decimal? AccruedRub { get; set; }
+
+    /// <summary>Задача 42: объём выпуска, штук бумаг (MOEX ISSUESIZE).</summary>
+    public long? IssueSize { get; set; }
+
+    /// <summary>Задача 42: эффективная доходность по расчёту биржи, ДОЛЯ (MOEX EFFECTIVEYIELD в % ÷ 100).</summary>
+    public decimal? EffectiveYieldFraction { get; set; }
+
+    /// <summary>Задача 42: доходность к оферте по расчёту биржи, ДОЛЯ (MOEX YIELDTOOFFER в % ÷ 100).
+    /// Null — оферты нет или биржа не посчитала.</summary>
+    public decimal? YieldToOfferFraction { get; set; }
+
+    /// <summary>Задача 42: к какой дате биржа считает доходность — "MATDATE" (к погашению), "OFFER"
+    /// (к оферте) и т.п., строка как отдаёт MOEX (YIELDDATETYPE).</summary>
+    public string? YieldDateType { get; set; }
+
+    /// <summary>Задача 42: G-спред, посчитанный БИРЖЕЙ, ДОЛЯ (MOEX GSPREADBP в б.п. ÷ 10000:
+    /// 35 б.п. = 0.0035). Null — биржа не посчитала (нет сделок/нет строки marketdata_yields).</summary>
+    public decimal? GspreadOfficialFraction { get; set; }
+
+    /// <summary>Задача 42: Z-спред, посчитанный БИРЖЕЙ, ДОЛЯ (MOEX ZSPREADBP в б.п. ÷ 10000).</summary>
+    public decimal? ZspreadOfficialFraction { get; set; }
+
+    /// <summary>Задача 43: идентификатор эмитента в справочнике MOEX (emitent_id bulk-справочника ISS).
+    /// Null — биржа не отдала эмитента либо суточное обогащение ещё не отрабатывало. НЕ пишется
+    /// часовым upsert снимка — заполняется отдельным суточным шагом.</summary>
+    public int? EmitentId { get; set; }
+
+    /// <summary>Задача 43: ИНН эмитента (строка, ведущие нули значимы). Ключ для будущей связки с отчётностью.</summary>
+    public string? EmitentInn { get; set; }
+
+    /// <summary>Задача 43: название эмитента как в справочнике MOEX.</summary>
+    public string? EmitentTitle { get; set; }
+
+    /// <summary>
+    /// Биржевой G-спред, при его отсутствии — наше приближение по сохранённой кривой
+    /// (<see cref="GspreadApproxFraction"/>). ДОЛЯ. Единственное значение спреда, которое должны
+    /// читать потребители банка (RV-корзины, риск-сигналы кандидатов, скринер): иначе в одной
+    /// корзине смешиваются два способа расчёта. Источник значения — <see cref="GspreadSource"/>.
+    /// </summary>
+    public decimal? EffectiveGspreadFraction => GspreadOfficialFraction ?? GspreadApproxFraction;
+
+    /// <summary>Откуда взято <see cref="EffectiveGspreadFraction"/>: <see cref="GspreadSourceMoex"/>,
+    /// <see cref="GspreadSourceApprox"/> или null (спреда нет вовсе).</summary>
+    public string? GspreadSource =>
+        GspreadOfficialFraction is not null ? GspreadSourceMoex
+        : GspreadApproxFraction is not null ? GspreadSourceApprox
+        : null;
+
+    /// <summary>Значение <see cref="GspreadSource"/>: спред посчитала биржа.</summary>
+    public const string GspreadSourceMoex = "moex";
+
+    /// <summary>Значение <see cref="GspreadSource"/>: наше приближение по последней сохранённой кривой.</summary>
+    public const string GspreadSourceApprox = "approx";
 
     /// <summary>Эвристика по BONDTYPE ISS ("Флоатер") — см. <c>MoexSecurityInfo.LooksLikeFloater</c>.
     /// Null, если распознать не удалось (BONDTYPE отсутствует в ответе).</summary>

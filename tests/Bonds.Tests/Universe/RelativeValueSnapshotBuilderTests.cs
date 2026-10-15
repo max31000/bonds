@@ -124,6 +124,86 @@ public class RelativeValueSnapshotBuilderTests
         snapshot.BasketStats[key].Median.Should().Be(0.03m, "однодневный выброс не должен исказить медиану медиан");
     }
 
+    /// <summary>
+    /// Задача 42: корзины строятся по ЭФФЕКТИВНОМУ спреду — биржевой побеждает приближённый (и в
+    /// текущем снимке, и в истории), для старых строк истории без effective-колонки берётся approx.
+    /// </summary>
+    [Fact]
+    public async Task GetSnapshotAsync_BasketMedian_UsesEffectiveSpread_OfficialOverApprox_LegacyHistoryFallsBack()
+    {
+        var a = Entry("A"); a.GspreadOfficialFraction = 0.0010m; a.GspreadApproxFraction = 0.9m;
+        var b = Entry("B"); b.GspreadOfficialFraction = 0.0030m; b.GspreadApproxFraction = 0.9m;
+        var c = Entry("C"); c.GspreadOfficialFraction = null; c.GspreadApproxFraction = 0.0020m;
+        _repo.Setup(r => r.GetAllAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new List<BondUniverseEntry> { a, b, c });
+
+        // Без истории — корпус строится из текущего снимка: [0.001, 0.003, 0.002] → медиана 0.002.
+        _repo.Setup(r => r.GetRecentHistoryAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<BondUniverseHistoryPoint>());
+        var snapshot = await BuildSut().GetSnapshotAsync();
+        var key = new Bonds.Core.Analytics.RelativeValueService.BasketKey { Sector = "Корпоративные", DurationBucket = "1–3 года" };
+        snapshot.BasketStats[key].Median.Should().Be(0.0020m);
+
+        // С историей: A, B — новые строки (effective заполнен, approx — мусор 0.9), C — старая строка (только approx).
+        _repo.Invocations.Clear();
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var history = new List<BondUniverseHistoryPoint>
+        {
+            new() { SnapshotDate = today, Secid = "A", DurationYears = 2m, GspreadEffectiveFraction = 0.0010m, GspreadApproxFraction = 0.9m },
+            new() { SnapshotDate = today, Secid = "B", DurationYears = 2m, GspreadEffectiveFraction = 0.0030m, GspreadApproxFraction = 0.9m },
+            new() { SnapshotDate = today, Secid = "C", DurationYears = 2m, GspreadEffectiveFraction = null, GspreadApproxFraction = 0.0020m },
+        };
+        _repo.Setup(r => r.GetRecentHistoryAsync(It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync(history);
+        var withHistory = await BuildSut().GetSnapshotAsync();
+        withHistory.BasketStats[key].Median.Should().Be(0.0020m);
+    }
+
+    /// <summary>
+    /// Задача 44: оборот для ликвидности — медиана за 5 торговых дней из истории (одним батчевым чтением,
+    /// без запроса на бумагу); для бумаги без истории — fallback на сегодняшний VALTODAY. Утренний
+    /// VALTODAY (мал) не меняет оценку.
+    /// </summary>
+    [Fact]
+    public async Task GetSnapshotAsync_MedianTurnover_FromHistoryBatch_WithFallbackToTodaysTurnover()
+    {
+        var withHistory = Entry("HIST"); withHistory.TurnoverRub = 40_000m; // утро: VALTODAY «на сейчас» мал
+        var noHistory = Entry("NEW"); noHistory.TurnoverRub = 777_000m;
+        _repo.Setup(r => r.GetAllAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new List<BondUniverseEntry> { withHistory, noHistory });
+
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var turnovers = new decimal?[] { 250_000_000m, 300_000_000m, null, 200_000_000m, 320_000_000m };
+        var history = turnovers
+            .Select((t, i) => new BondUniverseHistoryPoint
+            {
+                SnapshotDate = today.AddDays(-i), Secid = "HIST", DurationYears = 2m, GspreadApproxFraction = 0.01m, TurnoverRub = t,
+            })
+            .ToList();
+        _repo.Setup(r => r.GetRecentHistoryAsync(It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync(history);
+
+        var snapshot = await BuildSut().GetSnapshotAsync();
+
+        // Медиана 4 непустых значений (200, 250, 300, 320 млн) = (250+300)/2 = 275 млн.
+        snapshot.LiquidityTurnoverRub(withHistory).Should().Be(275_000_000m);
+        snapshot.LiquidityTurnoverRub(noHistory).Should().Be(777_000m, "истории по бумаге нет — сегодняшний VALTODAY");
+        _repo.Verify(r => r.GetRecentHistoryAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Once, "одно батчевое чтение на всех, без N+1");
+    }
+
+    [Fact]
+    public async Task GetSnapshotAsync_MedianTurnover_IncludesHygieneHiddenSecids()
+    {
+        // Скрытая гигиеной бумага (листинг 3) всё равно получает медиану — ликвидность считается и для скрытых строк скринера.
+        var hidden = Entry("HIDDEN", listLevel: 3);
+        _repo.Setup(r => r.GetAllAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new List<BondUniverseEntry> { hidden });
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        _repo.Setup(r => r.GetRecentHistoryAsync(It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync(new List<BondUniverseHistoryPoint>
+        {
+            new() { SnapshotDate = today, Secid = "HIDDEN", TurnoverRub = 9_000_000m },
+        });
+
+        var snapshot = await BuildSut().GetSnapshotAsync();
+
+        snapshot.LiquidityTurnoverRub(hidden).Should().Be(9_000_000m);
+    }
+
     [Fact]
     public async Task GetSnapshotAsync_CachesResult_DoesNotHitRepositoryTwiceWithinCacheWindow()
     {

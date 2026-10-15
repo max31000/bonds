@@ -44,11 +44,10 @@ import type {
 const REPLACEMENT_HORIZON_YEARS = 2;
 
 /**
- * Окно фильтра «похожая дюрация» на кандидатах — ТО ЖЕ значение, что бэкенд
- * использует для «сравнимых» пар дюраций в матрице замен (см.
- * `ReplacementMatrixService.ComparableDurationWindowYears`,
- * src/Bonds.Core/Analytics/ReplacementMatrixService.cs:65). Продублировано константой здесь —
- * фильтрация клиентская, по уже загруженному списку кандидатов, отдельного эндпоинта нет.
+ * Окно фильтра «похожая дюрация» на кандидатах, ГОДЫ (±1.5 г.). Фильтрация клиентская, по уже
+ * загруженному списку кандидатов, отдельного эндпоинта нет. Сравниваются дюрации МАКОЛЕЯ с обеих
+ * сторон: `candidate.durationYears` — MOEX DURATION банка (= Маколей), `holdDurationYears` —
+ * `ComparisonRow.macaulayDurationYears` позиции (не модифицированная — другая мера).
  */
 const ComparableDurationWindowYears = 1.5;
 
@@ -133,7 +132,8 @@ const MODE_OPTIONS: { label: string; value: ReplacementCandidatesMode | 'search'
  * непосредственно под строкой выбранного кандидата (было — после всего списка).
  * Отказ GET /replacement-candidates не роняет карточку/страницу — просто показывает ошибку в панели.
  * <para><b>holdDurationYears</b> — дюрация заменяемой позиции
- * (<c>ComparisonRow.modifiedDuration</c>), нужна фильтру «похожая дюрация» для окна вокруг неё.</para>
+ * (<c>ComparisonRow.macaulayDurationYears</c> — Маколей, как и у кандидатов банка), нужна фильтру
+ * «похожая дюрация» для окна вокруг неё.</para>
  */
 function ReplacementPanel({
   holdPositionId,
@@ -454,7 +454,7 @@ function WeakPositionCard({ row, reasons }: { row: ComparisonRow; reasons: { kin
       </UnstyledButton>
       <Collapse expanded={expanded}>
         <div style={{ marginTop: 8 }}>
-          {expanded && <ReplacementPanel holdPositionId={row.positionId} holdDurationYears={row.modifiedDuration} />}
+          {expanded && <ReplacementPanel holdPositionId={row.positionId} holdDurationYears={row.macaulayDurationYears} />}
         </div>
       </Collapse>
     </Paper>

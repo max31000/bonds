@@ -76,6 +76,9 @@ public static class DependencyInjection
         // Банк облигаций MOEX — снимок всей рыночной вселенной + дневная история.
         services.AddScoped<IBondUniverseRepository>(sp => new BondUniverseRepository(GetConnStr(sp)));
 
+        // Задача 43: персистентный кэш карточек бумаг MOEX (флаги дефолтов и т.п.).
+        services.AddScoped<ISecurityDetailsRepository>(sp => new SecurityDetailsRepository(GetConnStr(sp)));
+
         // Migration runner
         services.AddSingleton(sp => new MigrationRunner(
             GetConnStr(sp),
@@ -193,6 +196,9 @@ public static class DependencyInjection
         // позиций/watchlist), раз в час в торговые часы + дневная история для трендов.
         services.Configure<Bonds.Infrastructure.Universe.BondUniverseRefreshOptions>(configuration.GetSection("BondUniverse"));
         services.AddHostedService<Bonds.Infrastructure.Universe.BondUniverseRefreshService>();
+        // Задача 43: суточные шаги обогащения банка (резолвятся из scope тика BondUniverseRefreshService).
+        services.AddScoped<Bonds.Infrastructure.Universe.UniverseEmitentEnricher>();
+        services.AddScoped<Bonds.Infrastructure.Universe.SecurityDetailsEnricher>();
 
         // Сглаженная (медиана дневных медиан за 5 торговых дней) статистика
         // корзин relative value + кэш ~1 час в памяти — Singleton (кэш переживает HTTP-запросы),

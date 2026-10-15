@@ -629,6 +629,7 @@ describe('Positions', () => {
                 positionId: basePosition.positionId,
                 basket: { sector: 'ОФЗ', durationBucket: '3–5 лет', count: 8, confidence: 'High' },
                 deviationFraction: -0.0038,
+                thresholdFraction: 0.002,
                 percentile: 5,
                 verdict: 'Rich',
                 basedOnDays: 5,
@@ -646,6 +647,38 @@ describe('Positions', () => {
         expect(screen.getByTestId(`relative-value-compact-${basePosition.positionId}`)).toBeInTheDocument(),
       );
       expect(screen.getByTestId(`relative-value-compact-${basePosition.positionId}`)).toHaveTextContent('дорогая');
+    });
+
+    it('shows a gray "мало данных" indicator for an InsufficientData verdict (task 44)', async () => {
+      server.use(
+        http.get('*/api/positions', () => HttpResponse.json({ positions: [basePosition], disclaimer: '' })),
+        http.get('*/api/analytics/relative-value', () =>
+          HttpResponse.json({
+            positions: [
+              {
+                positionId: basePosition.positionId,
+                basket: { sector: 'Весь рынок', durationBucket: 'Весь рынок', count: 300, confidence: 'Low' },
+                deviationFraction: -0.05,
+                thresholdFraction: 0.002,
+                percentile: 3,
+                verdict: 'InsufficientData',
+                basedOnDays: 5,
+                cheapCandidates: [],
+              },
+            ],
+            disclaimer: '',
+          }),
+        ),
+      );
+
+      renderPositions();
+
+      await waitFor(() =>
+        expect(screen.getByTestId(`relative-value-compact-${basePosition.positionId}`)).toBeInTheDocument(),
+      );
+      const indicator = screen.getByTestId(`relative-value-compact-${basePosition.positionId}`);
+      expect(indicator).toHaveTextContent('мало данных');
+      expect(indicator).not.toHaveTextContent('дорогая');
     });
 
     it('does not crash the positions table when GET /api/analytics/relative-value fails', async () => {
@@ -670,6 +703,7 @@ describe('Positions', () => {
                 positionId: basePosition.positionId,
                 basket: { sector: 'ОФЗ', durationBucket: '3–5 лет', count: 8, confidence: 'High' },
                 deviationFraction: 0.0001,
+                thresholdFraction: 0.002,
                 percentile: 50,
                 verdict: 'Fair',
                 basedOnDays: 5,

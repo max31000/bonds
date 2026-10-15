@@ -54,6 +54,18 @@ public class PositionComparisonServiceTests
     }
 
     [Fact]
+    public void Compare_ExposesMacaulayDurationYears_NextToModified()
+    {
+        // Задача 44: фронт сравнивает Маколея с Маколеем (банк хранит MOEX DURATION = Маколей).
+        var holding = Holding(1, ytm: 0.12m, duration: 2.8m) with { MacaulayDuration = 3.1m };
+
+        var row = PositionComparisonService.Compare(new[] { holding }, AsOf).Rows.Single();
+
+        row.MacaulayDurationYears.Should().Be(3.1m);
+        row.ModifiedDuration.Should().Be(2.8m);
+    }
+
+    [Fact]
     public void Compare_Floater_UsesCurrentYieldNotYtm()
     {
         var holdings = new[] { Holding(1, ytm: null, currentYield: 0.09m, isFloater: true) };

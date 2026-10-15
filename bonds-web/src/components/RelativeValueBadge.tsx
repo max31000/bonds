@@ -8,6 +8,21 @@ const CONFIDENCE_LABEL: Record<string, string> = {
   Low: 'низкая надёжность (весь рынок)',
 };
 
+/** Общий хвост тултипа: корзина, порог, перцентиль, надёжность, глубина истории. Порог — ДОЛЯ
+ * (formatBp ×10000 один раз): max(20 б.п., 0.25 × IQR корзины). */
+function buildTooltipParts(rv: RelativeValuePosition): string[] {
+  return [
+    `Корзина: ${rv.basket.sector}, ${rv.basket.durationBucket} (${rv.basket.count} бумаг)`,
+    `Порог вердикта: ±${formatBp(rv.thresholdFraction)}`,
+    `Перцентиль в корзине: ${rv.percentile}`,
+    `Надёжность оценки: ${CONFIDENCE_LABEL[rv.basket.confidence] ?? rv.basket.confidence}`,
+    rv.basedOnDays > 0 ? `Оценка по ${rv.basedOnDays} дн. истории` : 'Оценка по последнему снимку рынка (истории пока мало)',
+  ];
+}
+
+const INSUFFICIENT_DATA_HINT =
+  'Мало сопоставимых бумаг в корзине и секторе (оценка по всему рынку) — вердикт «дёшево/дорого» не выдаётся.';
+
 /**
  * Компактный RV-бейдж: «дорогая: −38 б.п. к корзине» (оранжевый) / «дешёвая:
  * +25 б.п.» (зелёный) / ничего при Fair (verdict в пределах порога — не заслуживает бейджа, план
@@ -18,19 +33,27 @@ const CONFIDENCE_LABEL: Record<string, string> = {
 export function RelativeValueBadge({ rv }: { rv: RelativeValuePosition }) {
   if (rv.verdict === 'Fair') return null;
 
+  if (rv.verdict === 'InsufficientData') {
+    return (
+      <Tooltip label={[INSUFFICIENT_DATA_HINT, ...buildTooltipParts(rv)].join('. ')} multiline w={280} withArrow>
+        <Badge size="sm" color="gray" variant="light" data-testid={`relative-value-badge-${rv.positionId}`}>
+          мало данных
+        </Badge>
+      </Tooltip>
+    );
+  }
+
   const isRich = rv.verdict === 'Rich';
   // deviationFraction уже несёт знак (отрицательное — Rich, положительное — Cheap) — formatBp
   // рисует его как есть (Math.round даёт "-38 б.п."/"25 б.п."), явный "+" добавляем только для Cheap.
+  // Medium confidence — сравнение со всем сектором (родная корзина сектор×дюрация мала): вердикт
+  // выдаётся, но бейдж честно помечается «по сектору».
+  const sectorSuffix = rv.basket.confidence === 'Medium' ? ' · по сектору' : '';
   const label = isRich
-    ? `дорогая: ${formatBp(rv.deviationFraction)}`
-    : `дешёвая: +${formatBp(rv.deviationFraction)}`;
+    ? `дорогая: ${formatBp(rv.deviationFraction)}${sectorSuffix}`
+    : `дешёвая: +${formatBp(rv.deviationFraction)}${sectorSuffix}`;
 
-  const tooltipLabel = [
-    `Корзина: ${rv.basket.sector}, ${rv.basket.durationBucket} (${rv.basket.count} бумаг)`,
-    `Перцентиль в корзине: ${rv.percentile}`,
-    `Надёжность оценки: ${CONFIDENCE_LABEL[rv.basket.confidence] ?? rv.basket.confidence}`,
-    rv.basedOnDays > 0 ? `Оценка по ${rv.basedOnDays} дн. истории` : 'Оценка по последнему снимку рынка (истории пока мало)',
-  ].join('. ');
+  const tooltipLabel = buildTooltipParts(rv).join('. ');
 
   return (
     <Tooltip label={tooltipLabel} multiline w={280} withArrow>
@@ -55,13 +78,20 @@ export function RelativeValueBadge({ rv }: { rv: RelativeValuePosition }) {
 export function CompactRelativeValueIndicator({ rv }: { rv: RelativeValuePosition | undefined }) {
   if (!rv || rv.verdict === 'Fair') return null;
 
+  if (rv.verdict === 'InsufficientData') {
+    return (
+      <Tooltip label={[INSUFFICIENT_DATA_HINT, ...buildTooltipParts(rv)].join('. ')} multiline w={280} withArrow>
+        <Badge size="sm" color="gray" variant="outline" data-testid={`relative-value-compact-${rv.positionId}`}>
+          мало данных
+        </Badge>
+      </Tooltip>
+    );
+  }
+
   const isRich = rv.verdict === 'Rich';
   const tooltipLabel = [
     isRich ? `Дорогая: ${formatBp(rv.deviationFraction)} к медиане корзины` : `Дешёвая: +${formatBp(rv.deviationFraction)} к медиане корзины`,
-    `Корзина: ${rv.basket.sector}, ${rv.basket.durationBucket} (${rv.basket.count} бумаг)`,
-    `Перцентиль в корзине: ${rv.percentile}`,
-    `Надёжность оценки: ${CONFIDENCE_LABEL[rv.basket.confidence] ?? rv.basket.confidence}`,
-    rv.basedOnDays > 0 ? `Оценка по ${rv.basedOnDays} дн. истории` : 'Оценка по последнему снимку рынка (истории пока мало)',
+    ...buildTooltipParts(rv),
   ].join('. ');
 
   return (

@@ -169,6 +169,49 @@ public class CandidateRiskSignalServiceTests
         signals.Spread.Should().Be(SignalLevel.Neutral);
     }
 
+    // ─── Задача 44: порог оси спреда от IQR корзины; подпись «тонкий стакан» vs «стакан не виден» ──
+
+    [Fact]
+    public void AssessSpread_WithWideBasketThreshold_FortyBpDeviationIsNeutral_NotCaution()
+    {
+        // Плоский порог 20 б.п. дал бы Caution на +40 б.п.; в широкой корзине порог 50 б.п. → Neutral.
+        CandidateRiskSignalService.AssessSpread(0.0240m, 0.0200m).Should().Be(SignalLevel.Caution);
+        CandidateRiskSignalService.AssessSpread(0.0240m, 0.0200m, thresholdFraction: 0.0050m).Should().Be(SignalLevel.Neutral);
+        CandidateRiskSignalService.AssessSpread(0.0260m, 0.0200m, thresholdFraction: 0.0050m).Should().Be(SignalLevel.Caution);
+        CandidateRiskSignalService.AssessSpread(0.0140m, 0.0200m, thresholdFraction: 0.0050m).Should().Be(SignalLevel.Good);
+    }
+
+    [Fact]
+    public void AssessLiquidity_Labels_DistinguishThinBookFromBookNotVisible()
+    {
+        CandidateRiskSignalService.AssessLiquidity(LiquidityScore.Low, 1, bookSpreadFraction: 0.021m).Label
+            .Should().Be("Низкая ликвидность, тонкий стакан 2.1%, листинг 1");
+
+        CandidateRiskSignalService.AssessLiquidity(LiquidityScore.Medium, 1, bookSpreadFraction: null, bookMissing: true).Label
+            .Should().Be("Средняя ликвидность, стакан не виден в снимке, листинг 1");
+
+        CandidateRiskSignalService.AssessLiquidity(LiquidityScore.Low, null, bookSpreadFraction: null, bookMissing: true).Label
+            .Should().Be("Низкий оборот, стакан не виден в снимке");
+
+        CandidateRiskSignalService.AssessLiquidity(LiquidityScore.Medium, 2, bookSpreadFraction: 0.01m).Label
+            .Should().Be("Средняя ликвидность, листинг 2", "известный нормальный спред — подпись без пометок");
+    }
+
+    [Fact]
+    public void Assess_LiquidBondWithoutBook_IsNotCautionOnLiquidityAxis()
+    {
+        // Раньше оборот 300 млн без стакана → Low → Caution → Red. Теперь Medium → Neutral (листинг 1).
+        var liquidity = Bonds.Core.Universe.LiquidityScoreCalculator.Assess(300_000_000m, null, null, null);
+
+        var signals = CandidateRiskSignalService.Assess(
+            liquidity.Score, listLevel: 1, gSpreadFraction: 0.03m, basketMedianGSpreadFraction: 0.03m,
+            spreadThresholdFraction: 0.002m, bookSpreadFraction: liquidity.BookSpreadFraction, bookMissing: true);
+
+        signals.Liquidity.Should().Be(SignalLevel.Neutral);
+        signals.LiquidityLabel.Should().Contain("стакан не виден");
+        CandidateRiskSignalService.Aggregate(signals, 1, "Корпоративные").Level.Should().Be(ReliabilityLight.Green);
+    }
+
     // ─── Aggregate — светофор надёжности (задача 38 часть A.1) ─────────────────────────────────
     //
     // Матрица (см. doc-comment CandidateRiskSignalService.Aggregate): Red — любой Caution (спред

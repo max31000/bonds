@@ -47,6 +47,7 @@ const weakRow = {
   effectiveYield: 0.08,
   yieldKind: 'Ytm' as const,
   modifiedDuration: 2,
+  macaulayDurationYears: 2.3,
   gSpread: 50,
   daysToHorizon: 30,
   horizonDate: '2026-08-02',
@@ -64,6 +65,7 @@ const strongRow = {
   effectiveYield: 0.16,
   yieldKind: 'Ytm' as const,
   modifiedDuration: 2.2,
+  macaulayDurationYears: 2.5,
   gSpread: 150,
   daysToHorizon: 900,
   horizonDate: '2028-12-01',
@@ -81,6 +83,7 @@ const floaterRow = {
   effectiveYield: 0.1,
   yieldKind: 'CurrentYield' as const,
   modifiedDuration: null,
+  macaulayDurationYears: null,
   gSpread: null,
   daysToHorizon: 500,
   horizonDate: '2027-11-01',
@@ -120,8 +123,8 @@ const redSignals: RiskSignals = {
   reliabilityReason: 'Красный: ликвидность/листинг в зоне риска (сигнал Caution).',
 };
 
-// weakRow.modifiedDuration = 2 — окно фильтра «похожая дюрация» ±1.5 года даёт
-// [0.5, 3.5]. MKT001 (1.5) и MKT002 (3.4) — внутри окна, MKT003 (6) — вне, MKT004 (null) — без
+// weakRow.macaulayDurationYears = 2.3 (modifiedDuration = 2) — окно фильтра «похожая дюрация»
+// ±1.5 года считается от МАКОЛЕЯ (как у кандидатов банка) и даёт [0.8, 3.8]. MKT001 (1.5) и MKT002 (3.4) — внутри окна, MKT003 (6) — вне, MKT004 (null) — без
 // дюрации (скрывается при включённом фильтре независимо от окна).
 const marketCandidatesResponse: ReplacementCandidatesResponse = {
   mode: 'market',
@@ -600,7 +603,7 @@ describe('Recommendations', () => {
     expect(screen.getByTestId('replace-candidate-MKT004')).toBeInTheDocument();
     expect(screen.queryByTestId('replace-duration-filter-count-1')).not.toBeInTheDocument();
 
-    // weakRow.modifiedDuration=2, окно ±1.5 -> [0.5, 3.5]: MKT001(1.5)/MKT002(3.4) внутри,
+    // weakRow.macaulayDurationYears=2.3, окно ±1.5 -> [0.8, 3.8]: MKT001(1.5)/MKT002(3.4) внутри,
     // MKT003(6) снаружи, MKT004(null) скрыт независимо от окна.
     fireEvent.click(screen.getByTestId('replace-duration-filter-1'));
 
@@ -609,6 +612,94 @@ describe('Recommendations', () => {
     expect(screen.getByTestId('replace-candidate-MKT002')).toBeInTheDocument();
     expect(screen.queryByTestId('replace-candidate-MKT003')).not.toBeInTheDocument();
     expect(screen.queryByTestId('replace-candidate-MKT004')).not.toBeInTheDocument();
+  });
+
+  it('duration filter window is centred on the position Macaulay duration, not the modified one (task 44)', async () => {
+    // Маколей 4.0 / modified 2.0: окно ±1.5 от Маколея = [2.5, 5.5] -> MKT002 (3.4) внутри,
+    // MKT001 (1.5) снаружи. Если бы окно строилось от modified (2.0 -> [0.5, 3.5]), картина была бы обратной.
+    server.use(
+      http.get('*/api/analytics/comparison', () =>
+        HttpResponse.json({
+          ...baseComparison,
+          rows: [{ ...weakRow, modifiedDuration: 2, macaulayDurationYears: 4 }, strongRow, floaterRow],
+        }),
+      ),
+    );
+
+    renderRecommendations();
+
+    await waitFor(() => expect(screen.getByTestId('sell-candidate-1')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('replace-toggle-1'));
+    await waitFor(() => expect(screen.getByTestId('replace-candidate-MKT001')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByTestId('replace-duration-filter-1'));
+
+    await waitFor(() => expect(screen.queryByTestId('replace-candidate-MKT001')).not.toBeInTheDocument());
+    expect(screen.getByTestId('replace-candidate-MKT002')).toBeInTheDocument();
+  });
+
+  it('hides the duration-filtered list when the position has no Macaulay duration (window undefined)', async () => {
+    server.use(
+      http.get('*/api/analytics/comparison', () =>
+        HttpResponse.json({
+          ...baseComparison,
+          rows: [{ ...weakRow, macaulayDurationYears: null }, strongRow, floaterRow],
+        }),
+      ),
+    );
+
+    renderRecommendations();
+
+    await waitFor(() => expect(screen.getByTestId('sell-candidate-1')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('replace-toggle-1'));
+    await waitFor(() => expect(screen.getByTestId('replace-candidate-MKT001')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('replace-duration-filter-1'));
+
+    await waitFor(() => expect(screen.getByTestId('replace-duration-filter-empty-1')).toBeInTheDocument());
+  });
+
+  it('renders a "мало данных" badge for an InsufficientData relative-value verdict (task 44)', async () => {
+    server.use(
+      http.get('*/api/analytics/relative-value', () =>
+        HttpResponse.json({
+          ...richRelativeValue,
+          positions: [
+            {
+              ...richRelativeValue.positions[0],
+              basket: { sector: 'Весь рынок', durationBucket: 'Весь рынок', count: 400, confidence: 'Low' },
+              verdict: 'InsufficientData',
+            },
+          ],
+        }),
+      ),
+    );
+
+    renderRecommendations();
+
+    await waitFor(() => expect(screen.getByTestId('relative-value-badge-1')).toBeInTheDocument());
+    expect(screen.getByTestId('relative-value-badge-1').textContent).toMatch(/мало данных/);
+    expect(screen.getByTestId('relative-value-badge-1').textContent).not.toMatch(/дорогая|дешёвая/);
+  });
+
+  it('marks a Medium-confidence verdict as "по сектору"', async () => {
+    server.use(
+      http.get('*/api/analytics/relative-value', () =>
+        HttpResponse.json({
+          ...richRelativeValue,
+          positions: [
+            {
+              ...richRelativeValue.positions[0],
+              basket: { sector: 'Корпоративные', durationBucket: 'Весь сектор', count: 20, confidence: 'Medium' },
+            },
+          ],
+        }),
+      ),
+    );
+
+    renderRecommendations();
+
+    await waitFor(() => expect(screen.getByTestId('relative-value-badge-1')).toBeInTheDocument());
+    expect(screen.getByTestId('relative-value-badge-1').textContent).toMatch(/дорогая.*по сектору/);
   });
 
   it('shows a friendly empty state when the duration filter leaves no candidates', async () => {
@@ -838,6 +929,7 @@ describe('Recommendations', () => {
         positionId: 1,
         basket: { sector: 'Корпоративные', durationBucket: '1–3 года', count: 7, confidence: 'High' },
         deviationFraction: -0.0038,
+        thresholdFraction: 0.002,
         percentile: 8,
         verdict: 'Rich',
         basedOnDays: 5,

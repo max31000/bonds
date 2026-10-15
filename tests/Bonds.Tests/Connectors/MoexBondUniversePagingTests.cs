@@ -40,12 +40,14 @@ public class MoexBondUniversePagingTests
     {
         private readonly Dictionary<int, string> _pagesByStart;
         public int RequestCount { get; private set; }
+        public List<string> RequestedUrls { get; } = [];
 
         public FakeUniverseHandler(Dictionary<int, string> pagesByStart) => _pagesByStart = pagesByStart;
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             RequestCount++;
+            RequestedUrls.Add(request.RequestUri!.PathAndQuery);
             var query = ParseQuery(request.RequestUri!.Query);
             var start = int.TryParse(query.GetValueOrDefault("start"), out var s) ? s : 0;
 
@@ -208,5 +210,19 @@ public class MoexBondUniversePagingTests
 
         handler.RequestCount.Should().Be(2, "вторая страница без новых (Secid, BoardId) должна остановить цикл");
         result.Should().HaveCount(1000, "повторные страницы не должны дублировать бумаги");
+    }
+
+    [Fact]
+    public async Task GetBondMarketSnapshotAsync_RequestsMarketdataYieldsBlock()
+    {
+        // Задача 42: блок marketdata_yields (биржевые G-/Z-спред, эффективная доходность) должен
+        // запрашиваться вместе с securities и marketdata одним запросом.
+        var pages = new Dictionary<int, string> { [0] = BuildPage([SecRow("RU000A", "TQCB")], []) };
+        var handler = new FakeUniverseHandler(pages);
+
+        await CreateClient(handler).GetBondMarketSnapshotAsync();
+
+        handler.RequestedUrls.Should().ContainSingle()
+            .Which.Should().Contain("iss.only=securities,marketdata,marketdata_yields");
     }
 }

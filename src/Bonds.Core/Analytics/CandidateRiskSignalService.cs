@@ -26,7 +26,7 @@ public enum SignalLevel
 /// <param name="LiquidityLabel">Человекочитаемая подпись, например "Высокая ликвидность, листинг 1"
 /// или "Низкий оборот, листинг 3" — без слова «надёжно».</param>
 /// <param name="Spread">Отклонение G-спреда кандидата от медианы ЕГО ЖЕ корзины (сектор × дюрация).</param>
-/// <param name="GSpreadFraction">ДОЛЯ; из <c>BondUniverseEntry.GspreadApproxFraction</c> кандидата.
+/// <param name="GSpreadFraction">ДОЛЯ; из <c>BondUniverseEntry.EffectiveGspreadFraction</c> кандидата (биржевой, при его отсутствии приближённый).
 /// Null, если MOEX не отдал спред/кривую (см. doc-comment поля источника) — тогда
 /// <see cref="Spread"/> = Neutral, а не Caution (нет данных ≠ негативный сигнал).</param>
 /// <param name="SpreadVsBasketMedianFraction">ДОЛЯ; = GSpreadFraction − медиана корзины кандидата.
@@ -82,7 +82,13 @@ public static class CandidateRiskSignalService
     /// null-данные не должны читаться как негативный сигнал.</item>
     /// </list>
     /// </summary>
-    public static (SignalLevel Level, string Label) AssessLiquidity(LiquidityScore liquidityScore, int? listLevel)
+    /// <param name="liquidityScore">Скор (по сглаженному обороту — задача 44).</param>
+    /// <param name="listLevel">Уровень листинга.</param>
+    /// <param name="bookSpreadFraction">Спред стакана, ДОЛЯ (0.021 = 2.1%); null — не передан/не виден.</param>
+    /// <param name="bookMissing">true — bid/offer отсутствуют в снимке («стакан не виден»); подпись это
+    /// различает с «тонким стаканом» (известный широкий спред). По умолчанию false — подпись как раньше.</param>
+    public static (SignalLevel Level, string Label) AssessLiquidity(
+        LiquidityScore liquidityScore, int? listLevel, decimal? bookSpreadFraction = null, bool bookMissing = false)
     {
         var baseLevel = liquidityScore switch
         {
@@ -96,7 +102,7 @@ public static class CandidateRiskSignalService
             ? StepTowardCaution(baseLevel)
             : baseLevel;
 
-        return (level, BuildLiquidityLabel(liquidityScore, listLevel));
+        return (level, BuildLiquidityLabel(liquidityScore, listLevel, bookSpreadFraction, bookMissing));
     }
 
     private static SignalLevel StepTowardCaution(SignalLevel level) => level switch
@@ -106,13 +112,24 @@ public static class CandidateRiskSignalService
         _ => SignalLevel.Caution,
     };
 
-    private static string BuildLiquidityLabel(LiquidityScore liquidityScore, int? listLevel)
+    /// <summary>Подпись ликвидности. Задача 44: различает «тонкий стакан 2.1%» (известный спред ≥ порога
+    /// Medium) и «стакан не виден в снимке» (bid/offer нет) — для тултипа UI. Процент в подписи =
+    /// <paramref name="bookSpreadFraction"/> × 100 (доля → проценты для человека, одна конверсия здесь).</summary>
+    private static string BuildLiquidityLabel(
+        LiquidityScore liquidityScore, int? listLevel, decimal? bookSpreadFraction, bool bookMissing)
     {
+        var thinBook = bookSpreadFraction is { } spread && spread >= LiquidityScoreCalculator.MediumSpreadThresholdFraction
+            ? $"тонкий стакан {(spread * 100m).ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)}%"
+            : null;
+        const string bookNotVisible = "стакан не виден в снимке";
+
         var liquidityPart = liquidityScore switch
         {
             LiquidityScore.High => "Высокая ликвидность",
-            LiquidityScore.Medium => "Средняя ликвидность",
-            LiquidityScore.Low => "Низкий оборот",
+            LiquidityScore.Medium => bookMissing ? $"Средняя ликвидность, {bookNotVisible}" : "Средняя ликвидность",
+            LiquidityScore.Low => thinBook is not null
+                ? $"Низкая ликвидность, {thinBook}"
+                : bookMissing ? $"Низкий оборот, {bookNotVisible}" : "Низкий оборот",
             _ => "Недостаточно данных по ликвидности",
         };
 
@@ -127,16 +144,21 @@ public static class CandidateRiskSignalService
     /// (MOEX не отдал спред/кривую или корзина не резолвится) → Neutral, оба значения в ответе null —
     /// план прямым текстом требует не путать "нет данных" с негативным сигналом.
     /// </summary>
-    public static SignalLevel AssessSpread(decimal? gSpreadFraction, decimal? basketMedianGSpreadFraction)
+    /// <param name="thresholdFraction">Порог корзины, ДОЛЯ (<see cref="SpreadThresholds.ForBasket"/> =
+    /// max(20 б.п., 0.25 × IQR) — задача 44, тот же порог, что RV-вердикт). null → нижняя планка
+    /// <see cref="SpreadThresholds.DeviationFraction"/>.</param>
+    public static SignalLevel AssessSpread(
+        decimal? gSpreadFraction, decimal? basketMedianGSpreadFraction, decimal? thresholdFraction = null)
     {
         if (gSpreadFraction is not { } gSpread || basketMedianGSpreadFraction is not { } median)
         {
             return SignalLevel.Neutral;
         }
 
+        var threshold = thresholdFraction ?? SpreadThresholds.DeviationFraction;
         var deviation = gSpread - median;
-        if (deviation > SpreadThresholds.DeviationFraction) return SignalLevel.Caution;
-        if (deviation < -SpreadThresholds.DeviationFraction) return SignalLevel.Good;
+        if (deviation > threshold) return SignalLevel.Caution;
+        if (deviation < -threshold) return SignalLevel.Good;
         return SignalLevel.Neutral;
     }
 
@@ -145,16 +167,20 @@ public static class CandidateRiskSignalService
     /// медиана ЕГО ЖЕ корзины (сектор × дюрация кандидата, НЕ позиции, для которой ищем замену) —
     /// вызывающий слой резолвит её через <see cref="RelativeValueService.ResolveBasket"/> по
     /// снимку <c>RelativeValueSnapshotBuilder</c> (переиспользование инфраструктуры корзин RV, план
-    /// часть A).
+    /// часть A). <paramref name="spreadThresholdFraction"/> — порог корзины (ДОЛЯ, задача 44);
+    /// <paramref name="bookSpreadFraction"/>/<paramref name="bookMissing"/> — для подписи ликвидности.
     /// </summary>
     public static CandidateRiskSignals Assess(
         LiquidityScore liquidityScore,
         int? listLevel,
         decimal? gSpreadFraction,
-        decimal? basketMedianGSpreadFraction)
+        decimal? basketMedianGSpreadFraction,
+        decimal? spreadThresholdFraction = null,
+        decimal? bookSpreadFraction = null,
+        bool bookMissing = false)
     {
-        var (liquidityLevel, liquidityLabel) = AssessLiquidity(liquidityScore, listLevel);
-        var spreadLevel = AssessSpread(gSpreadFraction, basketMedianGSpreadFraction);
+        var (liquidityLevel, liquidityLabel) = AssessLiquidity(liquidityScore, listLevel, bookSpreadFraction, bookMissing);
+        var spreadLevel = AssessSpread(gSpreadFraction, basketMedianGSpreadFraction, spreadThresholdFraction);
 
         // Отклонение считается только когда известны ОБА входа — если по какой-то причине известен
         // только спред кандидата, но не медиана его корзины (не должно происходить в норме — корзина

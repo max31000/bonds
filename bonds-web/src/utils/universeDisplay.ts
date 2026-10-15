@@ -1,4 +1,4 @@
-import type { UniverseHiddenReason, UniverseRow } from '../api/types';
+import type { GspreadSource, UniverseHiddenReason, UniverseRow } from '../api/types';
 
 /** Русская подпись бейджа ликвидности (LiquidityScore) — общая для MarketComparator (27) и Screener (28). */
 export function liquidityLabel(score: UniverseRow['liquidityScore']): string {
@@ -24,6 +24,18 @@ export function liquidityColor(score: UniverseRow['liquidityScore']): string {
       return 'red';
     default:
       return 'gray';
+  }
+}
+
+/** Подпись источника G-спреда банка (задача 42) для тултипа; null — спреда нет, подписывать нечего. */
+export function gspreadSourceLabel(source: GspreadSource | null | undefined): string | null {
+  switch (source) {
+    case 'moex':
+      return 'биржевой';
+    case 'approx':
+      return 'расчётный (по кривой)';
+    default:
+      return null;
   }
 }
 

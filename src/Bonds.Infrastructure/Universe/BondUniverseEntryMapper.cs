@@ -13,11 +13,25 @@ namespace Bonds.Infrastructure.Universe;
 /// MOEX DURATION приходит в ДНЯХ — здесь делится на 365 → ГОДЫ. Цены/bid/offer остаются в %
 /// от номинала как есть (суффикс _percent), НЕ переводятся в доли/рубли.
 /// </para>
+/// <para>
+/// Задача 42 (блок <c>marketdata_yields</c>): EFFECTIVEYIELD/YIELDTOOFFER приходят в ПРОЦЕНТАХ → ÷100;
+/// GSPREADBP/ZSPREADBP приходят в БАЗИСНЫХ ПУНКТАХ → ÷10000 (35 б.п. → 0.0035); ACCRUEDINT — рубли
+/// на одну бумагу, без конверсии. Отсутствие строки marketdata_yields даёт null во всех этих полях.
+/// </para>
 /// </summary>
 public static class BondUniverseEntryMapper
 {
     private const decimal DaysPerYear = 365m;
     private const decimal PercentToFraction = 100m;
+    private const decimal BasisPointsToFraction = 10_000m;
+
+    /// <summary>MOEX проценты → доля (÷100). Null → null.</summary>
+    private static decimal? PercentToFractionOrNull(decimal? percent) =>
+        percent.HasValue ? percent.Value / PercentToFraction : null;
+
+    /// <summary>MOEX базисные пункты → доля (÷10000: 35 б.п. = 0.0035). Null → null.</summary>
+    private static decimal? BasisPointsToFractionOrNull(decimal? bp) =>
+        bp.HasValue ? bp.Value / BasisPointsToFraction : null;
 
     /// <summary>
     /// Маппит одну строку + опциональную кривую (для приближённого G-спреда, часть C.3). Только
@@ -60,6 +74,13 @@ public static class BondUniverseEntryMapper
             OfferPercent = row.OfferPricePercent,
             NumTrades = row.NumTrades,
             GspreadApproxFraction = gspreadApprox,
+            AccruedRub = row.AccruedRub,
+            IssueSize = row.IssueSize,
+            EffectiveYieldFraction = PercentToFractionOrNull(row.EffectiveYieldPercent),
+            YieldToOfferFraction = PercentToFractionOrNull(row.YieldToOfferPercent),
+            YieldDateType = row.YieldDateType,
+            GspreadOfficialFraction = BasisPointsToFractionOrNull(row.GspreadBp),
+            ZspreadOfficialFraction = BasisPointsToFractionOrNull(row.ZspreadBp),
             IsFloater = row.BondType is null ? null : row.BondType.Contains("Флоатер", StringComparison.OrdinalIgnoreCase),
             UpdatedAt = DateTime.UtcNow,
         };

@@ -476,6 +476,9 @@ export interface ComparisonRow {
   effectiveYield: number | null;
   yieldKind: YieldKind;
   modifiedDuration: number | null;
+  /** Дюрация Маколея, ГОДЫ (задача 44) — единая мера для сравнения с корзинами/кандидатами банка
+   * (банк хранит MOEX DURATION = Маколей); modifiedDuration остаётся мерой чувствительности. */
+  macaulayDurationYears: number | null;
   gSpread: number | null;
   daysToHorizon: number;
   horizonDate: string;
@@ -591,7 +594,7 @@ export interface ReplacementCandidate {
   yieldFraction: number | null;
   /** Годы. */
   durationYears: number | null;
-  /** ДОЛЯ; приближённый G-спред банка. */
+  /** ДОЛЯ; G-спред банка: биржевой, а при его отсутствии приближённый по кривой. */
   gSpreadFraction: number | null;
   /** Дата оферты (ISO "2028-01-01"), если есть — доходность к оферте считается
    * движком на другом горизонте, чем к погашению. Null — оферты нет/не известна. */
@@ -867,6 +870,9 @@ export type UniverseHiddenReason =
   | 'MissingDurationOrPrice'
   | 'NearMaturity';
 
+/** Источник G-спреда строки банка (задача 42): `moex` — посчитан биржей, `approx` — наше приближение по кривой. */
+export type GspreadSource = 'moex' | 'approx';
+
 /** Одна строка банка облигаций — дешёвая биржевая статистика MOEX, НЕ точный движок (см. Disclaimer). */
 export interface UniverseRow {
   secid: string;
@@ -880,7 +886,24 @@ export interface UniverseRow {
   listLevel: number | null;
   liquidityScore: LiquidityScore;
   slippageEstimateFraction: number | null;
+  /**
+   * ДОЛЯ. G-спред банка. Имя поля историческое (бэкенд не переименовывали): с задачи 42 это
+   * ЭФФЕКТИВНЫЙ спред — биржевой (marketdata_yields), а при его отсутствии приближённый по кривой.
+   * Источник — {@link UniverseRow.gspreadSource}.
+   */
   gspreadApproxFraction: number | null;
+  /** Задача 42: откуда `gspreadApproxFraction` — `'moex'` посчитан биржей, `'approx'` наше приближение по кривой, `null` спреда нет. */
+  gspreadSource?: GspreadSource | null;
+  /** Задача 42: НКД, рубли на ОДНУ бумагу (MOEX ACCRUEDINT). null — неизвестен. */
+  accruedRub?: number | null;
+  /** Задача 42: объём выпуска, штук бумаг. */
+  issueSize?: number | null;
+  /** Задача 42: ДОЛЯ. Доходность к оферте по расчёту биржи; null — оферты нет. */
+  yieldToOfferFraction?: number | null;
+  /** Задача 43: название эмитента (справочник MOEX); null — биржа не отдала либо обогащение ещё не отработало. Только отображение. */
+  emitentTitle?: string | null;
+  /** Задача 43: ИНН эмитента (строка, ведущие нули значимы); null — неизвестен. */
+  emitentInn?: string | null;
   maturityDate: string | null;
   offerDate: string | null;
   isHidden: boolean;
@@ -1031,8 +1054,9 @@ export type RelativeValueConfidence = 'High' | 'Medium' | 'Low';
 
 /** Cheap — спред бумаги заметно ВЫШЕ медианы её корзины («дешёвая», недооценена рынком либо
  * закладывает риск); Rich — заметно НИЖЕ («дорогая», кандидат на пересмотр); Fair — в пределах
- * порога (не заслуживает бейджа). */
-export type RelativeValueVerdict = 'Cheap' | 'Fair' | 'Rich';
+ * порога (не заслуживает бейджа); InsufficientData — сопоставимых бумаг мало (откат на «весь рынок»,
+ * Confidence Low): вердикта нет (задача 44). */
+export type RelativeValueVerdict = 'Cheap' | 'Fair' | 'Rich' | 'InsufficientData';
 
 export interface RelativeValueBasket {
   sector: string;
@@ -1056,6 +1080,8 @@ export interface RelativeValuePosition {
   basket: RelativeValueBasket;
   /** ДОЛЯ (0.002 = 20 б.п.) — рисуется фронтом через formatBp. */
   deviationFraction: number;
+  /** ДОЛЯ (0.002 = 20 б.п.) — порог вердикта корзины: max(20 б.п., 0.25 × IQR корзины) (задача 44). */
+  thresholdFraction: number;
   /** Перцентиль внутри эффективной корзины, 0-100. */
   percentile: number;
   verdict: RelativeValueVerdict;

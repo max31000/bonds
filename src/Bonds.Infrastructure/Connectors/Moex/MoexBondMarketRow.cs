@@ -2,9 +2,10 @@ namespace Bonds.Infrastructure.Connectors.Moex;
 
 /// <summary>
 /// Одна строка снимка всей рыночной вселенной облигаций MOEX —
-/// <c>/iss/engines/stock/markets/bonds/securities.json?iss.only=securities,marketdata</c>,
-/// слитые по (SECID, BOARDID) строки блоков <c>securities</c> (справочные параметры выпуска) и
-/// <c>marketdata</c> (текущие котировки/доходность/дюрация). Единицы — КАК ПРИШЛИ ОТ MOEX
+/// <c>/iss/engines/stock/markets/bonds/securities.json?iss.only=securities,marketdata,marketdata_yields</c>,
+/// слитые по (SECID, BOARDID) строки блоков <c>securities</c> (справочные параметры выпуска),
+/// <c>marketdata</c> (текущие котировки/доходность/дюрация) и <c>marketdata_yields</c> (расчёты
+/// самой биржи: эффективная доходность, G-/Z-спред, тип даты доходности — задача 42). Единицы — КАК ПРИШЛИ ОТ MOEX
 /// (ещё не переведены в доли/годы этого сервиса) — конвертация в <see cref="BondUniverseEntry"/>
 /// происходит на уровне <c>BondUniverseRefreshService</c>/маппера репозитория, см. doc-comment там
 /// про YIELD (%→доля) и DURATION (дни→годы).
@@ -54,6 +55,16 @@ public sealed class MoexBondMarketRow
     /// <summary>"A" = торгуется, иные значения — не активна/погашается (колонка STATUS).</summary>
     public string? Status { get; init; }
 
+    /// <summary>НКД в РУБЛЯХ на ОДНУ бумагу (колонка ACCRUEDINT блока securities) — НЕ в процентах и не на
+    /// лот: у бумаги с номиналом 1000 и купоном ~35 ₽ значение 0–35 (проверено по живому ответу
+    /// 2026-10-15: SU26238RMFS4 → 26.26). Для валютных бумаг приходит в валюте номинала, но они
+    /// отфильтровываются выше по стеку (FACEUNIT).</summary>
+    public decimal? AccruedRub { get; init; }
+
+    /// <summary>Объём выпуска, штук бумаг (колонка ISSUESIZE блока securities) — целое, может
+    /// превышать int32, поэтому long.</summary>
+    public long? IssueSize { get; init; }
+
     // --- marketdata (может отсутствовать целиком, если строка нашлась только в securities) ---
 
     /// <summary>Доходность в ПРОЦЕНТАХ, как отдаёт MOEX (колонка YIELD) — НЕ доля. Null, если сделок не было.</summary>
@@ -71,4 +82,22 @@ public sealed class MoexBondMarketRow
     public decimal? BidPercent { get; init; }
     public decimal? OfferPricePercent { get; init; }
     public int? NumTrades { get; init; }
+
+    // --- marketdata_yields (расчёты биржи; нет строки для (SECID, BOARDID) — все поля null) ---
+
+    /// <summary>Эффективная доходность в ПРОЦЕНТАХ, как отдаёт MOEX (колонка EFFECTIVEYIELD) — НЕ доля.</summary>
+    public decimal? EffectiveYieldPercent { get; init; }
+
+    /// <summary>Доходность к оферте в ПРОЦЕНТАХ (колонка YIELDTOOFFER блока marketdata_yields) — НЕ доля.</summary>
+    public decimal? YieldToOfferPercent { get; init; }
+
+    /// <summary>К какой дате биржа считает доходность: "MATDATE" (к погашению), "OFFER" (к оферте),
+    /// "MBS" и т.п. — строка как есть (колонка YIELDDATETYPE).</summary>
+    public string? YieldDateType { get; init; }
+
+    /// <summary>G-спред биржи в БАЗИСНЫХ ПУНКТАХ (колонка GSPREADBP): 35 = 0.35 п.п. = 35 б.п. — НЕ доля.</summary>
+    public decimal? GspreadBp { get; init; }
+
+    /// <summary>Z-спред биржи в БАЗИСНЫХ ПУНКТАХ (колонка ZSPREADBP) — НЕ доля.</summary>
+    public decimal? ZspreadBp { get; init; }
 }

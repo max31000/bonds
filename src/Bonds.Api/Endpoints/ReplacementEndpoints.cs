@@ -55,6 +55,7 @@ public static class ReplacementEndpoints
                 EffectiveYield = r.EffectiveYield,
                 YieldKind = r.YieldKind.ToString(),
                 ModifiedDuration = r.ModifiedDuration,
+                MacaulayDurationYears = r.MacaulayDurationYears,
                 GSpread = r.GSpread,
                 DaysToHorizon = r.DaysToHorizon,
                 HorizonDate = r.HorizonDate,
@@ -271,11 +272,14 @@ public static class ReplacementEndpoints
         var positionDtos = new List<RelativeValuePositionDto>(comparableHoldings.Count);
         foreach (var holding in comparableHoldings)
         {
-            var assessment = Assess(holding.Sector, holding.ModifiedDuration, holding.GSpread!.Value, snapshot.AllMembers, snapshot.BasketStats);
-            var verdict = ResolveVerdict(assessment.DeviationFraction);
+            // Задача 44: корзины банка строятся по MOEX DURATION = дюрация МАКОЛЕЯ (годы), поэтому бакет
+            // позиции определяется тоже по Маколею (не по модифицированной — иначе позиция у границы
+            // бакета попадала в чужую корзину).
+            var assessment = Assess(holding.Sector, holding.MacaulayDuration, holding.GSpread!.Value, snapshot.AllMembers, snapshot.BasketStats);
+            var verdict = assessment.Verdict;
 
             var candidates = verdict == RelativeValueVerdict.Rich
-                ? BuildCheapCandidates(assessment.Basket.EffectiveBasket, snapshot, holding.Isin)
+                ? BuildCheapCandidates(assessment.Basket, snapshot, holding.Isin)
                 : [];
 
             positionDtos.Add(new RelativeValuePositionDto
@@ -289,6 +293,7 @@ public static class ReplacementEndpoints
                     Confidence = assessment.Basket.Confidence.ToString(),
                 },
                 DeviationFraction = assessment.DeviationFraction,
+                ThresholdFraction = assessment.ThresholdFraction,
                 Percentile = assessment.Percentile,
                 Verdict = verdict.ToString(),
                 BasedOnDays = snapshot.BasedOnDays,
@@ -301,16 +306,6 @@ public static class ReplacementEndpoints
             Positions = positionDtos,
             Disclaimer = RelativeValueDisclaimer,
         });
-    }
-
-    /// <summary>Cheap/Fair/Rich по знаку и порогу <see cref="SpreadThresholds.DeviationFraction"/> (план часть C.1):
-    /// |deviation| &lt; порог → Fair (в рынке); иначе положительное — Cheap (спред выше медианы,
-    /// рынок недооценивает/закладывает риск), отрицательное — Rich (спред ниже медианы, дорого
-    /// относительно соседей по корзине, кандидат на пересмотр).</summary>
-    private static RelativeValueVerdict ResolveVerdict(decimal deviationFraction)
-    {
-        if (Math.Abs(deviationFraction) < SpreadThresholds.DeviationFraction) return RelativeValueVerdict.Fair;
-        return deviationFraction > 0 ? RelativeValueVerdict.Cheap : RelativeValueVerdict.Rich;
     }
 
     /// <summary>
@@ -329,16 +324,21 @@ public static class ReplacementEndpoints
     /// </para>
     /// </summary>
     private static List<RelativeValueCandidateDto> BuildCheapCandidates(
-        BasketKey effectiveBasket, RelativeValueSnapshotBuilder.RelativeValueSnapshot snapshot, string? positionIsin)
+        BasketResolution basket, RelativeValueSnapshotBuilder.RelativeValueSnapshot snapshot, string? positionIsin)
     {
-        var basketMedian = snapshot.BasketStats.TryGetValue(effectiveBasket, out var stats) ? stats.Median : 0m;
+        // Медиана — из РЕЗОЛЮЦИИ (а не поиском эффективной корзины в snapshot.BasketStats: у fallback
+        // «весь сектор» ключа там нет, и отклонение считалось бы от 0).
+        var effectiveBasket = basket.EffectiveBasket;
+        var basketMedian = basket.Stats.Median;
         var basketMembers = ResolveCheapBasketMembers(effectiveBasket, basketMedian, snapshot, positionIsin, TopCheapCandidatesPerRichPosition);
 
         var result = new List<RelativeValueCandidateDto>(basketMembers.Count);
         foreach (var member in basketMembers)
         {
             snapshot.CurrentEntriesBySecid.TryGetValue(member.Secid, out var entry);
-            var liquidity = LiquidityScoreCalculator.Assess(entry?.TurnoverRub, entry?.BidPercent, entry?.OfferPercent, entry?.NumTrades);
+            var liquidity = entry is null
+                ? LiquidityScoreCalculator.Assess(null, null, null, null)
+                : AssessEntryLiquidity(entry, snapshot);
 
             result.Add(new RelativeValueCandidateDto
             {
@@ -530,19 +530,21 @@ public static class ReplacementEndpoints
         int limit,
         string? reliabilityFilter)
     {
-        if (position.GSpread is not { } bondSpread || position.ModifiedDuration is null)
+        // Задача 44: бакет позиции — по дюрации МАКОЛЕЯ (банк хранит MOEX DURATION = Маколей).
+        if (position.GSpread is not { } bondSpread || position.MacaulayDuration is null)
         {
             return [];
         }
 
-        var assessment = Assess(position.Sector, position.ModifiedDuration, bondSpread, snapshot.AllMembers, snapshot.BasketStats);
+        var assessment = Assess(position.Sector, position.MacaulayDuration, bondSpread, snapshot.AllMembers, snapshot.BasketStats);
         var effectiveBasket = assessment.Basket.EffectiveBasket;
-        var basketMedian = assessment.Basket.Stats.Median;
+        var basketStats = assessment.Basket.Stats;
+        var basketMedian = basketStats.Median;
 
         var take = string.IsNullOrWhiteSpace(reliabilityFilter) ? limit : snapshot.AllMembers.Count;
         var basketMembers = ResolveCheapBasketMembers(effectiveBasket, basketMedian, snapshot, position.Isin, take);
 
-        var dtos = basketMembers.Select(m => ToReplacementCandidateDto(m, basketMedian, snapshot));
+        var dtos = basketMembers.Select(m => ToReplacementCandidateDto(m, basketStats, snapshot));
         if (!string.IsNullOrWhiteSpace(reliabilityFilter))
         {
             dtos = dtos.Where(dto => ReliabilityMeetsFilter(dto.RiskSignals.Reliability, reliabilityFilter));
@@ -568,7 +570,7 @@ public static class ReplacementEndpoints
             Sector = entry.Sector,
             YieldFraction = entry.YieldFraction,
             DurationYears = entry.DurationYears,
-            GSpreadFraction = entry.GspreadApproxFraction,
+            GSpreadFraction = entry.EffectiveGspreadFraction,
             OfferDate = entry.OfferDate,
             RiskSignals = ToRiskSignalsDto(signals, entry.ListLevel, entry.Sector),
         };
@@ -579,11 +581,13 @@ public static class ReplacementEndpoints
     /// медианы корзины позиции (все RV-кандидаты — из ОДНОЙ эффективной корзины, поэтому медиана
     /// одна на всех, в отличие от mode=market).</summary>
     private static ReplacementCandidateDto ToReplacementCandidateDto(
-        BasketMember member, decimal basketMedian, RelativeValueSnapshotBuilder.RelativeValueSnapshot snapshot)
+        BasketMember member, BasketStats basketStats, RelativeValueSnapshotBuilder.RelativeValueSnapshot snapshot)
     {
         snapshot.CurrentEntriesBySecid.TryGetValue(member.Secid, out var entry);
-        var liquidity = LiquidityScoreCalculator.Assess(entry?.TurnoverRub, entry?.BidPercent, entry?.OfferPercent, entry?.NumTrades);
-        var signals = CandidateRiskSignalService.Assess(liquidity.Score, entry?.ListLevel, member.GSpreadFraction, basketMedian);
+        var liquidity = entry is null
+            ? LiquidityScoreCalculator.Assess(null, null, null, null)
+            : AssessEntryLiquidity(entry, snapshot);
+        var signals = AssessRiskSignals(liquidity, entry?.ListLevel, member.GSpreadFraction, basketStats);
 
         return new ReplacementCandidateDto
         {

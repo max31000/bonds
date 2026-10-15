@@ -50,4 +50,16 @@ public interface IBondUniverseRepository
     /// корзин по нескольким дням (защита от однодневных выбросов).
     /// </summary>
     Task<IReadOnlyList<BondUniverseHistoryPoint>> GetRecentHistoryAsync(int tradingDaysBack, CancellationToken ct = default);
+
+    /// <summary>
+    /// Задача 43: записывает эмитента (ID/ИНН/название) в УЖЕ существующие строки <c>bond_universe</c> по
+    /// SECID — только UPDATE (бумаги, которых нет в банке, пропускаются, новые строки НЕ создаются).
+    /// Часовой <see cref="UpsertSnapshotBatchAsync"/> эти колонки не трогает, поэтому они переживают
+    /// обновление снимка. Возвращает число обновлённых строк.
+    /// </summary>
+    Task<int> UpdateEmitentsAsync(IReadOnlyList<UniverseEmitent> emitents, CancellationToken ct = default);
+
+    /// <summary>Сколько строк банка уже имеют эмитента (<c>emitent_id</c> или <c>emitent_inn</c> не NULL) —
+    /// 0 означает «обогащение эмитентами ещё ни разу не отрабатывало».</summary>
+    Task<int> CountWithEmitentAsync(CancellationToken ct = default);
 }

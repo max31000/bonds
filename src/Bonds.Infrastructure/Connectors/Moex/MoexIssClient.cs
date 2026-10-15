@@ -315,7 +315,7 @@ public sealed class MoexIssClient : IMoexIssClient
         {
             var start = page * IssUniversePageSize;
             var url = "/iss/engines/stock/markets/bonds/securities.json"
-                      + $"?iss.only=securities,marketdata&iss.meta=off&start={start}&limit={IssUniversePageSize}";
+                      + $"?iss.only=securities,marketdata,marketdata_yields&iss.meta=off&start={start}&limit={IssUniversePageSize}";
             var json = await GetStringSafeAsync(url, ct);
             if (json is null)
             {
@@ -358,6 +358,93 @@ public sealed class MoexIssClient : IMoexIssClient
         }
 
         return MoexBondUniverseParser.DeduplicateByBoard(rows);
+    }
+
+    /// <summary>Размер страницы bulk-справочника <c>/iss/securities.json</c> — ISS отдаёт ровно 100 строк.</summary>
+    private const int IssEmitentsPageSize = 100;
+
+    /// <summary>Предохранитель: 300 страниц × 100 = 30 000 строк при реальных ~10 700 (~107 страниц).</summary>
+    private const int IssEmitentsMaxPages = 300;
+
+    public async Task<MoexSecurityEmitentsResult> GetSecurityEmitentsAsync(CancellationToken ct = default)
+    {
+        var bySecid = new Dictionary<string, MoexSecurityEmitent>(StringComparer.Ordinal);
+        var complete = false;
+
+        for (var page = 0; page < IssEmitentsMaxPages; page++)
+        {
+            var start = page * IssEmitentsPageSize;
+            var url = "/iss/securities.json?engine=stock&market=bonds&iss.only=securities&iss.meta=off"
+                      + $"&securities.columns=secid,emitent_id,emitent_title,emitent_inn&start={start}";
+            var json = await GetStringSafeAsync(url, ct);
+            if (json is null)
+            {
+                // Страница недоступна посреди обхода — справочник неполный: вызывающий код не должен
+                // засчитывать суточный шаг выполненным (ревью В1, MINOR-3).
+                _logger.LogWarning("MOEX emitents bulk paging stopped at start {Start}: page unavailable", start);
+                break;
+            }
+
+            List<MoexSecurityEmitent> pageRows;
+            try
+            {
+                pageRows = MoexSecurityEmitentsParser.ParsePage(json);
+            }
+            catch (JsonException ex)
+            {
+                _logger.LogWarning(ex, "Failed to parse MOEX emitents bulk page at start {Start}", start);
+                break;
+            }
+
+            var newRows = 0;
+            foreach (var row in pageRows)
+            {
+                if (bySecid.TryAdd(row.Secid, row)) newRows++;
+            }
+
+            // Пустая/короткая страница — последняя; ноль новых SECID — ISS повторяет виденное (игнорирует start).
+            if (pageRows.Count < IssEmitentsPageSize || newRows == 0)
+            {
+                complete = true;
+                break;
+            }
+
+            if (page == IssEmitentsMaxPages - 1)
+            {
+                _logger.LogWarning("MOEX emitents bulk paging hit page limit at start {Start}", start);
+            }
+        }
+
+        return new MoexSecurityEmitentsResult(bySecid.Values.ToList(), complete);
+    }
+
+    public async Task<MoexSecurityDescription?> GetSecurityDescriptionAsync(string secid, CancellationToken ct = default)
+    {
+        // Транспортные ошибки пробрасываются (в отличие от GetStringSafeAsync): вызывающий код различает
+        // «источник недоступен» (исключение → прервать тик) и «карточки нет» (null → негативный кэш),
+        // иначе мёртвые SECID навсегда блокируют очередь обогащения (ревью В1, MINOR-1).
+        var url = $"/iss/securities/{Uri.EscapeDataString(secid)}.json?iss.only=description&iss.meta=off";
+        string json;
+        using (var response = await _http.GetAsync(url, ct))
+        {
+            if (response.StatusCode == HttpStatusCode.NotFound)
+            {
+                return null;
+            }
+
+            response.EnsureSuccessStatusCode();
+            json = await response.Content.ReadAsStringAsync(ct);
+        }
+
+        try
+        {
+            return MoexSecurityDescriptionParser.Parse(json);
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogWarning(ex, "Failed to parse MOEX security description for {Secid}", secid);
+            return null;
+        }
     }
 
     private async Task<string?> GetStringSafeAsync(string url, CancellationToken ct)

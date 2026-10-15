@@ -20,10 +20,13 @@ public class BondUniverseRepository : IBondUniverseRepository
 {
     private readonly string _connectionString;
 
-    /// <summary>Строк на один INSERT-батч — 500 строк × ~19 колонок ≈ 9500 параметров, с запасом
+    /// <summary>Строк на один INSERT-батч — 500 строк × ~27 колонок ≈ 13500 параметров, с запасом
     /// ниже дефолтного лимита MySQL max_prepared_stmt_count/packet, но крупными пачками, чтобы
     /// снимок ~3000 строк укладывался в считанные round-trip'ы.</summary>
     private const int BatchSize = 500;
+
+    /// <summary>Строк на один UPDATE-JOIN эмитентов (4 параметра на строку).</summary>
+    private const int EmitentBatchSize = 500;
 
     public BondUniverseRepository(string connectionString) => _connectionString = connectionString;
 
@@ -37,6 +40,11 @@ public class BondUniverseRepository : IBondUniverseRepository
         price_percent AS PricePercent, turnover_rub AS TurnoverRub, bid_percent AS BidPercent,
         offer_percent AS OfferPercent, num_trades AS NumTrades,
         gspread_approx_fraction AS GspreadApproxFraction, is_floater AS IsFloater,
+        accrued_rub AS AccruedRub, issue_size AS IssueSize,
+        effective_yield_fraction AS EffectiveYieldFraction, yield_to_offer_fraction AS YieldToOfferFraction,
+        yield_date_type AS YieldDateType, gspread_official_fraction AS GspreadOfficialFraction,
+        zspread_official_fraction AS ZspreadOfficialFraction,
+        emitent_id AS EmitentId, emitent_inn AS EmitentInn, emitent_title AS EmitentTitle,
         updated_at AS UpdatedAt";
 
     public async Task<IReadOnlyList<BondUniverseEntry>> GetAllAsync(CancellationToken ct = default)
@@ -92,10 +100,62 @@ public class BondUniverseRepository : IBondUniverseRepository
                 parameters.Add($"NumTrades{i}", e.NumTrades);
                 parameters.Add($"GspreadApproxFraction{i}", e.GspreadApproxFraction);
                 parameters.Add($"IsFloater{i}", e.IsFloater);
+                parameters.Add($"AccruedRub{i}", e.AccruedRub);
+                parameters.Add($"IssueSize{i}", e.IssueSize);
+                parameters.Add($"EffectiveYieldFraction{i}", e.EffectiveYieldFraction);
+                parameters.Add($"YieldToOfferFraction{i}", e.YieldToOfferFraction);
+                parameters.Add($"YieldDateType{i}", e.YieldDateType);
+                parameters.Add($"GspreadOfficialFraction{i}", e.GspreadOfficialFraction);
+                parameters.Add($"ZspreadOfficialFraction{i}", e.ZspreadOfficialFraction);
             }
 
             await conn.ExecuteAsync(sql, parameters);
         }
+    }
+
+    /// <summary>
+    /// Задача 43: UPDATE эмитентов в существующих строках банка. Один запрос на чанк:
+    /// <c>UPDATE bond_universe u JOIN (SELECT @s0 AS secid, ... UNION ALL ...) v ON u.secid = v.secid</c>.
+    /// JOIN (а не INSERT ... ON DUPLICATE KEY) — иначе в банк попали бы ~7 тыс. бумаг bulk-справочника,
+    /// которых там нет (погашенные/нерублёвые). Значения — только через DynamicParameters.
+    /// </summary>
+    public async Task<int> UpdateEmitentsAsync(IReadOnlyList<UniverseEmitent> emitents, CancellationToken ct = default)
+    {
+        if (emitents.Count == 0) return 0;
+
+        using var conn = CreateConnection();
+        conn.Open();
+
+        var updated = 0;
+        foreach (var chunk in Chunk(emitents, EmitentBatchSize))
+        {
+            var sb = new StringBuilder("UPDATE bond_universe u JOIN (");
+            var parameters = new DynamicParameters();
+            for (var i = 0; i < chunk.Count; i++)
+            {
+                if (i > 0) sb.Append(" UNION ALL ");
+                sb.Append($"SELECT @Secid{i} AS secid, @EmitentId{i} AS emitent_id, @EmitentInn{i} AS emitent_inn, @EmitentTitle{i} AS emitent_title");
+                var e = chunk[i];
+                parameters.Add($"Secid{i}", e.Secid);
+                parameters.Add($"EmitentId{i}", e.EmitentId);
+                parameters.Add($"EmitentInn{i}", e.EmitentInn);
+                parameters.Add($"EmitentTitle{i}", e.EmitentTitle);
+            }
+
+            sb.Append(@") v ON u.secid = v.secid
+                SET u.emitent_id = v.emitent_id, u.emitent_inn = v.emitent_inn, u.emitent_title = v.emitent_title");
+
+            updated += await conn.ExecuteAsync(sb.ToString(), parameters);
+        }
+
+        return updated;
+    }
+
+    public async Task<int> CountWithEmitentAsync(CancellationToken ct = default)
+    {
+        using var conn = CreateConnection();
+        return await conn.ExecuteScalarAsync<int>(
+            "SELECT COUNT(*) FROM bond_universe WHERE emitent_id IS NOT NULL OR emitent_inn IS NOT NULL");
     }
 
     private static string BuildUpsertSql(int rowCount)
@@ -106,7 +166,8 @@ public class BondUniverseRepository : IBondUniverseRepository
                 (secid, isin, short_name, sec_name, face_value, lot_value, coupon_percent,
                  maturity_date, offer_date, list_level, sector, yield_fraction, duration_years,
                  price_percent, turnover_rub, bid_percent, offer_percent, num_trades,
-                 gspread_approx_fraction, is_floater)
+                 gspread_approx_fraction, is_floater, accrued_rub, issue_size, effective_yield_fraction,
+                 yield_to_offer_fraction, yield_date_type, gspread_official_fraction, zspread_official_fraction)
             VALUES ");
 
         for (var i = 0; i < rowCount; i++)
@@ -116,7 +177,8 @@ public class BondUniverseRepository : IBondUniverseRepository
                 (@Secid{i}, @Isin{i}, @ShortName{i}, @SecName{i}, @FaceValue{i}, @LotValue{i}, @CouponPercent{i},
                  @MaturityDate{i}, @OfferDate{i}, @ListLevel{i}, @Sector{i}, @YieldFraction{i}, @DurationYears{i},
                  @PricePercent{i}, @TurnoverRub{i}, @BidPercent{i}, @OfferPercent{i}, @NumTrades{i},
-                 @GspreadApproxFraction{i}, @IsFloater{i})");
+                 @GspreadApproxFraction{i}, @IsFloater{i}, @AccruedRub{i}, @IssueSize{i}, @EffectiveYieldFraction{i},
+                 @YieldToOfferFraction{i}, @YieldDateType{i}, @GspreadOfficialFraction{i}, @ZspreadOfficialFraction{i})");
         }
 
         sb.Append(@"
@@ -129,7 +191,11 @@ public class BondUniverseRepository : IBondUniverseRepository
                 price_percent = VALUES(price_percent), turnover_rub = VALUES(turnover_rub),
                 bid_percent = VALUES(bid_percent), offer_percent = VALUES(offer_percent),
                 num_trades = VALUES(num_trades), gspread_approx_fraction = VALUES(gspread_approx_fraction),
-                is_floater = VALUES(is_floater)");
+                is_floater = VALUES(is_floater), accrued_rub = VALUES(accrued_rub), issue_size = VALUES(issue_size),
+                effective_yield_fraction = VALUES(effective_yield_fraction),
+                yield_to_offer_fraction = VALUES(yield_to_offer_fraction), yield_date_type = VALUES(yield_date_type),
+                gspread_official_fraction = VALUES(gspread_official_fraction),
+                zspread_official_fraction = VALUES(zspread_official_fraction)");
 
         return sb.ToString();
     }
@@ -162,17 +228,23 @@ public class BondUniverseRepository : IBondUniverseRepository
         try
         {
             // INSERT ... SELECT одним запросом из текущего снимка — не построчно из C# (план часть B.3).
+            // Задача 42: bid/offer (% от номинала, как bid_percent/offer_percent), list_level и
+            // gspread_effective_fraction = COALESCE(биржевой, приближённый) — тот же приоритет, что
+            // BondUniverseEntry.EffectiveGspreadFraction (ДОЛЯ, конверсий нет — обе колонки уже доли).
             const string insertSql = @"
                 INSERT INTO bond_universe_history
                     (snapshot_date, secid, yield_fraction, duration_years, gspread_approx_fraction,
-                     turnover_rub, price_percent)
+                     turnover_rub, price_percent, bid, offer, list_level, gspread_effective_fraction)
                 SELECT @Date, secid, yield_fraction, duration_years, gspread_approx_fraction,
-                       turnover_rub, price_percent
+                       turnover_rub, price_percent, bid_percent, offer_percent, list_level,
+                       COALESCE(gspread_official_fraction, gspread_approx_fraction)
                 FROM bond_universe
                 ON DUPLICATE KEY UPDATE
                     yield_fraction = VALUES(yield_fraction), duration_years = VALUES(duration_years),
                     gspread_approx_fraction = VALUES(gspread_approx_fraction),
-                    turnover_rub = VALUES(turnover_rub), price_percent = VALUES(price_percent)";
+                    turnover_rub = VALUES(turnover_rub), price_percent = VALUES(price_percent),
+                    bid = VALUES(bid), offer = VALUES(offer), list_level = VALUES(list_level),
+                    gspread_effective_fraction = VALUES(gspread_effective_fraction)";
 
             await conn.ExecuteAsync(insertSql, new { Date = date }, tx);
 
@@ -206,7 +278,9 @@ public class BondUniverseRepository : IBondUniverseRepository
         const string sql = @"
             SELECT snapshot_date AS SnapshotDate, secid AS Secid, yield_fraction AS YieldFraction,
                    duration_years AS DurationYears, gspread_approx_fraction AS GspreadApproxFraction,
-                   turnover_rub AS TurnoverRub, price_percent AS PricePercent
+                   turnover_rub AS TurnoverRub, price_percent AS PricePercent,
+                   bid AS Bid, offer AS Offer, list_level AS ListLevel,
+                   gspread_effective_fraction AS GspreadEffectiveFraction
             FROM bond_universe_history
             WHERE snapshot_date IN (
                 SELECT snapshot_date FROM (
