@@ -95,6 +95,86 @@ public class UniverseEndpointsTests
         rows[0].GetProperty("secid").GetString().Should().Be($"SRCH{marker}");
     }
 
+    /// <summary>
+    /// Задача 42 — DTO скринера: поле gspreadApproxFraction (имя историческое) наполняется ЭФФЕКТИВНЫМ
+    /// спредом, gspreadSource говорит откуда он ("moex" — биржевой, "approx" — по кривой, null —
+    /// спреда нет), плюс accruedRub / issueSize / yieldToOfferFraction. Единицы — доли/рубли.
+    /// </summary>
+    [Fact]
+    public async Task GetUniverse_ExposesEffectiveGspreadWithSource_AndNewOfficialFields()
+    {
+        var repo = new BondUniverseRepository(_factory.Database.ConnectionString);
+        var marker = Guid.NewGuid().ToString("N")[..6];
+        var official = HealthyEntry($"OFF{marker}", $"ISG{marker}A", 0.15m, 2m);
+        official.GspreadOfficialFraction = 0.0035m;   // 35 б.п. от биржи
+        official.GspreadApproxFraction = 0.0100m;     // наше приближение — должно проиграть
+        official.ZspreadOfficialFraction = 0.0030m;
+        official.AccruedRub = 26.26m;
+        official.IssueSize = 5_000_000_000L;           // не помещается в int32
+        official.YieldToOfferFraction = 0.1623m;
+        official.EffectiveYieldFraction = 0.1650m;
+        official.YieldDateType = "OFFER";
+        var approx = HealthyEntry($"APX{marker}", $"ISG{marker}B", 0.15m, 2m);
+        approx.GspreadOfficialFraction = null;
+        approx.GspreadApproxFraction = 0.0100m;
+        var none = HealthyEntry($"NON{marker}", $"ISG{marker}C", 0.15m, 2m);
+        await repo.UpsertSnapshotBatchAsync([official, approx, none]);
+
+        var client = await CreateAuthorizedClientAsync();
+        var response = await client.GetAsync($"/api/universe?search={marker}&limit=10");
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var rows = (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("rows").EnumerateArray().ToList();
+        var off = rows.Single(r => r.GetProperty("secid").GetString() == $"OFF{marker}");
+        off.GetProperty("gspreadApproxFraction").GetDecimal().Should().Be(0.0035m);
+        off.GetProperty("gspreadSource").GetString().Should().Be("moex");
+        off.GetProperty("accruedRub").GetDecimal().Should().Be(26.26m);
+        off.GetProperty("issueSize").GetInt64().Should().Be(5_000_000_000L);
+        off.GetProperty("yieldToOfferFraction").GetDecimal().Should().Be(0.1623m);
+
+        var apx = rows.Single(r => r.GetProperty("secid").GetString() == $"APX{marker}");
+        apx.GetProperty("gspreadApproxFraction").GetDecimal().Should().Be(0.0100m);
+        apx.GetProperty("gspreadSource").GetString().Should().Be("approx");
+        apx.GetProperty("accruedRub").ValueKind.Should().Be(JsonValueKind.Null);
+
+        var non = rows.Single(r => r.GetProperty("secid").GetString() == $"NON{marker}");
+        non.GetProperty("gspreadApproxFraction").ValueKind.Should().Be(JsonValueKind.Null);
+        non.GetProperty("gspreadSource").ValueKind.Should().Be(JsonValueKind.Null);
+    }
+
+    [Fact]
+    public async Task UpsertSnapshotBatch_RoundTripsOfficialYieldColumns_AndOverwritesOnSecondUpsert()
+    {
+        var repo = new BondUniverseRepository(_factory.Database.ConnectionString);
+        var marker = Guid.NewGuid().ToString("N")[..6];
+        var entry = HealthyEntry($"RT{marker}", $"ISR{marker}", 0.15m, 2m);
+        entry.AccruedRub = 12.34m;
+        entry.IssueSize = 1_000_000_000L;
+        entry.EffectiveYieldFraction = 0.16228m;
+        entry.YieldToOfferFraction = 0.15m;
+        entry.YieldDateType = "OFFER";
+        entry.GspreadOfficialFraction = -0.0025m;
+        entry.ZspreadOfficialFraction = -0.0008m;
+        await repo.UpsertSnapshotBatchAsync([entry]);
+
+        var saved = (await repo.GetAllAsync()).Single(e => e.Secid == entry.Secid);
+        saved.AccruedRub.Should().Be(12.34m);
+        saved.IssueSize.Should().Be(1_000_000_000L);
+        saved.EffectiveYieldFraction.Should().Be(0.16228m);
+        saved.YieldToOfferFraction.Should().Be(0.15m);
+        saved.YieldDateType.Should().Be("OFFER");
+        saved.GspreadOfficialFraction.Should().Be(-0.0025m);
+        saved.ZspreadOfficialFraction.Should().Be(-0.0008m);
+
+        // Биржа перестала отдавать строку marketdata_yields — следующий снимок обнуляет поля, а не хранит устаревшее.
+        entry.GspreadOfficialFraction = null;
+        entry.YieldToOfferFraction = null;
+        await repo.UpsertSnapshotBatchAsync([entry]);
+        var updated = (await repo.GetAllAsync()).Single(e => e.Secid == entry.Secid);
+        updated.GspreadOfficialFraction.Should().BeNull();
+        updated.YieldToOfferFraction.Should().BeNull();
+    }
+
     [Fact]
     public async Task GetUniverse_ReturnsIsFloaterFlag_ForFloaterAndFixedRows_WithoutHidingEither()
     {

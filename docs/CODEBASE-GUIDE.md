@@ -22,6 +22,9 @@ MySQL для интеграционных), vitest + Testing Library + MSW.
 | MOEX ISS: YIELD | вход | **проценты** → храним долю (÷100) |
 | MOEX ISS: DURATION | вход | **дни** → храним годы (÷365) |
 | MOEX ISS: цены (PREVPRICE/LAST/CLOSE) | вход | **% от номинала** → рубли = `pct/100 × FaceValue` |
+| MOEX ISS `marketdata_yields`: EFFECTIVEYIELD, YIELDTOOFFER | вход | **проценты** → доля (÷100) |
+| MOEX ISS `marketdata_yields`: GSPREADBP, ZSPREADBP | вход | **базисные пункты** → доля (÷10000: 35 б.п. = 0.0035) |
+| MOEX ISS `securities`: ACCRUEDINT (НКД) | вход | **рубли на одну бумагу** (не %, не на лот) — конверсии нет |
 | T-Invest `GetPortfolio` (CurrentPrice/CurrentNkd/AveragePositionPrice) | вход | **рубли** за бумагу — конверсия не нужна |
 | T-Invest `GetLastPrices` (marketdata `LastPrice`) | вход | **ПУНКТЫ** (% от номинала) → рубли = `pts/100 × FaceValue` (см. `LiveQuoteConverter`) |
 | `MarketQuote.CleanPrice/DirtyPrice/Accrued`, `intraday_quotes.dirty_price_rub` | БД | всегда рубли за бумагу (контракт в doc-comment модели) |
@@ -150,7 +153,11 @@ Single-user, один счёт. Т-Invest токен — read-only секрет:
 хранится шифрованным (DataProtection, ключи на volume). Все аналитики — «оценки, не
 инвестрекомендации»: дисклеймеры обязательны (`components/Disclaimer.tsx`), формулировки
 «кандидат/оценка», не «купите». Двухъярусная архитектура данных: банк (`bond_universe`) —
-дешёвая статистика MOEX для ранжирования; точный движок — по требованию через
+дешёвая статистика MOEX для ранжирования (биржевые G-/Z-спред, эффективная доходность и НКД —
+блок ISS `marketdata_yields`; внутри кода спред банка читать ТОЛЬКО через
+`BondUniverseEntry.EffectiveGspreadFraction` = биржевой ?? наше приближение по кривой,
+источник — `GspreadSource` "moex"/"approx"; DTO-поле `gspreadApproxFraction` историческое имя,
+наполняется эффективным); точный движок — по требованию через
 `POST /api/universe/{secid}/materialize` (единый путь обогащения —
 `InstrumentEnrichmentService`).
 

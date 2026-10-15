@@ -15,6 +15,7 @@ MOEX ISS (`https://iss.moex.com`), сохранённые живым HTTP-зап
 | `bondization_amortizing_offer_gtlk_1p16.json` | `RU000A101GD3` bondization | да | реальный график амортизации (8 платежей) + 1 put-оферта |
 | `zcyc_gcurve.json` | `/iss/engines/stock/zcyc/securities.json` | да | параметры NSS безрисковой кривой на дату запроса |
 | `securities_search_by_isin.json` | `/iss/securities.json?q=RU000A1038V6` | да | резолвер ISIN→SECID |
+| `bond_universe_with_yields_2026-10-15.json` | `/iss/engines/stock/markets/bonds/securities.json?iss.only=securities,marketdata,marketdata_yields&iss.meta=off` (срез 19 бумаг из ~3500) | да | блок `marketdata_yields` (G-/Z-спред в б.п., EFFECTIVEYIELD в %, YIELDDATETYPE MATDATE/OFFER/MBS), ACCRUEDINT/ISSUESIZE, бумаги БЕЗ строки в `marketdata_yields`, SECID на нескольких board'ах (PACT/SPOB/TQOB) |
 | `bondization_incomplete_coupons_SYNTHETIC.json` | — | **нет, синтетика** | см. ниже |
 
 ## Синтетическая фикстура неполных купонов

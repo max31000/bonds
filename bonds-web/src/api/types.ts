@@ -591,7 +591,7 @@ export interface ReplacementCandidate {
   yieldFraction: number | null;
   /** Годы. */
   durationYears: number | null;
-  /** ДОЛЯ; приближённый G-спред банка. */
+  /** ДОЛЯ; G-спред банка: биржевой, а при его отсутствии приближённый по кривой. */
   gSpreadFraction: number | null;
   /** Дата оферты (ISO "2028-01-01"), если есть — доходность к оферте считается
    * движком на другом горизонте, чем к погашению. Null — оферты нет/не известна. */
@@ -867,6 +867,9 @@ export type UniverseHiddenReason =
   | 'MissingDurationOrPrice'
   | 'NearMaturity';
 
+/** Источник G-спреда строки банка (задача 42): `moex` — посчитан биржей, `approx` — наше приближение по кривой. */
+export type GspreadSource = 'moex' | 'approx';
+
 /** Одна строка банка облигаций — дешёвая биржевая статистика MOEX, НЕ точный движок (см. Disclaimer). */
 export interface UniverseRow {
   secid: string;
@@ -880,7 +883,20 @@ export interface UniverseRow {
   listLevel: number | null;
   liquidityScore: LiquidityScore;
   slippageEstimateFraction: number | null;
+  /**
+   * ДОЛЯ. G-спред банка. Имя поля историческое (бэкенд не переименовывали): с задачи 42 это
+   * ЭФФЕКТИВНЫЙ спред — биржевой (marketdata_yields), а при его отсутствии приближённый по кривой.
+   * Источник — {@link UniverseRow.gspreadSource}.
+   */
   gspreadApproxFraction: number | null;
+  /** Задача 42: откуда `gspreadApproxFraction` — `'moex'` посчитан биржей, `'approx'` наше приближение по кривой, `null` спреда нет. */
+  gspreadSource?: GspreadSource | null;
+  /** Задача 42: НКД, рубли на ОДНУ бумагу (MOEX ACCRUEDINT). null — неизвестен. */
+  accruedRub?: number | null;
+  /** Задача 42: объём выпуска, штук бумаг. */
+  issueSize?: number | null;
+  /** Задача 42: ДОЛЯ. Доходность к оферте по расчёту биржи; null — оферты нет. */
+  yieldToOfferFraction?: number | null;
   maturityDate: string | null;
   offerDate: string | null;
   isHidden: boolean;

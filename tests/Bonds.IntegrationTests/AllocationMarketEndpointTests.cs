@@ -142,6 +142,57 @@ public class AllocationMarketEndpointTests
         signals.GetProperty("liquidity").GetString().Should().Be("Good");
     }
 
+    /// <summary>
+    /// Задача 42 часть B.6 — цена лота включает НКД банк-записи. Эталон руками: цена 95%, номинал
+    /// 1000 → чистая 950.00; НКД 12.34 ₽ → грязная 962.34; комиссия 0.3% (дефолт — журнала комиссий
+    /// у свежего пользователя нет) от грязной = 2.88702; лот = 962.34 × 1.003 = 965.22702 ≈ 965.23 ₽.
+    /// </summary>
+    [Fact]
+    public async Task GetAllocation_Market_LotPriceIncludesAccruedInterest_ReferenceCalculation()
+    {
+        var (client, _, _) = await CreateAuthorizedClientAsync();
+        var marker = Guid.NewGuid().ToString("N")[..6];
+        var secid = $"NK{marker}";
+        var entry = HealthyEntry(secid, $"Sector{marker}", 0.44m, 2m, turnover: 10_000_000m, bidPercent: 99.9m, offerPercent: 100m);
+        entry.PricePercent = 95m;
+        entry.AccruedRub = 12.34m;
+        await new BondUniverseRepository(_factory.Database.ConnectionString).UpsertSnapshotBatchAsync([entry]);
+
+        var response = await client.GetAsync("/api/analytics/allocation?amountRub=100000000&source=market");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var line = body.GetProperty("allocations").EnumerateArray()
+            .Single(a => a.GetProperty("secid").GetString() == secid);
+        line.GetProperty("quantity").GetDecimal().Should().Be(1m);
+        line.GetProperty("cleanCostRub").GetDecimal().Should().Be(950m);
+        line.GetProperty("accruedCostRub").GetDecimal().Should().Be(12.34m);
+        line.GetProperty("commissionCostRub").GetDecimal().Should().BeApproximately(2.88702m, 0.00001m);
+        line.GetProperty("estimatedCostRub").GetDecimal().Should().BeApproximately(965.23m, 0.005m);
+    }
+
+    [Fact]
+    public async Task GetAllocation_Market_UnknownAccrued_KeepsCleanPriceApproximation()
+    {
+        // accrued_rub IS NULL (снимок до миграции 017 либо биржа не отдала) — прежнее поведение:
+        // НКД = 0, лот = 950 × 1.003 = 952.85 ₽.
+        var (client, _, _) = await CreateAuthorizedClientAsync();
+        var marker = Guid.NewGuid().ToString("N")[..6];
+        var secid = $"NN{marker}";
+        var entry = HealthyEntry(secid, $"Sector{marker}", 0.44m, 2m, turnover: 10_000_000m, bidPercent: 99.9m, offerPercent: 100m);
+        entry.PricePercent = 95m;
+        entry.AccruedRub = null;
+        await new BondUniverseRepository(_factory.Database.ConnectionString).UpsertSnapshotBatchAsync([entry]);
+
+        var response = await client.GetAsync("/api/analytics/allocation?amountRub=100000000&source=market");
+
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var line = body.GetProperty("allocations").EnumerateArray()
+            .Single(a => a.GetProperty("secid").GetString() == secid);
+        line.GetProperty("accruedCostRub").GetDecimal().Should().Be(0m);
+        line.GetProperty("estimatedCostRub").GetDecimal().Should().BeApproximately(952.85m, 0.005m);
+    }
+
     [Fact]
     public async Task GetAllocation_Market_NonPositiveAmount_Returns422()
     {
