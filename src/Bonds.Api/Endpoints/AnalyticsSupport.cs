@@ -101,25 +101,72 @@ internal static class AnalyticsSupport
             bookMissing: liquidity.BookSpreadFraction is null);
 
 
-    /// <summary>Собирает RiskSignalsDto из двух информационных сигналов +
-    /// агрегированного светофора надёжности (<see cref="CandidateRiskSignalService.Aggregate"/>).
-    /// <paramref name="listLevel"/>/<paramref name="sector"/> — те же входы, что уже использованы
-    /// для расчёта <paramref name="signals"/> (листинг банк-записи, сектор банк-записи).</summary>
-    internal static RiskSignalsDto ToRiskSignalsDto(CandidateRiskSignals signals, int? listLevel, string? sector)
-    {
-        var (reliability, reliabilityReason) = CandidateRiskSignalService.Aggregate(signals, listLevel, sector);
+    /// <summary>
+    /// Ось Value (задача 46): вердикт цены бумаги — G-спред против медианы ЕЁ корзины (сектор × дюрация Маколея),
+    /// порог — IQR корзины, Confidence Low → InsufficientData (<see cref="RelativeValueService.Assess"/>). ОТДЕЛЬНО
+    /// от риска: уровень надёжности из него НЕ строится. Нет записи/спреда/корзины → InsufficientData.
+    /// </summary>
+    internal static string AssessValueVerdict(BondUniverseEntry? entry, RelativeValueSnapshotBuilder.RelativeValueSnapshot snapshot) =>
+        AssessValue(entry, snapshot).Verdict;
 
-        return new RiskSignalsDto
+    /// <summary>Ось Value с числами для тултипа (задача 47): вердикт + медиана корзины и порог — те же, по которым он
+    /// вынесен. Медиана и порог — ДОЛИ (0.003 = 30 б.п.); null, когда вердикта нет из-за отсутствия спреда.</summary>
+    internal readonly record struct ValueAssessment(string Verdict, decimal? MedianFraction, decimal? ThresholdFraction);
+
+    /// <summary>См. <see cref="AssessValueVerdict"/>; дополнительно отдаёт медиану корзины (= G-спред − отклонение) и порог.</summary>
+    internal static ValueAssessment AssessValue(BondUniverseEntry? entry, RelativeValueSnapshotBuilder.RelativeValueSnapshot snapshot)
+    {
+        // Флоатер несравним с фиксированными корзинами (его доходность — текущая по плавающему купону, а корзины
+        // строятся без флоатеров — RelativeValueSnapshotBuilder), поэтому вердикт — InsufficientData, а не сравнение.
+        if (entry?.EffectiveGspreadFraction is not { } spread || entry.IsFloater == true)
+        {
+            return new ValueAssessment(RelativeValueVerdict.InsufficientData.ToString(), null, null);
+        }
+
+        var assessment = Assess(entry.Sector, entry.DurationYears, spread, snapshot.AllMembers, snapshot.BasketStats);
+        return new ValueAssessment(assessment.Verdict.ToString(), spread - assessment.DeviationFraction, assessment.ThresholdFraction);
+    }
+
+    /// <summary>Собирает <see cref="RiskSignalsDto"/>: два информационных сигнала (ликвидность/спред) +
+    /// скоркарта надёжности v2 (светофор, score, coverage, компоненты, флаги) + ось Value.</summary>
+    internal static RiskSignalsDto ToRiskSignalsDto(CandidateRiskSignals signals, ReliabilityScore score, ValueAssessment value) =>
+        new()
         {
             Liquidity = signals.Liquidity.ToString(),
             LiquidityLabel = signals.LiquidityLabel,
             Spread = signals.Spread.ToString(),
             GSpreadFraction = signals.GSpreadFraction,
             SpreadVsBasketMedianFraction = signals.SpreadVsBasketMedianFraction,
-            Reliability = reliability.ToString(),
-            ReliabilityReason = reliabilityReason,
+            Reliability = score.Level.ToString(),
+            ReliabilityReason = score.Reason,
+            Score = score.Score,
+            Coverage = score.Coverage,
+            Components = score.Components.Select(ToComponentDto).ToList(),
+            CriticalFlags = score.CriticalFlags,
+            WarningFlags = score.WarningFlags,
+            ValueVerdict = value.Verdict,
+            ValueMedianFraction = value.MedianFraction,
+            ValueThresholdFraction = value.ThresholdFraction,
         };
-    }
+
+    /// <summary>Полная карточка банк-записи: сигналы + скоркарта из <paramref name="book"/> + ось Value.</summary>
+    internal static RiskSignalsDto BuildRiskSignalsDto(
+        BondUniverseEntry entry, RelativeValueSnapshotBuilder.RelativeValueSnapshot snapshot, ReliabilityBook book) =>
+        ToRiskSignalsDto(AssessEntryRiskSignals(entry, snapshot), book.Get(entry.Secid), AssessValue(entry, snapshot));
+
+    internal static ScoreComponentDto ToComponentDto(ScoreComponent c) => new()
+    {
+        Key = c.Key,
+        Title = c.Title,
+        RawValue = c.RawValue,
+        RawDisplay = c.RawDisplay,
+        Points = c.Points,
+        MaxPoints = c.MaxPoints,
+        Source = c.Source,
+        Missing = c.Missing,
+        Layer = c.Layer,
+        Stale = c.Stale,
+    };
 
     internal static IResult ValidationError(string message) =>
         Results.Json(new { error = message, type = "ValidationException" }, statusCode: StatusCodes.Status422UnprocessableEntity);

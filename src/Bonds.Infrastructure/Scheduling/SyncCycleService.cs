@@ -192,6 +192,14 @@ public sealed class SyncCycleService : ISyncCycleRunner
             result.Errors.Add($"Watchlist: непредвиденная ошибка ({ex.GetType().Name})");
         }
 
+        // --- 1a'. risk_level облигаций T-Invest (задача 46 часть C): ОДИН bulk-вызов Bonds() раз в сутки
+        // (ворота по БД внутри рефрешера). Необязательный вход скоркарты: сбой или отсутствие токена —
+        // только лог, цикл НЕ помечается неуспешным (иначе Telegram-алерт синка из-за второстепенного шага).
+        if (!result.TokenMissingOrInvalid)
+        {
+            await RefreshRiskLevelsAsync(sp, ct);
+        }
+
         // --- 1b. Бэкфилл истории стоимости, если она пуста/почти пуста (первый запуск, или миграция
         // пересчёта истории её очистила). Строго ПОСЛЕ успешного перечитывания журнала: история
         // строится из журнала, и бэкфилл из неполного журнала закрепился бы навсегда (бэкфилл
@@ -257,6 +265,26 @@ public sealed class SyncCycleService : ISyncCycleRunner
         }
 
         return result;
+    }
+
+    private async Task RefreshRiskLevelsAsync(IServiceProvider sp, CancellationToken ct)
+    {
+        try
+        {
+            // GetService (не Required): цикл не должен падать, если шаг не зарегистрирован (юнит-тесты цикла).
+            var refresher = sp.GetService<InstrumentRiskLevelRefresher>();
+            if (refresher is null) return;
+
+            await refresher.RefreshIfDueAsync(DateTime.UtcNow, ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "T-Invest risk level refresh failed — scorecard keeps the previous values");
+        }
     }
 
     /// <summary>

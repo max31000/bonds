@@ -117,10 +117,10 @@ public sealed record ReplacementCandidateDto
 }
 
 /// <summary>
-/// Два ИНФОРМАЦИОННЫХ риск-сигнала кандидата (не рейтинг кредитного качества,
-/// не «надёжность» — см. doc-comment <see cref="Bonds.Core.Analytics.SignalLevel"/>): ликвидность+
-/// листинг и отклонение спреда от медианы корзины. Уровни не ранжируют кандидатов — ранжирование
-/// mode=market идёт по доходности.
+/// Два ИНФОРМАЦИОННЫХ сигнала кандидата (ликвидность+листинг и отклонение спреда от медианы корзины —
+/// см. <see cref="Bonds.Core.Analytics.SignalLevel"/>) + скоркарта надёжности v2 (задача 46: score, coverage,
+/// компоненты, флаги, светофор) + ось Value отдельным полем. Сигналы НЕ ранжируют кандидатов — ранжирование
+/// mode=market идёт по доходности; светофор считает скоркарта, а не эти два сигнала.
 /// </summary>
 public sealed record RiskSignalsDto
 {
@@ -141,18 +141,73 @@ public sealed record RiskSignalsDto
     public decimal? SpreadVsBasketMedianFraction { get; init; }
 
     /// <summary>
-    /// Светофор надёжности: "Green"|"Yellow"|"Red" (см.
-    /// <see cref="Bonds.Core.Analytics.ReliabilityLight"/>/<see cref="Bonds.Core.Analytics.CandidateRiskSignalService.Aggregate"/>
-    /// для точной матрицы). Аддитивное поле — существующие Liquidity/Spread не меняются.
-    /// <b>НЕ кредитный рейтинг</b> — сигнал по биржевой статистике, формулировка "рейтинг"
-    /// запрещена планом задачи 38 везде в UI/API.
+    /// Светофор надёжности v2 (задача 46): "Green"|"Yellow"|"Red" — результат скоркарты
+    /// (<see cref="Bonds.Core.Analytics.ReliabilityScoreService"/>), а НЕ оси спреда: «дешёвая» бумага больше не краснеет.
+    /// Контракт значений и фильтра <c>reliability=green|yellow|red</c> прежний. <b>НЕ кредитный рейтинг</b> —
+    /// оценка по открытым данным, формулировка «рейтинг» для самого светофора запрещена планом задачи 38.
     /// </summary>
     public required string Reliability { get; init; }
 
-    /// <summary>Человекочитаемое обоснование светофора (что притянуло уровень вниз) — задача 38
-    /// часть A.1. Дисклеймер "не кредитный рейтинг" сюда НЕ входит — он отдельный элемент UI
-    /// (тултип фронта), не часть этой строки.</summary>
+    /// <summary>Человекочитаемое обоснование светофора (что притянуло уровень вниз/вверх). Дисклеймер
+    /// «не кредитный рейтинг» сюда НЕ входит — он отдельный элемент UI.</summary>
     public required string ReliabilityReason { get; init; }
+
+    /// <summary>Скор надёжности 0–100 = набрано / доступно × 100 (по компонентам с данными). ПОСЧИТАН НЕ из G-спреда.</summary>
+    public required decimal Score { get; init; }
+
+    /// <summary>Покрытие данными 0–1 = доступные баллы / максимум применимых компонентов (устаревшая отчётность
+    /// даёт слою фундамента половину веса). Низкое покрытие = скор опирается на мало данных.</summary>
+    public required decimal Coverage { get; init; }
+
+    /// <summary>Разбивка скоркарты: каждый компонент со значением, вкладом, источником и признаком «нет данных».</summary>
+    public required IReadOnlyList<ScoreComponentDto> Components { get; init; }
+
+    /// <summary>Критические флаги (краснят светофор): IssuerDefaulted, InterestUncovered, NegativeEquity, SpreadShock.</summary>
+    public required IReadOnlyList<string> CriticalFlags { get; init; }
+
+    /// <summary>Предупреждения (не краснят): IssuerTechDefault, PriceDrawdown, JunkRating.</summary>
+    public required IReadOnlyList<string> WarningFlags { get; init; }
+
+    /// <summary>Ось Value (цена, НЕ риск): "Cheap"|"Fair"|"Rich"|"InsufficientData" — G-спред бумаги против медианы
+    /// её корзины (сектор × дюрация Маколея), порог — IQR корзины (<c>RelativeValueService.ResolveVerdict</c>).
+    /// Отдельное поле: «дешёвая» бумага не обязана быть рискованной, а «Rich» — надёжной.</summary>
+    public required string ValueVerdict { get; init; }
+
+    /// <summary>Задача 47: медиана G-спреда корзины бумаги — ДОЛЯ (0.003 = 30 б.п.), для тултипа Value «спред X против
+    /// медианы Y». Null, если у бумаги нет спреда.</summary>
+    public decimal? ValueMedianFraction { get; init; }
+
+    /// <summary>Задача 47: порог вердикта Value — ДОЛЯ, max(20 б.п., 0.25 × IQR корзины). Null вместе с медианой.</summary>
+    public decimal? ValueThresholdFraction { get; init; }
+}
+
+/// <summary>Один компонент скоркарты надёжности (зеркало <see cref="Bonds.Core.Analytics.ScoreComponent"/>).</summary>
+public sealed record ScoreComponentDto
+{
+    /// <summary>Стабильный ключ: issuer_default_history, listing, no_offer, not_qual_only, broker_risk_level,
+    /// manual_rating, revenue_size, interest_coverage, leverage, current_ratio, trend, altman_z_em, sovereign,
+    /// spread_momentum, price_drawdown, liquidity.</summary>
+    public required string Key { get; init; }
+    public required string Title { get; init; }
+
+    /// <summary>Числовое значение показателя (единицы по компоненту: ДОЛЯ для spread_momentum/price_drawdown,
+    /// РУБЛИ для revenue_size, «раз» для коэффициентов); null, если нет или не число.</summary>
+    public decimal? RawValue { get; init; }
+
+    /// <summary>Значение/причина словами («2200/2330 = 2.4×», «нет данных: …», «[Stale: …]»).</summary>
+    public string? RawDisplay { get; init; }
+    public required int Points { get; init; }
+    public required int MaxPoints { get; init; }
+    public required string Source { get; init; }
+
+    /// <summary>true — данных нет: компонент не входит в Score (в отличие от честного нуля).</summary>
+    public required bool Missing { get; init; }
+
+    /// <summary>"A" структурный | "B" фундаментальный | "C" рыночный.</summary>
+    public required string Layer { get; init; }
+
+    /// <summary>true — отчётность устарела (старше 20 месяцев).</summary>
+    public required bool Stale { get; init; }
 }
 
 public sealed record ComparisonResponseDto

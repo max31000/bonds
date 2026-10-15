@@ -48,19 +48,6 @@ public sealed record CandidateRiskSignals(
     LiquidityScore LiquidityScoreRaw);
 
 /// <summary>
-/// Светофор надёжности: ОДИН агрегат поверх двух информационных риск-сигналов
-/// (<see cref="SignalLevel"/>) кандидата. <b>НЕ кредитный рейтинг</b> — см. doc-comment
-/// <see cref="CandidateRiskSignalService.Aggregate"/> для точной матрицы и владельческих рамок
-/// задачи (никаких внешних источников, никаких формулировок "рейтинг"/"надёжность эмитента").
-/// </summary>
-public enum ReliabilityLight
-{
-    Green,
-    Yellow,
-    Red,
-}
-
-/// <summary>
 /// Чистый сервис двух информационных риск-сигналов кандидата-замены поверх
 /// уже посчитанных данных (переиспользует <see cref="Bonds.Core.Universe.LiquidityScoreCalculator"/>
 /// и медиану корзины <see cref="RelativeValueService"/> — сам НЕ делает I/O и не строит корзины
@@ -194,7 +181,7 @@ public static class CandidateRiskSignalService
         return new CandidateRiskSignals(liquidityLevel, liquidityLabel, spreadLevel, gSpreadFraction, deviation, liquidityScore);
     }
 
-    // ─── Задача 38 часть A — светофор надёжности ────────────────────────────────────────────
+    // ─── Сектора суверенных эмитентов (используются скоркартой, задача 46) ──────────────────
 
     /// <summary>Классификация "Гособлигации" банка (<c>BondUniverseEntry.Sector</c>) — см.
     /// <c>Bonds.Infrastructure.Connectors.Moex.BondUniverseSectorMapper</c>/<c>MoexSegmentMapper</c>.
@@ -204,75 +191,4 @@ public static class CandidateRiskSignalService
 
     /// <summary>Классификация "Муниципальные" банка — см. doc-comment <see cref="GovernmentSectorLabel"/>.</summary>
     public const string MunicipalSectorLabel = "Муниципальные";
-
-    private static bool IsSovereignSector(string? sector) =>
-        string.Equals(sector, GovernmentSectorLabel, StringComparison.OrdinalIgnoreCase) ||
-        string.Equals(sector, MunicipalSectorLabel, StringComparison.OrdinalIgnoreCase);
-
-    /// <summary>
-    /// Светофор надёжности: ОДИН агрегат поверх двух риск-сигналов
-    /// (<see cref="SignalLevel"/> ликвидности и спреда) + листинга + сектора. <b>Информационный
-    /// сигнал по биржевой статистике, НЕ кредитный рейтинг</b> (владелец задачи 38 явно запретил
-    /// эту формулировку — нет надёжного бесплатного источника кредитного качества, см. план).
-    /// <para>
-    /// <b>Матрица (зафиксирована тестами <c>CandidateRiskSignalServiceTests.Aggregate_MatchesMatrix</c>):</b>
-    /// <list type="bullet">
-    /// <item><b>Red</b> — <see cref="CandidateRiskSignals.Liquidity"/> == Caution, ИЛИ
-    /// <see cref="CandidateRiskSignals.Spread"/> == Caution И сектор НЕ суверенный (см. ниже).
-    /// Любой Caution — красный, независимо от второй оси.</item>
-    /// <item><b>Green</b> — ни один из случаев Red не сработал, И <c>LiquidityScoreRaw != None</c>
-    /// (данные по ликвидности есть — None даёт тот же <see cref="SignalLevel.Neutral"/>, что Medium,
-    /// но НЕ считается "нормой" для зелёного), И <paramref name="listLevel"/> ∈ {1, 2} (листинг 3 или
-    /// неизвестный листинг не дотягивают до зелёного, даже если оба сигнала Good/Neutral).</item>
-    /// <item><b>Yellow</b> — всё остальное: смешанные сигналы недостающего листинга/ликвидности.
-    /// В частности, null-спред И null-ликвидность (<c>LiquidityScoreRaw == None</c>) ОДНОВРЕМЕННО —
-    /// Yellow, НЕ Red (нехватка данных ≠ негативный сигнал, тот же принцип, что часть A задачи 33).</item>
-    /// <item><b>Суверенное исключение</b> — сектор "Гособлигации"/"Муниципальные"
-    /// (<see cref="GovernmentSectorLabel"/>/<see cref="MunicipalSectorLabel"/>): спред НЕ участвует
-    /// ни в Red, ни в требованиях Green ("любой спред" — суверенный кредит РФ, спред к кривой ОФЗ не
-    /// несёт того же кредитного смысла, что у корпоративного эмитента). Исключение касается ТОЛЬКО
-    /// оси спреда — ликвидность/листинг по-прежнему могут дать Red/Yellow для гособлигации.</item>
-    /// </list>
-    /// </para>
-    /// <para>Возвращает уровень + строку-обоснование (что именно притянуло вниз) — обоснование НЕ
-    /// содержит слова "рейтинг"/"надёжность эмитента" (закреплено тестом), финальный обязательный
-    /// дисклеймер "оценка по биржевой статистике, не кредитный рейтинг" — на фронте,
-    /// рядом с обоснованием, не внутри строки.</para>
-    /// </summary>
-    public static (ReliabilityLight Level, string Reason) Aggregate(
-        CandidateRiskSignals signals, int? listLevel, string? sector)
-    {
-        var isSovereign = IsSovereignSector(sector);
-        var liquidityCaution = signals.Liquidity == SignalLevel.Caution;
-        // Спред суверенного сектора не считается Caution ни для Red, ни для Green-требований —
-        // единственное исключение матрицы (см. doc-comment выше).
-        var spreadCountsAsCaution = signals.Spread == SignalLevel.Caution && !isSovereign;
-
-        if (liquidityCaution || spreadCountsAsCaution)
-        {
-            var causes = new List<string>();
-            if (liquidityCaution) causes.Add("ликвидность/листинг в зоне риска (сигнал Caution)");
-            if (spreadCountsAsCaution) causes.Add("спред заметно выше медианы корзины (сигнал Caution)");
-            return (ReliabilityLight.Red, $"Красный: {string.Join("; ", causes)}.");
-        }
-
-        var liquidityDataMissing = signals.LiquidityScoreRaw == LiquidityScore.None;
-        var listingOutsideCore = listLevel is not (1 or 2);
-
-        if (!liquidityDataMissing && !listingOutsideCore)
-        {
-            return (ReliabilityLight.Green, isSovereign
-                ? "Зелёный: гособлигация/муниципальная — суверенный кредит, спред не учитывается; ликвидность и листинг в норме."
-                : "Зелёный: оба риск-сигнала не хуже Neutral, листинг 1-2, ликвидность с данными.");
-        }
-
-        var gaps = new List<string>();
-        if (liquidityDataMissing) gaps.Add("недостаточно данных по ликвидности (оборот/сделки не покрывают порог оценки)");
-        if (listingOutsideCore)
-        {
-            gaps.Add(listLevel is null ? "листинг неизвестен" : $"листинг {listLevel} (для зелёного нужен листинг 1 или 2)");
-        }
-
-        return (ReliabilityLight.Yellow, $"Жёлтый: {string.Join("; ", gaps)}.");
-    }
 }

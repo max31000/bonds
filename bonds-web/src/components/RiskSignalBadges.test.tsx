@@ -80,6 +80,8 @@ describe('RiskSignalBadges — светофор надёжности', () => {
 
     const caption = screen.getByTestId('risk-signals-caption');
     expect(caption.textContent).not.toMatch(/^рейтинг$/i);
-    expect(caption.textContent).toContain('не рейтинг рейтинговых агентств');
+    expect(caption.textContent).toContain(RELIABILITY_DISCLAIMER);
+    expect(RELIABILITY_DISCLAIMER).toContain('не кредитный рейтинг и не рекомендация');
+    expect(RELIABILITY_DISCLAIMER).not.toContain('биржевой статистике');
   });
 });

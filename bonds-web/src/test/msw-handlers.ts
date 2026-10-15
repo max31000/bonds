@@ -125,6 +125,15 @@ export const handlers = [
   http.get('*/api/universe/status', () =>
     HttpResponse.json({ lastRefreshUtc: null, totalBonds: 0, hiddenBonds: 0, historyDays: 0 }),
   ),
+  // Задача 47: скоркарта бумаги и ручной ввод данных эмитента — по умолчанию «бумаги нет в банке» и пустые списки;
+  // конкретные сценарии переопределяются через server.use в тестах.
+  http.get('*/api/universe/:secid/reliability', () => HttpResponse.json({ error: 'not found' }, { status: 404 })),
+  http.get('*/api/issuers/:inn/ratings', ({ params }) =>
+    HttpResponse.json({ inn: params.inn, ratings: [], freshMonths: 18, disclaimer: '' }),
+  ),
+  http.get('*/api/issuers/:inn/financials', ({ params }) =>
+    HttpResponse.json({ inn: params.inn, girBoStatus: null, years: [], disclaimer: '' }),
+  ),
   // Дефолтные кейсы для 09c — пустые/неактивные данные; переопределяются в тестах экранов.
   http.get('*/api/signals', () => HttpResponse.json({ signals: [] })),
   http.post('*/api/signals/read-all', () => HttpResponse.json({ acknowledged: 0 })),

@@ -38,6 +38,23 @@ public sealed class BondUniverseRefreshOptions
     /// <summary>Задача 43: пауза между запросами карточек к ISS (не напрягаем публичный API). В тестах 0.</summary>
     public TimeSpan SecurityDetailsRequestDelay { get; set; } = TimeSpan.FromMilliseconds(100);
 
+    /// <summary>Задача 45: максимум ИНН эмитентов, проверяемых в ГИР БО за один суточный шаг (бережём сервис).
+    /// Очередь — портфель/watchlist, затем ВЕСЬ банк (ревью В2): при паузе <see cref="IssuerFinancialsRequestDelay"/>
+    /// 1 с и 1–3 запросах на ИНН один тик занимает ~50–150 с; банк в несколько тысяч эмитентов прогревается
+    /// за ~3–4 недели (дефолт 20 → 50).</summary>
+    public int IssuerFinancialsBatchSize { get; set; } = 50;
+
+    /// <summary>Задача 45: статус проверки ИНН (кроме 'error') старше этого срока считается устаревшим
+    /// (отчётность годовая — чаще раз в месяц смысла нет).</summary>
+    public TimeSpan IssuerFinancialsRefreshAfter { get; set; } = TimeSpan.FromDays(30);
+
+    /// <summary>Задача 45: изолированный сбой по ИНН (статус 'error') перепроверяется на следующие сутки,
+    /// а не через 30 дней. Чуть меньше 24 ч, чтобы не промахнуться мимо суточного окна.</summary>
+    public TimeSpan IssuerFinancialsErrorRetryAfter { get; set; } = TimeSpan.FromHours(20);
+
+    /// <summary>Задача 45: пауза между запросами к ГИР БО (не менее 1 с по плану). В тестах 0.</summary>
+    public TimeSpan IssuerFinancialsRequestDelay { get; set; } = TimeSpan.FromSeconds(1);
+
     /// <summary>Retention дневной истории — план: ~400 дней.</summary>
     public int HistoryRetentionDays { get; set; } = 400;
 

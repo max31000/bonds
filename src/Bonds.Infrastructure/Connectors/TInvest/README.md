@@ -139,3 +139,12 @@ MVP берёт первый счёт со `Status == AccountStatus.Open` (spec �
   `InstrumentType`). Синк сохраняет в журнал только облигационные операции (или операции без типа инструмента).
 - `InputSecurities` / `OutputSecurities` (имена enum сверены по SDK) -> `SecurityIn` / `SecurityOut`.
 
+
+## risk_level облигаций — `Instruments.Bonds(InstrumentsRequest)` (задача 46)
+
+`GetBondRiskLevelsAsync`: ОДИН bulk-вызов `Instruments.BondsAsync(new InstrumentsRequest { InstrumentStatus = Base })`
+→ `Bond.risk_level` (instruments.proto:502, enum `RiskLevel`: UNSPECIFIED=0, LOW=1, MODERATE=2, HIGH=3; SDK 0.6.22.1
+сверен компиляцией — `RiskLevel.Low/Moderate/High`, поле `Bond.RiskLevel`). Пары (ISIN, уровень) кладутся в
+`instrument_risk_levels` раз в сутки шагом `SyncCycleService` (`InstrumentRiskLevelRefresher`, ворота по
+`MAX(fetched_at)` ≥ 20 ч). Потребитель — компонент `broker_risk_level` скоркарты надёжности. Реальный вызов с токеном
+в CI не выполняется (мок интерфейса).

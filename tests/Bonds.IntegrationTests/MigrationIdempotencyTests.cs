@@ -68,6 +68,8 @@ public class MigrationIdempotencyTests : IAsyncLifetime
             "016_signals_as_events.sql",
             "017_universe_official_yields.sql",
             "018_universe_emitents_and_security_details.sql",
+            "019_issuer_financials.sql",
+            "020_instrument_risk_levels_and_issuer_ratings.sql",
         });
 
         var expectedTables = new[]
@@ -76,7 +78,8 @@ public class MigrationIdempotencyTests : IAsyncLifetime
             "market_quotes", "yield_curve_snapshots", "accounts", "positions", "operations",
             "projected_cash_flows", "portfolio_value_snapshots", "signals", "target_allocations",
             "user_settings", "intraday_quotes", "instrument_price_history", "watchlist_items",
-            "bond_universe", "bond_universe_history", "security_details",
+            "bond_universe", "bond_universe_history", "security_details", "issuer_financials", "issuer_financials_status",
+            "instrument_risk_levels", "issuer_ratings",
         };
 
         foreach (var table in expectedTables)
@@ -102,7 +105,7 @@ public class MigrationIdempotencyTests : IAsyncLifetime
         await conn.OpenAsync();
 
         var migrationCount = await conn.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM _migrations");
-        migrationCount.Should().Be(18, "повторный запуск не должен заново применять уже применённые миграции");
+        migrationCount.Should().Be(20, "повторный запуск не должен заново применять уже применённые миграции");
 
         // users.base_currency существует ровно один раз (ALTER ... ADD COLUMN IF NOT EXISTS не падает повторно).
         var columnCount = await conn.ExecuteScalarAsync<long>(
@@ -208,6 +211,73 @@ public class MigrationIdempotencyTests : IAsyncLifetime
         {
             (await ColumnCount("security_details", column)).Should().Be(1, $"security_details.{column} создана миграцией 018");
         }
+    }
+
+    [Fact]
+    public async Task RunAsync_Migration019_IssuerFinancialsTablesAndUniqueKeyExist()
+    {
+        var connectionString = _container.GetConnectionString();
+        await new MigrationRunner(connectionString, NullLogger<MigrationRunner>.Instance).RunAsync();
+
+        await using var conn = new MySqlConnection(connectionString);
+        await conn.OpenAsync();
+
+        async Task<long> ColumnCount(string table, string column) => await conn.ExecuteScalarAsync<long>(
+            @"SELECT COUNT(*) FROM information_schema.columns
+              WHERE table_schema = DATABASE() AND table_name = @Table AND column_name = @Column",
+            new { Table = table, Column = column });
+
+        foreach (var column in new[]
+                 {
+                     "inn", "period", "source", "fetched_at", "revenue", "operating_profit", "interest_paid", "net_profit",
+                     "equity", "total_assets", "current_assets", "current_liabilities", "cash", "long_debt", "short_debt",
+                     "retained_earnings", "has_audit",
+                 })
+        {
+            (await ColumnCount("issuer_financials", column)).Should().Be(1, $"issuer_financials.{column} создана миграцией 019");
+        }
+
+        foreach (var column in new[] { "inn", "status", "checked_at" })
+        {
+            (await ColumnCount("issuer_financials_status", column)).Should().Be(1, $"issuer_financials_status.{column} создана миграцией 019");
+        }
+
+        var uniqueCols = (await conn.QueryAsync<string>(
+            @"SELECT column_name FROM information_schema.statistics
+              WHERE table_schema = DATABASE() AND table_name = 'issuer_financials' AND index_name = 'uq_issuer_financials'
+              ORDER BY seq_in_index")).ToList();
+        uniqueCols.Should().Equal("inn", "period", "source");
+    }
+
+    [Fact]
+    public async Task RunAsync_Migration020_RiskLevelsAndIssuerRatingsTablesExist()
+    {
+        var connectionString = _container.GetConnectionString();
+        await new MigrationRunner(connectionString, NullLogger<MigrationRunner>.Instance).RunAsync();
+
+        await using var conn = new MySqlConnection(connectionString);
+        await conn.OpenAsync();
+
+        async Task<long> ColumnCount(string table, string column) => await conn.ExecuteScalarAsync<long>(
+            @"SELECT COUNT(*) FROM information_schema.columns
+              WHERE table_schema = DATABASE() AND table_name = @Table AND column_name = @Column",
+            new { Table = table, Column = column });
+
+        foreach (var column in new[] { "isin", "risk_level", "fetched_at" })
+        {
+            (await ColumnCount("instrument_risk_levels", column)).Should().Be(1, $"instrument_risk_levels.{column} создана миграцией 020");
+        }
+
+        foreach (var column in new[] { "inn", "agency", "rating", "rating_date", "note" })
+        {
+            (await ColumnCount("issuer_ratings", column)).Should().Be(1, $"issuer_ratings.{column} создана миграцией 020");
+        }
+
+        var uniqueCols = (await conn.QueryAsync<string>(
+            @"SELECT column_name FROM information_schema.statistics
+              WHERE table_schema = DATABASE() AND table_name = 'issuer_ratings' AND index_name = 'uq_issuer_ratings'
+              ORDER BY seq_in_index")).ToList();
+        uniqueCols.Should().Equal("inn", "agency");
     }
 
     [Fact]

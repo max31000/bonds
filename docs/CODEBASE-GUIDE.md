@@ -29,6 +29,7 @@ MySQL для интеграционных), vitest + Testing Library + MSW.
 | MOEX ISS `securities`: ACCRUEDINT (НКД) | вход | **рубли на одну бумагу** (не %, не на лот) — конверсии нет |
 | T-Invest `GetPortfolio` (CurrentPrice/CurrentNkd/AveragePositionPrice) | вход | **рубли** за бумагу — конверсия не нужна |
 | T-Invest `GetLastPrices` (marketdata `LastPrice`) | вход | **ПУНКТЫ** (% от номинала) → рубли = `pts/100 × FaceValue` (см. `LiveQuoteConverter`) |
+| ГИР БО ФНС (`bo.nalog.gov.ru`): все суммы бухгалтерской отчётности | вход | **ТЫСЯЧИ рублей** → храним РУБЛИ (×1000, `GirBoParser.ThousandsToRubles`), `issuer_financials.*` — рубли |
 | `MarketQuote.CleanPrice/DirtyPrice/Accrued`, `intraday_quotes.dirty_price_rub` | БД | всегда рубли за бумагу (контракт в doc-comment модели) |
 | `Position.Accrued` | БД | НКД на ОДНУ бумагу (не на позицию) |
 | Знак `Operation.AmountRub` | БД | как отдал брокер — НЕ переписывать (см. `PortfolioXirrService.SignedAmount`) |
@@ -153,6 +154,15 @@ API — `api/client.ts` поверх `apiJson` кита (cookie, refresh; фин
 (`AppLayout` кита, `LoginRequired`, индикатор синка + «Обновить данные», автосинк — не ломать).
 Тесты страниц рендерят их в `MantineProvider`; `/auth/api/me` владельца — `OWNER_ME` в MSW.
 
+**UI скоркарты (задача 47).** `ReliabilityScoreCard` — чистый рендер `RiskSignals` (светофор + балл + `coverage` ДОЛЯ→«данных: N%»
++ флаги по словарю `reliabilityCopy.ts` + компоненты по слоям A/B/C + ось Value + дисклеймер `RELIABILITY_DISCLAIMER`). Точка входа —
+`ReliabilityDot` с `details`: клик открывает карточку в `Popover` (desktop) / `Drawer` (< 48em); строки без `components`
+(скринер) лениво грузят `GET /api/universe/{secid|isin}/reliability` (`useReliability`). Risk и Value — ДВА независимых бейджа
+(`ReliabilityDot` + `ValueBadge`; тултип Value: G-спред / `valueMedianFraction` / `valueThresholdFraction` — ДОЛИ, б.п. рисует
+`formatBp`). Ручной ввод — `IssuerDataBlock` (рейтинги + отчётность: форма принимает ₽ / тыс. ₽ (дефолт, как в РСБУ) / млн ₽, в API уходят РУБЛИ — конверсия один раз при отправке; ИНН = `emitentInn` карточки скоркарты или ввод
+вручную; страница Настроек), после сохранения родитель рефетчит скоркарту (`refreshToken`). Вложенные `<button>` недопустимы:
+строка кандидата-замены — `div[role=button]`, а содержимое попапа гасит всплытие клика (React-события идут через портал).
+
 ## Продуктовые константы
 
 Single-user, один счёт. Т-Invest токен — read-only секрет: не логировать, не отдавать на фронт,
@@ -168,7 +178,21 @@ Single-user, один счёт. Т-Invest токен — read-only секрет:
 `HASDEFAULT`/`HASTECHNICALDEFAULT`, квал-инвесторы, бенчмарк купона) — персистентный кэш
 `security_details` (`SecurityDetailsRepository`, наполняет `SecurityDetailsEnricher` по 200 бумаг в сутки:
 портфель/watchlist → банк без карточки → старше 30 дней); флаги `null` = «неизвестно», НЕ «нет»; дефолт-история
-эмитента — `GetEmitentDefaultHistoryAsync` (потребители — светофор, задача 46); точный движок — по требованию через
+эмитента — `GetEmitentDefaultHistoryAsync` (потребитель — скоркарта надёжности); отчётность эмитентов (портфель/watchlist → весь банк) — суточный шаг того же `BondUniverseRefreshService`
+(`IssuerFinancialsEnricher`, ГИР БО по ИНН из `bond_universe.emitent_inn`, ≤50 ИНН за сутки (портфель/watchlist, затем весь банк — прогрев за ~3–4 недели), пауза 1 с, 30-дневный кэш статусов
+`issuer_financials_status`: ok/not_found/hidden/cb/error; хранилище `IssuerFinancialsRepository`, РСБУ соло, годовые, рубли;
+потребитель — слой B скоркарты); **светофор надёжности — скоркарта** `ReliabilityScoreService` (Core, чистая функция, задача 46):
+три слоя — A структурный (дефолт-история эмитента, листинг, оферта, не-квал, `risk_level` T-Invest — суточный bulk-вызов
+`Bonds()` шагом `SyncCycleService`, таблица `instrument_risk_levels`, + ручной рейтинг `issuer_ratings`), B фундаментальный
+(последний год `issuer_financials`; Missing при статусе ГИР БО ≠ ok без ручной отчётности; Stale > 20 мес. → Coverage ×0.5;
+для гос/муни вместо B бонус `sovereign`), C рыночный (динамика G-спреда к 20-дневной медиане, просадка цены, ликвидность).
+Score = набрано/доступно×100, Coverage = доступно/максимум (Red по Score < 35 только при Coverage ≥ 0.3 — «почти нет данных» → Yellow; флоатер: spread_momentum Missing, Value = InsufficientData); **G-спред и перцентиль корзины в риск НЕ входят** — это ось
+Value (`valueVerdict` Cheap/Fair/Rich/InsufficientData отдельным полем). Пороги — `ReliabilityScoreOptions` (эвристика,
+калибровка — BACKLOG О2). Вход для всего банка собирает батчево и кэширует `ReliabilityScoreProvider` (Singleton, кэш =
+`RelativeValueCacheDuration`, `Invalidate()` при ручном вводе); эндпоинты берут `ReliabilityBook` и отдают
+`RiskSignalsDto` (score/coverage/components/criticalFlags/warningFlags/valueVerdict) — `AnalyticsSupport.BuildRiskSignalsDto`;
+полная карточка — `GET /api/universe/{secid}/reliability`; ручной ввод — `/api/issuers/{inn}/ratings|financials` (РУБЛИ,
+`source='manual'` приоритетнее ГИР БО); точный движок — по требованию через
 `POST /api/universe/{secid}/materialize` (единый путь обогащения —
 `InstrumentEnrichmentService`).
 

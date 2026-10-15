@@ -43,7 +43,18 @@ public interface ITInvestPortfolioClient
     /// наружу (тариф не критичен для работы продукта).
     /// </summary>
     Task<TInvestTariffInfo?> GetUserTariffAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// Задача 46: ОДИН bulk-вызов <c>Instruments.Bonds()</c> (<c>INSTRUMENT_STATUS_BASE</c>) → пары (ISIN, risk_level)
+    /// всех облигаций, доступных для торговли через API. <c>Bond.risk_level</c> подтверждён официальным proto
+    /// (instruments.proto:502, enum 0–3). Бумаги без ISIN пропускаются. Токен не настроен → <see cref="InvalidOperationException"/>
+    /// (как у остальных методов клиента), сбой gRPC → исключение наружу (вызывающий шаг синка логирует и пропускает).
+    /// </summary>
+    Task<IReadOnlyList<TInvestBondRiskLevel>> GetBondRiskLevelsAsync(CancellationToken ct = default);
 }
+
+/// <summary>Брокерская оценка риска одной облигации (ISIN → <see cref="BrokerRiskLevel"/>).</summary>
+public sealed record TInvestBondRiskLevel(string Isin, Bonds.Core.Models.BrokerRiskLevel RiskLevel);
 
 /// <summary>Тариф пользователя T-Invest — только контекст для UI, не влияет на расчёты.</summary>
 public sealed record TInvestTariffInfo

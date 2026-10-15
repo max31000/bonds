@@ -24,6 +24,7 @@ import { useDebouncedValue, useDisclosure, useMediaQuery } from '@mantine/hooks'
 
 import { Disclaimer } from '../components/Disclaimer';
 import { ReliabilityDot, RiskSignalsCaption } from '../components/RiskSignalBadges';
+import { ValueBadge } from '../components/ValueBadge';
 import { ReliabilityFilterControl } from '../components/ReliabilityFilterControl';
 import { postWatchlistItem } from '../api/watchlist';
 import {
@@ -77,6 +78,40 @@ function screenerReliabilityDetailLines(row: UniverseRow): string[] {
     `Ликвидность: ${liquidityLabel(row.liquidityScore)}${row.listLevel ? `, листинг ${row.listLevel}` : ''}`,
     `G-спред${gspreadSourceSuffix(row)}: ${formatBp(row.gspreadApproxFraction)}`,
   ];
+}
+
+/**
+ * Светофор (Risk) + балл + бейдж Value (Cheap/Fair/Rich/«мало данных») строки скринера — две НЕЗАВИСИМЫЕ оси
+ * (задача 47). Клик по точке лениво запрашивает полную разбивку скоркарты (`/api/universe/{secid}/reliability`):
+ * строки списка несут только свёртку. Медиана/порог Value — ДОЛИ из строки.
+ */
+function RowReliability({ row }: { row: UniverseRow }) {
+  return (
+    <Group gap={6} wrap="nowrap" align="center">
+      <ReliabilityDot
+        reliability={row.reliability}
+        reliabilityReason={row.reliabilityReason}
+        detailLines={screenerReliabilityDetailLines(row)}
+        testIdSuffix={`screener-${row.secid}`}
+        score={row.score}
+        details={{ lookup: row.secid }}
+      />
+      {row.score !== undefined && (
+        <Text size="xs" c="dimmed" className="mvv-num" data-testid={`screener-score-${row.secid}`}>
+          {Math.round(row.score)}
+        </Text>
+      )}
+      {row.valueVerdict !== undefined && (
+        <ValueBadge
+          verdict={row.valueVerdict}
+          gSpreadFraction={row.gspreadApproxFraction}
+          medianFraction={row.valueMedianFraction}
+          thresholdFraction={row.valueThresholdFraction}
+          testIdSuffix={`screener-${row.secid}`}
+        />
+      )}
+    </Group>
+  );
 }
 
 /** « (биржевой)»/« (расчётный (по кривой))» — пометка источника G-спреда в строках деталей (задача 42). */
@@ -360,12 +395,7 @@ function ScreenerCard({ row }: { row: UniverseRow }) {
         </Group>
 
         <Group gap={4} wrap="wrap" align="center">
-          <ReliabilityDot
-            reliability={row.reliability}
-            reliabilityReason={row.reliabilityReason}
-            detailLines={screenerReliabilityDetailLines(row)}
-            testIdSuffix={`screener-${row.secid}`}
-          />
+          <RowReliability row={row} />
           <Badge size="xs" color={liquidityColor(row.liquidityScore)} variant="light">
             {liquidityLabel(row.liquidityScore)}
           </Badge>
@@ -634,12 +664,7 @@ export function Screener() {
                           </Badge>
                         </Table.Td>
                         <Table.Td>
-                          <ReliabilityDot
-                            reliability={row.reliability}
-                            reliabilityReason={row.reliabilityReason}
-                            detailLines={screenerReliabilityDetailLines(row)}
-                            testIdSuffix={`screener-${row.secid}`}
-                          />
+                          <RowReliability row={row} />
                         </Table.Td>
                         <Table.Td>{maturityOrOfferLabel(row)}</Table.Td>
                         <Table.Td>

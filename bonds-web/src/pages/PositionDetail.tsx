@@ -7,6 +7,9 @@ import { IconArrowLeft } from '@tabler/icons-react';
 import { CartesianGrid, Line, LineChart, ReferenceDot, ReferenceLine, Tooltip, XAxis, YAxis } from 'recharts';
 import { fetchPositionDetail } from '../api/positions';
 import { Disclaimer } from '../components/Disclaimer';
+import { IssuerDataBlock } from '../components/IssuerDataBlock';
+import { ReliabilityScoreCard } from '../components/ReliabilityScoreCard';
+import { useReliability } from '../hooks/useReliability';
 
 import type { PositionDetail as PositionDetailDto, PriceHistoryRange } from '../api/types';
 import { formatRub, formatPercent, formatBp, formatNumber, formatDate, commissionSourceLabel, formatDaysUntil } from '../utils/format';
@@ -55,6 +58,44 @@ function MetricCard({ label, value, explanation, extra }: MetricCardProps) {
       value={value}
       hint={extra}
     />
+  );
+}
+
+/**
+ * Секция «Надёжность» карточки позиции (задача 47): развёрнутая скоркарта (не попап) — балл, покрытие данными, все
+ * компоненты с источниками и «нет данных» — плюс формы ручного ввода рейтинга/отчётности эмитента (ИНН берётся из
+ * карточки скоркарты `emitentInn`). После сохранения скоркарта перезапрашивается — введённое сразу меняет балл.
+ * Бумаги нет в банке MOEX (погашена/внебиржевая) → скоркарта недоступна, формы остаются (ИНН вводится вручную).
+ */
+function ReliabilitySection({ isin }: { isin: string }) {
+  const [refreshToken, setRefreshToken] = useState(0);
+  const { data, isLoading, error } = useReliability(isin, refreshToken);
+
+  return (
+    <Section
+      title="Надёжность"
+      description="Скоркарта по открытым данным: структура выпуска, отчётность эмитента, динамика рынка"
+      data-testid="position-reliability"
+    >
+      {isLoading && (
+        <div className="bonds-center">
+          <Loader size="sm" />
+        </div>
+      )}
+      {!isLoading && error && (
+        <ErrorState compact title="Скоркарта недоступна" error={error} data-testid="position-reliability-error" />
+      )}
+      {!isLoading && data && <ReliabilityScoreCard riskSignals={data.riskSignals} testIdSuffix="position" />}
+      {!isLoading && (
+        <div className="bonds-mt">
+          <IssuerDataBlock
+            key={data?.emitentInn ?? 'no-inn'}
+            defaultInn={data?.emitentInn}
+            onChanged={() => setRefreshToken((v) => v + 1)}
+          />
+        </div>
+      )}
+    </Section>
   );
 }
 
@@ -238,6 +279,9 @@ export function PositionDetail() {
               extra={nextCoupon?.valueForPositionRub !== undefined ? formatRub(nextCoupon?.valueForPositionRub ?? null) : undefined}
             />
           </MetricGrid>
+
+          {/* ── Надёжность: скоркарта + ручной ввод данных эмитента ───────────────── */}
+          <ReliabilitySection isin={detail.isin} />
 
           {/* ── График цены ──────────────────────────────────────────────────────── */}
           <ChartFrame

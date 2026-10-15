@@ -78,9 +78,21 @@ function ReplacementCandidateRow({
   isLoading: boolean;
 }) {
   return (
+    // div[role=button], а не <button>: внутри строки живёт светофор-кнопка (задача 47), вложенные <button> — невалидный HTML.
     <UnstyledButton
-      onClick={() => onSelect(candidate.secid)}
-      disabled={isLoading}
+      component="div"
+      role="button"
+      tabIndex={isLoading ? -1 : 0}
+      aria-disabled={isLoading}
+      onClick={() => {
+        if (!isLoading) onSelect(candidate.secid);
+      }}
+      onKeyDown={(event: React.KeyboardEvent) => {
+        if (!isLoading && event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) {
+          event.preventDefault();
+          onSelect(candidate.secid);
+        }
+      }}
       w="100%"
       data-testid={`replace-candidate-${candidate.secid}`}
     >
@@ -108,7 +120,7 @@ function ReplacementCandidateRow({
             </Badge>
           )}
         </Group>
-        <RiskSignalBadges signals={candidate.riskSignals} testIdSuffix={candidate.secid} />
+        <RiskSignalBadges signals={candidate.riskSignals} testIdSuffix={candidate.secid} lookup={candidate.secid} />
       </Paper>
     </UnstyledButton>
   );

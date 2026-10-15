@@ -450,7 +450,9 @@ public class UniverseEndpointsTests
 
     // ─── reliability (задача 38 часть B.2) ──────────────────────────────────────────────────────
 
-    /// <summary>Три записи по одной на уровень светофора — тот же приём, что
+    /// <summary>Три записи по одной на уровень светофора (задача 46: Green требует данных слоя B — GRN сидится здоровым
+    /// эмитентом через <see cref="ReliabilitySeed.SeedHealthyIssuerAsync"/>; YLW — без отчётности/с неизвестным листингом;
+    /// RED — мёртвая ликвидность). Тот же приём, что
     /// ReplacementCandidatesEndpointTests.ReliabilityProbeEntries (см. её doc-comment для того, почему
     /// None-ликвидность здесь не используется: гигиенический фильтр прячет null-оборот). GspreadApproxFraction
     /// не задаётся (остаётся null по умолчанию record-инициализатора) — спред-сигнал автоматически Neutral.</summary>
@@ -486,6 +488,7 @@ public class UniverseEndpointsTests
         var marker = Guid.NewGuid().ToString("N")[..6];
         var sector = $"Sector{marker}";
         await repo.UpsertSnapshotBatchAsync(ReliabilityProbeEntries(marker, sector, baseYield: 0.30m));
+        await ReliabilitySeed.SeedHealthyIssuerAsync(_factory.Database.ConnectionString, $"GRN{marker}", $"IGRN{marker}");
 
         var client = await CreateAuthorizedClientAsync();
         var response = await client.GetAsync($"/api/universe?search={marker}&limit=10");
@@ -498,6 +501,11 @@ public class UniverseEndpointsTests
         {
             row.GetProperty("reliability").ValueKind.Should().Be(JsonValueKind.String);
             row.GetProperty("reliabilityReason").GetString().Should().NotBeNullOrWhiteSpace();
+            // Задача 46: скоркарта и ось Value отдельными полями.
+            row.GetProperty("score").GetDecimal().Should().BeInRange(0m, 100m);
+            row.GetProperty("coverage").GetDecimal().Should().BeInRange(0m, 1m);
+            row.GetProperty("criticalFlags").ValueKind.Should().Be(JsonValueKind.Array);
+            row.GetProperty("valueVerdict").GetString().Should().BeOneOf("Cheap", "Fair", "Rich", "InsufficientData");
         }
 
         rows.Single(r => r.GetProperty("secid").GetString() == $"GRN{marker}").GetProperty("reliability").GetString().Should().Be("Green");
@@ -512,6 +520,7 @@ public class UniverseEndpointsTests
         var marker = Guid.NewGuid().ToString("N")[..6];
         var sector = $"Sector{marker}";
         await repo.UpsertSnapshotBatchAsync(ReliabilityProbeEntries(marker, sector, baseYield: 0.30m));
+        await ReliabilitySeed.SeedHealthyIssuerAsync(_factory.Database.ConnectionString, $"GRN{marker}", $"IGRN{marker}");
 
         var client = await CreateAuthorizedClientAsync();
 

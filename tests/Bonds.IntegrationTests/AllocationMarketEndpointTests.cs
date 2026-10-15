@@ -233,7 +233,7 @@ public class AllocationMarketEndpointTests
         var recommendedBody = await recommendedResponse.Content.ReadFromJsonAsync<JsonElement>();
 
         recommendedBody.GetProperty("source").GetString().Should().Be("recommended");
-        recommendedBody.GetProperty("disclaimer").GetString().Should().Contain("риск-сигнал");
+        recommendedBody.GetProperty("disclaimer").GetString().Should().Contain("светофор");
 
         var recommendedSecids = recommendedBody.GetProperty("allocations").EnumerateArray()
             .Select(a => a.GetProperty("secid").GetString())
@@ -254,13 +254,14 @@ public class AllocationMarketEndpointTests
 
         marketSecids.Should().Contain(cautionSecid, "source=market не фильтрует по риск-сигналам — Caution-кандидат всё равно попадает в ответ");
 
-        // Задача 38 часть A.3: светофор надёжности доходит до RiskSignals строки аллокации market —
-        // спред нейтрализован (одинаковый GspreadApproxFraction выше), поэтому reliability детерминирован
-        // только ликвидностью: goodEntry (High, листинг 1) -> Green, cautionEntry (Low) -> Red.
+        // Задача 38 часть A.3 / 46: светофор надёжности (скоркарта) доходит до RiskSignals строки аллокации market:
+        // goodEntry (High, листинг 1, но БЕЗ отчётности эмитента — слой B Missing) -> Yellow, не Green;
+        // cautionEntry (Low, оборот 150 тыс < 300 тыс) -> Red.
         var goodLine = marketAllocations.SingleOrDefault(a => a.GetProperty("secid").GetString() == goodSecid);
         if (goodLine.ValueKind != JsonValueKind.Undefined)
         {
-            goodLine.GetProperty("riskSignals").GetProperty("reliability").GetString().Should().Be("Green");
+            goodLine.GetProperty("riskSignals").GetProperty("reliability").GetString().Should().Be("Yellow");
+            goodLine.GetProperty("riskSignals").GetProperty("components").GetArrayLength().Should().BeGreaterThan(5);
         }
         var cautionLine = marketAllocations.SingleOrDefault(a => a.GetProperty("secid").GetString() == cautionSecid);
         if (cautionLine.ValueKind != JsonValueKind.Undefined)

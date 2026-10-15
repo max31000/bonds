@@ -5,6 +5,7 @@ import { http, HttpResponse } from 'msw';
 import { server } from '../test/msw-handlers';
 import { Screener } from './Screener';
 import { useScreenerStore } from '../store/useScreenerStore';
+import { reliabilityResponse } from '../test/scorecardFixtures';
 import type { UniverseRow, UniverseResponse, UniverseStatus } from '../api/types';
 
 function renderScreener() {
@@ -153,6 +154,41 @@ describe('Screener', () => {
     await waitFor(() => {
       expect(lastUrl).toContain('minYield=0.1');
     });
+  });
+
+  it('shows risk (light + score) and value (badge) independently in a row, and opens the full scorecard on click (task 47)', async () => {
+    const cheapRedRow: UniverseRow = {
+      ...gazpromRow,
+      reliability: 'Red',
+      reliabilityReason: 'Красный: критический флаг',
+      score: 41.6,
+      coverage: 0.78,
+      criticalFlags: ['InterestUncovered'],
+      valueVerdict: 'Cheap',
+      gspreadApproxFraction: 0.04,
+      valueMedianFraction: 0.03,
+      valueThresholdFraction: 0.002,
+    };
+    let requestedSecid: string | null = null;
+    server.use(
+      http.get('*/api/universe', () => HttpResponse.json(universeResponse([cheapRedRow]))),
+      http.get('*/api/universe/:secid/reliability', ({ params }) => {
+        requestedSecid = String(params.secid);
+        return HttpResponse.json(reliabilityResponse());
+      }),
+    );
+    renderScreener();
+
+    await waitFor(() => expect(screen.getByTestId('screener-table')).toBeInTheDocument());
+    expect(screen.getByTestId(`reliability-dot-screener-${cheapRedRow.secid}`)).toHaveAttribute('data-reliability', 'Red');
+    expect(screen.getByTestId(`screener-score-${cheapRedRow.secid}`)).toHaveTextContent('42');
+    expect(screen.getByTestId(`value-badge-screener-${cheapRedRow.secid}`)).toHaveAttribute('data-verdict', 'Cheap');
+
+    fireEvent.click(screen.getByTestId(`reliability-dot-screener-${cheapRedRow.secid}`));
+    const popover = await screen.findByTestId(`reliability-popover-screener-${cheapRedRow.secid}`);
+    const interest = await within(popover).findByTestId(`score-component-interest_coverage-screener-${cheapRedRow.secid}`);
+    await waitFor(() => expect(interest).toBeVisible());
+    expect(requestedSecid).toBe(cheapRedRow.secid);
   });
 
   it('renders the reliability dot column and sends reliability={green|yellow} to GET /api/universe (task 38)', async () => {
