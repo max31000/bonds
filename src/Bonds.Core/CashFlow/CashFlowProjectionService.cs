@@ -13,8 +13,9 @@ namespace Bonds.Core.CashFlow;
 /// </summary>
 public static class CashFlowProjectionService
 {
-    /// <summary>НДФЛ на купонный доход (spec §7.2). Применяется только к <see cref="CashFlowType.Coupon"/>.</summary>
-    public const decimal CouponTaxRate = 0.13m;
+    /// <summary>НДФЛ на купонный доход (spec §7.2). Применяется только к <see cref="CashFlowType.Coupon"/>.
+    /// Единый источник ставки — <see cref="Analytics.AfterTaxYield.TaxRate"/> (ревью Т-50, NIT-2).</summary>
+    public const decimal CouponTaxRate = Analytics.AfterTaxYield.TaxRate;
 
     /// <summary>
     /// Строит проекцию по одной позиции. Возвращает пустой список для бумаг вне скоупа валюты
