@@ -476,6 +476,9 @@ export interface ComparisonRow {
   effectiveYield: number | null;
   yieldKind: YieldKind;
   modifiedDuration: number | null;
+  /** Дюрация Маколея, ГОДЫ (задача 44) — единая мера для сравнения с корзинами/кандидатами банка
+   * (банк хранит MOEX DURATION = Маколей); modifiedDuration остаётся мерой чувствительности. */
+  macaulayDurationYears: number | null;
   gSpread: number | null;
   daysToHorizon: number;
   horizonDate: string;
@@ -1051,8 +1054,9 @@ export type RelativeValueConfidence = 'High' | 'Medium' | 'Low';
 
 /** Cheap — спред бумаги заметно ВЫШЕ медианы её корзины («дешёвая», недооценена рынком либо
  * закладывает риск); Rich — заметно НИЖЕ («дорогая», кандидат на пересмотр); Fair — в пределах
- * порога (не заслуживает бейджа). */
-export type RelativeValueVerdict = 'Cheap' | 'Fair' | 'Rich';
+ * порога (не заслуживает бейджа); InsufficientData — сопоставимых бумаг мало (откат на «весь рынок»,
+ * Confidence Low): вердикта нет (задача 44). */
+export type RelativeValueVerdict = 'Cheap' | 'Fair' | 'Rich' | 'InsufficientData';
 
 export interface RelativeValueBasket {
   sector: string;
@@ -1076,6 +1080,8 @@ export interface RelativeValuePosition {
   basket: RelativeValueBasket;
   /** ДОЛЯ (0.002 = 20 б.п.) — рисуется фронтом через formatBp. */
   deviationFraction: number;
+  /** ДОЛЯ (0.002 = 20 б.п.) — порог вердикта корзины: max(20 б.п., 0.25 × IQR корзины) (задача 44). */
+  thresholdFraction: number;
   /** Перцентиль внутри эффективной корзины, 0-100. */
   percentile: number;
   verdict: RelativeValueVerdict;

@@ -19,6 +19,7 @@ MySQL для интеграционных), vitest + Testing Library + MSW.
 | Исключения из «долей» | `RateScenarioService.DeltaPercent`, `PortfolioCompositionService.SharePercent` (+их DTO) — уже В ПРОЦЕНТАХ | задокументировано на полях, закреплено тестами; новых исключений не заводить |
 | Деньги | везде | `decimal`, рубли за одну бумагу если не сказано иное |
 | Дюрация | движок/модели | годы (`decimal`) |
+| Какая дюрация | сравнение позиции с банком/корзинами (бакет RV, фильтр «похожая дюрация», `macaulayDurationYears` в `/comparison`) | **Маколей** — банк хранит MOEX DURATION = Маколей; модифицированная — только мера чувствительности (сценарии ставок, PVBP, композиция портфеля) |
 | MOEX ISS: YIELD | вход | **проценты** → храним долю (÷100) |
 | MOEX ISS: DURATION | вход | **дни** → храним годы (÷365) |
 | MOEX ISS: цены (PREVPRICE/LAST/CLOSE) | вход | **% от номинала** → рубли = `pct/100 × FaceValue` |
@@ -106,8 +107,12 @@ XIRR), дата погашения прошла, а выплаты нет — н
 `Analytics/*` (cost basis, сравнение/замена `SwitchAnalysisService`, аллокация/корзина, what-if,
 налог продажи `SaleTaxEstimator`, RV `RelativeValueService`, бакеты — `DurationBucketClassifier`).
 Правило сравнимости доходностей: floater/indexed/dataIncomplete — «вне сравнения»
-(`YieldComparability.IsComparable`). Порог отклонения спреда (RV-вердикт и риск-сигнал кандидата) —
-одна константа `SpreadThresholds.DeviationFraction` (0.0020 = 20 б.п.). Ставка комиссии — ТОЛЬКО через
+(`YieldComparability.IsComparable`). Порог отклонения спреда (RV-вердикт и ось спреда
+светофора) — `SpreadThresholds.ForBasket(P25, P75)` = max(`DeviationFraction` 0.0020 = 20 б.п., `IqrMultiplier` 0.25 × IQR корзины);
+вердикт `RelativeValueService.ResolveVerdict` при Confidence Low (откат на «весь рынок») — `InsufficientData`, не Cheap/Rich.
+Ликвидность (`LiquidityScoreCalculator`) считается по МЕДИАНЕ оборота за 5 торговых дней из `bond_universe_history`
+(`RelativeValueSnapshot.LiquidityTurnoverRub`, fallback — сегодняшний VALTODAY; всегда через `AnalyticsSupport.AssessEntryLiquidity`,
+а не с `entry.TurnoverRub` напрямую); отсутствие bid/offer не даёт Low при живом обороте (High требует известного узкого спреда). Ставка комиссии — ТОЛЬКО через
 `ICommissionRateProvider` (override → оценка из журнала → дефолт), не константа.
 
 ## Тесты
