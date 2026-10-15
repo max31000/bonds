@@ -96,6 +96,14 @@ public static class RelativeValueService
     {
         public required BasketResolution Basket { get; init; }
 
+        /// <summary>Порог вердикта корзины — ДОЛЯ: <see cref="SpreadThresholds.ForBasket"/> от P25/P75
+        /// эффективной корзины (max(20 б.п., 0.25 × IQR)). Тот же порог использует ось спреда светофора.</summary>
+        public required decimal ThresholdFraction { get; init; }
+
+        /// <summary>Вердикт: Cheap/Fair/Rich по <see cref="ThresholdFraction"/>; при
+        /// <see cref="RelativeValueConfidence.Low"/> (fallback «весь рынок») — <see cref="RelativeValueVerdict.InsufficientData"/>.</summary>
+        public required RelativeValueVerdict Verdict { get; init; }
+
         /// <summary>deviationFraction = G-спред бумаги − медиана корзины (ДОЛЯ). Положительное —
         /// «дешевле» (спред выше медианы, рынок недооценивает/закладывает риск), отрицательное —
         /// «дороже» (спред ниже медианы, кандидат на продажу).</summary>
@@ -211,13 +219,36 @@ public static class RelativeValueService
         var resolution = ResolveBasket(key, allMembers, basketStats);
         var deviation = bondSpread - resolution.Stats.Median;
         var percentile = ComputePercentile(bondSpread, resolution.EffectiveBasket, allMembers, resolution.Confidence);
+        var threshold = ThresholdFor(resolution.Stats);
 
         return new RelativeValueAssessment
         {
             Basket = resolution,
+            ThresholdFraction = threshold,
+            Verdict = ResolveVerdict(deviation, threshold, resolution.Confidence),
             DeviationFraction = deviation,
             Percentile = percentile,
         };
+    }
+
+    /// <summary>Порог вердикта для статистики корзины (ДОЛЯ) — см. <see cref="SpreadThresholds.ForBasket"/>.</summary>
+    public static decimal ThresholdFor(BasketStats stats) => SpreadThresholds.ForBasket(stats.P25, stats.P75);
+
+    /// <summary>
+    /// Cheap/Fair/Rich по знаку и порогу корзины: <c>dev &gt; +threshold</c> → Cheap (спред выше
+    /// медианы — рынок недооценивает/закладывает риск), <c>dev &lt; −threshold</c> → Rich (спред ниже
+    /// медианы — дорого относительно соседей), иначе Fair. <paramref name="deviationFraction"/> и
+    /// <paramref name="thresholdFraction"/> — ДОЛИ. Confidence Low (fallback «весь рынок», сопоставимых
+    /// бумаг мало) гейтит вердикт: <see cref="RelativeValueVerdict.InsufficientData"/>, не Cheap/Rich.
+    /// Medium («весь сектор») вердикт выдаёт — UI помечает «по сектору».
+    /// </summary>
+    public static RelativeValueVerdict ResolveVerdict(
+        decimal deviationFraction, decimal thresholdFraction, RelativeValueConfidence confidence)
+    {
+        if (confidence == RelativeValueConfidence.Low) return RelativeValueVerdict.InsufficientData;
+        if (deviationFraction > thresholdFraction) return RelativeValueVerdict.Cheap;
+        if (deviationFraction < -thresholdFraction) return RelativeValueVerdict.Rich;
+        return RelativeValueVerdict.Fair;
     }
 
     private static decimal ComputePercentile(
@@ -280,4 +311,17 @@ public static class RelativeValueService
         var weight = rank - lowerIndex;
         return sorted[lowerIndex] + (sorted[upperIndex] - sorted[lowerIndex]) * weight;
     }
+}
+
+/// <summary>Вердикт одной позиции: Cheap — спред заметно выше медианы корзины (рынок
+/// недооценивает/закладывает риск), Rich — заметно ниже (дорого относительно соседей, кандидат на
+/// пересмотр), Fair — в пределах порога (<see cref="SpreadThresholds.ForBasket"/>), InsufficientData —
+/// сопоставимых бумаг мало (fallback «весь рынок», <see cref="RelativeValueService.RelativeValueConfidence.Low"/>):
+/// вердикт не выдаётся.</summary>
+public enum RelativeValueVerdict
+{
+    Cheap,
+    Fair,
+    Rich,
+    InsufficientData,
 }

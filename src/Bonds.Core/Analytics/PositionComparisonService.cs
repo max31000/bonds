@@ -55,6 +55,7 @@ public static class PositionComparisonService
             EffectiveYield = effectiveYield,
             YieldKind = isFloaterLike ? YieldKind.CurrentYield : YieldKind.Ytm,
             ModifiedDuration = h.ModifiedDuration,
+            MacaulayDurationYears = h.MacaulayDuration,
             GSpread = h.GSpread,
             DaysToHorizon = daysToHorizon,
             HorizonDate = h.HorizonDate,
@@ -101,6 +102,9 @@ public sealed record ComparisonRow
     public required YieldKind YieldKind { get; init; }
 
     public decimal? ModifiedDuration { get; init; }
+
+    /// <summary>Задача 44: дюрация Маколея, ГОДЫ — для сопоставления с корзинами банка (MOEX DURATION = Маколей).</summary>
+    public decimal? MacaulayDurationYears { get; init; }
     public decimal? GSpread { get; init; }
 
     public required int DaysToHorizon { get; init; }

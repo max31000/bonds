@@ -208,4 +208,135 @@ public class RelativeValueServiceTests
 
         stats.Should().ContainKey(new BasketKey { Sector = UnknownSector, DurationBucket = "1–3 года" });
     }
+
+    // ─── Задача 44: IQR-порог вердикта, Confidence-гейт, бакет по Маколею ───────────────────────
+
+    /// <summary>Корзина из 5 бумаг одного бакета (1–3 года) с заданными спредами (доли).</summary>
+    private static (List<BasketMember> Members, Dictionary<BasketKey, BasketStats> Stats) BasketWithSpreads(params decimal[] spreads)
+    {
+        var members = spreads.Select((sp, i) => Member($"S{i}", "Корпоративные", 2m, sp)).ToList();
+        return (members, BuildBasketStats(members));
+    }
+
+    [Fact]
+    public void ThresholdFor_NarrowBasket_IqrTenBp_FloorsAtTwentyBp()
+    {
+        // Спреды 290/295/300/305/310 б.п.: P25 = 295, P75 = 305 → IQR = 10 б.п. → 0.25×10 = 2.5 б.п. < 20 → порог 20 б.п.
+        var (_, stats) = BasketWithSpreads(0.0290m, 0.0295m, 0.0300m, 0.0305m, 0.0310m);
+        var basket = stats.Values.Single();
+
+        basket.P75.Should().Be(0.0305m);
+        basket.P25.Should().Be(0.0295m);
+        ThresholdFor(basket).Should().Be(0.0020m);
+    }
+
+    [Fact]
+    public void ThresholdFor_WideBasket_IqrTwoHundredBp_IsFiftyBp()
+    {
+        // Спреды 0/100/200/300/400 б.п.: P25 = 100, P75 = 300 → IQR = 200 б.п. → 0.25×200 = 50 б.п. > 20.
+        var (_, stats) = BasketWithSpreads(0.0000m, 0.0100m, 0.0200m, 0.0300m, 0.0400m);
+
+        ThresholdFor(stats.Values.Single()).Should().Be(0.0050m);
+    }
+
+    [Theory]
+    // Узкая корзина (медиана 0.0300, порог 20 б.п.): +25 б.п. → Cheap, +15 б.п. → Fair, −25 б.п. → Rich.
+    [InlineData(0.0325, "Cheap")]
+    [InlineData(0.0315, "Fair")]
+    [InlineData(0.0275, "Rich")]
+    [InlineData(0.0320, "Fair")] // ровно на пороге (+20 б.п.) — строгое неравенство, ещё Fair.
+    public void Assess_NarrowBasket_UsesTwentyBpFloor(double bondSpread, string expected)
+    {
+        var (members, stats) = BasketWithSpreads(0.0290m, 0.0295m, 0.0300m, 0.0305m, 0.0310m);
+
+        var assessment = Assess("Корпоративные", 2m, (decimal)bondSpread, members, stats);
+
+        assessment.ThresholdFraction.Should().Be(0.0020m);
+        assessment.Verdict.ToString().Should().Be(expected);
+    }
+
+    [Theory]
+    // Широкая корзина (медиана 0.0200, порог 50 б.п.): +40 б.п. → Fair (при плоском 20 б.п. было бы Cheap),
+    // +60 б.п. → Cheap, −60 б.п. → Rich, −50 б.п. (на пороге) → Fair.
+    [InlineData(0.0240, "Fair")]
+    [InlineData(0.0260, "Cheap")]
+    [InlineData(0.0140, "Rich")]
+    [InlineData(0.0150, "Fair")]
+    public void Assess_WideBasket_ThresholdScalesWithIqr(double bondSpread, string expected)
+    {
+        var (members, stats) = BasketWithSpreads(0.0000m, 0.0100m, 0.0200m, 0.0300m, 0.0400m);
+
+        var assessment = Assess("Корпоративные", 2m, (decimal)bondSpread, members, stats);
+
+        assessment.ThresholdFraction.Should().Be(0.0050m);
+        assessment.Verdict.ToString().Should().Be(expected);
+    }
+
+    [Fact]
+    public void Assess_LowConfidenceWholeMarketFallback_VerdictIsInsufficientData_NotCheapOrRich()
+    {
+        // Родная корзина и сектор — по 1 бумаге (< MinBasketSize), fallback на весь рынок → Confidence Low.
+        var members = new List<BasketMember>
+        {
+            Member("A", "Корпоративные", 2m, 0.0100m),
+            Member("B", "Гособлигации", 3m, 0.0050m),
+            Member("C", "Гособлигации", 4m, 0.0060m),
+            Member("D", "Гособлигации", 5m, 0.0070m),
+            Member("E", "Гособлигации", 6m, 0.0080m),
+        };
+        var stats = BuildBasketStats(members);
+
+        var assessment = Assess("Корпоративные", 2m, bondSpread: 0.0900m, members, stats);
+
+        assessment.Basket.Confidence.Should().Be(RelativeValueConfidence.Low);
+        assessment.DeviationFraction.Should().BeGreaterThan(assessment.ThresholdFraction, "отклонение огромное — но вердикта нет");
+        assessment.Verdict.Should().Be(RelativeValueVerdict.InsufficientData);
+    }
+
+    [Fact]
+    public void Assess_MediumConfidenceSectorFallback_StillIssuesVerdict()
+    {
+        // Родная корзина "1–3 года" — 2 бумаги; сектор целиком — 6 → Medium; вердикт выдаётся.
+        var members = new List<BasketMember>
+        {
+            Member("A", "Корпоративные", 2m, 0.0100m),
+            Member("B", "Корпоративные", 2m, 0.0150m),
+            Member("C", "Корпоративные", 0.5m, 0.0200m),
+            Member("D", "Корпоративные", 0.5m, 0.0250m),
+            Member("E", "Корпоративные", 6m, 0.0300m),
+            Member("F", "Корпоративные", 6m, 0.0350m),
+        };
+        var stats = BuildBasketStats(members);
+
+        var assessment = Assess("Корпоративные", 2m, bondSpread: 0.0900m, members, stats);
+
+        assessment.Basket.Confidence.Should().Be(RelativeValueConfidence.Medium);
+        assessment.Verdict.Should().Be(RelativeValueVerdict.Cheap);
+    }
+
+    [Fact]
+    public void Assess_PositionOnBucketBoundary_MacaulayLandsInSameBasketAsEqualBankBond()
+    {
+        // Эталон границы: Маколей 3.1 / Modified 2.8 при границе корзин 3 года. Банк хранит Маколея
+        // (MOEX DURATION), поэтому позиция должна быть в корзине "3–5 лет", где лежит равная ей бумага
+        // банка (Маколей 3.1), а не в "1–3 года" (куда её отправляла модифицированная дюрация).
+        var bank = new List<BasketMember>
+        {
+            Member("A", "Корпоративные", 3.1m, 0.0100m),
+            Member("B", "Корпоративные", 3.2m, 0.0150m),
+            Member("C", "Корпоративные", 3.5m, 0.0200m),
+            Member("D", "Корпоративные", 4.0m, 0.0250m),
+            Member("E", "Корпоративные", 4.5m, 0.0300m),
+            Member("X", "Корпоративные", 2.0m, 0.0900m),
+        };
+        var stats = BuildBasketStats(bank);
+
+        var byMacaulay = Assess("Корпоративные", 3.1m, 0.0200m, bank, stats);
+        var byModified = Assess("Корпоративные", 2.8m, 0.0200m, bank, stats);
+
+        byMacaulay.Basket.EffectiveBasket.DurationBucket.Should().Be("3–5 лет");
+        byMacaulay.Basket.EffectiveBasket.DurationBucket
+            .Should().Be(DurationBucketClassifier.Label(bank[0].DurationYears), "тот же бакет, что у равной бумаги банка");
+        byModified.Basket.EffectiveBasket.DurationBucket.Should().NotBe("3–5 лет", "это и был дефект: modified у границы уводил в другую корзину");
+    }
 }

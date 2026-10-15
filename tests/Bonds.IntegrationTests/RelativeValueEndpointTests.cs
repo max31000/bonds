@@ -343,4 +343,47 @@ public class RelativeValueEndpointTests
 
         positions.Should().NotContain(p => p.GetProperty("positionId").GetUInt64() == positionId, "флоатер вне сравнения (не floater/indexed/dataIncomplete), как и в comparison/replacement-matrix");
     }
+
+    /// <summary>
+    /// Задача 44: у позиции нет сопоставимых бумаг в банке (сектор пуст → fallback «весь рынок»,
+    /// Confidence Low) — вердикт не Cheap/Rich, а InsufficientData, кандидатов нет, порог отдан в долях.
+    /// </summary>
+    [Fact]
+    public async Task GetRelativeValue_NoComparablePeers_VerdictInsufficientData_NoCandidates()
+    {
+        await SeedYieldCurveAsync();
+        var (client, _, accountId) = await CreateAuthorizedClientAsync();
+        var marker = Guid.NewGuid().ToString("N")[..6];
+        var (_, positionId) = await SeedYieldingPositionAsync(accountId, $"Sector{marker}", cleanPrice: 1000m, couponValueRub: 20m, maturityYears: 2);
+
+        var response = await client.GetAsync("/api/analytics/relative-value");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var position = body.GetProperty("positions").EnumerateArray()
+            .Single(p => p.GetProperty("positionId").GetUInt64() == positionId);
+        position.GetProperty("basket").GetProperty("confidence").GetString().Should().Be("Low");
+        position.GetProperty("verdict").GetString().Should().Be("InsufficientData");
+        position.GetProperty("cheapCandidates").GetArrayLength().Should().Be(0);
+        position.GetProperty("thresholdFraction").GetDecimal().Should().BeGreaterThanOrEqualTo(0.0020m, "порог — доля, не ниже нижней планки 20 б.п.");
+    }
+
+    /// <summary>Задача 44: /comparison отдаёт дюрацию Маколея (годы) рядом с модифицированной; Маколей ≥ модифицированной.</summary>
+    [Fact]
+    public async Task GetComparison_ExposesMacaulayDurationYears()
+    {
+        await SeedYieldCurveAsync();
+        var (client, _, accountId) = await CreateAuthorizedClientAsync();
+        var (_, positionId) = await SeedYieldingPositionAsync(accountId, "Корпоративные", cleanPrice: 1000m, couponValueRub: 20m, maturityYears: 2);
+
+        var response = await client.GetAsync("/api/analytics/comparison");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var row = body.GetProperty("rows").EnumerateArray().Single(r => r.GetProperty("positionId").GetUInt64() == positionId);
+        var macaulay = row.GetProperty("macaulayDurationYears").GetDecimal();
+        var modified = row.GetProperty("modifiedDuration").GetDecimal();
+        macaulay.Should().BeGreaterThan(0m).And.BeLessThan(3m, "бумага к погашению через ~2 года");
+        macaulay.Should().BeGreaterThanOrEqualTo(modified, "модифицированная = Маколей / (1 + y/m) ≤ Маколея");
+    }
 }

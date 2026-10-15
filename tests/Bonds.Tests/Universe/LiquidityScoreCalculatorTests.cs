@@ -69,4 +69,64 @@ public class LiquidityScoreCalculatorTests
 
         result.Score.Should().Be(LiquidityScore.Low);
     }
+
+    // ─── Задача 44: стакан без данных ≠ Red; медиана оборота ────────────────────────────────────
+
+    [Fact]
+    public void Assess_HugeTurnover_NoBidOffer_IsMedium_NotLow()
+    {
+        // Оборот 300 млн ₽, стакана в снимке нет → раньше Low (→ Caution → Red), теперь Medium.
+        var result = LiquidityScoreCalculator.Assess(turnoverRub: 300_000_000m, bidPercent: null, offerPercent: null, numTrades: null);
+
+        result.Score.Should().Be(LiquidityScore.Medium);
+        result.BookSpreadFraction.Should().BeNull("стакан не виден — спред неизвестен, не нулевой");
+    }
+
+    [Fact]
+    public void Assess_High_RequiresKnownTightSpread()
+    {
+        LiquidityScoreCalculator.Assess(10_000_000m, null, null, 50).Score
+            .Should().Be(LiquidityScore.Medium, "High требует ИЗВЕСТНОГО спреда < 0.3%");
+        LiquidityScoreCalculator.Assess(10_000_000m, 99.9m, 100.1m, 50).Score.Should().Be(LiquidityScore.High);
+    }
+
+    [Fact]
+    public void Assess_KnownWideSpread_StaysLow_EvenWithTurnover()
+    {
+        // bid=98, offer=100.2 → спред 2.2/99.1 ≈ 2.2% ≥ 1.5%: известно, что стакан тонкий → Low.
+        var result = LiquidityScoreCalculator.Assess(50_000_000m, 98m, 100.2m, 20);
+
+        result.Score.Should().Be(LiquidityScore.Low);
+        result.BookSpreadFraction.Should().BeApproximately(0.0222m, 0.0001m);
+    }
+
+    [Fact]
+    public void Assess_SmallTurnover_NoBook_IsLow()
+    {
+        // 100 тыс. ₽ < 300 тыс. порога Medium, стакана нет → Low (что-то торгуется).
+        LiquidityScoreCalculator.Assess(100_000m, null, null, null).Score.Should().Be(LiquidityScore.Low);
+    }
+
+    [Fact]
+    public void MedianTurnover_OddAndEvenCounts_SkipsNulls()
+    {
+        LiquidityScoreCalculator.MedianTurnover(new decimal?[] { 5m, null, 1m, 3m }).Should().Be(3m);
+        LiquidityScoreCalculator.MedianTurnover(new decimal?[] { 4m, 2m, 10m, 6m }).Should().Be(5m, "чётное число — среднее двух центральных (4 и 6)");
+        LiquidityScoreCalculator.MedianTurnover(new decimal?[] { null, null }).Should().BeNull();
+    }
+
+    [Fact]
+    public void Assess_MedianTurnoverFromHistory_MorningAndEveningRunGiveSameScore()
+    {
+        // История за 5 дней: оборот 200–400 млн/день. Утром VALTODAY «на сейчас» = 40 тыс. ₽, вечером 300 млн.
+        var median = LiquidityScoreCalculator.MedianTurnover(new decimal?[] { 250_000_000m, 300_000_000m, 400_000_000m, 200_000_000m, 320_000_000m });
+
+        var morningByToday = LiquidityScoreCalculator.Assess(40_000m, 99.9m, 100.1m, 3).Score;
+        var morningByMedian = LiquidityScoreCalculator.Assess(median, 99.9m, 100.1m, 3).Score;
+        var eveningByMedian = LiquidityScoreCalculator.Assess(median, 99.9m, 100.1m, 400).Score;
+
+        morningByToday.Should().Be(LiquidityScore.Low, "по сегодняшнему VALTODAY утром оценка занижена — это и был дефект");
+        morningByMedian.Should().Be(LiquidityScore.High);
+        eveningByMedian.Should().Be(morningByMedian);
+    }
 }

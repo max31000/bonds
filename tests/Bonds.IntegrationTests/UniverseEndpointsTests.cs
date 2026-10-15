@@ -3,9 +3,11 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Bonds.Core.Models;
+using Dapper;
 using Bonds.Infrastructure.Repositories;
 using Bonds.IntegrationTests.Infrastructure;
 using FluentAssertions;
+using MySqlConnector;
 using Xunit;
 
 namespace Bonds.IntegrationTests;
@@ -140,6 +142,52 @@ public class UniverseEndpointsTests
         var non = rows.Single(r => r.GetProperty("secid").GetString() == $"NON{marker}");
         non.GetProperty("gspreadApproxFraction").ValueKind.Should().Be(JsonValueKind.Null);
         non.GetProperty("gspreadSource").ValueKind.Should().Be(JsonValueKind.Null);
+    }
+
+    /// <summary>
+    /// Задача 44: скор ликвидности — по медиане оборота за последние торговые дни из истории, а не по
+    /// сегодняшнему VALTODAY «на сейчас» (утром мал), и стакан без данных не даёт Low при живом обороте.
+    /// Бумага скрыта гигиеной (сегодняшний оборот 40 тыс. < порога) — ликвидность всё равно считается.
+    /// </summary>
+    [Fact]
+    public async Task GetUniverse_LiquidityScore_UsesMedianTurnoverFromHistory_BookMissingIsNotLow()
+    {
+        var repo = new BondUniverseRepository(_factory.Database.ConnectionString);
+        var marker = Guid.NewGuid().ToString("N")[..6];
+        var entry = HealthyEntry($"LQ{marker}", $"ISL{marker}", 0.15m, 2m, turnover: 400_000_000m);
+        entry.BidPercent = null;
+        entry.OfferPercent = null;
+        await repo.UpsertSnapshotBatchAsync([entry]);
+
+        // Даты «из будущего», чтобы гарантированно попасть в топ-5 последних дат независимо от соседей.
+        var baseDate = DateOnly.FromDateTime(DateTime.UtcNow).AddDays(3100);
+        var dates = new[] { baseDate, baseDate.AddDays(1), baseDate.AddDays(2) };
+        await using var conn = new MySqlConnection(_factory.Database.ConnectionString);
+        try
+        {
+            foreach (var date in dates) await repo.AppendDailyHistorySnapshotAsync(date, retentionDays: 100_000);
+
+            // «Утро»: VALTODAY «на сейчас» упал до 40 тыс. ₽.
+            entry.TurnoverRub = 40_000m;
+            await repo.UpsertSnapshotBatchAsync([entry]);
+
+            var client = await CreateAuthorizedClientAsync();
+            var response = await client.GetAsync($"/api/universe?search={marker}&includeHidden=true");
+            response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+            var row = (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("rows").EnumerateArray()
+                .Single(r => r.GetProperty("secid").GetString() == $"LQ{marker}");
+            row.GetProperty("turnoverRub").GetDecimal().Should().Be(40_000m, "поле оборота остаётся сегодняшним");
+            row.GetProperty("liquidityScore").GetString().Should().Be("Medium", "медиана 400 млн, стакана в снимке нет → не Low");
+        }
+        finally
+        {
+            foreach (var date in dates)
+            {
+                await conn.ExecuteAsync("DELETE FROM bond_universe_history WHERE snapshot_date = @Date",
+                    new { Date = date.ToDateTime(TimeOnly.MinValue) });
+            }
+        }
     }
 
     /// <summary>

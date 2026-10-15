@@ -126,7 +126,7 @@ public static class UniverseEndpoints
         var portfolioIsins = await ResolvePortfolioIsinsAsync(accountRepo, positionRepo, instrumentRepo);
         var watchlistIsins = await ResolveWatchlistIsinsAsync(currentUser, watchlistRepo);
 
-        var rows = page.Select(x => ToRowDto(x.Entry, x.HiddenReason, x.Reliability, x.ReliabilityReason, portfolioIsins, watchlistIsins)).ToList();
+        var rows = page.Select(x => ToRowDto(x.Entry, x.HiddenReason, x.Reliability, x.ReliabilityReason, portfolioIsins, watchlistIsins, snapshot)).ToList();
 
         return Results.Ok(new UniverseResponseDto
         {
@@ -194,9 +194,11 @@ public static class UniverseEndpoints
 
     private static UniverseRowDto ToRowDto(
         BondUniverseEntry entry, HygieneHiddenReason hiddenReason, ReliabilityLight reliability, string reliabilityReason,
-        HashSet<string> portfolioIsins, HashSet<string> watchlistIsins)
+        HashSet<string> portfolioIsins, HashSet<string> watchlistIsins,
+        RelativeValueSnapshotBuilder.RelativeValueSnapshot snapshot)
     {
-        var liquidity = LiquidityScoreCalculator.Assess(entry.TurnoverRub, entry.BidPercent, entry.OfferPercent, entry.NumTrades);
+        // Задача 44: оборот для скора — медиана за 5 торговых дней (поле TurnoverRub в DTO остаётся сегодняшним).
+        var liquidity = AnalyticsSupport.AssessEntryLiquidity(entry, snapshot);
         var isInPortfolio = entry.Isin is not null && portfolioIsins.Contains(entry.Isin);
         var isInWatchlist = entry.Isin is not null && watchlistIsins.Contains(entry.Isin);
 

@@ -58,9 +58,9 @@ internal static class AnalyticsSupport
     internal static CandidateRiskSignals AssessEntryRiskSignals(
         BondUniverseEntry entry, RelativeValueSnapshotBuilder.RelativeValueSnapshot snapshot)
     {
-        var liquidity = LiquidityScoreCalculator.Assess(entry.TurnoverRub, entry.BidPercent, entry.OfferPercent, entry.NumTrades);
+        var liquidity = AssessEntryLiquidity(entry, snapshot);
 
-        decimal? basketMedian = null;
+        BasketStats? basketStats = null;
         if (entry.EffectiveGspreadFraction is not null)
         {
             var key = new BasketKey
@@ -68,11 +68,37 @@ internal static class AnalyticsSupport
                 Sector = string.IsNullOrWhiteSpace(entry.Sector) ? UnknownSector : entry.Sector!,
                 DurationBucket = Bonds.Core.Analytics.DurationBucketClassifier.Label(entry.DurationYears),
             };
-            basketMedian = ResolveBasket(key, snapshot.AllMembers, snapshot.BasketStats).Stats.Median;
+            basketStats = ResolveBasket(key, snapshot.AllMembers, snapshot.BasketStats).Stats;
         }
 
-        return CandidateRiskSignalService.Assess(liquidity.Score, entry.ListLevel, entry.EffectiveGspreadFraction, basketMedian);
+        return AssessRiskSignals(liquidity, entry.ListLevel, entry.EffectiveGspreadFraction, basketStats);
     }
+
+    /// <summary>
+    /// Ликвидность записи банка (задача 44): оборот — медиана за 5 торговых дней из истории
+    /// (<see cref="RelativeValueSnapshotBuilder.RelativeValueSnapshot.LiquidityTurnoverRub"/>, fallback —
+    /// сегодняшний VALTODAY), а не «оборот на сейчас» — утренний и вечерний прогон дают одну оценку.
+    /// </summary>
+    internal static LiquidityAssessment AssessEntryLiquidity(
+        BondUniverseEntry entry, RelativeValueSnapshotBuilder.RelativeValueSnapshot snapshot) =>
+        LiquidityScoreCalculator.Assess(snapshot.LiquidityTurnoverRub(entry), entry.BidPercent, entry.OfferPercent, entry.NumTrades);
+
+    /// <summary>
+    /// Единая сборка риск-сигналов из готовой ликвидности и статистики корзины кандидата: порог оси
+    /// спреда — тот же <see cref="SpreadThresholds.ForBasket"/> (max(20 б.п., 0.25 × IQR)), что и у
+    /// RV-вердикта; подпись ликвидности различает «тонкий стакан» и «стакан не виден в снимке».
+    /// <paramref name="basketStats"/> null (нет спреда/корзины) → медиана и порог null, ось спреда Neutral.
+    /// </summary>
+    internal static CandidateRiskSignals AssessRiskSignals(
+        LiquidityAssessment liquidity, int? listLevel, decimal? gSpreadFraction, BasketStats? basketStats) =>
+        CandidateRiskSignalService.Assess(
+            liquidity.Score,
+            listLevel,
+            gSpreadFraction,
+            basketStats?.Median,
+            basketStats is null ? null : ThresholdFor(basketStats),
+            liquidity.BookSpreadFraction,
+            bookMissing: liquidity.BookSpreadFraction is null);
 
 
     /// <summary>Собирает RiskSignalsDto из двух информационных сигналов +

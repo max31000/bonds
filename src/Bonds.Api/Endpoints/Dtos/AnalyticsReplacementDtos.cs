@@ -16,16 +16,6 @@ using static Bonds.Core.Analytics.RelativeValueService;
 
 namespace Bonds.Api.Endpoints;
 
-/// <summary>Verdict одной позиции (план часть C.1): Cheap — спред заметно выше медианы корзины
-/// (рынок недооценивает/закладывает риск), Rich — заметно ниже (дорого относительно соседей,
-/// кандидат на пересмотр), Fair — в пределах порога (см. <see cref="SpreadThresholds.DeviationFraction"/>).</summary>
-public enum RelativeValueVerdict
-{
-    Cheap,
-    Fair,
-    Rich,
-}
-
 public sealed record RelativeValueResponseDto
 {
     public required IReadOnlyList<RelativeValuePositionDto> Positions { get; init; }
@@ -43,6 +33,12 @@ public sealed record RelativeValuePositionDto
     /// <summary>Перцентиль внутри эффективной корзины (0-100).</summary>
     public required decimal Percentile { get; init; }
 
+    /// <summary>ДОЛЯ (0.0020 = 20 б.п.): порог вердикта корзины = max(20 б.п., 0.25 × IQR корзины),
+    /// см. <see cref="SpreadThresholds.ForBasket"/>. Отклонение больше порога → Cheap/Rich.</summary>
+    public required decimal ThresholdFraction { get; init; }
+
+    /// <summary>"Cheap" | "Fair" | "Rich" | "InsufficientData" (<see cref="RelativeValueVerdict"/>;
+    /// InsufficientData — fallback «весь рынок», мало сопоставимых бумаг, вердикта нет).</summary>
     public required string Verdict { get; init; }
 
     /// <summary>Сколько торговых дней истории легло в основу сглаженной медианы (0 — банк молодой,
@@ -174,6 +170,10 @@ public sealed record ComparisonRowDto
     public decimal? EffectiveYield { get; init; }
     public required string YieldKind { get; init; }
     public decimal? ModifiedDuration { get; init; }
+
+    /// <summary>Задача 44: дюрация Маколея, ГОДЫ — единая мера для сравнения с корзинами банка (банк
+    /// хранит MOEX DURATION = Маколей; ModifiedDuration остаётся мерой чувствительности).</summary>
+    public decimal? MacaulayDurationYears { get; init; }
     public decimal? GSpread { get; init; }
     public required int DaysToHorizon { get; init; }
     public required DateOnly HorizonDate { get; init; }
