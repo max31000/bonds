@@ -231,6 +231,23 @@ public static class RelativeValueService
         };
     }
 
+    /// <summary>
+    /// Принадлежит ли член банка ЭФФЕКТИВНОЙ корзине (после fallback): родная корзина — сектор И дюрационный
+    /// бакет; «весь сектор» (<see cref="SectorWideBucketLabel"/>) — только сектор; «весь рынок»
+    /// (<see cref="MarketWideLabel"/>) — любой член (у такой корзины нет ни сектора, ни бакета, фильтр по метке
+    /// «Весь рынок» отсёк бы всех — баг задачи 48, из-за него mode=rv при Low-корзине всегда был пуст).
+    /// </summary>
+    public static bool IsBasketMember(BasketMember member, BasketKey effectiveBasket)
+    {
+        if (string.Equals(effectiveBasket.Sector, MarketWideLabel, StringComparison.Ordinal)) return true;
+
+        var sector = string.IsNullOrWhiteSpace(member.Sector) ? UnknownSector : member.Sector;
+        if (!string.Equals(sector, effectiveBasket.Sector, StringComparison.OrdinalIgnoreCase)) return false;
+
+        return effectiveBasket.DurationBucket == SectorWideBucketLabel
+            || DurationBucketClassifier.Label(member.DurationYears) == effectiveBasket.DurationBucket;
+    }
+
     /// <summary>Порог вердикта для статистики корзины (ДОЛЯ) — см. <see cref="SpreadThresholds.ForBasket"/>.</summary>
     public static decimal ThresholdFor(BasketStats stats) => SpreadThresholds.ForBasket(stats.P25, stats.P75);
 

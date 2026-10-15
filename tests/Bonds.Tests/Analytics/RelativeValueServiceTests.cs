@@ -209,6 +209,39 @@ public class RelativeValueServiceTests
         stats.Should().ContainKey(new BasketKey { Sector = UnknownSector, DurationBucket = "1–3 года" });
     }
 
+    // ─── Задача 48: принадлежность члена эффективной корзине (в т.ч. откат «весь рынок») ─────────
+
+    [Fact]
+    public void IsBasketMember_WholeMarketFallback_AcceptsEveryMember_RegressionForEmptyRvCandidates()
+    {
+        // Баг ревью В1: фильтр по Sector == "Весь рынок" отсекал всех — mode=rv при Low-корзине всегда был пуст.
+        var marketBasket = new BasketKey { Sector = MarketWideLabel, DurationBucket = MarketWideLabel };
+
+        IsBasketMember(Member("A", "Корпоративные", 2m, 0.01m), marketBasket).Should().BeTrue();
+        IsBasketMember(Member("B", "Гособлигации", 9m, 0.02m), marketBasket).Should().BeTrue();
+        IsBasketMember(new BasketMember { Secid = "C", Sector = null, DurationYears = null, GSpreadFraction = 0.03m }, marketBasket).Should().BeTrue();
+    }
+
+    [Fact]
+    public void IsBasketMember_SectorWide_IgnoresDuration_ButNotSector()
+    {
+        var sectorBasket = new BasketKey { Sector = "Корпоративные", DurationBucket = SectorWideBucketLabel };
+
+        IsBasketMember(Member("A", "Корпоративные", 2m, 0.01m), sectorBasket).Should().BeTrue();
+        IsBasketMember(Member("B", "Корпоративные", 9m, 0.01m), sectorBasket).Should().BeTrue();
+        IsBasketMember(Member("C", "Гособлигации", 2m, 0.01m), sectorBasket).Should().BeFalse();
+    }
+
+    [Fact]
+    public void IsBasketMember_NativeBasket_RequiresSectorAndDurationBucket()
+    {
+        var native = new BasketKey { Sector = "Корпоративные", DurationBucket = DurationBucketClassifier.Label(2m) };
+
+        IsBasketMember(Member("A", "корпоративные", 2.5m, 0.01m), native).Should().BeTrue("сектор сравнивается без учёта регистра");
+        IsBasketMember(Member("B", "Корпоративные", 9m, 0.01m), native).Should().BeFalse("другой дюрационный бакет");
+        IsBasketMember(Member("C", "Гособлигации", 2m, 0.01m), native).Should().BeFalse();
+    }
+
     // ─── Задача 44: IQR-порог вердикта, Confidence-гейт, бакет по Маколею ───────────────────────
 
     /// <summary>Корзина из 5 бумаг одного бакета (1–3 года) с заданными спредами (доли).</summary>

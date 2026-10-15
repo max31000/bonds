@@ -400,9 +400,8 @@ public static class ReplacementEndpoints
         int take)
     {
         return snapshot.AllMembers
-            .Where(m => string.Equals(m.Sector ?? UnknownSector, effectiveBasket.Sector, StringComparison.OrdinalIgnoreCase))
-            .Where(m => effectiveBasket.DurationBucket is SectorWideBucketLabel or MarketWideLabel
-                || Bonds.Core.Analytics.DurationBucketClassifier.Label(m.DurationYears) == effectiveBasket.DurationBucket)
+            // «Весь рынок» (Low-откат) — все члены банка (раньше фильтр по Sector=="Весь рынок" отсекал всех, mode=rv был молча пуст).
+            .Where(m => IsBasketMember(m, effectiveBasket))
             .Where(m => m.GSpreadFraction is not null)
             // Self-exclusion (ревью T-30, MAJOR): банк — вся вселенная MOEX, оцениваемая позиция
             // почти наверняка присутствует в нём под своим secid, а её approx-спред из банка
