@@ -39,4 +39,24 @@ public static class DurationBucketClassifier
 
         return Buckets[^1].Label;
     }
+
+    /// <summary>
+    /// Порядковый номер корзины (0 — «0–1 года» … 4 — «7+ лет»), по тем же границам, что <see cref="Label"/>;
+    /// null — дюрации нет. Нужен для «соседних бакетов» (задача 50): сопоставимость кандидатов по сроку.
+    /// </summary>
+    public static int? Index(decimal? durationYears)
+    {
+        if (durationYears is null) return null;
+
+        for (var i = 0; i < Buckets.Length; i++)
+        {
+            if (durationYears.Value < Buckets[i].UpperBoundYears) return i;
+        }
+
+        return Buckets.Length - 1;
+    }
+
+    /// <summary>Тот же бакет или соседний (±1); если дюрация любой из сторон неизвестна — false.</summary>
+    public static bool AreSameOrAdjacent(decimal? a, decimal? b) =>
+        Index(a) is { } ia && Index(b) is { } ib && Math.Abs(ia - ib) <= 1;
 }

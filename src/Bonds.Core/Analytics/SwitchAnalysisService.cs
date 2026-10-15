@@ -58,7 +58,7 @@ public static class SwitchAnalysisService
     /// доходности — купонной и дисконтной; сальдирование и ЛДВ вне скоупа, BACKLOG P-4. Совпадает со ставкой
     /// налога продажи <see cref="SaleTaxEstimator.NdflRate"/> (один источник).
     /// </summary>
-    public const decimal CouponTaxRate = SaleTaxEstimator.NdflRate;
+    public const decimal CouponTaxRate = AfterTaxYield.TaxRate;
 
     /// <summary>Нижняя граница эффективного горизонта при усечении сроком цели, годы (не превращать анализ в «ноль дней»).</summary>
     public const decimal MinEffectiveHorizonYears = 0.25m;
@@ -207,8 +207,7 @@ public static class SwitchAnalysisService
     }
 
     /// <summary>Доходность после НДФЛ: положительная — ×(1 − <see cref="CouponTaxRate"/>); отрицательная налога не создаёт.</summary>
-    public static decimal AfterTax(decimal yieldFraction) =>
-        yieldFraction > 0m ? yieldFraction * (1m - CouponTaxRate) : yieldFraction;
+    public static decimal AfterTax(decimal yieldFraction) => AfterTaxYield.Apply(yieldFraction);
 
     /// <summary>
     /// (1 + y)^years. Возведение в дробную степень — через double (в decimal нет Pow); погрешность ~1e-12 относительно,
