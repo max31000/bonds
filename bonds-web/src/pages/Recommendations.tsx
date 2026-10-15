@@ -19,6 +19,7 @@ import {
   Switch,
 } from '@mantine/core';
 import { Page } from '@mvv42/kit';
+import { useSearchParams } from 'react-router-dom';
 import { useRecommendationsStore } from '../store/useRecommendationsStore';
 import { useWatchlistStore } from '../store/useWatchlistStore';
 import { useRelativeValueStore } from '../store/useRelativeValueStore';
@@ -426,8 +427,17 @@ function ReplacementPanel({
  * (оценочные, «кандидат», не «продайте»), RV-бейдж (отказ GET /relative-value не роняет
  * карточку — undefined просто не рендерится), раскрывашка «подобрать замену» → <see>ReplacementPanel</see>.
  */
-function WeakPositionCard({ row, reasons }: { row: ComparisonRow; reasons: { kind: string; label: string }[] }) {
-  const [expanded, setExpanded] = useState(false);
+function WeakPositionCard({
+  row,
+  reasons,
+  initiallyExpanded = false,
+}: {
+  row: ComparisonRow;
+  reasons: { kind: string; label: string }[];
+  /** Задача 49: переход «подобрать замену» из вердикта позиции (`?positionId=`) сразу раскрывает панель подбора. */
+  initiallyExpanded?: boolean;
+}) {
+  const [expanded, setExpanded] = useState(initiallyExpanded);
   const rv = useRelativeValueStore((s) => s.positionsById[row.positionId]);
 
   return (
@@ -472,7 +482,14 @@ function WeakPositionCard({ row, reasons }: { row: ComparisonRow; reasons: { kin
  * позиций, у каждой — раскрывашка режимов подбора замены (см. <see>ReplacementPanel</see>).
  */
 function WeakLinksSection() {
-  const { sellCandidates, outOfComparison, comparisonDisclaimer, isLoading, error } = useRecommendationsStore();
+  const { sellCandidates, outOfComparison, comparisonRows, comparisonDisclaimer, isLoading, error } = useRecommendationsStore();
+
+  // Задача 49: `?positionId=N` (ссылка «подобрать замену» из вердикта позиции) — выбранная позиция раскрыта сразу;
+  // если она не среди «слабых» (топ-3 по доходности), показываем её отдельной карточкой над списком.
+  const [searchParams] = useSearchParams();
+  const selectedId = Number(searchParams.get('positionId')) || null;
+  const selectedRow = selectedId === null ? undefined : comparisonRows.find((r) => r.positionId === selectedId);
+  const pinnedRow = selectedRow && !sellCandidates.some((c) => c.row.positionId === selectedRow.positionId) ? selectedRow : null;
 
   return (
     <Paper withBorder p="md" radius="md" data-testid="weak-links-section">
@@ -502,10 +519,24 @@ function WeakLinksSection() {
         </Text>
       )}
 
+      {!isLoading && !error && pinnedRow && (
+        <Stack gap="sm" mb="sm" data-testid="selected-position-section">
+          <Text size="xs" fw={600} c="dimmed">
+            Выбранная позиция
+          </Text>
+          <WeakPositionCard row={pinnedRow} reasons={[]} initiallyExpanded />
+        </Stack>
+      )}
+
       {!isLoading && !error && sellCandidates.length > 0 && (
         <Stack gap="sm">
           {sellCandidates.map((c) => (
-            <WeakPositionCard key={c.row.positionId} row={c.row} reasons={c.reasons} />
+            <WeakPositionCard
+              key={c.row.positionId}
+              row={c.row}
+              reasons={c.reasons}
+              initiallyExpanded={c.row.positionId === selectedId}
+            />
           ))}
         </Stack>
       )}

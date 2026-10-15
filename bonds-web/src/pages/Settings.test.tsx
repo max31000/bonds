@@ -29,6 +29,8 @@ const baseSettings: SettingsResponse = {
   defaultMaxConcentrationPercent: 25,
   commissionRateOverride: null,
   replacementHorizonYears: 2,
+  spreadWideningThresholdFraction: 0.005,
+  priceDrawdownThresholdFraction: 0.05,
   commissionAutoEstimate: null,
   tInvestTariff: null,
   commissionEffectiveRate: 0.003,
@@ -198,6 +200,54 @@ describe('Settings', () => {
 
       await waitFor(() => expect(putBody).not.toBeNull());
       expect(putBody).toMatchObject({ replacementHorizonYears: 6 });
+    });
+  });
+
+  // Задача 49: пороги рыночных событий — UI вводит б.п. и %, бэкенд хранит ДОЛИ.
+  describe('market events thresholds (T-49)', () => {
+    it('shows the thresholds converted from fractions: 0.008 → 80 б.п., 0.07 → 7%', async () => {
+      server.use(
+        http.get('*/api/settings', () =>
+          HttpResponse.json({ ...baseSettings, spreadWideningThresholdFraction: 0.008, priceDrawdownThresholdFraction: 0.07 }),
+        ),
+      );
+
+      renderSettings();
+
+      await waitFor(() => expect(screen.getByTestId('market-events-section')).toBeInTheDocument());
+      await waitFor(() => expect(screen.getByTestId('spread-widening-input')).toHaveValue('80'));
+      expect(screen.getByTestId('price-drawdown-input')).toHaveValue('7');
+    });
+
+    it('sends the thresholds as fractions (б.п. ÷ 10000, % ÷ 100) in one PUT', async () => {
+      let putBody: Record<string, unknown> | null = null;
+      server.use(
+        http.get('*/api/settings', () => HttpResponse.json(baseSettings)),
+        http.put('*/api/settings', async ({ request }) => {
+          putBody = (await request.json()) as Record<string, unknown>;
+          return HttpResponse.json({ ...baseSettings, ...putBody });
+        }),
+      );
+
+      renderSettings();
+
+      await waitFor(() => expect(screen.getByTestId('spread-widening-input')).toHaveValue('50'));
+      const { default: userEvent } = await import('@testing-library/user-event');
+      const spread = screen.getByTestId('spread-widening-input');
+      await userEvent.clear(spread);
+      await userEvent.type(spread, '80');
+      const drawdown = screen.getByTestId('price-drawdown-input');
+      await userEvent.clear(drawdown);
+      await userEvent.type(drawdown, '8');
+      await userEvent.click(screen.getByTestId('market-events-save'));
+
+      await waitFor(() => expect(screen.getByText('Пороги сохранены')).toBeInTheDocument());
+      expect(putBody).toMatchObject({
+        spreadWideningThresholdFraction: 0.008,
+        priceDrawdownThresholdFraction: 0.08,
+        upcomingEventDaysThreshold: 14,
+        replacementHorizonYears: 2,
+      });
     });
   });
 

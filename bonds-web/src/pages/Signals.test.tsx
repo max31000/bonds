@@ -196,4 +196,45 @@ describe('Signals («События»)', () => {
 
     await waitFor(() => expect(screen.getByTestId('signals-error')).toBeInTheDocument());
   });
+
+  // ─── Задача 49: рыночные и кредитные события ───────────────────────────────────────────
+
+  it('shows new market and credit event types with labels and icons, grouped by severity', async () => {
+    const spread: Signal = {
+      ...concentration,
+      id: 21,
+      type: 'SpreadWidening',
+      severity: 'Warning',
+      instrumentId: 10,
+      subject: 'Бумага А',
+      suggestedAction: 'G-спред бумаги расширился на 60 б.п. к медиане за 20 торговых дн.',
+      isRead: false,
+    };
+    const drawdown: Signal = { ...spread, id: 22, type: 'PriceDrawdown', subject: 'Бумага Б', suggestedAction: 'Цена на 6.0% ниже максимума.' };
+    const issuerDefault: Signal = {
+      ...putOffer,
+      id: 23,
+      type: 'IssuerDefaultEvent',
+      severity: 'Critical',
+      subject: 'Эмитент В',
+      eventDate: null,
+      suggestedAction: 'У эмитента отмечен дефолт.',
+    };
+    server.use(http.get('*/api/signals', () => HttpResponse.json({ signals: [spread, drawdown, issuerDefault] })));
+
+    renderSignals();
+
+    await waitFor(() => expect(screen.getByTestId('signal-23')).toBeInTheDocument());
+    expect(within(screen.getByTestId('signals-group-Critical')).getByTestId('signal-23')).toHaveTextContent('Дефолт эмитента');
+    const warnings = screen.getByTestId('signals-group-Warning');
+    expect(within(warnings).getByTestId('signal-21')).toHaveTextContent('Расширение G-спреда');
+    expect(within(warnings).getByTestId('signal-22')).toHaveTextContent('Просадка цены');
+    expect(screen.getByTestId('signal-type-21').querySelector('svg')).not.toBeNull();
+    expect(screen.getByTestId('signal-type-23').querySelector('svg')).not.toBeNull();
+    // сырые имена enum пользователю не показываются
+    const list = screen.getByTestId('signals-list');
+    for (const raw of ['SpreadWidening', 'PriceDrawdown', 'IssuerDefaultEvent']) {
+      expect(list).not.toHaveTextContent(raw);
+    }
+  });
 });

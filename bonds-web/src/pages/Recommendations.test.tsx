@@ -19,10 +19,10 @@ import type {
   RelativeValueResponse,
 } from '../api/types';
 
-function renderRecommendations() {
+function renderRecommendations(initialEntry = '/recommendations') {
   return render(
     <MantineProvider>
-      <MemoryRouter>
+      <MemoryRouter initialEntries={[initialEntry]}>
         <Recommendations />
       </MemoryRouter>
     </MantineProvider>,
@@ -313,6 +313,7 @@ describe('Recommendations', () => {
     useSettingsStore.setState({ settings: null, isLoading: false, error: null });
     useRecommendationsStore.setState({
       sellCandidates: [],
+      comparisonRows: [],
       outOfComparison: [],
       comparisonDisclaimer: '',
       isLoading: false,
@@ -374,6 +375,31 @@ describe('Recommendations', () => {
 
     await waitFor(() => expect(screen.getByTestId('out-of-comparison-3')).toBeInTheDocument());
     expect(screen.queryByTestId('sell-candidate-3')).not.toBeInTheDocument();
+  });
+
+  // ─── Задача 49: переход «подобрать замену» из вердикта позиции ───────────────────────────────
+
+  it('opens the replacement panel right away for ?positionId= of a weak position (no extra click)', async () => {
+    renderRecommendations('/recommendations?positionId=1');
+
+    await waitFor(() => expect(screen.getByTestId('replace-candidate-MKT001')).toBeInTheDocument());
+    expect(screen.queryByTestId('selected-position-section')).not.toBeInTheDocument();
+  });
+
+  it('keeps the panels collapsed without the positionId parameter', async () => {
+    renderRecommendations();
+
+    await waitFor(() => expect(screen.getByTestId('sell-candidate-1')).toBeInTheDocument());
+    expect(screen.queryByTestId('replace-candidate-MKT001')).not.toBeInTheDocument();
+  });
+
+  it('pins a selected position that is not among the weak ones and opens its replacement panel', async () => {
+    // позиция 3 — флоатер: вне сравнения, в «слабых» её нет, но ссылка из вердикта должна работать
+    renderRecommendations('/recommendations?positionId=3');
+
+    await waitFor(() => expect(screen.getByTestId('selected-position-section')).toBeInTheDocument());
+    expect(within(screen.getByTestId('selected-position-section')).getByTestId('sell-candidate-3')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByTestId('replace-candidate-MKT001')).toBeInTheDocument());
   });
 
   it('shows an error state without crashing when comparison fails', async () => {
@@ -511,6 +537,8 @@ describe('Recommendations', () => {
         defaultMaxConcentrationPercent: 25,
         commissionRateOverride: null,
         replacementHorizonYears: 3.5,
+        spreadWideningThresholdFraction: 0.005,
+        priceDrawdownThresholdFraction: 0.05,
         commissionAutoEstimate: null,
         tInvestTariff: null,
         commissionEffectiveRate: 0.003,

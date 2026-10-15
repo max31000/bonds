@@ -1,6 +1,17 @@
 import { useEffect, useState } from 'react';
 import { Stack, Paper, Text, Loader, Badge, Group, Button, Collapse } from '@mantine/core';
 import { EmptyState, ErrorState, Page, Section } from '@mvv42/kit';
+import {
+  IconAlertOctagon,
+  IconCalendarEvent,
+  IconCash,
+  IconChartPie,
+  IconFlag,
+  IconRefresh,
+  IconTrendingDown,
+  IconTrendingUp,
+  type Icon,
+} from '@tabler/icons-react';
 import { useSignalsStore } from '../store/useSignalsStore';
 import { formatDate } from '../utils/format';
 import type { Signal, SignalSeverity, SignalType } from '../api/types';
@@ -27,6 +38,22 @@ const TYPE_LABEL: Record<SignalType, string> = {
   FloaterRateReset: 'Пересчёт ставки флоатера',
   UninvestedCashThreshold: 'Свободные деньги',
   ConcentrationLimitBreached: 'Концентрация по эмитенту',
+  SpreadWidening: 'Расширение G-спреда',
+  PriceDrawdown: 'Просадка цены',
+  IssuerDefaultEvent: 'Дефолт эмитента',
+};
+
+/** Иконка типа события (задача 49: рыночные и кредитное события различимы с первого взгляда). */
+const TYPE_ICON: Record<SignalType, Icon> = {
+  UpcomingOffer: IconFlag,
+  UpcomingRedemption: IconCalendarEvent,
+  UpcomingAmortization: IconCalendarEvent,
+  FloaterRateReset: IconRefresh,
+  UninvestedCashThreshold: IconCash,
+  ConcentrationLimitBreached: IconChartPie,
+  SpreadWidening: IconTrendingUp,
+  PriceDrawdown: IconTrendingDown,
+  IssuerDefaultEvent: IconAlertOctagon,
 };
 
 /** Ближайшая дата события первой; «состояния» без даты — в конце группы. */
@@ -44,6 +71,7 @@ function SignalCard({
   signal: Signal;
   onMarkRead?: (id: number) => void;
 }) {
+  const TypeIcon = TYPE_ICON[signal.type];
   return (
     <Paper withBorder p="md" radius="md" data-testid={`signal-${signal.id}`}>
       <Group justify="space-between" wrap="nowrap" align="flex-start">
@@ -52,9 +80,12 @@ function SignalCard({
             <Badge color={SEVERITY_COLOR[signal.severity]} variant="filled" size="sm">
               {SEVERITY_LABEL[signal.severity]}
             </Badge>
-            <Text fw={600} size="sm">
-              {TYPE_LABEL[signal.type]}
-            </Text>
+            <Group gap={4} wrap="nowrap" data-testid={`signal-type-${signal.id}`}>
+              <TypeIcon size={16} aria-hidden="true" />
+              <Text fw={600} size="sm">
+                {TYPE_LABEL[signal.type]}
+              </Text>
+            </Group>
             {!signal.isRead && !signal.isResolved && (
               <Badge color="violet" variant="light" size="xs">
                 новое
@@ -89,7 +120,8 @@ function SignalCard({
 
 /**
  * «События»: короткий список ТЕКУЩИХ событий портфеля — оферты, погашения, амортизации,
- * пересчёт ставки флоатеров, концентрация, свободные деньги. Группы по важности, внутри — по дате
+ * пересчёт ставки флоатеров, концентрация, свободные деньги, а также рыночные и кредитные события
+ * (расширение G-спреда, просадка цены, дефолт эмитента). Группы по важности, внутри — по дате
  * события. «Прочитано» подтверждает событие (оно остаётся в списке, но без бейджа «новое»);
  * закрытые движком события живут в свёрнутой «Истории». Формулировки — оценки/кандидаты, не советы.
  */
@@ -113,7 +145,7 @@ export function Signals() {
   return (
     <Page
       title="События"
-      description="Что требует внимания в портфеле: оферты, погашения, концентрация, свободные деньги. Оценки, не инвестиционные рекомендации."
+      description="Что требует внимания в портфеле: оферты, погашения, концентрация, свободные деньги, расширение спреда, просадка цены и дефолты эмитентов. Оценки, не инвестиционные рекомендации."
       actions={
         hasUnread ? (
           <Button size="xs" variant="light" onClick={markAllRead} data-testid="mark-all-read">

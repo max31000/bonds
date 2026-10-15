@@ -8,7 +8,14 @@ import { useSettingsStore } from '../store/useSettingsStore';
 import { commissionSourceLabel, formatPercent, formatRub } from '../utils/format';
 import type { SettingsUpdateRequest } from '../api/types';
 
-type ThresholdsForm = Omit<SettingsUpdateRequest, 'baseCurrency' | 'commissionRateOverride' | 'replacementHorizonYears'>;
+type ThresholdsForm = Omit<
+  SettingsUpdateRequest,
+  | 'baseCurrency'
+  | 'commissionRateOverride'
+  | 'replacementHorizonYears'
+  | 'spreadWideningThresholdFraction'
+  | 'priceDrawdownThresholdFraction'
+>;
 
 /**
  * Экран настроек: пороги правил событий + токен T-Invest (write-only) (план 09c §B.8).
@@ -22,6 +29,7 @@ export function Settings() {
   const [savingThresholds, setSavingThresholds] = useState(false);
   const [savingCommission, setSavingCommission] = useState(false);
   const [savingHorizon, setSavingHorizon] = useState(false);
+  const [savingMarketEvents, setSavingMarketEvents] = useState(false);
 
   useEffect(() => {
     load();
@@ -95,6 +103,48 @@ export function Settings() {
       color: ok ? 'green' : 'red',
       title: ok ? 'Горизонт сохранён' : 'Не удалось сохранить горизонт',
       message: ok ? 'Новый горизонт применится к следующим расчётам замены.' : 'Проверьте значение (0.5–10, шаг 0.5) и попробуйте ещё раз.',
+    });
+  });
+
+  // Пороги рыночных событий (задача 49): UI вводит б.п. (спред) и % (просадка цены), бэкенд хранит ДОЛИ —
+  // конвертация ровно один раз на границе API (settings ↔ форма ниже и форма ↔ handleSaveMarketEvents).
+  const marketEventsForm = useForm<{ spreadBp: number | ''; drawdownPercent: number | '' }>({
+    initialValues: { spreadBp: 50, drawdownPercent: 5 },
+    validate: {
+      spreadBp: (v) => (v === '' || v <= 0 || v > 500 ? 'От 1 до 500 б.п.' : null),
+      drawdownPercent: (v) => (v === '' || v <= 0 || v > 50 ? 'От 0.1 до 50%' : null),
+    },
+  });
+
+  useEffect(() => {
+    if (!settings) return;
+    marketEventsForm.setValues({
+      // доля → б.п. (×10000) и доля → % (×100); округление гасит плавающую точку (0.005 × 10000 = 50.00000000000001).
+      spreadBp: Math.round(settings.spreadWideningThresholdFraction * 10000 * 100) / 100,
+      drawdownPercent: Math.round(settings.priceDrawdownThresholdFraction * 100 * 100) / 100,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings]);
+
+  const handleSaveMarketEvents = marketEventsForm.onSubmit(async (values) => {
+    if (!settings || values.spreadBp === '' || values.drawdownPercent === '') return;
+    setSavingMarketEvents(true);
+    const ok = await save({
+      baseCurrency: settings.baseCurrency,
+      upcomingEventDaysThreshold: settings.upcomingEventDaysThreshold,
+      uninvestedCashThresholdRub: settings.uninvestedCashThresholdRub,
+      defaultMaxConcentrationPercent: settings.defaultMaxConcentrationPercent,
+      commissionRateOverride: settings.commissionRateOverride,
+      replacementHorizonYears: settings.replacementHorizonYears,
+      // б.п. → доля (÷10000), % → доля (÷100) — на границе API.
+      spreadWideningThresholdFraction: values.spreadBp / 10000,
+      priceDrawdownThresholdFraction: values.drawdownPercent / 100,
+    });
+    setSavingMarketEvents(false);
+    notifications.show({
+      color: ok ? 'green' : 'red',
+      title: ok ? 'Пороги сохранены' : 'Не удалось сохранить пороги',
+      message: ok ? 'Новые пороги применятся при следующей синхронизации.' : 'Проверьте значения и попробуйте ещё раз.',
     });
   });
 
@@ -318,6 +368,41 @@ export function Settings() {
                 </Button>
               </Group>
             </form>
+          </Section>
+
+          <Section
+            title="Пороги рыночных событий"
+            description="Когда в «Событиях» появляются расширение G-спреда и просадка цены по бумагам портфеля (сравнение с 20 торговыми днями)"
+            data-testid="market-events-section"
+          >
+            <form onSubmit={handleSaveMarketEvents}>
+              <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md" verticalSpacing="sm">
+                <NumberInput
+                  label="Расширение G-спреда к медиане, б.п."
+                  min={1}
+                  max={500}
+                  decimalScale={0}
+                  data-testid="spread-widening-input"
+                  {...marketEventsForm.getInputProps('spreadBp')}
+                />
+                <NumberInput
+                  label="Просадка цены от максимума, %"
+                  min={0.1}
+                  max={50}
+                  decimalScale={1}
+                  data-testid="price-drawdown-input"
+                  {...marketEventsForm.getInputProps('drawdownPercent')}
+                />
+              </SimpleGrid>
+              <Group justify="flex-end" mt="lg">
+                <Button type="submit" loading={savingMarketEvents} data-testid="market-events-save">
+                  Сохранить пороги
+                </Button>
+              </Group>
+            </form>
+            <p className="bonds-note bonds-mt">
+              По умолчанию 50 б.п. и 5%. Событие не создаётся, пока по бумаге меньше 10 торговых дней истории.
+            </p>
           </Section>
         </>
       )}

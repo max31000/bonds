@@ -185,6 +185,8 @@ describe('MarketComparator', () => {
         defaultMaxConcentrationPercent: 25,
         commissionRateOverride: null,
         replacementHorizonYears: 4.5,
+        spreadWideningThresholdFraction: 0.005,
+        priceDrawdownThresholdFraction: 0.05,
         commissionAutoEstimate: null,
         tInvestTariff: null,
         commissionEffectiveRate: 0.003,
