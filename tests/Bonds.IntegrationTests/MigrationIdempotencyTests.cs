@@ -70,6 +70,7 @@ public class MigrationIdempotencyTests : IAsyncLifetime
             "018_universe_emitents_and_security_details.sql",
             "019_issuer_financials.sql",
             "020_instrument_risk_levels_and_issuer_ratings.sql",
+            "021_replacement_horizon_setting.sql",
         });
 
         var expectedTables = new[]
@@ -105,7 +106,7 @@ public class MigrationIdempotencyTests : IAsyncLifetime
         await conn.OpenAsync();
 
         var migrationCount = await conn.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM _migrations");
-        migrationCount.Should().Be(20, "повторный запуск не должен заново применять уже применённые миграции");
+        migrationCount.Should().Be(21, "повторный запуск не должен заново применять уже применённые миграции");
 
         // users.base_currency существует ровно один раз (ALTER ... ADD COLUMN IF NOT EXISTS не падает повторно).
         var columnCount = await conn.ExecuteScalarAsync<long>(
@@ -278,6 +279,22 @@ public class MigrationIdempotencyTests : IAsyncLifetime
               WHERE table_schema = DATABASE() AND table_name = 'issuer_ratings' AND index_name = 'uq_issuer_ratings'
               ORDER BY seq_in_index")).ToList();
         uniqueCols.Should().Equal("inn", "agency");
+    }
+
+    [Fact]
+    public async Task RunAsync_Migration021_ReplacementHorizonColumnExistsWithDefaultTwoYears()
+    {
+        var connectionString = _container.GetConnectionString();
+        await new MigrationRunner(connectionString, NullLogger<MigrationRunner>.Instance).RunAsync();
+
+        await using var conn = new MySqlConnection(connectionString);
+        await conn.OpenAsync();
+
+        var column = await conn.QuerySingleAsync<(string IsNullable, string? Default)>(
+            @"SELECT is_nullable AS IsNullable, column_default AS `Default` FROM information_schema.columns
+              WHERE table_schema = DATABASE() AND table_name = 'user_settings' AND column_name = 'replacement_horizon_years'");
+        column.IsNullable.Should().Be("NO", "горизонт замены NOT NULL (миграция 021)");
+        decimal.Parse(column.Default!, System.Globalization.CultureInfo.InvariantCulture).Should().Be(2.00m, "дефолт = прежняя фронтовая константа");
     }
 
     [Fact]

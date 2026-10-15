@@ -129,4 +129,15 @@ public class LiquidityScoreCalculatorTests
         morningByMedian.Should().Be(LiquidityScore.High);
         eveningByMedian.Should().Be(morningByMedian);
     }
+
+    [Fact]
+    public void HalfSpreadFraction_IsOfferMinusBidOverOfferPlusBid_AndMatchesAssessSlippage()
+    {
+        // bid 99.8, offer 100.2: (100.2 − 99.8)/(100.2 + 99.8) = 0.4/200 = 0.002 (полуспред, 20 б.п.).
+        LiquidityScoreCalculator.HalfSpreadFraction(99.8m, 100.2m).Should().BeApproximately(0.002m, 1e-12m);
+        LiquidityScoreCalculator.Assess(1_000_000m, 99.8m, 100.2m, 5).SlippageEstimateFraction
+            .Should().Be(LiquidityScoreCalculator.HalfSpreadFraction(99.8m, 100.2m), "единый источник формулы (задача 48)");
+        LiquidityScoreCalculator.HalfSpreadFraction(null, 100.2m).Should().BeNull();
+        LiquidityScoreCalculator.HalfSpreadFraction(0m, 100.2m).Should().BeNull();
+    }
 }
