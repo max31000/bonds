@@ -205,6 +205,8 @@ public static class UniverseEndpoints
         var isInPortfolio = entry.Isin is not null && portfolioIsins.Contains(entry.Isin);
         var isInWatchlist = entry.Isin is not null && watchlistIsins.Contains(entry.Isin);
 
+        var value = AnalyticsSupport.AssessValue(entry, snapshot);
+
         return new UniverseRowDto
         {
             Secid = entry.Secid,
@@ -242,7 +244,9 @@ public static class UniverseEndpoints
             Score = score.Score,
             Coverage = score.Coverage,
             CriticalFlags = score.CriticalFlags,
-            ValueVerdict = AnalyticsSupport.AssessValueVerdict(entry, snapshot),
+            ValueVerdict = value.Verdict,
+            ValueMedianFraction = value.MedianFraction,
+            ValueThresholdFraction = value.ThresholdFraction,
         };
     }
 
@@ -278,6 +282,8 @@ public static class UniverseEndpoints
             Secid = entry.Secid,
             Isin = entry.Isin,
             Name = entry.ShortName ?? entry.SecName,
+            EmitentInn = entry.EmitentInn,
+            EmitentTitle = entry.EmitentTitle,
             RiskSignals = AnalyticsSupport.BuildRiskSignalsDto(entry, snapshot, book),
             Disclaimer = ReliabilityDisclaimer,
         });
@@ -494,6 +500,12 @@ public sealed record UniverseRowDto
 
     /// <summary>Ось Value: "Cheap"|"Fair"|"Rich"|"InsufficientData" — отдельно от риска.</summary>
     public required string ValueVerdict { get; init; }
+
+    /// <summary>Задача 47: медиана G-спреда корзины — ДОЛЯ (тултип Value); null — у бумаги нет спреда.</summary>
+    public decimal? ValueMedianFraction { get; init; }
+
+    /// <summary>Задача 47: порог вердикта Value — ДОЛЯ, max(20 б.п., 0.25 × IQR корзины); null вместе с медианой.</summary>
+    public decimal? ValueThresholdFraction { get; init; }
 }
 
 /// <summary>Ответ GET /api/universe/{secid}/reliability: полная карточка скоркарты одной бумаги.</summary>
@@ -502,6 +514,13 @@ public sealed record ReliabilityResponseDto
     public required string Secid { get; init; }
     public string? Isin { get; init; }
     public string? Name { get; init; }
+
+    /// <summary>Задача 47: ИНН эмитента (строка, ведущие нули значимы) — для форм ручного ввода рейтинга/отчётности;
+    /// null — эмитент ещё не определён (суточное обогащение не отработало).</summary>
+    public string? EmitentInn { get; init; }
+
+    /// <summary>Задача 47: название эмитента (справочник MOEX), только отображение.</summary>
+    public string? EmitentTitle { get; init; }
     public required RiskSignalsDto RiskSignals { get; init; }
     public required string Disclaimer { get; init; }
 }

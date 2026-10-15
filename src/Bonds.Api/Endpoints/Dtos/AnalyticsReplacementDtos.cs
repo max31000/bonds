@@ -172,6 +172,13 @@ public sealed record RiskSignalsDto
     /// её корзины (сектор × дюрация Маколея), порог — IQR корзины (<c>RelativeValueService.ResolveVerdict</c>).
     /// Отдельное поле: «дешёвая» бумага не обязана быть рискованной, а «Rich» — надёжной.</summary>
     public required string ValueVerdict { get; init; }
+
+    /// <summary>Задача 47: медиана G-спреда корзины бумаги — ДОЛЯ (0.003 = 30 б.п.), для тултипа Value «спред X против
+    /// медианы Y». Null, если у бумаги нет спреда.</summary>
+    public decimal? ValueMedianFraction { get; init; }
+
+    /// <summary>Задача 47: порог вердикта Value — ДОЛЯ, max(20 б.п., 0.25 × IQR корзины). Null вместе с медианой.</summary>
+    public decimal? ValueThresholdFraction { get; init; }
 }
 
 /// <summary>Один компонент скоркарты надёжности (зеркало <see cref="Bonds.Core.Analytics.ScoreComponent"/>).</summary>

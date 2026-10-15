@@ -344,7 +344,7 @@ public static class AllocationEndpoints
 
             foreach (var (entry, signals, score) in withSignals)
             {
-                signalsBySecid[entry.Secid] = ToRiskSignalsDto(signals, score, AssessValueVerdict(entry, snapshot));
+                signalsBySecid[entry.Secid] = ToRiskSignalsDto(signals, score, AssessValue(entry, snapshot));
             }
 
             poolAvailable = withSignals.Count;

@@ -95,6 +95,37 @@ public class ReliabilityScorecardEndpointsTests
         row.GetProperty("valueVerdict").GetString().Should().Be("Cheap");
     }
 
+    /// <summary>Задача 47: UI тултипа Value («G-спред X против медианы корзины Y, порог ±Z») и формы ручного ввода
+    /// (нужен ИНН эмитента) читают эти поля из полной карточки; строка скринера несёт те же числа Value.</summary>
+    [Fact]
+    public async Task Reliability_ExposesValueBasketDetails_AndEmitentInn_ForUi()
+    {
+        var marker = Marker();
+        var sector = $"Sector{marker}";
+        var universe = new BondUniverseRepository(Conn);
+        var peers = Enumerable.Range(0, 5).Select(i => Bond($"PR{i}{marker}", sector, 0.0300m)).ToList();
+        var cheap = Bond($"CH{marker}", sector, 0.0400m);
+        await universe.UpsertSnapshotBatchAsync([.. peers, cheap]);
+        var inn = ReliabilitySeed.NewInn();
+        await ReliabilitySeed.AttachIssuerAsync(Conn, cheap.Secid, ReliabilitySeed.NewEmitentId(), inn);
+
+        var client = await AuthorizedClientAsync();
+        var response = await client.GetAsync($"/api/universe/{cheap.Isin}/reliability");
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+
+        body.GetProperty("emitentInn").GetString().Should().Be(inn);
+        var risk = body.GetProperty("riskSignals");
+        risk.GetProperty("valueVerdict").GetString().Should().Be("Cheap");
+        risk.GetProperty("valueMedianFraction").GetDecimal().Should().Be(0.0300m, "медиана корзины — ДОЛЯ (300 б.п.)");
+        risk.GetProperty("valueThresholdFraction").GetDecimal().Should().Be(0.0020m, "порог = max(20 б.п., 0.25 × IQR); IQR корзины 0");
+
+        var list = await (await client.GetAsync($"/api/universe?search=CH{marker}")).Content.ReadFromJsonAsync<JsonElement>();
+        var row = list.GetProperty("rows").EnumerateArray().Single();
+        row.GetProperty("valueMedianFraction").GetDecimal().Should().Be(0.0300m);
+        row.GetProperty("valueThresholdFraction").GetDecimal().Should().Be(0.0020m);
+    }
+
     [Fact]
     public async Task Ofz_IsGreen_WithSovereignBonusInsteadOfLayerB()
     {

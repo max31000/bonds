@@ -606,7 +606,7 @@ public static class ReplacementEndpoints
             OfferDate = entry?.OfferDate,
             // Светофор — скоркарта по банк-записи (entry — тот же банк-снимок, что несёт листинг/сектор/эмитента);
             // entry может быть null, если secid не резолвится в текущем снимке банка — тогда Unknown (Yellow).
-            RiskSignals = ToRiskSignalsDto(signals, book.Get(member.Secid), AssessValueVerdict(entry, snapshot)),
+            RiskSignals = ToRiskSignalsDto(signals, book.Get(member.Secid), AssessValue(entry, snapshot)),
         };
     }
 
