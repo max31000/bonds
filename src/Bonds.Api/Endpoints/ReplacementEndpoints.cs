@@ -437,8 +437,14 @@ public static class ReplacementEndpoints
     /// <summary>Верхняя граница <c>limit</c> — защита от случайного запроса всей вселенной (~3400 бумаг) одним ответом.</summary>
     public const int MaxReplacementCandidatesLimit = 100;
 
+    /// <summary>Значения <c>durationScope</c> (задача 50): кандидаты из бакета дюрации позиции ±1 соседний / весь рынок.</summary>
+    public const string DurationScopeBucket = "bucket";
+    public const string DurationScopeAll = "all";
+
     public const string ReplacementCandidatesDisclaimer =
-        "Кандидаты и оценки — аналитическая информация, не инвестиционная рекомендация. Точная " +
+        "Кандидаты и оценки — аналитическая информация, не инвестиционная рекомендация. Доходность " +
+        "кандидатов ранжирована консервативно — к худшему из погашения и оферты, с учётом НДФЛ 13% (упрощённо, " +
+        "ко всей доходности); по умолчанию — среди бумаг похожего срока. Точная " +
         "выгода считается для выбранной бумаги через сравнение (POST /api/analytics/replacement). " +
         "Риск-сигналы (ликвидность/листинг, спред к рынку) — по биржевой статистике MOEX, не рейтинг " +
         "рейтинговых агентств.";
@@ -447,7 +453,7 @@ public static class ReplacementEndpoints
     /// Единый источник кандидатов-замен для ОДНОЙ позиции портфеля (блок 1
     /// переработки «Рекомендаций»): <c>mode=market</c> — вся фикс-купонная гигиенически-чистая
     /// вселенная банка (<see cref="UniverseHygieneFilter"/>, БЕЗ флоатеров), отсортированная по
-    /// доходности убыв.; <c>mode=rv</c> — дешёвые соседи по корзине сектор×дюрация ПОЗИЦИИ
+    /// после-налоговой доходности к worst убыв. (задача 50), по умолчанию — из бакета дюрации позиции ±1; <c>mode=rv</c> — дешёвые соседи по корзине сектор×дюрация ПОЗИЦИИ
     /// (переиспользует <see cref="RelativeValueService"/>/<see cref="ResolveCheapBasketMembers"/> —
     /// та же инфраструктура, что <see cref="GetRelativeValue"/>). Оба режима отдают дешёвую
     /// банк-статистику + информационные риск-сигналы (<see cref="CandidateRiskSignalService"/>) —
@@ -467,6 +473,7 @@ public static class ReplacementEndpoints
         string mode,
         int? limit,
         string? reliability,
+        string? durationScope,
         CancellationToken ct)
     {
         if (mode != "market" && mode != "rv")
@@ -477,6 +484,12 @@ public static class ReplacementEndpoints
         if (!IsValidReliabilityFilterValue(reliability))
         {
             return ValidationError("reliability должен быть 'green', 'yellow' или 'red'");
+        }
+
+        var requestedScope = string.IsNullOrWhiteSpace(durationScope) ? DurationScopeBucket : durationScope.Trim().ToLowerInvariant();
+        if (requestedScope is not (DurationScopeBucket or DurationScopeAll))
+        {
+            return ValidationError("durationScope должен быть 'bucket' или 'all'");
         }
 
         var accountId = await PositionsEndpoints.ResolveAccountIdAsync(currentUser, accountRepo);
@@ -491,8 +504,14 @@ public static class ReplacementEndpoints
         var snapshot = await snapshotBuilder.GetSnapshotAsync(ct);
         var book = await scoreProvider.GetBookAsync(ct);
 
+        // Задача 50: сопоставимость по сроку — только mode=market. Бакет позиции — по дюрации МАКОЛЕЯ (как у банка);
+        // дюрации у позиции нет (флоатер/неполные данные) — бакет не определить, честно откатываемся на «весь рынок»
+        // (эффективный scope в ответе подскажет UI, что запрос "bucket" не был применён).
+        var positionBucketIndex = DurationBucketClassifier.Index(position.MacaulayDuration);
+        var scopeToBucket = mode == "market" && requestedScope == DurationScopeBucket && positionBucketIndex is not null;
+
         var candidates = mode == "market"
-            ? await BuildMarketCandidates(position, universeRepo, universeOptions.Value.Hygiene, asOf, snapshot, book, effectiveLimit, reliability)
+            ? await BuildMarketCandidates(position, universeRepo, universeOptions.Value.Hygiene, asOf, snapshot, book, effectiveLimit, reliability, scopeToBucket)
             : BuildRvModeCandidates(position, snapshot, book, effectiveLimit, reliability);
 
         return Results.Ok(new ReplacementCandidatesResponseDto
@@ -503,6 +522,9 @@ public static class ReplacementEndpoints
             PositionIsin = position.Isin ?? string.Empty,
             Candidates = candidates,
             Disclaimer = ReplacementCandidatesDisclaimer,
+            DurationScope = mode == "market" ? (scopeToBucket ? DurationScopeBucket : DurationScopeAll) : null,
+            PositionDurationBucket = positionBucketIndex is null ? null : DurationBucketClassifier.Label(position.MacaulayDuration),
+            AfterTaxRateFraction = AfterTaxYield.TaxRate,
         });
     }
 
@@ -510,7 +532,9 @@ public static class ReplacementEndpoints
     /// mode=market (план часть B.2): гигиенически-чистая (<see cref="UniverseHygieneFilter"/>)
     /// фикс-купонная (<c>IsFloater != true</c>) вселенная банка, БЕЗ записей с
     /// <c>YieldFraction == null</c> (иначе нечем ранжировать), БЕЗ самой позиции (по ISIN),
-    /// топ-<paramref name="limit"/> по <see cref="BondUniverseEntry.YieldFraction"/> убыв. Точную
+    /// топ-<paramref name="limit"/> по ПОСЛЕ-НАЛОГОВОЙ доходности к worst (<see cref="CandidateYieldRanking"/>, задача 50:
+    /// <c>min(YTM, к оферте) × (1 − 13%)</c>) убыв.; при <paramref name="restrictToDurationBucket"/> — только бакет дюрации
+    /// позиции ±1 соседний (<see cref="DurationBucketClassifier.AreSameOrAdjacent"/>) Точную
     /// выгоду каждого кандидата эта ручка НЕ считает — та задача существующего POST
     /// /api/analytics/replacement (см. doc-comment <see cref="GetReplacementCandidates"/>).
     /// <para>
@@ -532,7 +556,8 @@ public static class ReplacementEndpoints
         RelativeValueSnapshotBuilder.RelativeValueSnapshot snapshot,
         ReliabilityBook book,
         int limit,
-        string? reliabilityFilter)
+        string? reliabilityFilter,
+        bool restrictToDurationBucket)
     {
         var all = await universeRepo.GetAllAsync();
 
@@ -541,14 +566,18 @@ public static class ReplacementEndpoints
             .Where(e => e.IsFloater != true)
             .Where(e => e.YieldFraction is not null)
             .Where(e => position.Isin is null || !string.Equals(e.Isin, position.Isin, StringComparison.OrdinalIgnoreCase))
-            .OrderByDescending(e => e.YieldFraction!.Value);
+            // Задача 50: сопоставимость по сроку — бакет дюрации позиции ±1 соседний (оба по Маколею); без дюрации кандидат скрыт.
+            .Where(e => !restrictToDurationBucket || DurationBucketClassifier.AreSameOrAdjacent(position.MacaulayDuration, e.DurationYears));
+
+        // Задача 50: сортировка по после-налоговой доходности к worst (а не по сырой YTM), детерминированно.
+        var ranked = CandidateYieldRanking.Rank(eligible).Select(x => x.Entry);
 
         if (string.IsNullOrWhiteSpace(reliabilityFilter))
         {
-            return eligible.Take(limit).Select(e => ToReplacementCandidateDto(e, snapshot, book)).ToList();
+            return ranked.Take(limit).Select(e => ToReplacementCandidateDto(e, snapshot, book)).ToList();
         }
 
-        return eligible
+        return ranked
             .Select(e => ToReplacementCandidateDto(e, snapshot, book))
             .Where(dto => ReliabilityMeetsFilter(dto.RiskSignals.Reliability, reliabilityFilter))
             .Take(limit)
@@ -604,6 +633,7 @@ public static class ReplacementEndpoints
     private static ReplacementCandidateDto ToReplacementCandidateDto(
         BondUniverseEntry entry, RelativeValueSnapshotBuilder.RelativeValueSnapshot snapshot, ReliabilityBook book)
     {
+        var rank = CandidateYieldRanking.Evaluate(entry);
         return new ReplacementCandidateDto
         {
             Secid = entry.Secid,
@@ -614,6 +644,8 @@ public static class ReplacementEndpoints
             Issuer = null,
             Sector = entry.Sector,
             YieldFraction = entry.YieldFraction,
+            AfterTaxYieldFraction = rank?.AfterTaxYieldFraction,
+            YieldBasis = rank?.Basis,
             DurationYears = entry.DurationYears,
             GSpreadFraction = entry.EffectiveGspreadFraction,
             OfferDate = entry.OfferDate,
@@ -633,6 +665,7 @@ public static class ReplacementEndpoints
             ? LiquidityScoreCalculator.Assess(null, null, null, null)
             : AssessEntryLiquidity(entry, snapshot);
         var signals = AssessRiskSignals(liquidity, entry?.ListLevel, member.GSpreadFraction, basketStats);
+        var rank = entry is null ? null : CandidateYieldRanking.Evaluate(entry);
 
         return new ReplacementCandidateDto
         {
@@ -642,6 +675,8 @@ public static class ReplacementEndpoints
             Issuer = null,
             Sector = member.Sector,
             YieldFraction = entry?.YieldFraction,
+            AfterTaxYieldFraction = rank?.AfterTaxYieldFraction,
+            YieldBasis = rank?.Basis,
             DurationYears = member.DurationYears,
             GSpreadFraction = member.GSpreadFraction,
             OfferDate = entry?.OfferDate,

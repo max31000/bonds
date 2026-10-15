@@ -84,6 +84,21 @@ public sealed record ReplacementCandidatesResponseDto
     public required string PositionIsin { get; init; }
     public required IReadOnlyList<ReplacementCandidateDto> Candidates { get; init; }
     public required string Disclaimer { get; init; }
+
+    /// <summary>
+    /// Задача 50, только mode=market: ПРИМЕНЁННАЯ сопоставимость по сроку — "bucket" (бакет дюрации позиции ±1 соседний) /
+    /// "all" (весь рынок). Может отличаться от запрошенной: у позиции нет дюрации Маколея → бакет не определить, откат на "all".
+    /// Null для mode=rv (там кандидаты всегда из корзины позиции).
+    /// </summary>
+    public string? DurationScope { get; init; }
+
+    /// <summary>Задача 50: метка бакета дюрации позиции ("1–3 года", Маколей, <see cref="Bonds.Core.Analytics.DurationBucketClassifier"/>);
+    /// null — дюрация позиции неизвестна.</summary>
+    public string? PositionDurationBucket { get; init; }
+
+    /// <summary>Задача 50: ставка НДФЛ, учтённая в <see cref="ReplacementCandidateDto.AfterTaxYieldFraction"/> — ДОЛЯ (0.13 = 13%),
+    /// из <see cref="Bonds.Core.Analytics.AfterTaxYield.TaxRate"/> (фронт не дублирует константу).</summary>
+    public required decimal AfterTaxRateFraction { get; init; }
 }
 
 /// <summary>Один кандидат-замена — дешёвая банк-статистика (bond_universe), НЕ точный расчёт
@@ -99,8 +114,19 @@ public sealed record ReplacementCandidateDto
 
     public string? Sector { get; init; }
 
-    /// <summary>ДОЛЯ (см. общая конвенция единиц репо).</summary>
+    /// <summary>ДОЛЯ (см. общая конвенция единиц репо): сырая биржевая доходность банка (MOEX YIELD), ДО налога.</summary>
     public decimal? YieldFraction { get; init; }
+
+    /// <summary>
+    /// Задача 50: ключ ранжирования mode=market — доходность к worst ПОСЛЕ НДФЛ, ДОЛЯ:
+    /// <c>min(YieldFraction, доходность к оферте) × (1 − <see cref="ReplacementCandidatesResponseDto.AfterTaxRateFraction"/>)</c>
+    /// (<see cref="Bonds.Core.Analytics.CandidateYieldRanking"/>). Null — доходности нет.
+    /// </summary>
+    public decimal? AfterTaxYieldFraction { get; init; }
+
+    /// <summary>Задача 50: к чему считана <see cref="AfterTaxYieldFraction"/> — "offer" (худший сценарий — оферта; дату см.
+    /// <see cref="OfferDate"/>) | "maturity" (к погашению). Null — доходности нет.</summary>
+    public string? YieldBasis { get; init; }
 
     /// <summary>Годы.</summary>
     public decimal? DurationYears { get; init; }
@@ -120,7 +146,7 @@ public sealed record ReplacementCandidateDto
 /// Два ИНФОРМАЦИОННЫХ сигнала кандидата (ликвидность+листинг и отклонение спреда от медианы корзины —
 /// см. <see cref="Bonds.Core.Analytics.SignalLevel"/>) + скоркарта надёжности v2 (задача 46: score, coverage,
 /// компоненты, флаги, светофор) + ось Value отдельным полем. Сигналы НЕ ранжируют кандидатов — ранжирование
-/// mode=market идёт по доходности; светофор считает скоркарта, а не эти два сигнала.
+/// mode=market идёт по после-налоговой доходности к worst; светофор считает скоркарта, а не эти два сигнала.
 /// </summary>
 public sealed record RiskSignalsDto
 {

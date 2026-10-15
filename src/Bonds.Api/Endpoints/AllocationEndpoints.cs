@@ -268,7 +268,8 @@ public static class AllocationEndpoints
     public const string MarketAllocationDisclaimer =
         "Оценка распределения свободных средств по всей фикс-купонной гигиенически-чистой вселенной " +
         "банка облигаций MOEX (флоатеры исключены — их доходность несравнима с фикс-купоном). " +
-        "Кандидаты ранжируются по доходности убыв., без учёта вашего текущего портфеля. Оценки — по " +
+        "Кандидаты ранжируются по доходности к худшему из погашения и оферты после налога (НДФЛ 13%, упрощённо) убыв., " +
+        "без учёта вашего текущего портфеля. Оценки — по " +
         "биржевой статистике, не является индивидуальной инвестиционной рекомендацией.";
 
     public const string RecommendedAllocationDisclaimer =
@@ -276,7 +277,8 @@ public static class AllocationEndpoints
         "из которых исключены бумаги с красным светофором скоркарты надёжности (оценка по открытым данным: " +
         "структура выпуска, отчётность эмитента, динамика рынка — НЕ рейтинг рейтинговых агентств) и " +
         "с низкой ликвидностью, с диверсификацией по секторам. «Дешёвая» бумага (спред выше медианы корзины) " +
-        "не исключается — это ось цены, а не риска. Оценки — по биржевой статистике, не является " +
+        "не исключается — это ось цены, а не риска. Пул ранжирован по доходности к худшему из погашения и оферты " +
+        "после налога (НДФЛ 13%, упрощённо). Оценки — по биржевой статистике, не является " +
         "индивидуальной инвестиционной рекомендацией.";
 
     /// <summary>
@@ -348,19 +350,14 @@ public static class AllocationEndpoints
             }
 
             poolAvailable = withSignals.Count;
-            pool = withSignals
-                .OrderByDescending(x => x.Entry.YieldFraction!.Value)
-                .Take(MarketAllocationCandidatePoolLimit)
-                .Select(x => x.Entry)
-                .ToList();
+            // Задача 50: пул — по после-налоговой доходности к worst (min(YTM, к оферте) × (1 − НДФЛ)), не по сырой YTM.
+            pool = CandidateYieldRanking.TopByRank(withSignals.Select(x => x.Entry), MarketAllocationCandidatePoolLimit);
         }
         else
         {
             poolAvailable = eligible.Count;
-            pool = eligible
-                .OrderByDescending(e => e.YieldFraction!.Value)
-                .Take(MarketAllocationCandidatePoolLimit)
-                .ToList();
+            // Задача 50: тот же ранг, что у recommended и mode=market кандидатов-замен.
+            pool = CandidateYieldRanking.TopByRank(eligible, MarketAllocationCandidatePoolLimit);
 
             foreach (var entry in pool)
             {
@@ -388,7 +385,7 @@ public static class AllocationEndpoints
         var truncated = poolAvailable > MarketAllocationCandidatePoolLimit;
         var baseDisclaimer = source == "recommended" ? RecommendedAllocationDisclaimer : MarketAllocationDisclaimer;
         var disclaimer = truncated
-            ? $"{baseDisclaimer} Показаны топ-{MarketAllocationCandidatePoolLimit} из {poolAvailable} подходящих бумаг по доходности — не все кандидаты участвовали в распределении."
+            ? $"{baseDisclaimer} Показаны топ-{MarketAllocationCandidatePoolLimit} из {poolAvailable} подходящих бумаг по доходности после налога — не все кандидаты участвовали в распределении."
             : baseDisclaimer;
 
         var dto = new AllocationResponseDto

@@ -270,6 +270,77 @@ public class AllocationMarketEndpointTests
         }
     }
 
+    // ─── Задача 50: пул кандидатов — по после-налоговой доходности к worst ────────────────────────
+
+    /// <summary>
+    /// Пул топ-200 (market и recommended) отбирается по <c>min(YTM, к оферте) × (1 − 13%)</c>, а не по сырой YTM:
+    /// «ловушка» с максимальной сырой доходностью, но низкой доходностью к оферте, в пул не попадает, а дешёвая
+    /// Green-бумага (ось Value ≠ риск) — попадает. Тест засевает 205 заполнителей и ЧИСТИТ их в finally: банк в
+    /// контейнере общий, 205 строк с доходностью 0.449 вытеснили бы кандидатов других тестов из пула 200.
+    /// </summary>
+    [Fact]
+    public async Task GetAllocation_MarketAndRecommended_PoolRankedByAfterTaxYieldToWorst()
+    {
+        var (client, _, _) = await CreateAuthorizedClientAsync();
+        var marker = Guid.NewGuid().ToString("N")[..6];
+        var sector = $"Sector{marker}";
+        var conn = _factory.Database.ConnectionString;
+        var universeRepo = new BondUniverseRepository(conn);
+
+        var fillers = Enumerable.Range(0, 205)
+            .Select(i =>
+            {
+                var f = HealthyEntry($"F{i:000}{marker}", sector, 0.449m, 2m);
+                f.Isin = $"F{i:000}{marker}"; // колонка isin — VARCHAR(12): префикс "ISIN" из HealthyEntry не влезает
+                return f;
+            })
+            .ToList();
+        var trap = HealthyEntry($"TR{marker}", sector, 0.45m, 2m);
+        trap.Isin = $"ITR{marker}";
+        trap.YieldToOfferFraction = 0.10m; // сырая YTM — максимум, но к оферте всего 10% → после налога 8.7%
+        trap.YieldDateType = "OFFER";
+
+        // Дешёвая Green-бумага: пять соседей по корзине (отдельный сектор) с G-спредом 300 б.п., она — 400 б.п.
+        var cheapSector = $"Cheap{marker}";
+        var peers = Enumerable.Range(0, 5).Select(i =>
+        {
+            var p = HealthyEntry($"P{i}{marker}", cheapSector, 0.20m, 2m, turnover: 10_000_000m, bidPercent: 99.9m, offerPercent: 100m);
+            p.Isin = $"IP{i}{marker}";
+            p.GspreadApproxFraction = 0.0300m;
+            return p;
+        }).ToList();
+        var cheap = HealthyEntry($"CH{marker}", cheapSector, 0.45m, 2m, turnover: 10_000_000m, bidPercent: 99.9m, offerPercent: 100m);
+        cheap.Isin = $"ICH{marker}";
+        cheap.GspreadApproxFraction = 0.0400m;
+
+        try
+        {
+            await universeRepo.UpsertSnapshotBatchAsync([.. fillers, trap, .. peers, cheap]);
+            await ReliabilitySeed.SeedHealthyIssuerAsync(conn, cheap.Secid, cheap.Isin!);
+
+            foreach (var source in new[] { "market", "recommended" })
+            {
+                var response = await client.GetAsync($"/api/analytics/allocation?amountRub=1000000000&source={source}");
+                response.StatusCode.Should().Be(HttpStatusCode.OK);
+                var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+
+                body.GetProperty("candidatePoolTruncated").GetBoolean().Should().BeTrue($"{source}: подходящих бумаг больше пула 200");
+                var secids = body.GetProperty("allocations").EnumerateArray().Select(a => a.GetProperty("secid").GetString())
+                    .Concat(body.GetProperty("skipped").EnumerateArray().Select(s => s.GetProperty("secid").GetString()))
+                    .ToList();
+
+                secids.Should().NotContain(trap.Secid, $"{source}: сырая YTM максимальна, но после-налоговая доходность к оферте ниже 200 заполнителей");
+                secids.Should().Contain(cheap.Secid, $"{source}: дешёвая Green-бумага с высокой после-налоговой доходностью проходит в пул (дешевизна — не риск)");
+                body.GetProperty("disclaimer").GetString().Should().Contain("после налога");
+            }
+        }
+        finally
+        {
+            await using var db = new MySqlConnector.MySqlConnection(conn);
+            await Dapper.SqlMapper.ExecuteAsync(db, "DELETE FROM bond_universe WHERE secid LIKE @Pattern", new { Pattern = $"%{marker}" });
+        }
+    }
+
     // ─── source=portfolio (план часть D.7 — регресс дефолта) ────────────────────────────────
 
     [Fact]

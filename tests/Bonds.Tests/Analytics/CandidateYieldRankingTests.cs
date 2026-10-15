@@ -94,4 +94,16 @@ public class CandidateYieldRankingTests
         first.Should().Equal("A", "M", "Z");
         second.Should().Equal(first);
     }
+
+    [Fact]
+    public void TopByRank_PoolTruncatedByAfterTaxRank_NotByRawYield()
+    {
+        // Ловушка: сырая доходность максимальна (0.45), но к оферте всего 0.10 → после налога 0.087 — в усечённый пул не входит.
+        var trap = Entry("TRAP", 0.45m, 0.10m, "OFFER");
+        var entries = new[] { trap, Entry("B", 0.30m), Entry("A", 0.31m), Entry("C", 0.20m) };
+
+        var pool = CandidateYieldRanking.TopByRank(entries, 2);
+
+        pool.Select(e => e.Secid).Should().Equal("A", "B");
+    }
 }

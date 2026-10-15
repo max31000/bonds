@@ -50,4 +50,11 @@ public static class CandidateYieldRanking
             .OrderByDescending(x => x.Rank.AfterTaxYieldFraction)
             .ThenBy(x => x.Entry.Secid, StringComparer.Ordinal)
             .ToList();
+
+    /// <summary>
+    /// Топ-<paramref name="limit"/> записей по после-налоговому рангу (<see cref="Rank"/>) — пул кандидатов
+    /// аллокации банка (задача 50): пул отбирается по ranked-доходности к worst, а не по сырой YTM.
+    /// </summary>
+    public static List<BondUniverseEntry> TopByRank(IEnumerable<BondUniverseEntry> entries, int limit) =>
+        Rank(entries).Take(limit).Select(x => x.Entry).ToList();
 }
