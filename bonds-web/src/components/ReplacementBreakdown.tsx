@@ -1,16 +1,20 @@
 import { Stack, Text } from '@mantine/core';
 import { formatRub, formatPercent, formatHorizon, formatDate, commissionSourceLabel } from '../utils/format';
-import type { ReplacementBreakdownData } from '../utils/replacementBreakdown';
+import { reconcileBreakdown, type ReplacementBreakdownData } from '../utils/replacementBreakdown';
 
 /**
  * Построчная формула-разбивка: доходности после НДФЛ → спред → вложено → горизонт (с причиной обрезки) →
- * валовая выгода → минус комиссии → минус слиппедж → чистая выгода ≈ % годовых → минус НДФЛ продажи → выгода
- * после налога; предупреждение о смене дюрации.
+ * валовая выгода → минус комиссии → минус слиппедж → эффект роста издержек на горизонте → чистая выгода ≈ % годовых →
+ * минус налог продажи (с учётом роста на горизонте) → выгода после налога; предупреждение о смене дюрации.
+ * Строки сходятся арифметически: валовая − комиссии − слиппедж + эффект = чистая выгода; чистая − налог = выгода после налога
+ * (сводящие строки считает <see>reconcileBreakdown</see>: издержки и налог уходят из капитала СЕГОДНЯ и лишают его роста
+ * на горизонте, поэтому влияют на итог сильнее номинала).
  * data-testid принимает суффикс, чтобы вызывающий код мог задать уникальный ключ (карточка кандидата или
  * market-сравнивалка используют разные префиксы).
  */
 export function ReplacementBreakdown({ data, testIdSuffix }: { data: ReplacementBreakdownData; testIdSuffix: string }) {
   const slippageTotal = data.sellSlippageRub + data.buySlippageRub;
+  const { costGrowthEffectRub, saleTaxRub } = reconcileBreakdown(data);
   return (
     <Stack gap={2} mt="xs" data-testid={`replacement-details-${testIdSuffix}`}>
       <Text size="xs" data-testid={`replacement-yield-after-tax-${testIdSuffix}`}>
@@ -45,14 +49,21 @@ export function ReplacementBreakdown({ data, testIdSuffix }: { data: Replacement
           спреда стакана)
         </Text>
       )}
+      {costGrowthEffectRub !== null && (
+        <Text size="xs" data-testid={`replacement-cost-growth-${testIdSuffix}`}>
+          {costGrowthEffectRub < 0 ? '−' : '+'} эффект роста издержек на горизонте {formatRub(Math.abs(costGrowthEffectRub))} (издержки уходят
+          из капитала сегодня и не растут вместе с ним)
+        </Text>
+      )}
       <Text size="xs" fw={600}>
         = чистая выгода {formatRub(data.netBenefitRub)}
         {data.annualizedBenefitFraction !== null && <> ≈ {formatPercent(data.annualizedBenefitFraction)} годовых</>}
       </Text>
-      {data.sellTaxEstimateRub !== null ? (
+      {saleTaxRub !== null ? (
         <>
           <Text size="xs" data-testid={`replacement-sell-tax-${testIdSuffix}`}>
-            − НДФЛ от продажи ≈ {formatRub(data.sellTaxEstimateRub)} (оценка, 13% с прибыли к средней цене входа)
+            − налог продажи (с учётом роста на горизонте) {formatRub(saleTaxRub)}
+            {data.sellTaxEstimateRub !== null && <> (сам НДФЛ ≈ {formatRub(data.sellTaxEstimateRub)}: оценка, 13% с прибыли к средней цене входа)</>}
           </Text>
           <Text size="xs" fw={600} data-testid={`replacement-net-after-tax-${testIdSuffix}`}>
             = выгода после налога {formatRub(data.netBenefitAfterTaxRub)}

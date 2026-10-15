@@ -91,3 +91,54 @@ export function horizonCaption(
   const date = r.targetHorizonDate ? ` ${formatDate(r.targetHorizonDate)}` : '';
   return `${base}, сокращён до ${formatHorizon(r.effectiveHorizonYears)}: ${reason}${date}`;
 }
+
+/** Сведение разбивки: недостающие строки, чтобы сумма строк давала ровно «чистую выгоду». */
+export interface BreakdownReconciliation {
+  /**
+   * «Эффект роста издержек на горизонте» = netBenefit − (валовая − комиссии − слиппедж), рубли. Валовая выгода считается на
+   * полной стоимости hold, а издержки (комиссии, слиппедж) вычитаются из капитала сегодня и тем самым лишают его роста на
+   * горизонте (FV-математика v2) — их влияние на чистую выгоду больше номинальной суммы издержек. Null — валовой выгоды нет
+   * (yieldDataIncomplete): сводить нечего.
+   */
+  costGrowthEffectRub: number | null;
+  /**
+   * Налоговая строка «налог продажи (с учётом роста на горизонте)» = netBenefitRub − netBenefitAfterTaxRub, рубли. Налог
+   * вычитается из выручки сегодня, поэтому на выгоду на горизонте влияет больше, чем сам налог. Null — налог не оценён.
+   */
+  saleTaxRub: number | null;
+}
+
+const roundKopecks = (v: number) => Math.round(v * 100) / 100;
+
+/**
+ * Считает сводящие строки разбивки (см. <see>BreakdownReconciliation</see>). Единицы — рубли; округление до копеек,
+ * чтобы сумма строк (валовая − комиссии − слиппедж + эффект) точно равнялась netBenefitRub.
+ */
+export function reconcileBreakdown(
+  data: Pick<
+    ReplacementBreakdownData,
+    | 'grossGainRub'
+    | 'sellCommissionRub'
+    | 'buyCommissionRub'
+    | 'sellSlippageRub'
+    | 'buySlippageRub'
+    | 'netBenefitRub'
+    | 'netBenefitAfterTaxRub'
+    | 'sellTaxEstimateRub'
+  >,
+): BreakdownReconciliation {
+  const costGrowthEffectRub =
+    data.grossGainRub === null
+      ? null
+      : roundKopecks(
+          data.netBenefitRub -
+            (data.grossGainRub -
+              (data.sellCommissionRub + data.buyCommissionRub) -
+              (data.sellSlippageRub + data.buySlippageRub)),
+        );
+  const saleTaxRub =
+    data.sellTaxEstimateRub === null || data.netBenefitAfterTaxRub === null
+      ? null
+      : roundKopecks(data.netBenefitRub - data.netBenefitAfterTaxRub);
+  return { costGrowthEffectRub, saleTaxRub };
+}

@@ -520,7 +520,9 @@ export interface ReplacementResponse {
   horizonYears: number;
   sellCommissionRub: number;
   buyCommissionRub: number;
+  /** Комиссии обеих сделок (продажа + покупка), рубли; слиппедж и налог — отдельные поля. */
   totalSwitchCostRub: number;
+  /** FV_switch − FV_hold БЕЗ налога продажи (но после НДФЛ на купоны, комиссий и слиппеджа), рубли. */
   netBenefitRub: number;
   isSwitchFavorable: boolean;
   breakEvenYears: number | null;
@@ -535,15 +537,15 @@ export interface ReplacementResponse {
 
   /** Та же формула-разбивка, что MatrixPair — спред эффективных доходностей (targetYield − holdYield), ДОЛЯ. Null — yieldDataIncomplete. */
   spreadFraction: number | null;
-  /** Капитал, реально переходящий в target (marketValueRub hold минус комиссия продажи), в рублях. */
+  /** Капитал, реально вложенный в цель: выручка hold минус комиссия/слиппедж покупки (и минус комиссия, слиппедж, налог продажи — до этого), рубли. */
   capitalRub: number;
-  /** Валовая выгода (спред × капитал × горизонт) ДО вычета комиссий, в рублях. Null — yieldDataIncomplete. */
+  /** Валовая выгода: MV × ((1+y_target_at)^h − (1+y_hold_at)^h) — разница доходностей после НДФЛ на полной стоимости hold ДО издержек, рубли. Null — yieldDataIncomplete. */
   grossGainRub: number | null;
-  /** netBenefitRub / capitalRub / horizonYears — ДОЛЯ (не процент). */
+  /** (FV_switch / FV_hold)^(1/effectiveHorizonYears) − 1 — годовая выгода ДОЛЕЙ (не процент). Null — yieldDataIncomplete. */
   annualizedBenefitFraction: number | null;
   /** Оценка НДФЛ от продажи hold-позиции — null, если cost basis недоступен/журнал неполон. */
   sellTaxEstimateRub: number | null;
-  /** netBenefitRub − sellTaxEstimateRub. Null, если sellTaxEstimateRub недоступен. */
+  /** FV_switch − FV_hold С налогом продажи (он уже вычтен из выручки, поэтому разница с netBenefitRub больше самого налога — налог ещё и «не растёт» на горизонте). Null, если sellTaxEstimateRub недоступен. */
   netBenefitAfterTaxRub: number | null;
   /** Риск-сигналы таргета (см. <see>RiskSignals</see>) — только если таргет
    * найден в банке (bond_universe) по ISIN, иначе null (бумага вне биржевой статистики MOEX). */

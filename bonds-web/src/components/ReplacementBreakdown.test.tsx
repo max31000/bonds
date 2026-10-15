@@ -2,7 +2,7 @@ import { render, screen } from '@testing-library/react';
 import { describe, it, expect } from 'vitest';
 import { MantineProvider } from '@mantine/core';
 import { ReplacementBreakdown } from './ReplacementBreakdown';
-import { horizonCaption, toBreakdownData } from '../utils/replacementBreakdown';
+import { horizonCaption, reconcileBreakdown, toBreakdownData } from '../utils/replacementBreakdown';
 import { replacementResponseFixture } from '../test/replacementFixtures';
 import type { ReplacementResponse } from '../api/types';
 
@@ -67,6 +67,61 @@ describe('ReplacementBreakdown (задача 48)', () => {
   it('shows the "tax not estimated" note when the journal is incomplete', () => {
     renderBreakdown({ sellTaxEstimateRub: null, netBenefitAfterTaxRub: null });
     expect(screen.getByTestId('replacement-tax-unavailable-t')).toBeInTheDocument();
+  });
+});
+
+describe('ReplacementBreakdown: арифметика сходится (ревью В3)', () => {
+  // Эталон ревью, кейс 1: валовая 947.58, комиссии 598.5 (299.25 × 2), слиппедж 598 (299 × 2), чистая −477.50.
+  const case1 = {
+    grossGainRub: 947.58,
+    sellCommissionRub: 299.25,
+    buyCommissionRub: 299.25,
+    sellSlippageRub: 299,
+    buySlippageRub: 299,
+    netBenefitRub: -477.5,
+    sellTaxEstimateRub: 200,
+    netBenefitAfterTaxRub: -716.63,
+  };
+
+  it('reconcileBreakdown: строка эффекта роста издержек = netBenefit − (валовая − комиссии − слиппедж) = −228.58', () => {
+    const r = reconcileBreakdown(toBreakdownData(replacementResponseFixture(case1)));
+    expect(r.costGrowthEffectRub).toBeCloseTo(-228.58, 2);
+    // сумма строк ровно даёт итог
+    const sum = case1.grossGainRub - 598.5 - 598 + r.costGrowthEffectRub!;
+    expect(sum).toBeCloseTo(case1.netBenefitRub, 2);
+  });
+
+  it('reconcileBreakdown: налоговая строка = netBenefit − netBenefitAfterTax = 2353.67 − (−716.63) = 3070.30', () => {
+    const r = reconcileBreakdown(
+      toBreakdownData(replacementResponseFixture({ ...case1, netBenefitRub: 2353.67, netBenefitAfterTaxRub: -716.63 })),
+    );
+    expect(r.saleTaxRub).toBeCloseTo(3070.3, 2);
+    expect(2353.67 - r.saleTaxRub!).toBeCloseTo(-716.63, 2);
+  });
+
+  it('reconcileBreakdown: без валовой выгоды (данных нет) или без налога строки не считаются', () => {
+    const r = reconcileBreakdown(
+      toBreakdownData(replacementResponseFixture({ grossGainRub: null, sellTaxEstimateRub: null, netBenefitAfterTaxRub: null })),
+    );
+    expect(r.costGrowthEffectRub).toBeNull();
+    expect(r.saleTaxRub).toBeNull();
+  });
+
+  it('рендер: строка эффекта роста издержек и налоговая строка показывают числа, чтобы сумма строк давала итог', () => {
+    renderBreakdown(case1);
+    const effect = screen.getByTestId('replacement-cost-growth-t').textContent!;
+    expect(effect).toMatch(/эффект роста издержек на горизонте/);
+    expect(effect).toMatch(/229/);
+
+    const tax = screen.getByTestId('replacement-sell-tax-t').textContent!;
+    expect(tax).toMatch(/налог продажи \(с учётом роста на горизонте\)/);
+    // −477.50 − (−716.63) = 239.13 (рубли без копеек, как везде в formatRub)
+    expect(tax).toMatch(/239/);
+  });
+
+  it('рендер: без валовой выгоды строка эффекта не показывается', () => {
+    renderBreakdown({ grossGainRub: null });
+    expect(screen.queryByTestId('replacement-cost-growth-t')).not.toBeInTheDocument();
   });
 });
 
