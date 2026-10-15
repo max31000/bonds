@@ -32,6 +32,16 @@ public class UserSettings
     /// </summary>
     public decimal? CommissionRateOverride { get; set; }
 
+    /// <summary>
+    /// Горизонт анализа замены, ГОДЫ (задача 48; <c>user_settings.replacement_horizon_years</c>, миграция 021).
+    /// Диапазон 0.5–10, шаг 0.5 — валидация на границе API (SettingsEndpoints). Не null: у новой записи и
+    /// у существующих строк = 2.0 (прежняя фронтовая константа).
+    /// </summary>
+    public decimal ReplacementHorizonYears { get; set; } = DefaultReplacementHorizonYears;
+
+    /// <summary>Дефолт горизонта анализа замены, годы (совпадает с DEFAULT колонки в миграции 021).</summary>
+    public const decimal DefaultReplacementHorizonYears = 2.0m;
+
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
 }

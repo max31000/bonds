@@ -43,6 +43,16 @@ public static class SettingsEndpoints
     /// <summary>Валидация override: null допустим (сброс), иначе строго 0 &lt; x &lt; 0.05 — ставка ≥5% явно опечатка (ввод в % на фронте, доля на бэкенде).</summary>
     private const decimal MaxCommissionRateOverride = 0.05m;
 
+    /// <summary>Допустимый диапазон горизонта анализа замены, годы (задача 48): 0.5–10 с шагом 0.5.</summary>
+    public const decimal MinReplacementHorizonYears = 0.5m;
+    public const decimal MaxReplacementHorizonYears = 10m;
+    public const decimal ReplacementHorizonStepYears = 0.5m;
+
+    /// <summary>true — горизонт в допустимом диапазоне и кратен шагу 0.5 года.</summary>
+    public static bool IsValidReplacementHorizon(decimal years) =>
+        years >= MinReplacementHorizonYears && years <= MaxReplacementHorizonYears
+        && years % ReplacementHorizonStepYears == 0m;
+
     private static async Task<IResult> GetSettings(
         ICurrentUser currentUser,
         IUserRepository userRepo,
@@ -93,6 +103,17 @@ public static class SettingsEndpoints
                 statusCode: StatusCodes.Status422UnprocessableEntity);
         }
 
+        if (request.ReplacementHorizonYears is decimal horizon && !IsValidReplacementHorizon(horizon))
+        {
+            return Results.Json(
+                new
+                {
+                    error = $"Горизонт анализа замены должен быть от {MinReplacementHorizonYears:0.#} до {MaxReplacementHorizonYears:0.#} лет с шагом {ReplacementHorizonStepYears:0.#}",
+                    type = "ValidationException",
+                },
+                statusCode: StatusCodes.Status422UnprocessableEntity);
+        }
+
         if (request.BaseCurrency is not null)
         {
             user.BaseCurrency = request.BaseCurrency;
@@ -109,6 +130,9 @@ public static class SettingsEndpoints
         // остальные пороги ниже в Settings.tsx), поэтому null здесь означает "убрать override",
         // не "не менять" (в отличие от полей выше, где PUT — частичное обновление per-поле).
         existing.CommissionRateOverride = request.CommissionRateOverride;
+
+        // Горизонт замены — колонка NOT NULL, поэтому null в запросе = «не менять» (частичное обновление).
+        existing.ReplacementHorizonYears = request.ReplacementHorizonYears ?? existing.ReplacementHorizonYears;
 
         await settingsRepo.UpsertAsync(existing);
 
@@ -182,6 +206,7 @@ public static class SettingsEndpoints
         UninvestedCashThresholdRub = settings?.UninvestedCashThresholdRub ?? defaults.UninvestedCashThresholdRub,
         DefaultMaxConcentrationPercent = settings?.DefaultMaxConcentrationPercent ?? defaults.DefaultMaxConcentrationPercent,
         CommissionRateOverride = settings?.CommissionRateOverride,
+        ReplacementHorizonYears = settings?.ReplacementHorizonYears ?? UserSettings.DefaultReplacementHorizonYears,
         CommissionAutoEstimate = commission.AutoEstimate,
         TInvestTariff = commission.TInvestTariff,
         CommissionEffectiveRate = commission.CommissionEffectiveRate,
@@ -281,6 +306,9 @@ public sealed record SettingsResponseDto
     /// <summary>Ручной override ставки комиссии — ДОЛЯ (0.0005 = 0.05%). Null — не задан.</summary>
     public decimal? CommissionRateOverride { get; init; }
 
+    /// <summary>Горизонт анализа замены, ГОДЫ (0.5–10, шаг 0.5; дефолт 2.0) — задача 48.</summary>
+    public required decimal ReplacementHorizonYears { get; init; }
+
     /// <summary>Read-only: авто-оценка ставки из журнала операций (часть A). Null — журнал не позволяет оценить (нет сделок/оборот 0).</summary>
     public CommissionAutoEstimateDto? CommissionAutoEstimate { get; init; }
 
@@ -314,6 +342,9 @@ public sealed record SettingsUpdateRequestDto
 
     /// <summary>override ставки комиссии — ДОЛЯ (не процент; конвертация из % на фронте). Null — убрать override. Валидация: 0 &lt; x &lt; 0.05, иначе 422.</summary>
     public decimal? CommissionRateOverride { get; init; }
+
+    /// <summary>Горизонт анализа замены, ГОДЫ. Null — не менять. Валидация: 0.5–10 с шагом 0.5, иначе 422.</summary>
+    public decimal? ReplacementHorizonYears { get; init; }
 }
 
 public sealed record TInvestTokenRequestDto
