@@ -11,8 +11,8 @@ public sealed record IssuerFinancialsRunResult(int Queued, int Ok, int NoData, i
 
 /// <summary>
 /// Задача 45 часть B.4: суточное наполнение отчётности эмитентов из ГИР БО. За вызов обрабатывает до
-/// <c>batchSize</c> ИНН эмитентов позиций портфеля и watchlist
-/// (<see cref="IIssuerFinancialsRepository.GetRefreshQueueAsync"/>: без статуса → самые давно проверенные;
+/// <c>batchSize</c> ИНН эмитентов: сначала позиции портфеля и watchlist, затем остальной банк
+/// (<see cref="IIssuerFinancialsRepository.GetRefreshQueueAsync"/>: портфель → банк без статуса → банк протухший;
 /// статус свежее 30 дней, 'error' — свежее ~суток не перепроверяются).
 /// <para>
 /// Цепочка по ИНН: поиск организации → список подач → детали последней подачи

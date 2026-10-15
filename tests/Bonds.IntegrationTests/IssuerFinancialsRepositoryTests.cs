@@ -195,7 +195,7 @@ public class IssuerFinancialsRepositoryTests
     }
 
     [Fact]
-    public async Task RefreshQueue_PortfolioAndWatchlistIssuersOnly_ValidInnOnly_ClosedPositionsAndBankExcluded()
+    public async Task RefreshQueue_PortfolioAndWatchlistFirst_ThenWholeBank_ValidInnOnly_ClosedPositionsStillBankTail()
     {
         var repo = new IssuerFinancialsRepository(Conn);
         var m = Marker();
@@ -203,6 +203,8 @@ public class IssuerFinancialsRepositoryTests
         var watchlistInn = NewInn();
         var closedInn = NewInn();
         var bankOnlyInn = NewInn();
+        var bankFreshInn = NewInn();
+        var bankStaleInn = NewInn();
         var sharedInn = NewInn(); // у эмитента два выпуска в портфеле — ИНН один раз
         var ipInn = Random.Shared.NextInt64(100_000_000_000, 999_999_999_999).ToString(); // 12 цифр (ИП)
         const string garbageInn = "ABC-123";
@@ -233,14 +235,25 @@ public class IssuerFinancialsRepositoryTests
         await Instrument(watchSecid, watchIsin);
         await new WatchlistItemRepository(Conn).CreateAsync(new WatchlistItem { UserId = userId, Isin = watchIsin });
         await SeedBond(bankOnlyInn, m, "BA");
+        await SeedBond(bankFreshInn, m, "BF");
+        await SeedBond(bankStaleInn, m, "BS");
+        await repo.UpsertStatusAsync(new IssuerFinancialsStatus(bankFreshInn, IssuerFinancialsStatuses.Ok, DateTime.UtcNow.AddDays(-3)));
+        await repo.UpsertStatusAsync(new IssuerFinancialsStatus(bankStaleInn, IssuerFinancialsStatuses.Ok, DateTime.UtcNow.AddDays(-40)));
 
         var queue = (await repo.GetRefreshQueueAsync(1_000_000, DateTime.UtcNow.AddDays(-30), DateTime.UtcNow.AddHours(-20))).ToList();
 
-        queue.Should().Contain([portfolioInn, watchlistInn, sharedInn, ipInn]);
+        var tierZero = new[] { portfolioInn, watchlistInn, sharedInn, ipInn };
+        queue.Should().Contain(tierZero);
         queue.Count(i => i == sharedInn).Should().Be(1, "ИНН эмитента с несколькими выпусками не дублируется");
-        queue.Should().NotContain(closedInn, "закрытая позиция (quantity = 0) — не эмитент портфеля");
-        queue.Should().NotContain(bankOnlyInn, "эмитенты остального банка не скачиваем — только портфель/watchlist");
         queue.Should().NotContain(garbageInn, "ИНН не из 10/12 цифр во внешний сервис не уходит");
+
+        // Банк целиком: эмитенты без выпусков в портфеле тоже в очереди — но ПОСЛЕ портфеля/watchlist.
+        queue.Should().Contain([closedInn, bankOnlyInn, bankStaleInn], "закрытая позиция — обычный эмитент банка; банк прогревается целиком");
+        queue.Should().NotContain(bankFreshInn, "свежий статус банка — 30-дневный кэш");
+        var lastTierZero = tierZero.Max(i => queue.IndexOf(i));
+        queue.IndexOf(closedInn).Should().BeGreaterThan(lastTierZero);
+        queue.IndexOf(bankOnlyInn).Should().BeGreaterThan(lastTierZero, "банковские ИНН — в хвосте очереди, после портфеля/watchlist");
+        queue.IndexOf(bankStaleInn).Should().BeGreaterThan(queue.IndexOf(bankOnlyInn), "банк без статуса — раньше банка с протухшим статусом");
 
         (await repo.GetRefreshQueueAsync(1, DateTime.UtcNow.AddDays(-30), DateTime.UtcNow.AddHours(-20))).Should().HaveCount(1);
         (await repo.GetRefreshQueueAsync(0, DateTime.UtcNow.AddDays(-30), DateTime.UtcNow.AddHours(-20))).Should().BeEmpty();

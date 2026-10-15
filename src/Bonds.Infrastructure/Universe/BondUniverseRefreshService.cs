@@ -200,10 +200,10 @@ public sealed class BondUniverseRefreshService : BackgroundService
     /// <summary>
     /// Задача 45 часть B.4: раз в сутки (первый тик после <see cref="BondUniverseRefreshOptions.TradingWindowStartMsk"/>
     /// МСК, уже после суточного обогащения эмитентов) проверяет в ГИР БО до
-    /// <see cref="BondUniverseRefreshOptions.IssuerFinancialsBatchSize"/> ИНН эмитентов портфеля/watchlist.
+    /// <see cref="BondUniverseRefreshOptions.IssuerFinancialsBatchSize"/> ИНН эмитентов: портфель/watchlist, затем весь банк.
     /// Паттерн «источник недоступен → шаг не засчитан» (как <see cref="MaybeEnrichEmitentsAsync"/>): дата
     /// выполнения ставится, только если прогон завершён; при недоступности ГИР БО повтор не чаще
-    /// <see cref="BondUniverseRefreshOptions.RefreshInterval"/>. Остаток очереди (>20 ИНН) добирается на
+    /// <see cref="BondUniverseRefreshOptions.RefreshInterval"/>. Остаток очереди (больше размера пакета) добирается на
     /// следующие сутки — это осознанное бережное ограничение.
     /// </summary>
     private async Task MaybeEnrichIssuerFinancialsAsync(IServiceProvider sp, DateTime nowMsk, DateTime utcNow, CancellationToken ct)

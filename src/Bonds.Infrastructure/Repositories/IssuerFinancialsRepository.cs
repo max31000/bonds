@@ -158,30 +158,41 @@ public class IssuerFinancialsRepository : IIssuerFinancialsRepository
 
         using var conn = CreateConnection();
 
-        // ИНН эмитентов портфеля (позиции с quantity > 0) и watchlist: ISIN → bond_universe.emitent_inn
-        // (заполняется суточным UniverseEmitentEnricher). Ограничение формата — ИНН юрлица (10) или ИП (12)
-        // цифр, мусор в справочнике не уходит во внешний сервис. Нужна проверка, если статуса нет, либо
-        // он 'error' и старше errorRetryBefore, либо иной статус старше staleBefore.
+        // Кандидаты — ИНН с приоритетом (tier): 0 = эмитенты портфеля (позиции с quantity > 0) и watchlist
+        // (ISIN → bond_universe.emitent_inn, заполняется суточным UniverseEmitentEnricher); 1 = ВСЕ остальные уникальные
+        // emitent_inn банка (bond_universe целиком — прогрев покрытия скоркарты/скринера). Ограничение формата —
+        // ИНН юрлица (10) или ИП (12) цифр, мусор в справочнике не уходит во внешний сервис. Нужна проверка, если
+        // статуса нет, либо он 'error' и старше errorRetryBefore, либо иной статус старше staleBefore.
+        // Порядок: (1) портфель/watchlist — без статуса, затем самые давно проверенные; (2) банк без статуса;
+        // (3) банк с протухшим статусом (самые давние первыми); ИНН — детерминированный хвост.
         var sql = $@"
             SELECT c.inn
               FROM (
-                    SELECT bu.emitent_inn AS inn
-                      FROM instruments i
-                      JOIN positions p ON p.instrument_id = i.id AND p.quantity > 0
-                      JOIN bond_universe bu ON bu.isin = i.isin
-                     WHERE bu.emitent_inn IS NOT NULL
-                    UNION
-                    SELECT bu.emitent_inn
-                      FROM watchlist_items w
-                      JOIN bond_universe bu ON bu.isin = w.isin
-                     WHERE bu.emitent_inn IS NOT NULL
+                    SELECT u.inn, MIN(u.tier) AS tier
+                      FROM (
+                            SELECT bu.emitent_inn AS inn, 0 AS tier
+                              FROM instruments i
+                              JOIN positions p ON p.instrument_id = i.id AND p.quantity > 0
+                              JOIN bond_universe bu ON bu.isin = i.isin
+                             WHERE bu.emitent_inn IS NOT NULL
+                            UNION ALL
+                            SELECT bu.emitent_inn, 0
+                              FROM watchlist_items w
+                              JOIN bond_universe bu ON bu.isin = w.isin
+                             WHERE bu.emitent_inn IS NOT NULL
+                            UNION ALL
+                            SELECT emitent_inn, 1
+                              FROM bond_universe
+                             WHERE emitent_inn IS NOT NULL
+                           ) u
+                     GROUP BY u.inn
                    ) c
               LEFT JOIN issuer_financials_status s ON s.inn = c.inn
              WHERE c.inn REGEXP '^([0-9]{{10}}|[0-9]{{12}})$'
                AND (s.inn IS NULL
                     OR (s.status = '{IssuerFinancialsStatuses.Error}' AND s.checked_at < @ErrorRetryBefore)
                     OR (s.status <> '{IssuerFinancialsStatuses.Error}' AND s.checked_at < @StaleBefore))
-             ORDER BY (s.inn IS NULL) DESC, s.checked_at ASC, c.inn ASC
+             ORDER BY (c.tier = 0) DESC, (s.inn IS NULL) DESC, s.checked_at ASC, c.inn ASC
              LIMIT @Limit";
 
         var rows = await conn.QueryAsync<string>(sql, new

@@ -30,11 +30,14 @@ public interface IIssuerFinancialsRepository
         IReadOnlyCollection<string> inns, CancellationToken ct = default);
 
     /// <summary>
-    /// Очередь обновления: до <paramref name="limit"/> ИНН эмитентов позиций портфеля (quantity &gt; 0) и
-    /// watchlist (через <c>bond_universe.emitent_inn</c> по ISIN; ИНН не 10/12 цифр отбрасываются),
-    /// которым нужна проверка: статуса нет, ИЛИ статус 'error' старше <paramref name="errorRetryBeforeUtc"/>,
-    /// ИЛИ любой другой статус старше <paramref name="staleBeforeUtc"/>. Порядок: без статуса → самые
-    /// давно проверенные → по ИНН (детерминированно).
+    /// Очередь обновления: до <paramref name="limit"/> ИНН, которым нужна проверка (статуса нет, ИЛИ статус
+    /// 'error' старше <paramref name="errorRetryBeforeUtc"/>, ИЛИ любой другой статус старше
+    /// <paramref name="staleBeforeUtc"/>; ИНН не из 10/12 цифр отбрасываются). Источники — через
+    /// <c>bond_universe.emitent_inn</c> по ISIN, три приоритета: (1) эмитенты позиций портфеля (quantity &gt; 0) и
+    /// watchlist — без статуса, затем самые давно проверенные; (2) все остальные уникальные ИНН банка
+    /// (<c>bond_universe</c>) без статуса — прогрев покрытия скоркарты/скринера; (3) ИНН банка с протухшим статусом,
+    /// самые давно проверенные первыми; ИНН — детерминированный хвост. Портфель/watchlist, нуждающиеся в проверке,
+    /// всегда идут перед банком, чтобы многонедельный прогрев банка не оставлял портфельную отчётность устаревшей.
     /// </summary>
     Task<IReadOnlyList<string>> GetRefreshQueueAsync(
         int limit, DateTime staleBeforeUtc, DateTime errorRetryBeforeUtc, CancellationToken ct = default);
