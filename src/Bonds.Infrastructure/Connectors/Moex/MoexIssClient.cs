@@ -360,6 +360,77 @@ public sealed class MoexIssClient : IMoexIssClient
         return MoexBondUniverseParser.DeduplicateByBoard(rows);
     }
 
+    /// <summary>Размер страницы bulk-справочника <c>/iss/securities.json</c> — ISS отдаёт ровно 100 строк.</summary>
+    private const int IssEmitentsPageSize = 100;
+
+    /// <summary>Предохранитель: 300 страниц × 100 = 30 000 строк при реальных ~10 700 (~107 страниц).</summary>
+    private const int IssEmitentsMaxPages = 300;
+
+    public async Task<IReadOnlyList<MoexSecurityEmitent>> GetSecurityEmitentsAsync(CancellationToken ct = default)
+    {
+        var bySecid = new Dictionary<string, MoexSecurityEmitent>(StringComparer.Ordinal);
+
+        for (var page = 0; page < IssEmitentsMaxPages; page++)
+        {
+            var start = page * IssEmitentsPageSize;
+            var url = "/iss/securities.json?engine=stock&market=bonds&iss.only=securities&iss.meta=off"
+                      + $"&securities.columns=secid,emitent_id,emitent_title,emitent_inn&start={start}";
+            var json = await GetStringSafeAsync(url, ct);
+            if (json is null)
+            {
+                _logger.LogWarning("MOEX emitents bulk paging stopped at start {Start}: page unavailable", start);
+                break;
+            }
+
+            List<MoexSecurityEmitent> pageRows;
+            try
+            {
+                pageRows = MoexSecurityEmitentsParser.ParsePage(json);
+            }
+            catch (JsonException ex)
+            {
+                _logger.LogWarning(ex, "Failed to parse MOEX emitents bulk page at start {Start}", start);
+                break;
+            }
+
+            var newRows = 0;
+            foreach (var row in pageRows)
+            {
+                if (bySecid.TryAdd(row.Secid, row)) newRows++;
+            }
+
+            // Пустая/короткая страница — последняя; ноль новых SECID — ISS повторяет виденное (игнорирует start).
+            if (pageRows.Count < IssEmitentsPageSize || newRows == 0)
+            {
+                break;
+            }
+
+            if (page == IssEmitentsMaxPages - 1)
+            {
+                _logger.LogWarning("MOEX emitents bulk paging hit page limit at start {Start}", start);
+            }
+        }
+
+        return bySecid.Values.ToList();
+    }
+
+    public async Task<MoexSecurityDescription?> GetSecurityDescriptionAsync(string secid, CancellationToken ct = default)
+    {
+        var url = $"/iss/securities/{Uri.EscapeDataString(secid)}.json?iss.only=description&iss.meta=off";
+        var json = await GetStringSafeAsync(url, ct);
+        if (json is null) return null;
+
+        try
+        {
+            return MoexSecurityDescriptionParser.Parse(json);
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogWarning(ex, "Failed to parse MOEX security description for {Secid}", secid);
+            return null;
+        }
+    }
+
     private async Task<string?> GetStringSafeAsync(string url, CancellationToken ct)
     {
         try

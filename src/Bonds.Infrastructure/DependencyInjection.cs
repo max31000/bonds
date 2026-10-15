@@ -76,6 +76,9 @@ public static class DependencyInjection
         // Банк облигаций MOEX — снимок всей рыночной вселенной + дневная история.
         services.AddScoped<IBondUniverseRepository>(sp => new BondUniverseRepository(GetConnStr(sp)));
 
+        // Задача 43: персистентный кэш карточек бумаг MOEX (флаги дефолтов и т.п.).
+        services.AddScoped<ISecurityDetailsRepository>(sp => new SecurityDetailsRepository(GetConnStr(sp)));
+
         // Migration runner
         services.AddSingleton(sp => new MigrationRunner(
             GetConnStr(sp),

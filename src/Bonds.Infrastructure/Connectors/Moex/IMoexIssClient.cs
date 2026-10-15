@@ -49,4 +49,21 @@ public interface IMoexIssClient
     /// недоступен (не бросает исключение).
     /// </summary>
     Task<IReadOnlyList<MoexBondMarketRow>> GetBondMarketSnapshotAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// Задача 43: bulk-справочник эмитентов ВСЕХ облигаций ISS —
+    /// <c>/iss/securities.json?engine=stock&amp;market=bonds&amp;iss.only=securities&amp;securities.columns=secid,emitent_id,emitent_title,emitent_inn</c>.
+    /// Постраничный (start=0,100,200…), читается до пустой/короткой страницы (эмпирически ~10 тыс. строк,
+    /// ~107 страниц, включая выпуски вне торгов — вызывающий код мапит по SECID только на банк).
+    /// Сбой на середине — отдаёт собранное (то же, что <see cref="GetHistoryPricesAsync"/>), первая
+    /// страница недоступна — пустой список; не бросает исключение. Строки дедуплицированы по SECID.
+    /// </summary>
+    Task<IReadOnlyList<MoexSecurityEmitent>> GetSecurityEmitentsAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// Задача 43: карточка бумаги — <c>/iss/securities/{secid}.json?iss.only=description</c> (флаги
+    /// дефолтов, квал-инвесторы, бенчмарк купона). Null, если SECID не найден/источник недоступен/карточка
+    /// пуста; не бросает исключение (ошибка по одной бумаге — пропуск, решает вызывающий).
+    /// </summary>
+    Task<MoexSecurityDescription?> GetSecurityDescriptionAsync(string secid, CancellationToken ct = default);
 }

@@ -98,6 +98,17 @@ public class BondUniverseEntry
     /// <summary>Задача 42: Z-спред, посчитанный БИРЖЕЙ, ДОЛЯ (MOEX ZSPREADBP в б.п. ÷ 10000).</summary>
     public decimal? ZspreadOfficialFraction { get; set; }
 
+    /// <summary>Задача 43: идентификатор эмитента в справочнике MOEX (emitent_id bulk-справочника ISS).
+    /// Null — биржа не отдала эмитента либо суточное обогащение ещё не отрабатывало. НЕ пишется
+    /// часовым upsert снимка — заполняется отдельным суточным шагом.</summary>
+    public int? EmitentId { get; set; }
+
+    /// <summary>Задача 43: ИНН эмитента (строка, ведущие нули значимы). Ключ для будущей связки с отчётностью.</summary>
+    public string? EmitentInn { get; set; }
+
+    /// <summary>Задача 43: название эмитента как в справочнике MOEX.</summary>
+    public string? EmitentTitle { get; set; }
+
     /// <summary>
     /// Биржевой G-спред, при его отсутствии — наше приближение по сохранённой кривой
     /// (<see cref="GspreadApproxFraction"/>). ДОЛЯ. Единственное значение спреда, которое должны

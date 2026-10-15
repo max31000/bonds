@@ -25,6 +25,9 @@ public class BondUniverseRepository : IBondUniverseRepository
     /// снимок ~3000 строк укладывался в считанные round-trip'ы.</summary>
     private const int BatchSize = 500;
 
+    /// <summary>Строк на один UPDATE-JOIN эмитентов (4 параметра на строку).</summary>
+    private const int EmitentBatchSize = 500;
+
     public BondUniverseRepository(string connectionString) => _connectionString = connectionString;
 
     private IDbConnection CreateConnection() => new MySqlConnection(_connectionString);
@@ -41,6 +44,7 @@ public class BondUniverseRepository : IBondUniverseRepository
         effective_yield_fraction AS EffectiveYieldFraction, yield_to_offer_fraction AS YieldToOfferFraction,
         yield_date_type AS YieldDateType, gspread_official_fraction AS GspreadOfficialFraction,
         zspread_official_fraction AS ZspreadOfficialFraction,
+        emitent_id AS EmitentId, emitent_inn AS EmitentInn, emitent_title AS EmitentTitle,
         updated_at AS UpdatedAt";
 
     public async Task<IReadOnlyList<BondUniverseEntry>> GetAllAsync(CancellationToken ct = default)
@@ -107,6 +111,51 @@ public class BondUniverseRepository : IBondUniverseRepository
 
             await conn.ExecuteAsync(sql, parameters);
         }
+    }
+
+    /// <summary>
+    /// Задача 43: UPDATE эмитентов в существующих строках банка. Один запрос на чанк:
+    /// <c>UPDATE bond_universe u JOIN (SELECT @s0 AS secid, ... UNION ALL ...) v ON u.secid = v.secid</c>.
+    /// JOIN (а не INSERT ... ON DUPLICATE KEY) — иначе в банк попали бы ~7 тыс. бумаг bulk-справочника,
+    /// которых там нет (погашенные/нерублёвые). Значения — только через DynamicParameters.
+    /// </summary>
+    public async Task<int> UpdateEmitentsAsync(IReadOnlyList<UniverseEmitent> emitents, CancellationToken ct = default)
+    {
+        if (emitents.Count == 0) return 0;
+
+        using var conn = CreateConnection();
+        conn.Open();
+
+        var updated = 0;
+        foreach (var chunk in Chunk(emitents, EmitentBatchSize))
+        {
+            var sb = new StringBuilder("UPDATE bond_universe u JOIN (");
+            var parameters = new DynamicParameters();
+            for (var i = 0; i < chunk.Count; i++)
+            {
+                if (i > 0) sb.Append(" UNION ALL ");
+                sb.Append($"SELECT @Secid{i} AS secid, @EmitentId{i} AS emitent_id, @EmitentInn{i} AS emitent_inn, @EmitentTitle{i} AS emitent_title");
+                var e = chunk[i];
+                parameters.Add($"Secid{i}", e.Secid);
+                parameters.Add($"EmitentId{i}", e.EmitentId);
+                parameters.Add($"EmitentInn{i}", e.EmitentInn);
+                parameters.Add($"EmitentTitle{i}", e.EmitentTitle);
+            }
+
+            sb.Append(@") v ON u.secid = v.secid
+                SET u.emitent_id = v.emitent_id, u.emitent_inn = v.emitent_inn, u.emitent_title = v.emitent_title");
+
+            updated += await conn.ExecuteAsync(sb.ToString(), parameters);
+        }
+
+        return updated;
+    }
+
+    public async Task<int> CountWithEmitentAsync(CancellationToken ct = default)
+    {
+        using var conn = CreateConnection();
+        return await conn.ExecuteScalarAsync<int>(
+            "SELECT COUNT(*) FROM bond_universe WHERE emitent_id IS NOT NULL OR emitent_inn IS NOT NULL");
     }
 
     private static string BuildUpsertSql(int rowCount)
