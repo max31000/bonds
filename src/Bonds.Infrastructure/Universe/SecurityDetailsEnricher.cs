@@ -9,8 +9,11 @@ namespace Bonds.Infrastructure.Universe;
 /// Задача 43 часть B: фоновое наполнение кэша карточек бумаг (<c>security_details</c>). За один вызов
 /// обрабатывает до <c>batchSize</c> бумаг из очереди
 /// <see cref="ISecurityDetailsRepository.GetEnrichmentQueueAsync"/> (портфель/watchlist → банк без
-/// карточки → карточки старше порога). Ошибка по одной бумаге — LogWarning и пропуск (бумага вернётся
-/// в очередь на следующем вызове). Единицы: см. <see cref="SecurityDetails"/> (спред купона — ДОЛЯ).
+/// карточки → карточки старше порога). Различаем два вида неудач (ревью В1, MINOR-1):
+/// транспортная ошибка клиента (исключение) = «источник недоступен» — пропуск без записи, серия подряд
+/// прерывает тик; null-карточка (404/пустая/битая) = «карточки нет» — пишется негативный кэш (строка со
+/// всеми null-флагами и свежим fetched_at), чтобы мёртвый SECID ушёл из головы очереди и не блокировал
+/// остальных. Единицы: см. <see cref="SecurityDetails"/> (спред купона — ДОЛЯ).
 /// </summary>
 public sealed class SecurityDetailsEnricher
 {
@@ -48,6 +51,7 @@ public sealed class SecurityDetailsEnricher
             ct.ThrowIfCancellationRequested();
 
             MoexSecurityDescription? card = null;
+            var sourceFailed = false;
             try
             {
                 card = await _moex.GetSecurityDescriptionAsync(secid, ct);
@@ -58,12 +62,12 @@ public sealed class SecurityDetailsEnricher
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Security details: ошибка карточки {Secid} — пропуск", secid);
+                sourceFailed = true;
+                _logger.LogWarning(ex, "Security details: источник недоступен для {Secid} — пропуск без записи", secid);
             }
 
-            if (card is null)
+            if (sourceFailed)
             {
-                _logger.LogWarning("Security details: карточка {Secid} недоступна или пуста — пропуск", secid);
                 if (++consecutiveFailures >= MaxConsecutiveFailures)
                 {
                     _logger.LogWarning(
@@ -74,17 +78,24 @@ public sealed class SecurityDetailsEnricher
             else
             {
                 consecutiveFailures = 0;
+                if (card is null)
+                {
+                    // Негативный кэш: карточки нет (404/пустая/битая) — пишем строку со всеми null-флагами,
+                    // чтобы SECID ушёл из бакета «банк без карточки» и вернулся в очередь только протухшим.
+                    _logger.LogInformation("Security details: карточки {Secid} нет — негативный кэш", secid);
+                }
+
                 pending.Add(new SecurityDetails
                 {
                     Secid = secid,
-                    Isin = card.Isin,
-                    EmitentId = card.EmitterId,
-                    HasDefault = card.HasDefault,
-                    HasTechnicalDefault = card.HasTechnicalDefault,
-                    IsQualifiedInvestors = card.IsQualifiedInvestors,
-                    CouponBenchmark = card.CouponBenchmark,
-                    CouponBenchmarkSpreadFraction = card.CouponBenchmarkSpreadFraction,
-                    EarlyRepayment = card.EarlyRepayment,
+                    Isin = card?.Isin,
+                    EmitentId = card?.EmitterId,
+                    HasDefault = card?.HasDefault,
+                    HasTechnicalDefault = card?.HasTechnicalDefault,
+                    IsQualifiedInvestors = card?.IsQualifiedInvestors,
+                    CouponBenchmark = card?.CouponBenchmark,
+                    CouponBenchmarkSpreadFraction = card?.CouponBenchmarkSpreadFraction,
+                    EarlyRepayment = card?.EarlyRepayment,
                     FetchedAt = utcNow,
                 });
 

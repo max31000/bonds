@@ -366,9 +366,10 @@ public sealed class MoexIssClient : IMoexIssClient
     /// <summary>Предохранитель: 300 страниц × 100 = 30 000 строк при реальных ~10 700 (~107 страниц).</summary>
     private const int IssEmitentsMaxPages = 300;
 
-    public async Task<IReadOnlyList<MoexSecurityEmitent>> GetSecurityEmitentsAsync(CancellationToken ct = default)
+    public async Task<MoexSecurityEmitentsResult> GetSecurityEmitentsAsync(CancellationToken ct = default)
     {
         var bySecid = new Dictionary<string, MoexSecurityEmitent>(StringComparer.Ordinal);
+        var complete = false;
 
         for (var page = 0; page < IssEmitentsMaxPages; page++)
         {
@@ -378,6 +379,8 @@ public sealed class MoexIssClient : IMoexIssClient
             var json = await GetStringSafeAsync(url, ct);
             if (json is null)
             {
+                // Страница недоступна посреди обхода — справочник неполный: вызывающий код не должен
+                // засчитывать суточный шаг выполненным (ревью В1, MINOR-3).
                 _logger.LogWarning("MOEX emitents bulk paging stopped at start {Start}: page unavailable", start);
                 break;
             }
@@ -402,6 +405,7 @@ public sealed class MoexIssClient : IMoexIssClient
             // Пустая/короткая страница — последняя; ноль новых SECID — ISS повторяет виденное (игнорирует start).
             if (pageRows.Count < IssEmitentsPageSize || newRows == 0)
             {
+                complete = true;
                 break;
             }
 
@@ -411,14 +415,26 @@ public sealed class MoexIssClient : IMoexIssClient
             }
         }
 
-        return bySecid.Values.ToList();
+        return new MoexSecurityEmitentsResult(bySecid.Values.ToList(), complete);
     }
 
     public async Task<MoexSecurityDescription?> GetSecurityDescriptionAsync(string secid, CancellationToken ct = default)
     {
+        // Транспортные ошибки пробрасываются (в отличие от GetStringSafeAsync): вызывающий код различает
+        // «источник недоступен» (исключение → прервать тик) и «карточки нет» (null → негативный кэш),
+        // иначе мёртвые SECID навсегда блокируют очередь обогащения (ревью В1, MINOR-1).
         var url = $"/iss/securities/{Uri.EscapeDataString(secid)}.json?iss.only=description&iss.meta=off";
-        var json = await GetStringSafeAsync(url, ct);
-        if (json is null) return null;
+        string json;
+        using (var response = await _http.GetAsync(url, ct))
+        {
+            if (response.StatusCode == HttpStatusCode.NotFound)
+            {
+                return null;
+            }
+
+            response.EnsureSuccessStatusCode();
+            json = await response.Content.ReadAsStringAsync(ct);
+        }
 
         try
         {

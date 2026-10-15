@@ -27,23 +27,33 @@ public sealed class UniverseEmitentEnricher
 
     /// <summary>
     /// Выполняет обогащение. Возвращает число обновлённых строк банка либо <c>null</c>, если справочник
-    /// ISS недоступен (пустой ответ) — вызывающий код тогда НЕ считает шаг выполненным и повторит позже.
-    /// Исключения БД пробрасываются (логирует и глотает вызывающий тик).
+    /// ISS недоступен или собран не полностью (<see cref="MoexSecurityEmitentsResult.Complete"/> = false) —
+    /// вызывающий код тогда НЕ считает шаг выполненным и повторит позже; частично собранные строки при
+    /// этом всё равно применяются (идемпотентно, улучшает данные). Исключения БД пробрасываются
+    /// (логирует и глотает вызывающий тик).
     /// </summary>
     public async Task<int?> EnrichAsync(CancellationToken ct = default)
     {
-        var emitents = await _moex.GetSecurityEmitentsAsync(ct);
-        if (emitents.Count == 0)
+        var result = await _moex.GetSecurityEmitentsAsync(ct);
+        if (result.Rows.Count == 0)
         {
             _logger.LogWarning("Universe emitent enrichment: MOEX bulk справочник пуст/недоступен — пропуск (банк не меняем)");
             return null;
         }
 
-        var mapped = emitents
+        var mapped = result.Rows
             .Select(e => new UniverseEmitent(e.Secid, e.EmitentId, e.EmitentInn, e.EmitentTitle))
             .ToList();
 
         var updated = await _universeRepo.UpdateEmitentsAsync(mapped, ct);
+        if (!result.Complete)
+        {
+            _logger.LogWarning(
+                "Universe emitent enrichment: справочник собран не полностью ({Total} выпусков, обновлено {Updated}) — шаг будет повторён",
+                mapped.Count, updated);
+            return null;
+        }
+
         _logger.LogInformation(
             "Universe emitent enrichment: справочник {Total} выпусков, обновлено строк банка {Updated}", mapped.Count, updated);
         return updated;

@@ -63,7 +63,8 @@ public class MoexSecurityEmitentsPagingTests
 
         var result = await CreateClient(handler).GetSecurityEmitentsAsync();
 
-        result.Should().HaveCount(207);
+        result.Rows.Should().HaveCount(207);
+        result.Complete.Should().BeTrue();
         handler.Urls.Should().HaveCount(3, "короткая третья страница — последняя, четвёртый запрос не нужен");
         handler.Urls[0].Should().Contain("securities.columns=secid,emitent_id,emitent_title,emitent_inn")
             .And.Contain("engine=stock").And.Contain("market=bonds");
@@ -76,7 +77,8 @@ public class MoexSecurityEmitentsPagingTests
 
         var result = await CreateClient(handler).GetSecurityEmitentsAsync();
 
-        result.Should().HaveCount(100);
+        result.Rows.Should().HaveCount(100);
+        result.Complete.Should().BeTrue();
         handler.Urls.Should().HaveCount(2);
     }
 
@@ -89,18 +91,24 @@ public class MoexSecurityEmitentsPagingTests
 
         var result = await CreateClient(handler).GetSecurityEmitentsAsync();
 
-        result.Should().HaveCount(100);
+        result.Rows.Should().HaveCount(100);
+        result.Complete.Should().BeTrue("повтор страницы — штатный критерий конца обхода");
         handler.Urls.Should().HaveCount(2);
     }
 
     [Fact]
-    public async Task GetSecurityEmitentsAsync_FailureMidway_ReturnsCollectedRows_FirstPageFailure_ReturnsEmpty()
+    public async Task GetSecurityEmitentsAsync_FailureMidway_ReturnsCollectedRowsIncomplete_FirstPageFailure_ReturnsEmpty()
     {
+        // Ревью В1 MINOR-3: обрыв на середине отдаёт собранное, но Complete=false — суточный шаг не засчитывается.
         var midway = new FakeHandler(r => StartOf(r) == 0 ? Json(Page(0, 100)) : Json("", HttpStatusCode.InternalServerError));
-        (await CreateClient(midway).GetSecurityEmitentsAsync()).Should().HaveCount(100);
+        var partial = await CreateClient(midway).GetSecurityEmitentsAsync();
+        partial.Rows.Should().HaveCount(100);
+        partial.Complete.Should().BeFalse();
 
         var firstFails = new FakeHandler(_ => Json("", HttpStatusCode.ServiceUnavailable));
-        (await CreateClient(firstFails).GetSecurityEmitentsAsync()).Should().BeEmpty();
+        var empty = await CreateClient(firstFails).GetSecurityEmitentsAsync();
+        empty.Rows.Should().BeEmpty();
+        empty.Complete.Should().BeFalse();
     }
 
     [Fact]
@@ -118,5 +126,16 @@ public class MoexSecurityEmitentsPagingTests
         found!.HasDefault.Should().BeTrue();
         handler.Urls[0].Should().Contain("/iss/securities/RU000A10BVW6.json").And.Contain("iss.only=description");
         missing.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetSecurityDescriptionAsync_TransportError_Throws()
+    {
+        // Ревью В1 MINOR-1: 5xx/сеть — «источник недоступен», исключение пробрасывается (в отличие от 404).
+        var handler = new FakeHandler(_ => Json("", HttpStatusCode.ServiceUnavailable));
+
+        var act = () => CreateClient(handler).GetSecurityDescriptionAsync("ANY");
+
+        await act.Should().ThrowAsync<HttpRequestException>();
     }
 }

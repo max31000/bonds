@@ -48,10 +48,11 @@ public class UniverseEnrichmentTests
     {
         var moex = new Mock<IMoexIssClient>();
         moex.Setup(m => m.GetSecurityEmitentsAsync(It.IsAny<CancellationToken>())).ReturnsAsync(
-        [
-            new MoexSecurityEmitent("RU000A10GCU9", 11355, "АО Селектел", "7810962785"),
-            new MoexSecurityEmitent("RU0001245474", null, null, null),
-        ]);
+            new MoexSecurityEmitentsResult(
+            [
+                new MoexSecurityEmitent("RU000A10GCU9", 11355, "АО Селектел", "7810962785"),
+                new MoexSecurityEmitent("RU0001245474", null, null, null),
+            ], Complete: true));
         IReadOnlyList<UniverseEmitent>? captured = null;
         var repo = new Mock<IBondUniverseRepository>();
         repo.Setup(r => r.UpdateEmitentsAsync(It.IsAny<IReadOnlyList<UniverseEmitent>>(), It.IsAny<CancellationToken>()))
@@ -72,12 +73,31 @@ public class UniverseEnrichmentTests
     public async Task EmitentEnricher_EmptyDirectory_ReturnsNull_DoesNotTouchBank()
     {
         var moex = new Mock<IMoexIssClient>();
-        moex.Setup(m => m.GetSecurityEmitentsAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        moex.Setup(m => m.GetSecurityEmitentsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MoexSecurityEmitentsResult([], Complete: false));
         var repo = new Mock<IBondUniverseRepository>(MockBehavior.Strict);
 
         var result = await new UniverseEmitentEnricher(moex.Object, repo.Object, NullLogger<UniverseEmitentEnricher>.Instance).EnrichAsync();
 
         result.Should().BeNull("пустой справочник = источник недоступен, шаг не считается выполненным");
+    }
+
+    [Fact]
+    public async Task EmitentEnricher_IncompleteDirectory_AppliesRows_ButReturnsNull()
+    {
+        // Ревью В1 MINOR-3: обрыв обхода на середине — собранное применяем, но шаг не засчитан (повторится).
+        var moex = new Mock<IMoexIssClient>();
+        moex.Setup(m => m.GetSecurityEmitentsAsync(It.IsAny<CancellationToken>())).ReturnsAsync(
+            new MoexSecurityEmitentsResult([new MoexSecurityEmitent("S1", 1, "Э1", "0000000001")], Complete: false));
+        var repo = new Mock<IBondUniverseRepository>();
+        repo.Setup(r => r.UpdateEmitentsAsync(It.IsAny<IReadOnlyList<UniverseEmitent>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(1);
+
+        var result = await new UniverseEmitentEnricher(moex.Object, repo.Object, NullLogger<UniverseEmitentEnricher>.Instance).EnrichAsync();
+
+        result.Should().BeNull("неполный справочник не засчитывается выполненным шагом");
+        repo.Verify(r => r.UpdateEmitentsAsync(It.IsAny<IReadOnlyList<UniverseEmitent>>(), It.IsAny<CancellationToken>()), Times.Once,
+            "частично собранные строки всё равно применяются — это идемпотентно");
     }
 
     // ─── SecurityDetailsEnricher ──────────────────────────────────────────────────────────────
@@ -145,20 +165,27 @@ public class UniverseEnrichmentTests
     }
 
     [Fact]
-    public async Task DetailsEnricher_FailedOrEmptyCard_IsSkipped_OthersStillSaved()
+    public async Task DetailsEnricher_MissingCard_WritesNegativeCache_TransportError_SkippedWithoutRecord()
     {
+        // Ревью В1 MINOR-1: null-карточка (404/пустая) — негативный кэш со всеми null-флагами;
+        // транспортная ошибка — пропуск без записи (бумага вернётся в очередь).
+        var now = DateTime.UtcNow;
         var repo = new RepoFake { Queue = ["OK1", "NULL", "BOOM", "OK2"] };
         var moex = new Mock<IMoexIssClient>();
         moex.Setup(m => m.GetSecurityDescriptionAsync("OK1", It.IsAny<CancellationToken>())).ReturnsAsync(Card("OK1"));
         moex.Setup(m => m.GetSecurityDescriptionAsync("NULL", It.IsAny<CancellationToken>())).ReturnsAsync((MoexSecurityDescription?)null);
-        moex.Setup(m => m.GetSecurityDescriptionAsync("BOOM", It.IsAny<CancellationToken>())).ThrowsAsync(new InvalidOperationException("parse"));
+        moex.Setup(m => m.GetSecurityDescriptionAsync("BOOM", It.IsAny<CancellationToken>())).ThrowsAsync(new HttpRequestException("503"));
         moex.Setup(m => m.GetSecurityDescriptionAsync("OK2", It.IsAny<CancellationToken>())).ReturnsAsync(Card("OK2"));
 
         var saved = await new SecurityDetailsEnricher(moex.Object, repo, NullLogger<SecurityDetailsEnricher>.Instance)
-            .EnrichBatchAsync(200, TimeSpan.FromDays(30), TimeSpan.Zero, DateTime.UtcNow);
+            .EnrichBatchAsync(200, TimeSpan.FromDays(30), TimeSpan.Zero, now);
 
-        saved.Should().Be(2);
-        repo.Saved.Select(s => s.Secid).Should().BeEquivalentTo("OK1", "OK2");
+        saved.Should().Be(3);
+        repo.Saved.Select(s => s.Secid).Should().BeEquivalentTo("OK1", "NULL", "OK2");
+        var tombstone = repo.Saved.Single(s => s.Secid == "NULL");
+        tombstone.HasDefault.Should().BeNull("null-флаги = «неизвестно», не «нет дефолта»");
+        tombstone.EmitentId.Should().BeNull();
+        tombstone.FetchedAt.Should().Be(now, "негативный кэш уводит бумагу из головы очереди до протухания");
     }
 
     [Fact]
@@ -170,7 +197,7 @@ public class UniverseEnrichmentTests
         var moex = new Mock<IMoexIssClient>();
         moex.Setup(m => m.GetSecurityDescriptionAsync("GOOD", It.IsAny<CancellationToken>())).ReturnsAsync(Card("GOOD"));
         moex.Setup(m => m.GetSecurityDescriptionAsync(It.Is<string>(s => s.StartsWith("DEAD")), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((MoexSecurityDescription?)null);
+            .ThrowsAsync(new HttpRequestException("timeout"));
 
         var saved = await new SecurityDetailsEnricher(moex.Object, repo, NullLogger<SecurityDetailsEnricher>.Instance)
             .EnrichBatchAsync(200, TimeSpan.FromDays(30), TimeSpan.Zero, DateTime.UtcNow);
