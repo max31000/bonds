@@ -4,6 +4,8 @@ import { MemoryRouter } from 'react-router-dom';
 import { MantineProvider } from '@mantine/core';
 import { http, HttpResponse } from 'msw';
 import { server } from '../test/msw-handlers';
+import { replacementResponseFixture } from '../test/replacementFixtures';
+import { useSettingsStore } from '../store/useSettingsStore';
 import { Recommendations } from './Recommendations';
 import { useRecommendationsStore } from '../store/useRecommendationsStore';
 import { useWatchlistStore } from '../store/useWatchlistStore';
@@ -235,30 +237,20 @@ function mockReplacementFlow() {
       });
     }),
     http.post('*/api/analytics/replacement', () =>
-      HttpResponse.json({
-        holdPositionId: 1,
-        targetPositionId: 0,
-        targetInstrumentId: 777,
-        horizonYears: 2,
-        sellCommissionRub: 30,
-        buyCommissionRub: 30,
-        totalSwitchCostRub: 60,
-        netBenefitRub: 1400,
-        isSwitchFavorable: true,
-        breakEvenYears: 0.4,
-        yieldDataIncomplete: false,
-        disclaimer: '',
-        sellCommissionRateUsed: 0.003,
-        buyCommissionRateUsed: 0.003,
-        commissionRateSource: 'Default',
-        spreadFraction: 0.09,
-        capitalRub: 1490,
-        grossGainRub: 1460,
-        annualizedBenefitFraction: 0.19,
-        sellTaxEstimateRub: null,
-        netBenefitAfterTaxRub: null,
-        targetRiskSignals: goodSignals,
-      }),
+      HttpResponse.json(
+        replacementResponseFixture({
+          targetInstrumentId: 777,
+          netBenefitRub: 1400,
+          breakEvenYears: 0.4,
+          disclaimer: '',
+          spreadFraction: 0.09,
+          grossGainRub: 1460,
+          annualizedBenefitFraction: 0.19,
+          sellTaxEstimateRub: null,
+          netBenefitAfterTaxRub: null,
+          targetRiskSignals: goodSignals,
+        }),
+      ),
     ),
   );
 }
@@ -302,34 +294,23 @@ function materializeResponseFor(secid: string, instrumentId: number) {
 }
 
 function replacementResponseFor(targetInstrumentId: number) {
-  return {
-    holdPositionId: 1,
-    targetPositionId: 0,
+  return replacementResponseFixture({
     targetInstrumentId,
-    horizonYears: 2,
-    sellCommissionRub: 30,
-    buyCommissionRub: 30,
-    totalSwitchCostRub: 60,
     netBenefitRub: targetInstrumentId,
-    isSwitchFavorable: true,
     breakEvenYears: 0.4,
-    yieldDataIncomplete: false,
     disclaimer: '',
-    sellCommissionRateUsed: 0.003,
-    buyCommissionRateUsed: 0.003,
-    commissionRateSource: 'Default' as const,
     spreadFraction: 0.09,
-    capitalRub: 1490,
     grossGainRub: 1460,
     annualizedBenefitFraction: 0.19,
     sellTaxEstimateRub: null,
     netBenefitAfterTaxRub: null,
     targetRiskSignals: goodSignals,
-  };
+  });
 }
 
 describe('Recommendations', () => {
   beforeEach(() => {
+    useSettingsStore.setState({ settings: null, isLoading: false, error: null });
     useRecommendationsStore.setState({
       sellCandidates: [],
       outOfComparison: [],
@@ -485,30 +466,20 @@ describe('Recommendations', () => {
         const body = (await request.json()) as Record<string, unknown>;
         expect(body.targetInstrumentId).toBe(777);
         expect(body.holdPositionId).toBe(1);
-        return HttpResponse.json({
-          holdPositionId: 1,
-          targetPositionId: 0,
-          targetInstrumentId: 777,
-          horizonYears: 2,
-          sellCommissionRub: 30,
-          buyCommissionRub: 30,
-          totalSwitchCostRub: 60,
-          netBenefitRub: 1400,
-          isSwitchFavorable: true,
-          breakEvenYears: 0.4,
-          yieldDataIncomplete: false,
-          disclaimer: '',
-          sellCommissionRateUsed: 0.003,
-          buyCommissionRateUsed: 0.003,
-          commissionRateSource: 'Default',
-          spreadFraction: 0.09,
-          capitalRub: 1490,
-          grossGainRub: 1460,
-          annualizedBenefitFraction: 0.19,
-          sellTaxEstimateRub: null,
-          netBenefitAfterTaxRub: null,
-          targetRiskSignals: goodSignals,
-        });
+        return HttpResponse.json(
+          replacementResponseFixture({
+            targetInstrumentId: 777,
+            netBenefitRub: 1400,
+            breakEvenYears: 0.4,
+            disclaimer: '',
+            spreadFraction: 0.09,
+            grossGainRub: 1460,
+            annualizedBenefitFraction: 0.19,
+            sellTaxEstimateRub: null,
+            netBenefitAfterTaxRub: null,
+            targetRiskSignals: goodSignals,
+          }),
+        );
       }),
     );
 
@@ -525,6 +496,83 @@ describe('Recommendations', () => {
     expect(within(result).getByTestId('replace-benefit-1').textContent).toMatch(/выгода/);
     expect(within(result).getByTestId('replacement-details-candidate-1')).toBeInTheDocument();
     expect(within(result).getByTestId('risk-signal-liquidity-replace-1')).toBeInTheDocument();
+  });
+
+  // ─── Задача 48: горизонт замены — из настроек пользователя, не константа ───────────────────
+
+  it('sends the replacement horizon from the settings store in the request and captions the result', async () => {
+    useSettingsStore.setState({
+      settings: {
+        baseCurrency: 'RUB',
+        tInvestTokenConfigured: false,
+        tInvestTokenMasked: null,
+        upcomingEventDaysThreshold: 14,
+        uninvestedCashThresholdRub: 10000,
+        defaultMaxConcentrationPercent: 25,
+        commissionRateOverride: null,
+        replacementHorizonYears: 3.5,
+        commissionAutoEstimate: null,
+        tInvestTariff: null,
+        commissionEffectiveRate: 0.003,
+        commissionEffectiveSource: 'Default',
+      },
+      isLoading: false,
+      error: null,
+    });
+    let requestBody: Record<string, unknown> | null = null;
+    mockReplacementFlow();
+    server.use(
+      http.post('*/api/analytics/replacement', async ({ request }) => {
+        requestBody = (await request.json()) as Record<string, unknown>;
+        return HttpResponse.json(
+          replacementResponseFixture({
+            horizonYears: 3.5,
+            effectiveHorizonYears: 3.5,
+            horizonSource: 'Settings',
+            targetRiskSignals: goodSignals,
+          }),
+        );
+      }),
+    );
+    renderRecommendations();
+
+    await waitFor(() => expect(screen.getByTestId('sell-candidate-1')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('replace-toggle-1'));
+    await waitFor(() => expect(screen.getByTestId('replace-candidate-MKT001')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('replace-candidate-MKT001'));
+
+    await waitFor(() => expect(screen.getByTestId('replace-result-1')).toBeInTheDocument());
+    expect(requestBody).not.toBeNull();
+    expect(requestBody!.horizonYears).toBe(3.5);
+    expect(screen.getByTestId('replace-horizon-1').textContent).toBe('на горизонте 3.5 года (настройка)');
+  });
+
+  it('shows why the horizon was cut by the target offer/maturity', async () => {
+    mockReplacementFlow();
+    server.use(
+      http.post('*/api/analytics/replacement', () =>
+        HttpResponse.json(
+          replacementResponseFixture({
+            horizonYears: 2,
+            effectiveHorizonYears: 0.8,
+            horizonLimitedByTarget: true,
+            targetHorizonDate: '2027-05-01',
+            targetHorizonIsOffer: true,
+            targetRiskSignals: goodSignals,
+          }),
+        ),
+      ),
+    );
+    renderRecommendations();
+
+    await waitFor(() => expect(screen.getByTestId('sell-candidate-1')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('replace-toggle-1'));
+    await waitFor(() => expect(screen.getByTestId('replace-candidate-MKT001')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('replace-candidate-MKT001'));
+
+    await waitFor(() => expect(screen.getByTestId('replace-result-1')).toBeInTheDocument());
+    expect(screen.getByTestId('replace-horizon-1').textContent).toMatch(/сокращён до 10 мес: оферта цели 01\.05\.2027/);
+    expect(screen.getByTestId('replacement-horizon-candidate-1').textContent).toMatch(/сокращён с 2\.0 г\.: оферта цели/);
   });
 
   // ─── Задача 37: карточка выгоды под выбранной строкой + фильтр «похожая дюрация» + дата оферты ──

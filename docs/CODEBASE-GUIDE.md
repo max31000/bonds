@@ -19,6 +19,7 @@ MySQL для интеграционных), vitest + Testing Library + MSW.
 | Исключения из «долей» | `RateScenarioService.DeltaPercent`, `PortfolioCompositionService.SharePercent` (+их DTO) — уже В ПРОЦЕНТАХ | задокументировано на полях, закреплено тестами; новых исключений не заводить |
 | Деньги | везде | `decimal`, рубли за одну бумагу если не сказано иное |
 | Дюрация | движок/модели | годы (`decimal`) |
+| Горизонт анализа замены | `user_settings.replacement_horizon_years`, DTO `horizonYears`/`effectiveHorizonYears` | годы (`decimal`, 0.5–10) |
 | Какая дюрация | сравнение позиции с банком/корзинами (бакет RV, фильтр «похожая дюрация», `macaulayDurationYears` в `/comparison`) | **Маколей** — банк хранит MOEX DURATION = Маколей; модифицированная — только мера чувствительности (сценарии ставок, PVBP, композиция портфеля) |
 | MOEX ISS: YIELD | вход | **проценты** → храним долю (÷100) |
 | MOEX ISS: DURATION | вход | **дни** → храним годы (÷365) |
@@ -107,6 +108,12 @@ XIRR), дата погашения прошла, а выплаты нет — н
 НКД, XIRR, G-спред: интерполяция кривой — `GSpreadCalculator.CurveValue`); портфельные —
 `Analytics/*` (cost basis, сравнение/замена `SwitchAnalysisService`, аллокация/корзина, what-if,
 налог продажи `SaleTaxEstimator`, RV `RelativeValueService`, бакеты — `DurationBucketClassifier`).
+Анализ замены (`SwitchAnalysisService`, задача 48) — компаундирование обеих ног на эффективном горизонте
+`h_eff = min(горизонт пользователя, срок до оферты/погашения ЦЕЛИ)`, не меньше 0.25 г.: доходности после НДФЛ 13% (`CouponTaxRate`,
+упрощение — ко всей доходности), слиппедж = полуспред стакана банка `LiquidityScoreCalculator.HalfSpreadFraction` (единая формула;
+нет bid/offer → 0 + `SlippageUnknown`), налог продажи — `SaleTaxEstimator` внутри выручки, `FV_switch − FV_hold`, срок окупаемости
+аналитически, предупреждение `DurationMismatch` (|Маколей| > 1.5 г.). Горизонт — `user_settings.replacement_horizon_years`
+(годы, 0.5–10, шаг 0.5, дефолт 2): фронт шлёт его из `useSettingsStore` (не константа), без поля в запросе бэкенд берёт настройку сам.
 Правило сравнимости доходностей: floater/indexed/dataIncomplete — «вне сравнения»
 (`YieldComparability.IsComparable`). Порог отклонения спреда (RV-вердикт и ось спреда
 светофора) — `SpreadThresholds.ForBasket(P25, P75)` = max(`DeviationFraction` 0.0020 = 20 б.п., `IqrMultiplier` 0.25 × IQR корзины);

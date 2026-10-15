@@ -1,0 +1,50 @@
+import type { ReplacementResponse } from '../api/types';
+
+/**
+ * Базовый ответ POST /analytics/replacement (математика v2, задача 48) для тестов — все поля заполнены,
+ * переопределяйте только нужное. Единицы: доходности/ставки — ДОЛИ, деньги — рубли, горизонты — годы.
+ */
+export function replacementResponseFixture(overrides: Partial<ReplacementResponse> = {}): ReplacementResponse {
+  return {
+    holdPositionId: 1,
+    targetPositionId: 0,
+    targetInstrumentId: 555,
+    horizonYears: 2,
+    sellCommissionRub: 30,
+    buyCommissionRub: 30,
+    totalSwitchCostRub: 60,
+    netBenefitRub: 1500,
+    isSwitchFavorable: true,
+    breakEvenYears: 0.5,
+    yieldDataIncomplete: false,
+    disclaimer: 'Анализ замены сравнивает конкретные бумаги.',
+    sellCommissionRateUsed: 0.003,
+    buyCommissionRateUsed: 0.003,
+    commissionRateSource: 'Default',
+    spreadFraction: 0.08,
+    capitalRub: 1490,
+    grossGainRub: 1560,
+    annualizedBenefitFraction: 0.21,
+    sellTaxEstimateRub: 200,
+    netBenefitAfterTaxRub: 1300,
+    horizonSource: 'Settings',
+    effectiveHorizonYears: 2,
+    horizonLimitedByTarget: false,
+    targetHorizonDate: null,
+    targetHorizonIsOffer: false,
+    couponTaxRate: 0.13,
+    holdYieldAfterTaxFraction: 0.087,
+    targetYieldAfterTaxFraction: 0.1392,
+    sellSlippageRub: 10,
+    buySlippageRub: 15,
+    slippageUnknown: false,
+    proceedsRub: 9500,
+    holdFutureValueRub: 11815.69,
+    switchFutureValueRub: 12000,
+    holdMacaulayDurationYears: 2,
+    targetMacaulayDurationYears: 2.5,
+    durationMismatch: false,
+    durationMismatchWarning: null,
+    ...overrides,
+  };
+}

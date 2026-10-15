@@ -172,6 +172,7 @@ export const handlers = [
       upcomingEventDaysThreshold: 14,
       uninvestedCashThresholdRub: 10000,
       defaultMaxConcentrationPercent: 25,
+      replacementHorizonYears: 2,
     }),
   ),
   http.put('*/api/settings', async ({ request }) => {

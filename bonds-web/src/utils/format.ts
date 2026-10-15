@@ -176,6 +176,21 @@ export function formatHorizon(years: number): string {
   return `${years.toFixed(1)} г.`;
 }
 
+/**
+ * Горизонт анализа замены словами с правильным склонением: «2 года», «2.5 года», «5 лет», «1 год».
+ * Дробное значение — всегда «года» (2.5 года, 0.5 года). Вход — ГОДЫ (настройка 0.5–10 с шагом 0.5).
+ */
+export function formatYearsWord(years: number): string {
+  if (!Number.isFinite(years)) return '—';
+  const text = Number.isInteger(years) ? String(years) : String(Math.round(years * 100) / 100);
+  if (!Number.isInteger(years)) return `${text} года`;
+  const mod10 = years % 10;
+  const mod100 = years % 100;
+  if (mod10 === 1 && mod100 !== 11) return `${text} год`;
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return `${text} года`;
+  return `${text} лет`;
+}
+
 /** Форматирует дату-время ISO (UTC) в краткий локальный вид ("01.07.2026, 14:30"). */
 export function formatDateTime(dateIso: string | null | undefined): string {
   if (!dateIso) return '—';

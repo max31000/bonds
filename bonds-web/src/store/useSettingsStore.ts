@@ -10,13 +10,18 @@ interface SettingsStore {
   isLoading: boolean;
   error: string | null;
   load: () => Promise<void>;
+  /**
+   * Загружает настройки, только если они ещё не загружены и не грузятся — для компонентов, которым
+   * настройки нужны «фоном» (горизонт анализа замены): десяток карточек не должны плодить десяток GET.
+   */
+  ensureLoaded: () => Promise<void>;
   save: (body: SettingsUpdateRequest) => Promise<boolean>;
   /** Токен никогда не хранится в сторе дольше момента отправки (см. план 09c §B.8). */
   saveToken: (token: string) => Promise<SaveTokenResult>;
 }
 
 /** Кэш настроек (GET/PUT /api/settings). Без `persist` — серверные данные, не клиентский UI-стейт. */
-export const useSettingsStore = create<SettingsStore>()((set) => ({
+export const useSettingsStore = create<SettingsStore>()((set, get) => ({
   settings: null,
   isLoading: false,
   error: null,
@@ -31,6 +36,11 @@ export const useSettingsStore = create<SettingsStore>()((set) => ({
         isLoading: false,
       });
     }
+  },
+  ensureLoaded: async () => {
+    const { settings, isLoading } = get();
+    if (settings || isLoading) return;
+    await get().load();
   },
   save: async (body) => {
     set({ error: null });
@@ -61,3 +71,12 @@ export const useSettingsStore = create<SettingsStore>()((set) => ({
     }
   },
 }));
+
+/**
+ * Горизонт анализа замены из настроек пользователя, ГОДЫ (задача 48) — для тела POST /analytics/replacement.
+ * undefined — настройки ещё не загружены: поле не отправляется и бэкенд сам подставляет настройку
+ * (тот же источник), поэтому анализ не ломается и без загруженного стора. Фронтовых констант горизонта нет.
+ */
+export function getReplacementHorizonYears(): number | undefined {
+  return useSettingsStore.getState().settings?.replacementHorizonYears;
+}

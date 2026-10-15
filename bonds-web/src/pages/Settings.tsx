@@ -8,7 +8,7 @@ import { useSettingsStore } from '../store/useSettingsStore';
 import { commissionSourceLabel, formatPercent, formatRub } from '../utils/format';
 import type { SettingsUpdateRequest } from '../api/types';
 
-type ThresholdsForm = Omit<SettingsUpdateRequest, 'baseCurrency' | 'commissionRateOverride'>;
+type ThresholdsForm = Omit<SettingsUpdateRequest, 'baseCurrency' | 'commissionRateOverride' | 'replacementHorizonYears'>;
 
 /**
  * Экран настроек: пороги правил событий + токен T-Invest (write-only) (план 09c §B.8).
@@ -21,6 +21,7 @@ export function Settings() {
   const [savingToken, setSavingToken] = useState(false);
   const [savingThresholds, setSavingThresholds] = useState(false);
   const [savingCommission, setSavingCommission] = useState(false);
+  const [savingHorizon, setSavingHorizon] = useState(false);
 
   useEffect(() => {
     load();
@@ -63,6 +64,40 @@ export function Settings() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings]);
 
+  // Горизонт анализа замены, ГОДЫ (задача 48) — отдельная форма, как комиссия; бэкенд валидирует 0.5–10 с шагом 0.5 (422).
+  const horizonForm = useForm<{ years: number | '' }>({
+    initialValues: { years: 2 },
+    validate: {
+      years: (v) =>
+        v === '' || v < 0.5 || v > 10 || (v * 2) % 1 !== 0 ? 'От 0.5 до 10 лет с шагом 0.5' : null,
+    },
+  });
+
+  useEffect(() => {
+    if (!settings) return;
+    horizonForm.setValues({ years: settings.replacementHorizonYears });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings]);
+
+  const handleSaveHorizon = horizonForm.onSubmit(async (values) => {
+    if (!settings || values.years === '') return;
+    setSavingHorizon(true);
+    const ok = await save({
+      baseCurrency: settings.baseCurrency,
+      upcomingEventDaysThreshold: settings.upcomingEventDaysThreshold,
+      uninvestedCashThresholdRub: settings.uninvestedCashThresholdRub,
+      defaultMaxConcentrationPercent: settings.defaultMaxConcentrationPercent,
+      commissionRateOverride: settings.commissionRateOverride,
+      replacementHorizonYears: values.years,
+    });
+    setSavingHorizon(false);
+    notifications.show({
+      color: ok ? 'green' : 'red',
+      title: ok ? 'Горизонт сохранён' : 'Не удалось сохранить горизонт',
+      message: ok ? 'Новый горизонт применится к следующим расчётам замены.' : 'Проверьте значение (0.5–10, шаг 0.5) и попробуйте ещё раз.',
+    });
+  });
+
   const handleSaveThresholds = form.onSubmit(async (values) => {
     if (!settings) return;
     setSavingThresholds(true);
@@ -71,6 +106,7 @@ export function Settings() {
     const ok = await save({
       baseCurrency: settings.baseCurrency,
       commissionRateOverride: settings.commissionRateOverride,
+      replacementHorizonYears: settings.replacementHorizonYears,
       ...values,
     });
     setSavingThresholds(false);
@@ -113,6 +149,7 @@ export function Settings() {
       uninvestedCashThresholdRub: settings.uninvestedCashThresholdRub,
       defaultMaxConcentrationPercent: settings.defaultMaxConcentrationPercent,
       commissionRateOverride,
+      replacementHorizonYears: settings.replacementHorizonYears,
     });
     setSavingCommission(false);
     notifications.show({
@@ -220,6 +257,33 @@ export function Settings() {
             <p className="bonds-note bonds-mt">
               Пусто — override не задан, применяется авто-оценка из журнала сделок либо дефолт 0.3%.
               Ввод в процентах, на бэкенде хранится и применяется как доля (0.05% = 0.0005).
+            </p>
+          </Section>
+
+          <Section
+            title="Анализ замены"
+            description="На какой срок сравниваются «держать» и «переложиться»; сокращается до оферты/погашения бумаги-цели"
+            data-testid="horizon-section"
+          >
+            <form onSubmit={handleSaveHorizon}>
+              <Group align="flex-end" wrap="wrap">
+                <NumberInput
+                  label="Горизонт анализа замены, лет"
+                  min={0.5}
+                  max={10}
+                  step={0.5}
+                  decimalScale={1}
+                  style={{ width: 240 }}
+                  data-testid="replacement-horizon-input"
+                  {...horizonForm.getInputProps('years')}
+                />
+                <Button type="submit" loading={savingHorizon} data-testid="replacement-horizon-save">
+                  Сохранить
+                </Button>
+              </Group>
+            </form>
+            <p className="bonds-note bonds-mt">
+              От 0.5 до 10 лет с шагом 0.5 (по умолчанию 2). Доходности обеих ног считаются со сложным начислением и после НДФЛ 13%.
             </p>
           </Section>
 

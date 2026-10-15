@@ -501,7 +501,8 @@ export interface ReplacementRequest {
   targetPositionId?: number;
   /** target — watchlist-бумага без позиции, по InstrumentId. */
   targetInstrumentId?: number;
-  horizonYears: number;
+  /** Горизонт, ГОДЫ. Не передан — бэкенд берёт настройку пользователя (replacementHorizonYears). */
+  horizonYears?: number;
   sellCommissionRate?: number;
   buyCommissionRate?: number;
 }
@@ -543,6 +544,41 @@ export interface ReplacementResponse {
   /** Риск-сигналы таргета (см. <see>RiskSignals</see>) — только если таргет
    * найден в банке (bond_universe) по ISIN, иначе null (бумага вне биржевой статистики MOEX). */
   targetRiskSignals?: RiskSignals | null;
+
+  // ---- Задача 48: математика замены v2 (additive). Доходности — ДОЛИ, деньги — рубли, горизонты/дюрации — годы. ----
+
+  /** Откуда взят horizonYears: 'Request' (явно в запросе) | 'Settings' (настройка пользователя). */
+  horizonSource: 'Request' | 'Settings';
+  /** Горизонт, на котором сравнены ноги: min(horizonYears, срок до оферты/погашения цели), не меньше 0.25 года. */
+  effectiveHorizonYears: number;
+  /** true — горизонт урезан сроком цели; тогда заданы targetHorizonDate/targetHorizonIsOffer. */
+  horizonLimitedByTarget: boolean;
+  /** Дата оферты/погашения цели, обрезавшая горизонт (ISO yyyy-MM-dd). */
+  targetHorizonDate?: string | null;
+  /** true — targetHorizonDate это оферта, false — погашение. */
+  targetHorizonIsOffer: boolean;
+  /** Ставка НДФЛ на купоны/дисконт — ДОЛЯ (0.13). Упрощение: ко всей доходности, без сальдирования/ЛДВ. */
+  couponTaxRate: number;
+  /** Доходность hold/цели после НДФЛ — ДОЛЯ. */
+  holdYieldAfterTaxFraction: number;
+  targetYieldAfterTaxFraction: number;
+  /** Слиппедж продажи/покупки (половина спреда стакана), рубли; 0 при slippageUnknown. */
+  sellSlippageRub: number;
+  buySlippageRub: number;
+  /** true — у одной из ног стакан (bid/offer) неизвестен, слиппедж этой ноги НЕ учтён. */
+  slippageUnknown: boolean;
+  /** Выручка продажи hold после комиссии, слиппеджа и налога продажи, рубли. */
+  proceedsRub: number;
+  /** Будущая стоимость hold / варианта «переложиться» на эффективном горизонте, рубли. */
+  holdFutureValueRub: number;
+  switchFutureValueRub: number;
+  /** Дюрации Маколея hold/цели, ГОДЫ (null — не посчитаны). */
+  holdMacaulayDurationYears?: number | null;
+  targetMacaulayDurationYears?: number | null;
+  /** |Маколей цели − Маколей hold| > 1.5 года. */
+  durationMismatch: boolean;
+  /** «Процентный риск изменится: дюрация X → Y лет» при durationMismatch. */
+  durationMismatchWarning?: string | null;
 }
 
 // ---- GET /api/analytics/replacement-candidates (фронт — задача 35 §A) ----
@@ -883,6 +919,8 @@ export interface SettingsResponse {
 
   /** Ручной override ставки комиссии — ДОЛЯ (0.0005 = 0.05%). Null — не задан. UI вводит в %, конвертация на границе API. */
   commissionRateOverride: number | null;
+  /** Горизонт анализа замены, ГОДЫ (0.5–10, шаг 0.5; дефолт 2) — задача 48. */
+  replacementHorizonYears: number;
   /** Read-only: авто-оценка ставки из журнала операций (часть A). Null — журнал не позволяет оценить. */
   commissionAutoEstimate: CommissionAutoEstimate | null;
   /** Read-only: имя тарифа T-Invest (GetInfo) — только контекст, не участвует в расчётах. Null — не удалось получить. */

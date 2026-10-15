@@ -24,6 +24,8 @@ import { useWatchlistStore } from '../store/useWatchlistStore';
 import { useRelativeValueStore } from '../store/useRelativeValueStore';
 import { Disclaimer } from '../components/Disclaimer';
 import { ReplacementBreakdown } from '../components/ReplacementBreakdown';
+import { horizonCaption, toBreakdownData } from '../utils/replacementBreakdown';
+import { getReplacementHorizonYears, useSettingsStore } from '../store/useSettingsStore';
 import { MarketComparator } from '../components/MarketComparator';
 import { BasketConstructor } from '../components/BasketConstructor';
 import { RelativeValueBadge } from '../components/RelativeValueBadge';
@@ -41,7 +43,6 @@ import type {
   ReplacementResponse,
 } from '../api/types';
 
-const REPLACEMENT_HORIZON_YEARS = 2;
 
 /**
  * Окно фильтра «похожая дюрация» на кандидатах, ГОДЫ (±1.5 г.). Фильтрация клиентская, по уже
@@ -190,6 +191,12 @@ function ReplacementPanel({
   // set-ом результата проверяем, что id всё ещё актуален.
   const selectRequestIdRef = useRef(0);
 
+  // Настройки (горизонт замены) нужны фоном; ensureLoaded не плодит повторных GET при многих карточках.
+  const ensureSettingsLoaded = useSettingsStore((s) => s.ensureLoaded);
+  useEffect(() => {
+    void ensureSettingsLoaded();
+  }, [ensureSettingsLoaded]);
+
   useEffect(() => {
     if (mode === 'search') return;
     let cancelled = false;
@@ -257,7 +264,8 @@ function ReplacementPanel({
       const replacementResult = await postReplacement({
         holdPositionId,
         targetInstrumentId: materializeResult.instrumentId,
-        horizonYears: REPLACEMENT_HORIZON_YEARS,
+        // Горизонт — настройка пользователя (Settings), не константа; не загружена — бэкенд подставит её сам.
+        horizonYears: getReplacementHorizonYears(),
       });
       if (selectRequestIdRef.current !== myRequestId) return;
       setReplacement(replacementResult);
@@ -311,32 +319,17 @@ function ReplacementPanel({
             {replacement.annualizedBenefitFraction !== null && (
               <> (~{formatPercent(replacement.annualizedBenefitFraction)} годовых)</>
             )}{' '}
-            за {formatHorizon(replacement.horizonYears)}
+            за {formatHorizon(replacement.effectiveHorizonYears)}
+          </Text>
+          <Text size="xs" c="dimmed" data-testid={`replace-horizon-${holdPositionId}`}>
+            {horizonCaption(toBreakdownData(replacement))}
           </Text>
 
           {replacement.targetRiskSignals && (
             <RiskSignalBadges signals={replacement.targetRiskSignals} testIdSuffix={`replace-${holdPositionId}`} />
           )}
 
-          <ReplacementBreakdown
-            data={{
-              spreadFraction: replacement.spreadFraction,
-              capitalRub: replacement.capitalRub,
-              horizonYears: replacement.horizonYears,
-              grossGainRub: replacement.grossGainRub,
-              sellCommissionRub: replacement.sellCommissionRub,
-              buyCommissionRub: replacement.buyCommissionRub,
-              netBenefitRub: replacement.netBenefitRub,
-              annualizedBenefitFraction: replacement.annualizedBenefitFraction,
-              // ReplacementResponse несёт раздельные ставки продажи/покупки (обычно совпадают) —
-              // берём ставку продажи как представительную (тот же приём, что MarketComparator).
-              commissionRateUsed: replacement.sellCommissionRateUsed,
-              commissionRateSource: replacement.commissionRateSource,
-              sellTaxEstimateRub: replacement.sellTaxEstimateRub,
-              netBenefitAfterTaxRub: replacement.netBenefitAfterTaxRub,
-            }}
-            testIdSuffix={`candidate-${holdPositionId}`}
-          />
+          <ReplacementBreakdown data={toBreakdownData(replacement)} testIdSuffix={`candidate-${holdPositionId}`} />
         </Paper>
       )}
     </div>

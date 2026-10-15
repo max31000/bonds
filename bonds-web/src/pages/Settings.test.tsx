@@ -28,6 +28,7 @@ const baseSettings: SettingsResponse = {
   uninvestedCashThresholdRub: 10000,
   defaultMaxConcentrationPercent: 25,
   commissionRateOverride: null,
+  replacementHorizonYears: 2,
   commissionAutoEstimate: null,
   tInvestTariff: null,
   commissionEffectiveRate: 0.003,
@@ -139,6 +140,65 @@ describe('Settings', () => {
     renderSettings();
 
     await waitFor(() => expect(screen.getByTestId('settings-error')).toBeInTheDocument());
+  });
+
+  // Задача 48: горизонт анализа замены — настройка (годы), заменяет фронтовую константу.
+  describe('replacement horizon section', () => {
+    it('shows the current horizon from settings', async () => {
+      server.use(http.get('*/api/settings', () => HttpResponse.json({ ...baseSettings, replacementHorizonYears: 3.5 })));
+
+      renderSettings();
+
+      await waitFor(() => expect(screen.getByTestId('horizon-section')).toBeInTheDocument());
+      await waitFor(() => expect(screen.getByTestId('replacement-horizon-input')).toHaveValue('3.5'));
+    });
+
+    it('saves the new horizon (years) together with the unchanged settings', async () => {
+      let putBody: Record<string, unknown> | null = null;
+      server.use(
+        http.get('*/api/settings', () => HttpResponse.json(baseSettings)),
+        http.put('*/api/settings', async ({ request }) => {
+          putBody = (await request.json()) as Record<string, unknown>;
+          return HttpResponse.json({ ...baseSettings, ...putBody });
+        }),
+      );
+
+      renderSettings();
+
+      await waitFor(() => expect(screen.getByTestId('replacement-horizon-input')).toBeInTheDocument());
+      const { default: userEvent } = await import('@testing-library/user-event');
+      const input = screen.getByTestId('replacement-horizon-input');
+      await userEvent.clear(input);
+      await userEvent.type(input, '4.5');
+      await userEvent.click(screen.getByTestId('replacement-horizon-save'));
+
+      await waitFor(() => expect(screen.getByText('Горизонт сохранён')).toBeInTheDocument());
+      expect(putBody).toMatchObject({
+        replacementHorizonYears: 4.5,
+        upcomingEventDaysThreshold: 14,
+        commissionRateOverride: null,
+      });
+    });
+
+    it('keeps the horizon when saving the commission override (all settings go in one PUT body)', async () => {
+      let putBody: Record<string, unknown> | null = null;
+      server.use(
+        http.get('*/api/settings', () => HttpResponse.json({ ...baseSettings, replacementHorizonYears: 6 })),
+        http.put('*/api/settings', async ({ request }) => {
+          putBody = (await request.json()) as Record<string, unknown>;
+          return HttpResponse.json({ ...baseSettings, ...putBody });
+        }),
+      );
+
+      renderSettings();
+
+      await waitFor(() => expect(screen.getByTestId('commission-save')).toBeInTheDocument());
+      const { default: userEvent } = await import('@testing-library/user-event');
+      await userEvent.click(screen.getByTestId('commission-save'));
+
+      await waitFor(() => expect(putBody).not.toBeNull());
+      expect(putBody).toMatchObject({ replacementHorizonYears: 6 });
+    });
   });
 
   // Блок «Комиссия брокера» — тариф T-Invest, авто-оценка из журнала, применённая ставка+источник.
