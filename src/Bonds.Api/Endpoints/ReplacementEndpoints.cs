@@ -158,17 +158,7 @@ public static class ReplacementEndpoints
         var snapshotForTarget = await snapshotBuilder.GetSnapshotAsync(ct);
         var bookForTarget = await scoreProvider.GetBookAsync(ct);
 
-        var holdCandidate = new SwitchCandidate
-        {
-            PositionId = holdPosition.PositionId,
-            MarketValueRub = holdPosition.MarketValueRub,
-            EffectiveYield = (holdPosition.IsFloater || holdPosition.IsIndexed) ? holdPosition.CurrentYield : holdPosition.YtmEffective,
-            MacaulayDurationYears = holdPosition.MacaulayDuration,
-            HalfSpreadFraction = HalfSpreadForIsin(holdPosition.Isin, snapshotForTarget),
-            // Налог продажи — из cost basis позиции (average cost); без него/при неполном журнале налог не оценивается.
-            InvestedRub = holdPosition.CostBasis?.InvestedRub,
-            HasUnknownLots = holdPosition.CostBasis?.HasUnknownLots ?? true,
-        };
+        var holdCandidate = BuildHoldSwitchCandidate(holdPosition, snapshotForTarget);
         var targetCandidate = new SwitchCandidate
         {
             // SwitchAnalysisService.Compare не использует targetPosition.MarketValueRub в расчёте
@@ -259,6 +249,24 @@ public static class ReplacementEndpoints
 
         return Results.Ok(dto);
     }
+
+    /// <summary>
+    /// Нога «удерживать» анализа замены по позиции портфеля: стоимость, доходность (YTM; для флоатера — текущая), Маколей,
+    /// полуспред банка (слиппедж) и cost basis для налога продажи. Общая сборка для POST /replacement и вердиктов позиций
+    /// (задача 49) — чтобы оба считали «hold» одинаково.
+    /// </summary>
+    internal static SwitchCandidate BuildHoldSwitchCandidate(
+        Core.Analytics.PortfolioHolding holdPosition, RelativeValueSnapshotBuilder.RelativeValueSnapshot snapshot) => new()
+    {
+        PositionId = holdPosition.PositionId,
+        MarketValueRub = holdPosition.MarketValueRub,
+        EffectiveYield = (holdPosition.IsFloater || holdPosition.IsIndexed) ? holdPosition.CurrentYield : holdPosition.YtmEffective,
+        MacaulayDurationYears = holdPosition.MacaulayDuration,
+        HalfSpreadFraction = HalfSpreadForIsin(holdPosition.Isin, snapshot),
+        // Налог продажи — из cost basis позиции (average cost); без него/при неполном журнале налог не оценивается.
+        InvestedRub = holdPosition.CostBasis?.InvestedRub,
+        HasUnknownLots = holdPosition.CostBasis?.HasUnknownLots ?? true,
+    };
 
     // ─── GET /api/analytics/relative-value ─────────────────────────────────────────────────────
 
@@ -392,7 +400,7 @@ public static class ReplacementEndpoints
     /// только с настраиваемым <paramref name="take"/> вместо константы
     /// <see cref="TopCheapCandidatesPerRichPosition"/>.
     /// </summary>
-    private static List<BasketMember> ResolveCheapBasketMembers(
+    internal static List<BasketMember> ResolveCheapBasketMembers(
         BasketKey effectiveBasket,
         decimal basketMedian,
         RelativeValueSnapshotBuilder.RelativeValueSnapshot snapshot,
@@ -663,7 +671,7 @@ public static class ReplacementEndpoints
     /// <see cref="SwitchAnalysisService"/>. Формула — единая, <see cref="LiquidityScoreCalculator.HalfSpreadFraction"/>
     /// (bid/offer банка — % от номинала, единица сокращается). Null — бумаги нет в банке или стакан не виден.
     /// </summary>
-    private static decimal? HalfSpreadForIsin(string? isin, RelativeValueSnapshotBuilder.RelativeValueSnapshot snapshot)
+    internal static decimal? HalfSpreadForIsin(string? isin, RelativeValueSnapshotBuilder.RelativeValueSnapshot snapshot)
     {
         if (isin is null) return null;
         var entry = FindBankEntryByIsin(isin, snapshot);
