@@ -3,6 +3,7 @@ using Bonds.Core.Interfaces.Repositories;
 using Bonds.Core.Signals;
 using Bonds.Infrastructure.Analytics;
 using Bonds.Infrastructure.CashFlow;
+using Bonds.Infrastructure.Connectors.GirBo;
 using Bonds.Infrastructure.Connectors.Moex;
 using Bonds.Infrastructure.Connectors.TInvest;
 using Bonds.Infrastructure.Quotes;
@@ -79,6 +80,9 @@ public static class DependencyInjection
         // Задача 43: персистентный кэш карточек бумаг MOEX (флаги дефолтов и т.п.).
         services.AddScoped<ISecurityDetailsRepository>(sp => new SecurityDetailsRepository(GetConnStr(sp)));
 
+        // Задача 45: отчётность эмитентов (ГИР БО) и статусы проверки по ИНН.
+        services.AddScoped<IIssuerFinancialsRepository>(sp => new IssuerFinancialsRepository(GetConnStr(sp)));
+
         // Migration runner
         services.AddSingleton(sp => new MigrationRunner(
             GetConnStr(sp),
@@ -95,6 +99,17 @@ public static class DependencyInjection
             client.Timeout = TimeSpan.FromSeconds(15);
         });
         services.AddScoped<IMoexIssClient, MoexIssClient>();
+
+        // ГИР БО ФНС (bo.nalog.gov.ru): открытая отчётность организаций по ИНН, без авторизации и секретов,
+        // но с обязательным User-Agent. Таймаут 30 с — сервис медленный.
+        services.AddHttpClient(GirBoClient.HttpClientName, client =>
+        {
+            client.BaseAddress = new Uri("https://bo.nalog.gov.ru");
+            client.Timeout = TimeSpan.FromSeconds(30);
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("BondAnalytics/1.0 (personal portfolio tool)");
+            client.DefaultRequestHeaders.Accept.ParseAdd("application/json");
+        });
+        services.AddScoped<IGirBoClient, GirBoClient>();
 
         // Telegram Bot API — алерт владельцу при падении автосинка. Тот же бот,
         // что и CI-алерты (Telegram:BotToken), base address без секрета в URL самого
@@ -199,6 +214,8 @@ public static class DependencyInjection
         // Задача 43: суточные шаги обогащения банка (резолвятся из scope тика BondUniverseRefreshService).
         services.AddScoped<Bonds.Infrastructure.Universe.UniverseEmitentEnricher>();
         services.AddScoped<Bonds.Infrastructure.Universe.SecurityDetailsEnricher>();
+        // Задача 45: суточное наполнение отчётности эмитентов портфеля/watchlist из ГИР БО (тот же тик).
+        services.AddScoped<Bonds.Infrastructure.Universe.IssuerFinancialsEnricher>();
 
         // Сглаженная (медиана дневных медиан за 5 торговых дней) статистика
         // корзин relative value + кэш ~1 час в памяти — Singleton (кэш переживает HTTP-запросы),

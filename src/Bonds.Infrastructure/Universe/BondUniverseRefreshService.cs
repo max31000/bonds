@@ -41,6 +41,11 @@ public sealed class BondUniverseRefreshService : BackgroundService
     private DateTime? _lastEmitentEnrichAttemptUtc;
     private DateOnly? _lastSecurityDetailsDateMsk;
 
+    // Задача 45: суточный шаг отчётности эмитентов (ГИР БО). Дата ставится только когда шаг завершён
+    // (источник был доступен); попытки при недоступности ГИР БО троттлятся по RefreshInterval.
+    private DateOnly? _lastIssuerFinancialsDateMsk;
+    private DateTime? _lastIssuerFinancialsAttemptUtc;
+
     public BondUniverseRefreshService(
         IServiceScopeFactory scopeFactory,
         IOptions<BondUniverseRefreshOptions> options,
@@ -113,6 +118,8 @@ public sealed class BondUniverseRefreshService : BackgroundService
         // Каждый шаг изолирован: сбой одного не мешает другому и не валит тик.
         await MaybeEnrichEmitentsAsync(sp, repo, nowMsk, utcNow, ct);
         await MaybeEnrichSecurityDetailsAsync(sp, nowMsk, utcNow, ct);
+        // Задача 45: после эмитентов (ИНН берутся из bond_universe.emitent_inn).
+        await MaybeEnrichIssuerFinancialsAsync(sp, nowMsk, utcNow, ct);
     }
 
     /// <summary>
@@ -187,6 +194,49 @@ public sealed class BondUniverseRefreshService : BackgroundService
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Bond universe refresh: security details enrichment failed — wait for the next day");
+        }
+    }
+
+    /// <summary>
+    /// Задача 45 часть B.4: раз в сутки (первый тик после <see cref="BondUniverseRefreshOptions.TradingWindowStartMsk"/>
+    /// МСК, уже после суточного обогащения эмитентов) проверяет в ГИР БО до
+    /// <see cref="BondUniverseRefreshOptions.IssuerFinancialsBatchSize"/> ИНН эмитентов портфеля/watchlist.
+    /// Паттерн «источник недоступен → шаг не засчитан» (как <see cref="MaybeEnrichEmitentsAsync"/>): дата
+    /// выполнения ставится, только если прогон завершён; при недоступности ГИР БО повтор не чаще
+    /// <see cref="BondUniverseRefreshOptions.RefreshInterval"/>. Остаток очереди (>20 ИНН) добирается на
+    /// следующие сутки — это осознанное бережное ограничение.
+    /// </summary>
+    private async Task MaybeEnrichIssuerFinancialsAsync(IServiceProvider sp, DateTime nowMsk, DateTime utcNow, CancellationToken ct)
+    {
+        try
+        {
+            if (!DailyEnrichmentGate.IsDue(nowMsk, _lastIssuerFinancialsDateMsk, _options.TradingWindowStartMsk))
+            {
+                return;
+            }
+
+            if (_lastIssuerFinancialsAttemptUtc is { } lastAttempt && utcNow - lastAttempt < _options.RefreshInterval)
+            {
+                return; // недавно пробовали (ГИР БО был недоступен) — не долбим каждые 5 минут.
+            }
+
+            _lastIssuerFinancialsAttemptUtc = utcNow;
+            var enricher = sp.GetRequiredService<IssuerFinancialsEnricher>();
+            var result = await enricher.EnrichBatchAsync(
+                _options.IssuerFinancialsBatchSize, _options.IssuerFinancialsRefreshAfter,
+                _options.IssuerFinancialsErrorRetryAfter, _options.IssuerFinancialsRequestDelay, utcNow, ct);
+            if (result.Completed)
+            {
+                _lastIssuerFinancialsDateMsk = DateOnly.FromDateTime(nowMsk);
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Bond universe refresh: issuer financials enrichment failed — will retry later");
         }
     }
 

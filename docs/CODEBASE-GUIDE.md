@@ -29,6 +29,7 @@ MySQL для интеграционных), vitest + Testing Library + MSW.
 | MOEX ISS `securities`: ACCRUEDINT (НКД) | вход | **рубли на одну бумагу** (не %, не на лот) — конверсии нет |
 | T-Invest `GetPortfolio` (CurrentPrice/CurrentNkd/AveragePositionPrice) | вход | **рубли** за бумагу — конверсия не нужна |
 | T-Invest `GetLastPrices` (marketdata `LastPrice`) | вход | **ПУНКТЫ** (% от номинала) → рубли = `pts/100 × FaceValue` (см. `LiveQuoteConverter`) |
+| ГИР БО ФНС (`bo.nalog.gov.ru`): все суммы бухгалтерской отчётности | вход | **ТЫСЯЧИ рублей** → храним РУБЛИ (×1000, `GirBoParser.ThousandsToRubles`), `issuer_financials.*` — рубли |
 | `MarketQuote.CleanPrice/DirtyPrice/Accrued`, `intraday_quotes.dirty_price_rub` | БД | всегда рубли за бумагу (контракт в doc-comment модели) |
 | `Position.Accrued` | БД | НКД на ОДНУ бумагу (не на позицию) |
 | Знак `Operation.AmountRub` | БД | как отдал брокер — НЕ переписывать (см. `PortfolioXirrService.SignedAmount`) |
@@ -168,7 +169,10 @@ Single-user, один счёт. Т-Invest токен — read-only секрет:
 `HASDEFAULT`/`HASTECHNICALDEFAULT`, квал-инвесторы, бенчмарк купона) — персистентный кэш
 `security_details` (`SecurityDetailsRepository`, наполняет `SecurityDetailsEnricher` по 200 бумаг в сутки:
 портфель/watchlist → банк без карточки → старше 30 дней); флаги `null` = «неизвестно», НЕ «нет»; дефолт-история
-эмитента — `GetEmitentDefaultHistoryAsync` (потребители — светофор, задача 46); точный движок — по требованию через
+эмитента — `GetEmitentDefaultHistoryAsync` (потребители — светофор, задача 46); отчётность эмитентов портфеля/watchlist — суточный шаг того же `BondUniverseRefreshService`
+(`IssuerFinancialsEnricher`, ГИР БО по ИНН из `bond_universe.emitent_inn`, ≤20 ИНН за сутки, пауза 1 с, 30-дневный кэш статусов
+`issuer_financials_status`: ok/not_found/hidden/cb/error; хранилище `IssuerFinancialsRepository`, РСБУ соло, годовые, рубли;
+потребитель — кредитный слой скоркарты, задача 46); точный движок — по требованию через
 `POST /api/universe/{secid}/materialize` (единый путь обогащения —
 `InstrumentEnrichmentService`).
 
