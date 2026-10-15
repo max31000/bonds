@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Accordion, ActionIcon, Alert, Badge, Button, Collapse, Group, Select, SimpleGrid, Stack, Table, Text, TextInput } from '@mantine/core';
+import { Accordion, ActionIcon, Alert, Badge, Button, Collapse, Group, Select, SegmentedControl, SimpleGrid, Stack, Table, Text, TextInput } from '@mantine/core';
 import { IconTrash } from '@tabler/icons-react';
 import {
   deleteIssuerRating,
@@ -46,7 +46,30 @@ const GIRBO_STATUS_LABEL: Record<string, string> = {
   error: 'ГИР БО: ошибка загрузки, повторим позже',
 };
 
-/** Разбор суммы из поля ввода: пробелы (`\s` покрывает и неразрывные) убираем, запятая = десятичный разделитель. Рубли как есть, без пересчёта. */
+/**
+ * Единицы ввода сумм отчётности. Формы РСБУ заполняются в ТЫСЯЧАХ рублей (дефолт), бэкенд (`issuer_financials`) хранит
+ * РУБЛИ — множитель применяется ровно один раз, при отправке (`toRubles`), и больше нигде.
+ */
+type AmountUnit = 'rub' | 'thousand' | 'million';
+
+const AMOUNT_UNITS: { value: AmountUnit; label: string; multiplier: number }[] = [
+  { value: 'rub', label: '₽', multiplier: 1 },
+  { value: 'thousand', label: 'тыс. ₽', multiplier: 1_000 },
+  { value: 'million', label: 'млн ₽', multiplier: 1_000_000 },
+];
+
+const DEFAULT_AMOUNT_UNIT: AmountUnit = 'thousand';
+
+/**
+ * Конверсия введённой суммы в РУБЛИ для API: введённое × множитель единицы, округление до копеек (чтобы десятичные
+ * вроде 0.1 × 1000 не давали хвост бинарной плавающей точки). Единственное место конверсии единиц в форме.
+ */
+function toRubles(amount: number, unit: AmountUnit): number {
+  const multiplier = AMOUNT_UNITS.find((u) => u.value === unit)?.multiplier ?? 1;
+  return Math.round(amount * multiplier * 100) / 100;
+}
+
+/** Разбор суммы из поля ввода: пробелы (`\s` покрывает и неразрывные) убираем, запятая = десятичный разделитель. Единицы не трогает (конверсия — `toRubles`). */
 function parseAmount(text: string): number | null {
   const normalized = text.replace(/\s/g, '').replace(',', '.');
   if (normalized === '') return null;
@@ -211,6 +234,7 @@ function FinancialsForm({ inn, onChanged }: { inn: string; onChanged: () => void
   const { data, isLoading, error } = useWidgetData(() => fetchIssuerFinancials(inn), [inn, version]);
   const [period, setPeriod] = useState(String(new Date().getFullYear() - 1));
   const [amounts, setAmounts] = useState<Partial<Record<IssuerFinancialsAmountKey, string>>>({});
+  const [unit, setUnit] = useState<AmountUnit>(DEFAULT_AMOUNT_UNIT);
   const [showExtra, setShowExtra] = useState(false);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
@@ -220,7 +244,7 @@ function FinancialsForm({ inn, onChanged }: { inn: string; onChanged: () => void
       key={key}
       label={label}
       inputMode="decimal"
-      placeholder="₽"
+      placeholder={AMOUNT_UNITS.find((u) => u.value === unit)?.label}
       value={amounts[key] ?? ''}
       onChange={(e) => {
         const next = e.currentTarget.value;
@@ -242,10 +266,10 @@ function FinancialsForm({ inn, onChanged }: { inn: string; onChanged: () => void
       const parsed = parseAmount(amounts[key] ?? '');
       if (parsed === null) continue;
       if (Number.isNaN(parsed)) {
-        setFormError(`${label}: ожидается число (рубли)`);
+        setFormError(`${label}: ожидается число (${AMOUNT_UNITS.find((u) => u.value === unit)?.label})`);
         return;
       }
-      body[key] = parsed;
+      body[key] = toRubles(parsed, unit); // тут и только тут: единицы формы → рубли API
     }
     if (Object.keys(body).length === 1) {
       setFormError('Заполните хотя бы одну строку отчётности');
@@ -304,9 +328,19 @@ function FinancialsForm({ inn, onChanged }: { inn: string; onChanged: () => void
 
       <form onSubmit={(e) => void submit(e)} data-testid="issuer-financials-form">
         <Text size="xs" c="dimmed" mb="xs">
-          Для банков и эмитентов, скрывших отчётность в ГИР БО. Суммы — в рублях (не в тысячах), как в консолидированной
-          отчётности. Ручной ввод за год заменяет автоматические данные за этот год.
+          Для банков и эмитентов, скрывших отчётность в ГИР БО. Суммы — по отчётности эмитента (РСБУ — соло, не
+          консолидация); выберите единицы, в которых вводите (в формах РСБУ — тыс. ₽), на сервер уходят рубли. Ручной
+          ввод за год заменяет автоматические данные за этот год.
         </Text>
+        <SegmentedControl
+          size="xs"
+          mb="xs"
+          aria-label="Единицы ввода сумм"
+          data={AMOUNT_UNITS.map((u) => ({ value: u.value, label: u.label }))}
+          value={unit}
+          onChange={(v) => setUnit(v as AmountUnit)}
+          data-testid="issuer-financials-unit"
+        />
         <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs">
           <TextInput
             label="Отчётный год"

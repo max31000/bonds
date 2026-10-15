@@ -107,7 +107,51 @@ describe('IssuerDataBlock — рейтинги', () => {
 });
 
 describe('IssuerDataBlock — отчётность', () => {
-  it('sends amounts in RUBLES as typed (no thousands conversion), normalising spaces and decimal comma', async () => {
+  it('with unit "₽" sends amounts as typed, normalising spaces and decimal comma', async () => {
+    let posted: Record<string, unknown> | null = null;
+    server.use(
+      http.post('*/api/issuers/:inn/financials', async ({ request }) => {
+        posted = (await request.json()) as Record<string, unknown>;
+        return HttpResponse.json({ period: posted.period, source: 'manual' });
+      }),
+    );
+    const onChanged = vi.fn();
+    renderBlock({ onChanged });
+
+    await openPanel('issuer-financials-toggle');
+    fireEvent.click(await screen.findByRole('radio', { name: '₽' }));
+    fireEvent.change(await screen.findByTestId('issuer-financials-period'), { target: { value: '2024' } });
+    fireEvent.change(screen.getByTestId('issuer-financials-revenue'), { target: { value: '12 500 000 000' } });
+    fireEvent.change(screen.getByTestId('issuer-financials-interestPaid'), { target: { value: '300000000,50' } });
+    fireEvent.click(screen.getByTestId('issuer-financials-save'));
+
+    await waitFor(() => expect(onChanged).toHaveBeenCalledTimes(1));
+    expect(posted).toEqual({ period: 2024, revenue: 12_500_000_000, interestPaid: 300_000_000.5 });
+  });
+
+  it('defaults to thousands of rubles (RSBU forms): 495877663 is sent to the backend as 495877663000', async () => {
+    let posted: Record<string, unknown> | null = null;
+    server.use(
+      http.post('*/api/issuers/:inn/financials', async ({ request }) => {
+        posted = (await request.json()) as Record<string, unknown>;
+        return HttpResponse.json({ period: posted.period, source: 'manual' });
+      }),
+    );
+    const onChanged = vi.fn();
+    renderBlock({ onChanged });
+
+    await openPanel('issuer-financials-toggle');
+    expect(await screen.findByRole('radio', { name: 'тыс. ₽' })).toBeChecked();
+    expect(screen.getByText(/РСБУ — соло, не\s+консолидация/)).toBeVisible();
+    fireEvent.change(screen.getByTestId('issuer-financials-period'), { target: { value: '2024' } });
+    fireEvent.change(screen.getByTestId('issuer-financials-revenue'), { target: { value: '495877663' } });
+    fireEvent.click(screen.getByTestId('issuer-financials-save'));
+
+    await waitFor(() => expect(onChanged).toHaveBeenCalledTimes(1));
+    expect(posted).toEqual({ period: 2024, revenue: 495_877_663_000 });
+  });
+
+  it('converts exactly once: "млн ₽" multiplies by 10^6, and switching units does not re-scale typed values', async () => {
     let posted: Record<string, unknown> | null = null;
     server.use(
       http.post('*/api/issuers/:inn/financials', async ({ request }) => {
@@ -120,12 +164,12 @@ describe('IssuerDataBlock — отчётность', () => {
 
     await openPanel('issuer-financials-toggle');
     fireEvent.change(await screen.findByTestId('issuer-financials-period'), { target: { value: '2024' } });
-    fireEvent.change(screen.getByTestId('issuer-financials-revenue'), { target: { value: '12 500 000 000' } });
-    fireEvent.change(screen.getByTestId('issuer-financials-interestPaid'), { target: { value: '300000000,50' } });
+    fireEvent.change(screen.getByTestId('issuer-financials-revenue'), { target: { value: '495,5' } });
+    fireEvent.click(await screen.findByRole('radio', { name: 'млн ₽' }));
     fireEvent.click(screen.getByTestId('issuer-financials-save'));
 
     await waitFor(() => expect(onChanged).toHaveBeenCalledTimes(1));
-    expect(posted).toEqual({ period: 2024, revenue: 12_500_000_000, interestPaid: 300_000_000.5 });
+    expect(posted).toEqual({ period: 2024, revenue: 495_500_000 });
   });
 
   it('rejects a non-numeric amount and an empty form locally, 422 from the server is shown inline', async () => {
