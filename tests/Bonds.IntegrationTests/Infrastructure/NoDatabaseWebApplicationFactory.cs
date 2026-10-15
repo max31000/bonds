@@ -32,6 +32,8 @@ public class NoDatabaseWebApplicationFactory : WebApplicationFactory<Program>
                 ["Telegram:BotToken"] = "test-bot-token-not-real",
                 ["Telegram:OwnerId"] = OwnerTelegramId.ToString(),
                 ["DataProtection:KeysPath"] = _dataProtectionKeysPath,
+                // Отдельный KestrelMetricServer (9091) не поднимаем: хосты тестов не должны делить порт.
+                ["Metrics:Port"] = "0",
             });
         });
 

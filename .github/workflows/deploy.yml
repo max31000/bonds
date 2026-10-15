@@ -136,7 +136,7 @@ jobs:
             echo "previous image: ${PREV:-<none>}"
 
             run_api() {
-              docker run -d                 --name bonds-api                 --network cashpulse-network                 --restart unless-stopped                 --label com.centurylinklabs.watchtower.enable=false                 -p 127.0.0.1:5001:5001                 -v /var/lib/bonds/dataprotection-keys:/app/dataprotection-keys                 -e "ConnectionStrings__DefaultConnection=${DB_CONNECTION_STRING}"                 -e "Telegram__BotToken=${TELEGRAM_BOT_TOKEN}"                 -e "Telegram__OwnerId=${OWNER_TELEGRAM_ID}"                 "$1"
+              docker run -d                 --name bonds-api                 --network cashpulse-network                 --restart unless-stopped                 --label com.centurylinklabs.watchtower.enable=false                 -p 127.0.0.1:5001:5001                 -p 127.0.0.1:9501:9091                 -v /var/lib/bonds/dataprotection-keys:/app/dataprotection-keys                 -e "ConnectionStrings__DefaultConnection=${DB_CONNECTION_STRING}"                 -e "Telegram__BotToken=${TELEGRAM_BOT_TOKEN}"                 -e "Telegram__OwnerId=${OWNER_TELEGRAM_ID}"                 "$1"
             }
 
             healthy() {

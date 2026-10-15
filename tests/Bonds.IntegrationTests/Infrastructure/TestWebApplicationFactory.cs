@@ -61,6 +61,8 @@ public class TestWebApplicationFactory : WebApplicationFactory<Program>, IAsyncL
                 // тестовом хосте — свой temp dir на процесс теста, чтобы PUT /api/settings/tinvest-token
                 // (шифрует токен через IDataProtectionProvider) не падал 500 в тестах.
                 ["DataProtection:KeysPath"] = _dataProtectionKeysPath,
+                // Отдельный KestrelMetricServer (9091) не поднимаем: хосты тестов не должны делить порт.
+                ["Metrics:Port"] = "0",
                 // Задача 30: RelativeValueSnapshotBuilder — singleton с in-memory кэшем ~1 час
                 // (план часть B.3). TestWebApplicationFactory общий на всю коллекцию "Integration"
                 // (IntegrationCollectionFixture) — без отключения кэша здесь тест, засеявший новые
