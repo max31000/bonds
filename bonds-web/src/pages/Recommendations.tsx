@@ -32,12 +32,13 @@ import { BasketConstructor } from '../components/BasketConstructor';
 import { RelativeValueBadge } from '../components/RelativeValueBadge';
 import { RiskSignalBadges, RiskSignalsCaption } from '../components/RiskSignalBadges';
 import { ReliabilityFilterControl } from '../components/ReliabilityFilterControl';
-import { meetsReliabilityFilter, type ReliabilityFilterValue } from '../utils/reliabilityFilter';
+import { toReliabilityQuery, type ReliabilityFilterValue } from '../utils/reliabilityFilter';
 import { fetchReplacementCandidates, postReplacement } from '../api/recommendations';
 import { postMaterialize } from '../api/universe';
 import { formatRub, formatPercent, formatNumber, formatDate, formatHorizon } from '../utils/format';
 import type {
   ComparisonRow,
+  DurationScope,
   MaterializeResponse,
   ReplacementCandidate,
   ReplacementCandidatesMode,
@@ -70,15 +71,29 @@ function OutOfComparisonRow({ row }: { row: ComparisonRow }) {
 /** Одна строка кандидата-замены (mode=market/rv) — имя, доходность, дюрация, риск-бейджи. */
 function ReplacementCandidateRow({
   candidate,
+  taxRateFraction,
   onSelect,
   isSelected,
   isLoading,
 }: {
   candidate: ReplacementCandidate;
+  /** ДОЛЯ НДФЛ, учтённого в `afterTaxYieldFraction` (из ответа бэкенда); нет — подпись про налог не показываем. */
+  taxRateFraction: number | null;
   onSelect: (secid: string) => void;
   isSelected: boolean;
   isLoading: boolean;
 }) {
+  // Задача 50: главная цифра — доходность к худшему из погашения/оферты ПОСЛЕ налога (по ней ранжирует бэкенд);
+  // сырая биржевая YTM — мелко рядом. Нет ранга (rv-кандидат без банк-записи) — прежняя сырая цифра.
+  const hasAfterTax = candidate.afterTaxYieldFraction !== null;
+  const basisLabel =
+    candidate.yieldBasis === 'offer'
+      ? candidate.offerDate
+        ? `к оферте ${formatDate(candidate.offerDate)}`
+        : 'к оферте'
+      : candidate.yieldBasis === 'maturity'
+        ? 'к погашению'
+        : null;
   return (
     // div[role=button], а не <button>: внутри строки живёт светофор-кнопка (задача 47), вложенные <button> — невалидный HTML.
     <UnstyledButton
@@ -108,10 +123,17 @@ function ReplacementCandidateRow({
           <Text size="sm" fw={600}>
             {candidate.name}
           </Text>
-          <Text size="sm" c="teal" fw={600}>
-            {formatPercent(candidate.yieldFraction)}
+          <Text size="sm" c="teal" fw={600} data-testid={`replace-candidate-yield-${candidate.secid}`}>
+            {formatPercent(hasAfterTax ? candidate.afterTaxYieldFraction : candidate.yieldFraction)}
           </Text>
         </Group>
+        {hasAfterTax && (
+          <Text size="xs" c="dimmed" data-testid={`replace-candidate-yield-caption-${candidate.secid}`}>
+            {basisLabel ?? 'к погашению'}
+            {taxRateFraction !== null && <>, налог {formatPercent(taxRateFraction)} учтён</>}
+            {' · '}биржевая YTM {formatPercent(candidate.yieldFraction)}
+          </Text>
+        )}
         <Group gap={6} wrap="wrap" mb={4}>
           <Text size="xs" c="dimmed">
             дюрация {candidate.durationYears !== null ? `${formatNumber(candidate.durationYears, 1)} лет` : '—'}
@@ -127,6 +149,11 @@ function ReplacementCandidateRow({
     </UnstyledButton>
   );
 }
+
+const DURATION_SCOPE_OPTIONS: { label: string; value: DurationScope }[] = [
+  { label: 'похожий срок', value: 'bucket' },
+  { label: 'весь рынок', value: 'all' },
+];
 
 const MODE_OPTIONS: { label: string; value: ReplacementCandidatesMode | 'search' }[] = [
   { label: 'доходные рынка', value: 'market' },
@@ -169,10 +196,20 @@ function ReplacementPanel({
   // дефолт ВЫКЛ (план: не усекать список неожиданно для пользователя, который его ещё не открывал).
   const [durationFilterEnabled, setDurationFilterEnabled] = useState(false);
 
-  // Клиентский фильтр «надёжность не хуже уровня» — тот же приём, что фильтр
-  // дюрации выше (уже загруженный список, без похода на бэкенд); дефолт 'all' (план: не усекать
-  // список неожиданно).
+  // Задача 50: фильтр «надёжность не хуже уровня» — СЕРВЕРНЫЙ (`reliability=` в запросе): лимит 20 применяется уже к
+  // подходящим по светофору, а не к топ-20 сырой выдачи (иначе «только 🟢» мог дать 0 при зелёных дальше по рынку).
+  // Дефолт 'all' (не усекать список неожиданно).
   const [reliabilityFilter, setReliabilityFilter] = useState<ReliabilityFilterValue>('all');
+
+  // Задача 50: сопоставимость по сроку — «похожий срок» (бакет дюрации Маколея позиции ±1 соседний, дефолт бэкенда)
+  // или «весь рынок». Только mode=market (RV-кандидаты и так из корзины позиции).
+  const [durationScope, setDurationScope] = useState<DurationScope>('bucket');
+  // Мета последнего ответа: ПРИМЕНЁННЫЙ scope (откат на «весь рынок» при неизвестной дюрации позиции), бакет позиции, ставка НДФЛ.
+  const [responseMeta, setResponseMeta] = useState<{
+    durationScope: DurationScope | null;
+    positionDurationBucket: string | null;
+    taxRateFraction: number | null;
+  }>({ durationScope: null, positionDurationBucket: null, taxRateFraction: null });
 
   const [selectedSecid, setSelectedSecid] = useState<string | null>(null);
   const [isSelecting, setIsSelecting] = useState(false);
@@ -202,10 +239,18 @@ function ReplacementPanel({
     if (mode === 'search') return;
     let cancelled = false;
 
-    fetchReplacementCandidates(holdPositionId, mode)
+    fetchReplacementCandidates(holdPositionId, mode, {
+      reliability: toReliabilityQuery(reliabilityFilter),
+      durationScope: mode === 'market' ? durationScope : undefined,
+    })
       .then((response) => {
         if (cancelled) return;
         setCandidates(response.candidates);
+        setResponseMeta({
+          durationScope: response.durationScope ?? null,
+          positionDurationBucket: response.positionDurationBucket ?? null,
+          taxRateFraction: response.afterTaxRateFraction ?? null,
+        });
         setIsLoading(false);
       })
       .catch((err) => {
@@ -217,7 +262,7 @@ function ReplacementPanel({
     return () => {
       cancelled = true;
     };
-  }, [mode, holdPositionId]);
+  }, [mode, holdPositionId, reliabilityFilter, durationScope]);
 
   useEffect(() => {
     if (!isSelecting && !selectError && materialized && replacement) {
@@ -235,6 +280,30 @@ function ReplacementPanel({
     setSelectError(null);
     setLoadError(null);
     setIsLoading(nextMode !== 'search');
+  };
+
+  /** Смена серверного фильтра (надёжность / срок): список перезапрашивается, выбранный кандидат и его карточка сбрасываются. */
+  const resetForRefetch = () => {
+    selectRequestIdRef.current += 1;
+    setCandidates([]);
+    setSelectedSecid(null);
+    setMaterialized(null);
+    setReplacement(null);
+    setSelectError(null);
+    setLoadError(null);
+    setIsLoading(true);
+  };
+
+  const handleReliabilityChange = (value: ReliabilityFilterValue) => {
+    if (value === reliabilityFilter) return;
+    resetForRefetch();
+    setReliabilityFilter(value);
+  };
+
+  const handleDurationScopeChange = (value: DurationScope) => {
+    if (value === durationScope) return;
+    resetForRefetch();
+    setDurationScope(value);
   };
 
   const handleSelectCandidate = async (secid: string) => {
@@ -281,18 +350,18 @@ function ReplacementPanel({
   // Окно ±ComparableDurationWindowYears вокруг дюрации заменяемой позиции;
   // кандидаты без дюрации ИЛИ позиция без дюрации (holdDurationYears===null, окно не определить) —
   // скрываются при включённом фильтре, честнее, чем показать их без критерия сравнения.
-  // Фильтр надёжности комбинируется (И) с фильтром дюрации — оба клиентские
-  // над уже загруженным списком, тот же приём.
-  const filteredCandidates = candidates
-    .filter(
-      (c) =>
-        !durationFilterEnabled ||
-        (c.durationYears !== null &&
-          holdDurationYears !== null &&
-          Math.abs(c.durationYears - holdDurationYears) <= ComparableDurationWindowYears),
-    )
-    .filter((c) => meetsReliabilityFilter(c.riskSignals.reliability, reliabilityFilter));
-  const isAnyClientFilterActive = durationFilterEnabled || reliabilityFilter !== 'all';
+  // Надёжность фильтрует СЕРВЕР (задача 50) — здесь остаётся только клиентское тонкое окно дюрации.
+  const filteredCandidates = candidates.filter(
+    (c) =>
+      !durationFilterEnabled ||
+      (c.durationYears !== null &&
+        holdDurationYears !== null &&
+        Math.abs(c.durationYears - holdDurationYears) <= ComparableDurationWindowYears),
+  );
+  const isReliabilityFilterActive = reliabilityFilter !== 'all';
+  // Откат "bucket" → "all" на бэкенде (у позиции нет дюрации): честно говорим, что «похожий срок» не применён.
+  const scopeFellBack = mode === 'market' && durationScope === 'bucket' && responseMeta.durationScope === 'all';
+  const isBucketScopeApplied = mode === 'market' && responseMeta.durationScope === 'bucket';
 
   /** Карточка выгоды выбранного кандидата — рендерится под строкой ниже. */
   const renderBenefitCard = () => (
@@ -350,6 +419,51 @@ function ReplacementPanel({
         <MarketComparator holdPositionId={holdPositionId} />
       ) : (
         <>
+          {!loadError && (
+            <Stack gap={6}>
+              {mode === 'market' && (
+                <>
+                  <Group gap={6} align="center" wrap="nowrap">
+                    <Text size="xs" c="dimmed">
+                      Срок:
+                    </Text>
+                    <SegmentedControl
+                      size="xs"
+                      value={durationScope}
+                      onChange={(v) => handleDurationScopeChange(v as DurationScope)}
+                      data={DURATION_SCOPE_OPTIONS}
+                      data-testid={`replace-duration-scope-${holdPositionId}`}
+                    />
+                  </Group>
+                  {isBucketScopeApplied && (
+                    <Text size="xs" c="dimmed" data-testid={`replace-duration-scope-caption-${holdPositionId}`}>
+                      {responseMeta.positionDurationBucket
+                        ? `Бумаги из бакета дюрации позиции (${responseMeta.positionDurationBucket}) и соседних.`
+                        : 'Бумаги из бакета дюрации позиции и соседних.'}
+                    </Text>
+                  )}
+                  {scopeFellBack && (
+                    <Text size="xs" c="dimmed" data-testid={`replace-duration-scope-fallback-${holdPositionId}`}>
+                      Дюрация позиции неизвестна — «похожий срок» не применён, показан весь рынок.
+                    </Text>
+                  )}
+                </>
+              )}
+              <ReliabilityFilterControl
+                value={reliabilityFilter}
+                onChange={handleReliabilityChange}
+                testId={`replace-reliability-filter-${holdPositionId}`}
+              />
+              {mode === 'market' && (
+                <Text size="xs" c="dimmed" data-testid={`replace-ranking-caption-${holdPositionId}`}>
+                  Кандидаты ранжированы по доходности к худшему из погашения и оферты после налога
+                  {responseMeta.taxRateFraction !== null && <> (НДФЛ {formatPercent(responseMeta.taxRateFraction)} учтён)</>}, а не
+                  по сырой YTM.
+                </Text>
+              )}
+            </Stack>
+          )}
+
           {isLoading && (
             <Center py="sm">
               <Loader size="sm" />
@@ -362,11 +476,34 @@ function ReplacementPanel({
             </Alert>
           )}
 
-          {!isLoading && !loadError && candidates.length === 0 && (
+          {!isLoading && !loadError && candidates.length === 0 && isReliabilityFilterActive && (
+            <Stack gap={4} data-testid={`replace-reliability-empty-${holdPositionId}`}>
+              <Text size="xs" c="dimmed">
+                {isBucketScopeApplied
+                  ? 'Нет кандидатов с выбранной надёжностью в этом бакете — расширьте до всего рынка.'
+                  : 'Нет кандидатов с выбранной надёжностью — выберите «все» или смягчите уровень.'}
+              </Text>
+              {isBucketScopeApplied && (
+                <Button
+                  size="xs"
+                  variant="light"
+                  w="fit-content"
+                  onClick={() => handleDurationScopeChange('all')}
+                  data-testid={`replace-expand-scope-${holdPositionId}`}
+                >
+                  Весь рынок
+                </Button>
+              )}
+            </Stack>
+          )}
+
+          {!isLoading && !loadError && candidates.length === 0 && !isReliabilityFilterActive && (
             <Text size="xs" c="dimmed" data-testid={`replace-candidates-empty-${holdPositionId}`}>
               {mode === 'rv'
                 ? 'Нет данных для сравнения по корзине этой позиции (сектор/дюрация/спред не определились).'
-                : 'Кандидатов не найдено.'}
+                : isBucketScopeApplied
+                  ? 'Кандидатов в этом бакете не найдено — расширьте до всего рынка.'
+                  : 'Кандидатов не найдено.'}
             </Text>
           )}
 
@@ -379,20 +516,14 @@ function ReplacementPanel({
                   onChange={(e) => setDurationFilterEnabled(e.currentTarget.checked)}
                   data-testid={`replace-duration-filter-${holdPositionId}`}
                 />
-                {isAnyClientFilterActive && (
+                {durationFilterEnabled && (
                   <Text size="xs" c="dimmed" data-testid={`replace-duration-filter-count-${holdPositionId}`}>
                     осталось {filteredCandidates.length} из {candidates.length}
                   </Text>
                 )}
               </Group>
 
-              <ReliabilityFilterControl
-                value={reliabilityFilter}
-                onChange={setReliabilityFilter}
-                testId={`replace-reliability-filter-${holdPositionId}`}
-              />
-
-              {isAnyClientFilterActive && filteredCandidates.length === 0 ? (
+              {durationFilterEnabled && filteredCandidates.length === 0 ? (
                 <Text size="xs" c="dimmed" data-testid={`replace-duration-filter-empty-${holdPositionId}`}>
                   Нет кандидатов по текущим фильтрам — отключите фильтр.
                 </Text>
@@ -403,6 +534,7 @@ function ReplacementPanel({
                     <div key={c.secid}>
                       <ReplacementCandidateRow
                         candidate={c}
+                        taxRateFraction={responseMeta.taxRateFraction}
                         onSelect={handleSelectCandidate}
                         isSelected={selectedSecid === c.secid}
                         isLoading={isSelecting && selectedSecid === c.secid}

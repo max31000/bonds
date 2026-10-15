@@ -1,5 +1,3 @@
-import type { ReliabilityLevel } from '../api/types';
-
 /**
  * Значение UI-фильтра «не хуже уровня»: 'all' — без фильтра (дефолт, план
  * прямым текстом требует дефолт "все", не сужать список неожиданно для пользователя, который его
@@ -12,13 +10,10 @@ import type { ReliabilityLevel } from '../api/types';
  */
 export type ReliabilityFilterValue = 'all' | 'green' | 'yellow';
 
-/** «не хуже уровня»: чистая функция, переиспользуется клиентским фильтром
- * блока 1 (панель кандидатов, фильтрует уже загруженный список без похода на бэкенд — тот же
- * приём, что фильтр «похожая дюрация» задачи 37). Скринер использует то же значение как СЕРВЕРНЫЙ
- * query-параметр (см. `useScreenerStore.load`) — эта функция ему не нужна, фильтрация там уже
- * сделал бэкенд. */
-export function meetsReliabilityFilter(level: ReliabilityLevel, filter: ReliabilityFilterValue): boolean {
-  if (filter === 'all') return true;
-  if (filter === 'green') return level === 'Green';
-  return level === 'Green' || level === 'Yellow';
+/**
+ * Значение UI-фильтра → серверный query-параметр `reliability` ('all' → без параметра). Блок 1 «Рекомендаций» (задача 50) и
+ * скринер фильтруют НА СЕРВЕРЕ: клиентская фильтрация топ-20 могла показать 0 кандидатов, хотя дальше по рынку зелёные есть.
+ */
+export function toReliabilityQuery(filter: ReliabilityFilterValue): 'green' | 'yellow' | undefined {
+  return filter === 'all' ? undefined : filter;
 }

@@ -666,6 +666,12 @@ export interface ScoreComponent {
 /** Режим подбора кандидатов-замен для одной позиции портфеля (GET /replacement-candidates). */
 export type ReplacementCandidatesMode = 'market' | 'rv';
 
+/** Задача 50: сопоставимость кандидатов по сроку — "bucket" (бакет дюрации Маколея позиции ±1 соседний) / "all" (весь рынок). */
+export type DurationScope = 'bucket' | 'all';
+
+/** Задача 50: к чему считана доходность кандидата (худший сценарий): оферта или погашение. */
+export type YieldBasis = 'offer' | 'maturity';
+
 /** Один кандидат-замена — дешёвая банк-статистика (bond_universe), НЕ точный расчёт движка (см.
  * doc-comment backend `ReplacementCandidateDto`) — точную выгоду считает POST /replacement. */
 export interface ReplacementCandidate {
@@ -675,8 +681,13 @@ export interface ReplacementCandidate {
   /** Банк-слой не хранит эмитента — всегда null. */
   issuer: string | null;
   sector: string | null;
-  /** ДОЛЯ. */
+  /** ДОЛЯ; сырая биржевая доходность банка (MOEX YIELD), ДО налога. */
   yieldFraction: number | null;
+  /** Задача 50, ДОЛЯ: доходность к худшему из погашения/оферты ПОСЛЕ НДФЛ — ключ сортировки mode=market
+   * (`min(YTM, к оферте) × (1 − ставка)`, ставка — `ReplacementCandidatesResponse.afterTaxRateFraction`). Null — доходности нет. */
+  afterTaxYieldFraction: number | null;
+  /** Задача 50: к чему считана afterTaxYieldFraction — "offer" (к оферте, дата — `offerDate`) | "maturity" (к погашению). */
+  yieldBasis: YieldBasis | null;
   /** Годы. */
   durationYears: number | null;
   /** ДОЛЯ; G-спред банка: биржевой, а при его отсутствии приближённый по кривой. */
@@ -694,6 +705,13 @@ export interface ReplacementCandidatesResponse {
   positionIsin: string;
   candidates: ReplacementCandidate[];
   disclaimer: string;
+  /** Задача 50, только mode=market: ПРИМЕНЁННЫЙ scope по сроку. Может отличаться от запрошенного: у позиции нет дюрации →
+   * бакет не определить, бэкенд откатывается на "all". Null для mode=rv. */
+  durationScope?: DurationScope | null;
+  /** Задача 50: метка бакета дюрации позиции ("1–3 года", Маколей); null — дюрация позиции неизвестна. */
+  positionDurationBucket?: string | null;
+  /** Задача 50, ДОЛЯ (0.13 = 13%): НДФЛ, учтённый в afterTaxYieldFraction кандидатов. */
+  afterTaxRateFraction?: number;
 }
 
 // ---- GET /api/analytics/allocation (задача 34 — source=market/recommended) ----

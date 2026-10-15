@@ -137,6 +137,14 @@ XIRR), дата погашения прошла, а выплаты нет — н
 нет bid/offer → 0 + `SlippageUnknown`), налог продажи — `SaleTaxEstimator` внутри выручки, `FV_switch − FV_hold`, срок окупаемости
 аналитически, предупреждение `DurationMismatch` (|Маколей| > 1.5 г.). Горизонт — `user_settings.replacement_horizon_years`
 (годы, 0.5–10, шаг 0.5, дефолт 2): фронт шлёт его из `useSettingsStore` (не константа), без поля в запросе бэкенд берёт настройку сам.
+**Ранжирование кандидатов (задача 50).** `CandidateYieldRanking` (Core): ключ = `min(YTM банка, yield_to_offer) × (1 − НДФЛ)`
+(ДОЛЯ; налог — `AfterTaxYield` с единственной ставкой `SaleTaxEstimator.NdflRate`, её же берёт `SwitchAnalysisService.AfterTax`);
+основа `yieldBasis`: "offer" (худший сценарий — оферта или `YIELDDATETYPE=OFFER`) / "maturity"; при равенстве — по SECID.
+`GET /replacement-candidates?mode=market` ранжирует так, по умолчанию `durationScope=bucket` — бакет дюрации Маколея позиции ±1 соседний
+(`DurationBucketClassifier.AreSameOrAdjacent`; у позиции нет дюрации → откат на `all`, эффективный scope — в ответе), `all` = весь рынок.
+DTO кандидата: `yieldFraction` (сырая биржевая) + `afterTaxYieldFraction` + `yieldBasis`; ответ: `durationScope`, `positionDurationBucket`,
+`afterTaxRateFraction`. Пул аллокации market/recommended (топ-200) отбирается тем же рангом (`TopByRank`); жадный проход внутри пула не менялся.
+Фильтр светофора блока 1 — серверный `reliability=` (лимит 20 применяется после фильтра).
 Правило сравнимости доходностей: floater/indexed/dataIncomplete — «вне сравнения»
 (`YieldComparability.IsComparable`). Порог отклонения спреда (RV-вердикт и ось спреда
 светофора) — `SpreadThresholds.ForBasket(P25, P75)` = max(`DeviationFraction` 0.0020 = 20 б.п., `IqrMultiplier` 0.25 × IQR корзины);
