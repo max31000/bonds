@@ -118,38 +118,35 @@ function RatingsForm({ inn, onChanged }: { inn: string; onChanged: () => void })
         </Text>
       )}
       {data && data.ratings.length > 0 && (
-        <Table withRowBorders fz="sm" data-testid="issuer-ratings-list">
-          <Table.Tbody>
-            {data.ratings.map((r) => (
-              <Table.Tr key={r.agency} data-testid={`issuer-rating-${r.agency}`}>
-                <Table.Td>{r.agency}</Table.Td>
-                <Table.Td fw={600}>{r.rating}</Table.Td>
-                <Table.Td>
-                  {formatDate(r.ratingDate)}
+        // Строки-flex вместо таблицы: на 375px пять колонок (агентство, рейтинг, дата, заметка, удалить) не помещаются.
+        <Stack gap={4} data-testid="issuer-ratings-list">
+          {data.ratings.map((r) => (
+            <Group key={r.agency} justify="space-between" wrap="nowrap" align="flex-start" gap="xs" data-testid={`issuer-rating-${r.agency}`}>
+              <Stack gap={0} style={{ minWidth: 0 }}>
+                <Group gap={6} wrap="wrap">
+                  <Text size="sm">{r.agency}</Text>
+                  <Text size="sm" fw={600}>{r.rating}</Text>
+                  <Text size="xs" c="dimmed">{formatDate(r.ratingDate)}</Text>
                   {r.isStale && (
-                    <Badge ml={6} size="xs" color="yellow" variant="light">
+                    <Badge size="xs" color="yellow" variant="light">
                       старше {data.freshMonths} мес. — не учитывается
                     </Badge>
                   )}
-                </Table.Td>
-                <Table.Td>
-                  <Text size="xs" c="dimmed">{r.note ?? ''}</Text>
-                </Table.Td>
-                <Table.Td ta="right">
-                  <ActionIcon
-                    variant="subtle"
-                    color="red"
-                    aria-label={`Удалить рейтинг ${r.agency}`}
-                    onClick={() => void remove(r.agency)}
-                    data-testid={`issuer-rating-delete-${r.agency}`}
-                  >
-                    <IconTrash size={16} />
-                  </ActionIcon>
-                </Table.Td>
-              </Table.Tr>
-            ))}
-          </Table.Tbody>
-        </Table>
+                </Group>
+                {r.note && <Text size="xs" c="dimmed" style={{ overflowWrap: 'anywhere' }}>{r.note}</Text>}
+              </Stack>
+              <ActionIcon
+                variant="subtle"
+                color="red"
+                aria-label={`Удалить рейтинг ${r.agency}`}
+                onClick={() => void remove(r.agency)}
+                data-testid={`issuer-rating-delete-${r.agency}`}
+              >
+                <IconTrash size={16} />
+              </ActionIcon>
+            </Group>
+          ))}
+        </Stack>
       )}
 
       <form onSubmit={(e) => void submit(e)} data-testid="issuer-rating-form">
