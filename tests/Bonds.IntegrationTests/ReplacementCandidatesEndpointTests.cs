@@ -483,4 +483,126 @@ public class ReplacementCandidatesEndpointTests
         (await OwnSecidsAsync("green")).Should().BeEquivalentTo([$"GRN{marker}"], "green — только Green");
         (await OwnSecidsAsync("yellow")).Should().BeEquivalentTo([$"GRN{marker}", $"YLW{marker}"], "yellow — не хуже жёлтого (Green+Yellow)");
     }
+
+    // ─── Задача 50: после-налоговый ранг, сопоставимость по сроку ───────────────────────────────
+
+    [Fact]
+    public async Task GetReplacementCandidates_Market_RanksByAfterTaxYieldToWorst_AndExposesBasis()
+    {
+        var (client, _, accountId) = await CreateAuthorizedClientAsync();
+        var marker = Guid.NewGuid().ToString("N")[..6];
+        var sector = $"Sector{marker}";
+        var (_, positionId, _) = await SeedYieldingPositionAsync(accountId, sector, cleanPrice: 1000m, couponValueRub: 20m);
+
+        // OFR: сырая 0.45, но к оферте 0.30 → ранг 0.30 × 0.87 = 0.261. MAT: 0.40 → 0.348. LOW: 0.38 → 0.3306.
+        var offerEntry = HealthyEntry($"OF{marker}", sector, 0.45m, 2m, offerDate: DateOnly.FromDateTime(DateTime.UtcNow.AddMonths(8)));
+        offerEntry.YieldToOfferFraction = 0.30m;
+        offerEntry.YieldDateType = "OFFER";
+        var maturityEntry = HealthyEntry($"MT{marker}", sector, 0.40m, 2m);
+        maturityEntry.YieldDateType = "MATDATE";
+        var lowEntry = HealthyEntry($"LO{marker}", sector, 0.38m, 2m);
+
+        await new BondUniverseRepository(_factory.Database.ConnectionString)
+            .UpsertSnapshotBatchAsync(new[] { offerEntry, maturityEntry, lowEntry });
+
+        var response = await client.GetAsync($"/api/analytics/replacement-candidates?positionId={positionId}&mode=market&limit=100");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        body.GetProperty("afterTaxRateFraction").GetDecimal().Should().Be(0.13m);
+
+        var own = body.GetProperty("candidates").EnumerateArray()
+            .Where(c => c.GetProperty("secid").GetString()!.EndsWith(marker, StringComparison.Ordinal)).ToList();
+        own.Select(c => c.GetProperty("secid").GetString()).Should().Equal($"MT{marker}", $"LO{marker}", $"OF{marker}");
+
+        var offer = own.Single(c => c.GetProperty("secid").GetString() == $"OF{marker}");
+        offer.GetProperty("afterTaxYieldFraction").GetDecimal().Should().Be(0.261m);
+        offer.GetProperty("yieldBasis").GetString().Should().Be("offer");
+        offer.GetProperty("yieldFraction").GetDecimal().Should().Be(0.45m, "сырая YTM банка отдаётся как есть — ранг в отдельном поле");
+
+        var maturity = own.Single(c => c.GetProperty("secid").GetString() == $"MT{marker}");
+        maturity.GetProperty("afterTaxYieldFraction").GetDecimal().Should().Be(0.348m);
+        maturity.GetProperty("yieldBasis").GetString().Should().Be("maturity");
+    }
+
+    [Fact]
+    public async Task GetReplacementCandidates_Market_DurationScopeBucket_ReturnsOnlySameAndAdjacentBuckets()
+    {
+        var (client, _, accountId) = await CreateAuthorizedClientAsync();
+        var marker = Guid.NewGuid().ToString("N")[..6];
+        var sector = $"Sector{marker}";
+        // Позиция: 2 года до погашения, полугодовой купон → дюрация Маколея ~1.8 г. → бакет «1–3 года».
+        var (_, positionId, _) = await SeedYieldingPositionAsync(accountId, sector, cleanPrice: 1000m, couponValueRub: 20m, maturityYears: 2);
+
+        await new BondUniverseRepository(_factory.Database.ConnectionString).UpsertSnapshotBatchAsync(new[]
+        {
+            HealthyEntry($"B0{marker}", sector, 0.30m, 0.5m),  // 0–1: соседний
+            HealthyEntry($"B1{marker}", sector, 0.29m, 2.0m),  // 1–3: тот же
+            HealthyEntry($"B2{marker}", sector, 0.28m, 3.5m),  // 3–5: соседний
+            HealthyEntry($"B3{marker}", sector, 0.27m, 5.5m),  // 5–7: дальше
+            HealthyEntry($"B4{marker}", sector, 0.26m, 9.0m),  // 7+: дальше
+        });
+
+        async Task<(JsonElement Body, List<string> Own)> GetAsync(string? scope)
+        {
+            var query = $"/api/analytics/replacement-candidates?positionId={positionId}&mode=market&limit=100";
+            if (scope is not null) query += $"&durationScope={scope}";
+            var response = await client.GetAsync(query);
+            response.StatusCode.Should().Be(HttpStatusCode.OK);
+            var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+            var own = body.GetProperty("candidates").EnumerateArray()
+                .Select(c => c.GetProperty("secid").GetString()!)
+                .Where(s => s.EndsWith(marker, StringComparison.Ordinal)).ToList();
+            return (body, own);
+        }
+
+        var (defaultBody, defaultOwn) = await GetAsync(null);
+        defaultBody.GetProperty("durationScope").GetString().Should().Be("bucket", "дефолт — похожий срок");
+        defaultBody.GetProperty("positionDurationBucket").GetString().Should().Be("1–3 года");
+        defaultOwn.Should().Equal($"B0{marker}", $"B1{marker}", $"B2{marker}");
+
+        var (_, bucketOwn) = await GetAsync("bucket");
+        bucketOwn.Should().Equal(defaultOwn);
+
+        var (allBody, allOwn) = await GetAsync("all");
+        allBody.GetProperty("durationScope").GetString().Should().Be("all");
+        allOwn.Should().Equal($"B0{marker}", $"B1{marker}", $"B2{marker}", $"B3{marker}", $"B4{marker}");
+    }
+
+    [Fact]
+    public async Task GetReplacementCandidates_InvalidDurationScope_Returns422()
+    {
+        var (client, _, _) = await CreateAuthorizedClientAsync();
+
+        var response = await client.GetAsync("/api/analytics/replacement-candidates?positionId=1&mode=market&durationScope=bogus");
+
+        response.StatusCode.Should().Be((HttpStatusCode)422);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        body.GetProperty("type").GetString().Should().Be("ValidationException");
+    }
+
+    [Fact]
+    public async Task GetReplacementCandidates_Market_ReliabilityGreen_WithBucketScope_ReturnsTopGreenNotClientSlice()
+    {
+        var (client, _, accountId) = await CreateAuthorizedClientAsync();
+        var marker = Guid.NewGuid().ToString("N")[..6];
+        var sector = $"Sector{marker}";
+        var (_, positionId, _) = await SeedYieldingPositionAsync(accountId, sector, cleanPrice: 1000m, couponValueRub: 20m);
+
+        // RED/YLW доходнее GRN: без серверного фильтра при limit=1 наверху был бы не-зелёный; с фильтром ДО Take — GRN.
+        var probes = ReliabilityProbeEntries(marker, sector, baseYield: 0.30m);
+        probes[0].YieldFraction = 0.20m;                  // GRN — самый низкий ранг
+        await new BondUniverseRepository(_factory.Database.ConnectionString).UpsertSnapshotBatchAsync(probes);
+        await ReliabilitySeed.SeedHealthyIssuerAsync(_factory.Database.ConnectionString, $"GRN{marker}", $"IGRN{marker}");
+
+        var response = await client.GetAsync($"/api/analytics/replacement-candidates?positionId={positionId}&mode=market&limit=100&reliability=green&durationScope=bucket");
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+
+        var candidates = body.GetProperty("candidates").EnumerateArray().ToList();
+        candidates.Should().NotBeEmpty();
+        candidates.Should().OnlyContain(c => c.GetProperty("riskSignals").GetProperty("reliability").GetString() == "Green");
+        candidates.Select(c => c.GetProperty("secid").GetString()).Should().Contain($"GRN{marker}");
+        candidates.Select(c => c.GetProperty("secid").GetString()).Should().NotContain($"YLW{marker}").And.NotContain($"RED{marker}");
+    }
 }

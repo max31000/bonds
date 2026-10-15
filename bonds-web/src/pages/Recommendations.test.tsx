@@ -6,6 +6,7 @@ import { http, HttpResponse } from 'msw';
 import { server } from '../test/msw-handlers';
 import { replacementResponseFixture } from '../test/replacementFixtures';
 import { useSettingsStore } from '../store/useSettingsStore';
+import { formatDate } from '../utils/format';
 import { Recommendations } from './Recommendations';
 import { useRecommendationsStore } from '../store/useRecommendationsStore';
 import { useWatchlistStore } from '../store/useWatchlistStore';
@@ -139,6 +140,8 @@ const marketCandidatesResponse: ReplacementCandidatesResponse = {
       issuer: null,
       sector: 'Корпоративные',
       yieldFraction: 0.22,
+      afterTaxYieldFraction: 0.1914,
+      yieldBasis: 'maturity',
       durationYears: 1.5,
       gSpreadFraction: 0.04,
       offerDate: null,
@@ -151,6 +154,8 @@ const marketCandidatesResponse: ReplacementCandidatesResponse = {
       issuer: null,
       sector: 'Корпоративные',
       yieldFraction: 0.2,
+      afterTaxYieldFraction: 0.1479,
+      yieldBasis: 'offer',
       durationYears: 3.4,
       gSpreadFraction: 0.035,
       offerDate: '2027-05-01',
@@ -163,6 +168,8 @@ const marketCandidatesResponse: ReplacementCandidatesResponse = {
       issuer: null,
       sector: 'Корпоративные',
       yieldFraction: 0.19,
+      afterTaxYieldFraction: 0.1653,
+      yieldBasis: 'maturity',
       durationYears: 6,
       gSpreadFraction: 0.03,
       offerDate: null,
@@ -175,6 +182,8 @@ const marketCandidatesResponse: ReplacementCandidatesResponse = {
       issuer: null,
       sector: 'Корпоративные',
       yieldFraction: 0.18,
+      afterTaxYieldFraction: 0.1566,
+      yieldBasis: 'maturity',
       durationYears: null,
       gSpreadFraction: 0.028,
       offerDate: null,
@@ -182,6 +191,9 @@ const marketCandidatesResponse: ReplacementCandidatesResponse = {
     },
   ],
   disclaimer: 'Кандидаты и оценки — аналитическая информация, не рейтинг рейтинговых агентств.',
+  durationScope: 'bucket',
+  positionDurationBucket: '1–3 года',
+  afterTaxRateFraction: 0.13,
 };
 
 const rvCandidatesResponse: ReplacementCandidatesResponse = {
@@ -195,6 +207,8 @@ const rvCandidatesResponse: ReplacementCandidatesResponse = {
       issuer: null,
       sector: 'Корпоративные',
       yieldFraction: 0.2,
+      afterTaxYieldFraction: 0.174,
+      yieldBasis: 'maturity',
       durationYears: 1.8,
       gSpreadFraction: 0.045,
       offerDate: null,
@@ -801,41 +815,170 @@ describe('Recommendations', () => {
     expect(screen.queryByTestId('replace-candidate-MKT003')).not.toBeInTheDocument();
   });
 
-  it('filters candidates by reliability (not worse than level) with an honest "N of M" count (task 38)', async () => {
+  // ─── Задача 50: серверный фильтр надёжности, scope по сроку, подпись базы доходности ─────────────
+
+  /** Мок GET /replacement-candidates, который, как сервер, фильтрует «не хуже уровня» ДО выдачи и пишет в журнал запросы. */
+  function mockServerSideReliability(requests: URLSearchParams[]) {
+    server.use(
+      http.get('*/api/analytics/replacement-candidates', ({ request }) => {
+        const params = new URL(request.url).searchParams;
+        requests.push(params);
+        if (params.get('mode') === 'rv') return HttpResponse.json(rvCandidatesResponse);
+        const level = params.get('reliability');
+        const allowed = level === 'green' ? ['Green'] : level === 'yellow' ? ['Green', 'Yellow'] : ['Green', 'Yellow', 'Red'];
+        return HttpResponse.json({
+          ...marketCandidatesResponse,
+          durationScope: params.get('durationScope') === 'all' ? 'all' : 'bucket',
+          candidates: marketCandidatesResponse.candidates.filter((c) => allowed.includes(c.riskSignals.reliability)),
+        });
+      }),
+    );
+  }
+
+  it('sends reliability as a SERVER query param (not a client slice of the top-20) and refetches on change', async () => {
+    const requests: URLSearchParams[] = [];
+    mockServerSideReliability(requests);
+
     renderRecommendations();
 
     await waitFor(() => expect(screen.getByTestId('sell-candidate-1')).toBeInTheDocument());
     fireEvent.click(screen.getByTestId('replace-toggle-1'));
     await waitFor(() => expect(screen.getByTestId('replace-candidate-MKT001')).toBeInTheDocument());
 
-    // Дефолт — 'все', весь список из 4 кандидатов виден (Green MKT001/MKT004, Yellow MKT002, Red MKT003).
-    expect(screen.getByTestId('replace-candidate-MKT002')).toBeInTheDocument();
+    // Дефолт: без reliability, срок — «похожий» (bucket); все 4 кандидата.
+    expect(requests.at(-1)?.get('reliability')).toBeNull();
+    expect(requests.at(-1)?.get('durationScope')).toBe('bucket');
     expect(screen.getByTestId('replace-candidate-MKT003')).toBeInTheDocument();
-    expect(screen.queryByTestId('replace-duration-filter-count-1')).not.toBeInTheDocument();
 
     const reliabilityControl = screen.getByTestId('replace-reliability-filter-1');
     fireEvent.click(within(reliabilityControl).getByText('🟢'));
 
-    await waitFor(() => expect(screen.getByTestId('replace-duration-filter-count-1').textContent).toMatch(/2 из 4/));
+    await waitFor(() => expect(requests.at(-1)?.get('reliability')).toBe('green'));
+    await waitFor(() => expect(screen.queryByTestId('replace-candidate-MKT002')).not.toBeInTheDocument());
     expect(screen.getByTestId('replace-candidate-MKT001')).toBeInTheDocument();
     expect(screen.getByTestId('replace-candidate-MKT004')).toBeInTheDocument();
-    expect(screen.queryByTestId('replace-candidate-MKT002')).not.toBeInTheDocument();
     expect(screen.queryByTestId('replace-candidate-MKT003')).not.toBeInTheDocument();
+    // Счётчик «N из M» — клиентской фильтрации больше нет.
+    expect(screen.queryByTestId('replace-duration-filter-count-1')).not.toBeInTheDocument();
 
-    // yellow — «не хуже жёлтого»: Green+Yellow, Red остаётся исключённым.
     fireEvent.click(within(reliabilityControl).getByText('🟡'));
-
-    await waitFor(() => expect(screen.getByTestId('replace-duration-filter-count-1').textContent).toMatch(/3 из 4/));
-    expect(screen.getByTestId('replace-candidate-MKT001')).toBeInTheDocument();
-    expect(screen.getByTestId('replace-candidate-MKT002')).toBeInTheDocument();
-    expect(screen.getByTestId('replace-candidate-MKT004')).toBeInTheDocument();
+    await waitFor(() => expect(requests.at(-1)?.get('reliability')).toBe('yellow'));
+    await waitFor(() => expect(screen.getByTestId('replace-candidate-MKT002')).toBeInTheDocument());
     expect(screen.queryByTestId('replace-candidate-MKT003')).not.toBeInTheDocument();
 
-    // Возврат к 'все' — список снова полный, счётчик пропадает.
     fireEvent.click(within(reliabilityControl).getByText('все'));
+    await waitFor(() => expect(requests.at(-1)?.get('reliability')).toBeNull());
+    await waitFor(() => expect(screen.getByTestId('replace-candidate-MKT003')).toBeInTheDocument());
+  });
 
-    await waitFor(() => expect(screen.queryByTestId('replace-duration-filter-count-1')).not.toBeInTheDocument());
-    expect(screen.getByTestId('replace-candidate-MKT003')).toBeInTheDocument();
+  it('toggles between "похожий срок" and "весь рынок" via durationScope and keeps the reliability filter', async () => {
+    const requests: URLSearchParams[] = [];
+    mockServerSideReliability(requests);
+
+    renderRecommendations();
+
+    await waitFor(() => expect(screen.getByTestId('sell-candidate-1')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('replace-toggle-1'));
+    await waitFor(() => expect(screen.getByTestId('replace-candidate-MKT001')).toBeInTheDocument());
+    expect(screen.getByTestId('replace-duration-scope-caption-1').textContent).toMatch(/1–3 года/);
+
+    fireEvent.click(within(screen.getByTestId('replace-reliability-filter-1')).getByText('🟡'));
+    await waitFor(() => expect(requests.at(-1)?.get('reliability')).toBe('yellow'));
+
+    fireEvent.click(within(screen.getByTestId('replace-duration-scope-1')).getByText('весь рынок'));
+
+    await waitFor(() => expect(requests.at(-1)?.get('durationScope')).toBe('all'));
+    expect(requests.at(-1)?.get('reliability')).toBe('yellow');
+    await waitFor(() => expect(screen.queryByTestId('replace-duration-scope-caption-1')).not.toBeInTheDocument());
+  });
+
+  it('does not send durationScope in rv mode (its candidates are always from the position basket)', async () => {
+    const requests: URLSearchParams[] = [];
+    mockServerSideReliability(requests);
+
+    renderRecommendations();
+
+    await waitFor(() => expect(screen.getByTestId('sell-candidate-1')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('replace-toggle-1'));
+    await waitFor(() => expect(screen.getByTestId('replace-candidate-MKT001')).toBeInTheDocument());
+
+    fireEvent.click(within(screen.getByTestId('replace-mode-1')).getByText('дешёвые соседи (RV)'));
+
+    await waitFor(() => expect(screen.getByTestId('replace-candidate-RVCAND1')).toBeInTheDocument());
+    expect(requests.at(-1)?.get('mode')).toBe('rv');
+    expect(requests.at(-1)?.get('durationScope')).toBeNull();
+    expect(screen.queryByTestId('replace-duration-scope-1')).not.toBeInTheDocument();
+  });
+
+  it('shows an empty state with a "весь рынок" button when no candidate of the chosen reliability is in the bucket', async () => {
+    const requests: URLSearchParams[] = [];
+    server.use(
+      http.get('*/api/analytics/replacement-candidates', ({ request }) => {
+        const params = new URL(request.url).searchParams;
+        requests.push(params);
+        if (params.get('reliability') === 'green' && params.get('durationScope') !== 'all') {
+          return HttpResponse.json({ ...marketCandidatesResponse, candidates: [] });
+        }
+        return HttpResponse.json({ ...marketCandidatesResponse, durationScope: params.get('durationScope') });
+      }),
+    );
+
+    renderRecommendations();
+
+    await waitFor(() => expect(screen.getByTestId('sell-candidate-1')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('replace-toggle-1'));
+    await waitFor(() => expect(screen.getByTestId('replace-candidate-MKT001')).toBeInTheDocument());
+
+    fireEvent.click(within(screen.getByTestId('replace-reliability-filter-1')).getByText('🟢'));
+
+    const empty = await screen.findByTestId('replace-reliability-empty-1');
+    expect(empty.textContent).toMatch(/Нет кандидатов с выбранной надёжностью в этом бакете — расширьте до всего рынка/);
+    // Фильтры остаются доступными в empty-state — пользователь может их поменять.
+    expect(screen.getByTestId('replace-reliability-filter-1')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('replace-expand-scope-1'));
+
+    await waitFor(() => expect(requests.at(-1)?.get('durationScope')).toBe('all'));
+    expect(requests.at(-1)?.get('reliability')).toBe('green');
+    await waitFor(() => expect(screen.getByTestId('replace-candidate-MKT001')).toBeInTheDocument());
+    expect(screen.queryByTestId('replace-reliability-empty-1')).not.toBeInTheDocument();
+  });
+
+  it('labels each candidate with what the after-tax yield is calculated to (оферта / погашение) and that tax is included', async () => {
+    renderRecommendations();
+
+    await waitFor(() => expect(screen.getByTestId('sell-candidate-1')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('replace-toggle-1'));
+    await waitFor(() => expect(screen.getByTestId('replace-candidate-MKT001')).toBeInTheDocument());
+
+    // Главная цифра — после-налоговая доходность к worst; сырая YTM — в подписи.
+    expect(screen.getByTestId('replace-candidate-yield-MKT001').textContent).toBe('19.14%');
+    const maturityCaption = screen.getByTestId('replace-candidate-yield-caption-MKT001').textContent ?? '';
+    expect(maturityCaption).toMatch(/к погашению/);
+    expect(maturityCaption).toMatch(/налог 13\.00% учтён/);
+    expect(maturityCaption).toMatch(/биржевая YTM 22\.00%/);
+
+    // Кандидат, у которого худший сценарий — оферта: подпись с датой оферты.
+    expect(screen.getByTestId('replace-candidate-yield-MKT002').textContent).toBe('14.79%');
+    expect(screen.getByTestId('replace-candidate-yield-caption-MKT002').textContent).toContain(`к оферте ${formatDate('2027-05-01')}`);
+
+    expect(screen.getByTestId('replace-ranking-caption-1').textContent).toMatch(/после налога/);
+  });
+
+  it('says so when the position has no duration and the backend fell back from "похожий срок" to the whole market', async () => {
+    server.use(
+      http.get('*/api/analytics/replacement-candidates', () =>
+        HttpResponse.json({ ...marketCandidatesResponse, durationScope: 'all', positionDurationBucket: null }),
+      ),
+    );
+
+    renderRecommendations();
+
+    await waitFor(() => expect(screen.getByTestId('sell-candidate-1')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('replace-toggle-1'));
+
+    await waitFor(() => expect(screen.getByTestId('replace-duration-scope-fallback-1')).toBeInTheDocument());
+    expect(screen.queryByTestId('replace-duration-scope-caption-1')).not.toBeInTheDocument();
   });
 
   it('does not break the weak-position card when GET /api/analytics/replacement-candidates fails', async () => {

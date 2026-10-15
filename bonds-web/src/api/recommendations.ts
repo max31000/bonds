@@ -5,6 +5,7 @@ import type {
   BasketRequest,
   BasketResponse,
   ComparisonResponse,
+  DurationScope,
   ReplacementRequest,
   ReplacementResponse,
   ReplacementCandidatesMode,
@@ -33,14 +34,24 @@ export function postReplacement(request: ReplacementRequest): Promise<Replacemen
  * mode=market (самые доходные фикс-купонные бумаги банка) / mode=rv (дешёвые соседи по корзине
  * сектор×дюрация позиции). Дешёвая банк-статистика + информационные риск-сигналы; точную выгоду
  * выбранного кандидата считает POST /analytics/replacement (см. doc-comment postReplacement).
+ * Задача 50: market ранжирован по доходности к worst после НДФЛ; `reliability` — серверный фильтр светофора
+ * (топ-N среди подходящих), `durationScope` — «похожий срок» (bucket, дефолт бэкенда) / «весь рынок» (all).
  */
 export function fetchReplacementCandidates(
   positionId: number,
   mode: ReplacementCandidatesMode,
-  limit?: number,
+  options?: {
+    limit?: number;
+    /** Серверный фильтр светофора «не хуже уровня» (задача 50): применяется ДО лимита — топ-N среди подходящих по надёжности. */
+    reliability?: 'green' | 'yellow';
+    /** Задача 50, только mode=market: "bucket" (бэкенд-дефолт) / "all". */
+    durationScope?: DurationScope;
+  },
 ): Promise<ReplacementCandidatesResponse> {
   const params = new URLSearchParams({ positionId: String(positionId), mode });
-  if (limit !== undefined) params.set('limit', String(limit));
+  if (options?.limit !== undefined) params.set('limit', String(options.limit));
+  if (options?.reliability) params.set('reliability', options.reliability);
+  if (options?.durationScope) params.set('durationScope', options.durationScope);
   return apiClient.get<ReplacementCandidatesResponse>(`/analytics/replacement-candidates?${params.toString()}`);
 }
 
