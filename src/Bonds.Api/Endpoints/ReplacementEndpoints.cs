@@ -568,7 +568,7 @@ public static class ReplacementEndpoints
             Sector = entry.Sector,
             YieldFraction = entry.YieldFraction,
             DurationYears = entry.DurationYears,
-            GSpreadFraction = entry.GspreadApproxFraction,
+            GSpreadFraction = entry.EffectiveGspreadFraction,
             OfferDate = entry.OfferDate,
             RiskSignals = ToRiskSignalsDto(signals, entry.ListLevel, entry.Sector),
         };

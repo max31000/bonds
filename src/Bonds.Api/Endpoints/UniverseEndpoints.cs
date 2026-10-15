@@ -149,7 +149,7 @@ public static class UniverseEndpoints
         {
             "duration" => x => x.Entry.DurationYears,
             "turnover" => x => x.Entry.TurnoverRub,
-            "gspread" => x => x.Entry.GspreadApproxFraction,
+            "gspread" => x => x.Entry.EffectiveGspreadFraction,
             "yield" => x => x.Entry.YieldFraction,
             _ => x => x.Entry.YieldFraction, // дефолт — сортировка по доходности (наиболее востребованный сценарий скринера).
         };
@@ -213,7 +213,13 @@ public static class UniverseEndpoints
             ListLevel = entry.ListLevel,
             LiquidityScore = liquidity.Score.ToString(),
             SlippageEstimateFraction = liquidity.SlippageEstimateFraction,
-            GspreadApproxFraction = entry.GspreadApproxFraction,
+            // Имя поля не меняем (фронт зеркалит literal), но наполняем ЭФФЕКТИВНЫМ спредом (задача 42):
+            // биржевой G-спред, при его отсутствии — наше приближение по кривой. Источник — GspreadSource.
+            GspreadApproxFraction = entry.EffectiveGspreadFraction,
+            GspreadSource = entry.GspreadSource,
+            AccruedRub = entry.AccruedRub,
+            IssueSize = entry.IssueSize,
+            YieldToOfferFraction = entry.YieldToOfferFraction,
             MaturityDate = entry.MaturityDate,
             OfferDate = entry.OfferDate,
             IsHidden = hiddenReason != HygieneHiddenReason.None,
@@ -381,7 +387,23 @@ public sealed record UniverseRowDto
     public int? ListLevel { get; init; }
     public required string LiquidityScore { get; init; }
     public decimal? SlippageEstimateFraction { get; init; }
+    /// <summary>ДОЛЯ. G-спред банка: <c>BondUniverseEntry.EffectiveGspreadFraction</c> — биржевой, а при его
+    /// отсутствии приближённый по сохранённой кривой (источник — <see cref="GspreadSource"/>). Имя поля
+    /// историческое (фронт зеркалит его буквально) — не переименовывать.</summary>
     public decimal? GspreadApproxFraction { get; init; }
+
+    /// <summary>Откуда <see cref="GspreadApproxFraction"/>: "moex" (посчитан биржей), "approx"
+    /// (наше приближение по кривой) или null (спреда нет).</summary>
+    public string? GspreadSource { get; init; }
+
+    /// <summary>НКД в РУБЛЯХ на одну бумагу (MOEX ACCRUEDINT). Null — неизвестен.</summary>
+    public decimal? AccruedRub { get; init; }
+
+    /// <summary>Объём выпуска, штук бумаг (MOEX ISSUESIZE).</summary>
+    public long? IssueSize { get; init; }
+
+    /// <summary>ДОЛЯ. Доходность к оферте по расчёту биржи (MOEX YIELDTOOFFER в % ÷ 100). Null — оферты нет.</summary>
+    public decimal? YieldToOfferFraction { get; init; }
     public DateOnly? MaturityDate { get; init; }
     public DateOnly? OfferDate { get; init; }
     public required bool IsHidden { get; init; }

@@ -61,7 +61,7 @@ internal static class AnalyticsSupport
         var liquidity = LiquidityScoreCalculator.Assess(entry.TurnoverRub, entry.BidPercent, entry.OfferPercent, entry.NumTrades);
 
         decimal? basketMedian = null;
-        if (entry.GspreadApproxFraction is not null)
+        if (entry.EffectiveGspreadFraction is not null)
         {
             var key = new BasketKey
             {
@@ -71,7 +71,7 @@ internal static class AnalyticsSupport
             basketMedian = ResolveBasket(key, snapshot.AllMembers, snapshot.BasketStats).Stats.Median;
         }
 
-        return CandidateRiskSignalService.Assess(liquidity.Score, entry.ListLevel, entry.GspreadApproxFraction, basketMedian);
+        return CandidateRiskSignalService.Assess(liquidity.Score, entry.ListLevel, entry.EffectiveGspreadFraction, basketMedian);
     }
 
 

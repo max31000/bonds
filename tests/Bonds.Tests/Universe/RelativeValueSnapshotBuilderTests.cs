@@ -124,6 +124,39 @@ public class RelativeValueSnapshotBuilderTests
         snapshot.BasketStats[key].Median.Should().Be(0.03m, "однодневный выброс не должен исказить медиану медиан");
     }
 
+    /// <summary>
+    /// Задача 42: корзины строятся по ЭФФЕКТИВНОМУ спреду — биржевой побеждает приближённый (и в
+    /// текущем снимке, и в истории), для старых строк истории без effective-колонки берётся approx.
+    /// </summary>
+    [Fact]
+    public async Task GetSnapshotAsync_BasketMedian_UsesEffectiveSpread_OfficialOverApprox_LegacyHistoryFallsBack()
+    {
+        var a = Entry("A"); a.GspreadOfficialFraction = 0.0010m; a.GspreadApproxFraction = 0.9m;
+        var b = Entry("B"); b.GspreadOfficialFraction = 0.0030m; b.GspreadApproxFraction = 0.9m;
+        var c = Entry("C"); c.GspreadOfficialFraction = null; c.GspreadApproxFraction = 0.0020m;
+        _repo.Setup(r => r.GetAllAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new List<BondUniverseEntry> { a, b, c });
+
+        // Без истории — корпус строится из текущего снимка: [0.001, 0.003, 0.002] → медиана 0.002.
+        _repo.Setup(r => r.GetRecentHistoryAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<BondUniverseHistoryPoint>());
+        var snapshot = await BuildSut().GetSnapshotAsync();
+        var key = new Bonds.Core.Analytics.RelativeValueService.BasketKey { Sector = "Корпоративные", DurationBucket = "1–3 года" };
+        snapshot.BasketStats[key].Median.Should().Be(0.0020m);
+
+        // С историей: A, B — новые строки (effective заполнен, approx — мусор 0.9), C — старая строка (только approx).
+        _repo.Invocations.Clear();
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var history = new List<BondUniverseHistoryPoint>
+        {
+            new() { SnapshotDate = today, Secid = "A", DurationYears = 2m, GspreadEffectiveFraction = 0.0010m, GspreadApproxFraction = 0.9m },
+            new() { SnapshotDate = today, Secid = "B", DurationYears = 2m, GspreadEffectiveFraction = 0.0030m, GspreadApproxFraction = 0.9m },
+            new() { SnapshotDate = today, Secid = "C", DurationYears = 2m, GspreadEffectiveFraction = null, GspreadApproxFraction = 0.0020m },
+        };
+        _repo.Setup(r => r.GetRecentHistoryAsync(It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync(history);
+        var withHistory = await BuildSut().GetSnapshotAsync();
+        withHistory.BasketStats[key].Median.Should().Be(0.0020m);
+    }
+
     [Fact]
     public async Task GetSnapshotAsync_CachesResult_DoesNotHitRepositoryTwiceWithinCacheWindow()
     {

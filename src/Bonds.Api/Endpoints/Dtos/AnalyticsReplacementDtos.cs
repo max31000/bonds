@@ -109,7 +109,7 @@ public sealed record ReplacementCandidateDto
     /// <summary>Годы.</summary>
     public decimal? DurationYears { get; init; }
 
-    /// <summary>ДОЛЯ; приближённый G-спред банка (<c>BondUniverseEntry.GspreadApproxFraction</c>).</summary>
+    /// <summary>ДОЛЯ; G-спред банка (<c>BondUniverseEntry.EffectiveGspreadFraction</c>): биржевой, а при его отсутствии приближённый по кривой.</summary>
     public decimal? GSpreadFraction { get; init; }
 
     /// <summary>Дата оферты банк-записи (<see cref="BondUniverseEntry.OfferDate"/>),

@@ -3,9 +3,9 @@ using System.Text.Json;
 namespace Bonds.Infrastructure.Connectors.Moex;
 
 /// <summary>
-/// Разбор одной страницы ISS-ответа <c>/iss/engines/stock/markets/bonds/securities.json?iss.only=securities,marketdata</c>
+/// Разбор одной страницы ISS-ответа <c>/iss/engines/stock/markets/bonds/securities.json?iss.only=securities,marketdata,marketdata_yields</c>
 /// — снимок всей рыночной вселенной облигаций одним-двумя запросами. Сливает
-/// строки блоков <c>securities</c> и <c>marketdata</c> по ключу (SECID, BOARDID) — они возвращаются
+/// строки блоков <c>securities</c>, <c>marketdata</c> и <c>marketdata_yields</c> по ключу (SECID, BOARDID) — они возвращаются
 /// как отдельные параллельные таблицы, не вложенные структуры (то же семейство ответов ISS, что
 /// <see cref="MoexSecuritiesParser"/>, но без выбора "лучшего" board — то делает вызывающий код
 /// после накопления всех страниц, см. <see cref="MoexIssClient.GetBondMarketSnapshotAsync"/>).
@@ -43,6 +43,22 @@ public static class MoexBondUniverseParser
             }
         }
 
+        // marketdata_yields — расчёты самой биржи; ключ тот же (SECID, BOARDID): джойн именно по
+        // борду, чтобы после дедупликации официальные доходности/спреды принадлежали ПОБЕДИВШЕМУ борду.
+        // Блока может не быть вовсе (старый ответ/сбой) или строки для борда нет — тогда поля null.
+        var yieldsTable = IssTable.Parse(root, "marketdata_yields");
+        var yieldsByKey = new Dictionary<(string Secid, string BoardId), IssRow>();
+        if (yieldsTable is not null)
+        {
+            foreach (var row in yieldsTable.Rows())
+            {
+                var secid = row.GetString("SECID");
+                var boardId = row.GetString("BOARDID");
+                if (secid is null || boardId is null) continue;
+                yieldsByKey.TryAdd((secid, boardId), row);
+            }
+        }
+
         // IssRow — readonly struct поверх Dictionary/JsonElement[]; default(IssRow) хранил бы null
         // внутри и уронил бы Get() с NullReferenceException при обращении к отсутствующей marketdata.
         // Nullable<IssRow> явно моделирует "строки marketdata для этого SECID/BOARDID нет".
@@ -55,6 +71,7 @@ public static class MoexBondUniverseParser
             if (secid is null || boardId is null) continue; // строка без идентификатора бесполезна — пропускаем.
 
             var hasMd = marketDataByKey.TryGetValue((secid, boardId), out var md);
+            var hasYields = yieldsByKey.TryGetValue((secid, boardId), out var yl);
 
             result.Add(new MoexBondMarketRow
             {
@@ -74,6 +91,9 @@ public static class MoexBondUniverseParser
                 SecType = row.GetString("SECTYPE"),
                 BondType = row.GetString("BONDTYPE"),
                 Status = row.GetString("STATUS"),
+                // ACCRUEDINT — рубли на одну бумагу (см. MoexBondMarketRow.AccruedRub), без конверсии.
+                AccruedRub = row.GetDecimal("ACCRUEDINT"),
+                IssueSize = row.GetLong("ISSUESIZE"),
 
                 YieldPercent = hasMd ? md.GetDecimal("YIELD") : null,
                 DurationDays = hasMd ? md.GetInt("DURATION") : null,
@@ -82,6 +102,13 @@ public static class MoexBondUniverseParser
                 BidPercent = hasMd ? md.GetDecimal("BID") : null,
                 OfferPricePercent = hasMd ? md.GetDecimal("OFFER") : null,
                 NumTrades = hasMd ? md.GetInt("NUMTRADES") : null,
+
+                // Сырые единицы MOEX (проценты / б.п.) — доли получаются в BondUniverseEntryMapper.
+                EffectiveYieldPercent = hasYields ? yl.GetDecimal("EFFECTIVEYIELD") : null,
+                YieldToOfferPercent = hasYields ? yl.GetDecimal("YIELDTOOFFER") : null,
+                YieldDateType = hasYields ? yl.GetString("YIELDDATETYPE") : null,
+                GspreadBp = hasYields ? yl.GetDecimal("GSPREADBP") : null,
+                ZspreadBp = hasYields ? yl.GetDecimal("ZSPREADBP") : null,
             });
         }
 

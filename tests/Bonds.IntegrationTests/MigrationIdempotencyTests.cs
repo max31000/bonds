@@ -66,6 +66,7 @@ public class MigrationIdempotencyTests : IAsyncLifetime
             "014_add_account_balance.sql",
             "015_redemption_correctness_repair.sql",
             "016_signals_as_events.sql",
+            "017_universe_official_yields.sql",
         });
 
         var expectedTables = new[]
@@ -100,7 +101,7 @@ public class MigrationIdempotencyTests : IAsyncLifetime
         await conn.OpenAsync();
 
         var migrationCount = await conn.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM _migrations");
-        migrationCount.Should().Be(16, "повторный запуск не должен заново применять уже применённые миграции");
+        migrationCount.Should().Be(17, "повторный запуск не должен заново применять уже применённые миграции");
 
         // users.base_currency существует ровно один раз (ALTER ... ADD COLUMN IF NOT EXISTS не падает повторно).
         var columnCount = await conn.ExecuteScalarAsync<long>(
@@ -148,6 +149,35 @@ public class MigrationIdempotencyTests : IAsyncLifetime
         (await ColumnCount("user_settings", "default_max_concentration_pct")).Should().Be(1, "рабочие пороги остались");
 
         (await conn.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM signals")).Should().Be(0);
+    }
+
+    [Fact]
+    public async Task RunAsync_Migration017_UniverseOfficialYieldColumnsAndHistoryExtensionExist()
+    {
+        var connectionString = _container.GetConnectionString();
+        await new MigrationRunner(connectionString, NullLogger<MigrationRunner>.Instance).RunAsync();
+
+        await using var conn = new MySqlConnection(connectionString);
+        await conn.OpenAsync();
+
+        async Task<long> ColumnCount(string table, string column) => await conn.ExecuteScalarAsync<long>(
+            @"SELECT COUNT(*) FROM information_schema.columns
+              WHERE table_schema = DATABASE() AND table_name = @Table AND column_name = @Column",
+            new { Table = table, Column = column });
+
+        foreach (var column in new[]
+                 {
+                     "accrued_rub", "issue_size", "effective_yield_fraction", "yield_to_offer_fraction",
+                     "yield_date_type", "gspread_official_fraction", "zspread_official_fraction",
+                 })
+        {
+            (await ColumnCount("bond_universe", column)).Should().Be(1, $"bond_universe.{column} добавлена миграцией 017");
+        }
+
+        foreach (var column in new[] { "bid", "offer", "list_level", "gspread_effective_fraction" })
+        {
+            (await ColumnCount("bond_universe_history", column)).Should().Be(1, $"bond_universe_history.{column} добавлена миграцией 017");
+        }
     }
 
     [Fact]

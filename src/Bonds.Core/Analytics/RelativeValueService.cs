@@ -17,8 +17,9 @@ namespace Bonds.Core.Analytics;
 /// <b>Смешение точного и приближённого G-спреда (осознанное решение плана).</b> Для позиций
 /// портфеля используется НАШ ТОЧНЫЙ спред движка (<c>PortfolioHolding.GSpread</c>, посчитан через
 /// <see cref="Bonds.Core.Calculation.BondMetricsCalculator"/> + <see cref="Bonds.Core.Calculation.GSpreadCalculator"/>),
-/// а корзины (медиана/перцентили) строятся по ПРИБЛИЖЁННОМУ спреду всей рыночной вселенной
-/// (<c>BondUniverseEntry.GspreadApproxFraction</c> — дешёвая биржевая статистика MOEX, см.
+/// а корзины (медиана/перцентили) строятся по спреду всей рыночной вселенной
+/// (<c>BondUniverseEntry.EffectiveGspreadFraction</c> — G-спред, посчитанный самой биржей
+/// (<c>marketdata_yields</c>), а при его отсутствии наше приближение по сохранённой кривой; см.
 /// doc-comment <c>BondUniverseEntry</c>). Точный и приближённый спред считаются по одной и той же
 /// формуле (G-спред = YTM/YIELD минус безрисковая кривая на срок дюрации), различие только в
 /// источнике YTM/дюрации (движок vs биржевые YIELD/DURATION MOEX) — типовое расхождение единицы

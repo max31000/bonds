@@ -315,7 +315,7 @@ public sealed class MoexIssClient : IMoexIssClient
         {
             var start = page * IssUniversePageSize;
             var url = "/iss/engines/stock/markets/bonds/securities.json"
-                      + $"?iss.only=securities,marketdata&iss.meta=off&start={start}&limit={IssUniversePageSize}";
+                      + $"?iss.only=securities,marketdata,marketdata_yields&iss.meta=off&start={start}&limit={IssUniversePageSize}";
             var json = await GetStringSafeAsync(url, ct);
             if (json is null)
             {

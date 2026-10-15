@@ -26,7 +26,7 @@ public enum SignalLevel
 /// <param name="LiquidityLabel">Человекочитаемая подпись, например "Высокая ликвидность, листинг 1"
 /// или "Низкий оборот, листинг 3" — без слова «надёжно».</param>
 /// <param name="Spread">Отклонение G-спреда кандидата от медианы ЕГО ЖЕ корзины (сектор × дюрация).</param>
-/// <param name="GSpreadFraction">ДОЛЯ; из <c>BondUniverseEntry.GspreadApproxFraction</c> кандидата.
+/// <param name="GSpreadFraction">ДОЛЯ; из <c>BondUniverseEntry.EffectiveGspreadFraction</c> кандидата (биржевой, при его отсутствии приближённый).
 /// Null, если MOEX не отдал спред/кривую (см. doc-comment поля источника) — тогда
 /// <see cref="Spread"/> = Neutral, а не Caution (нет данных ≠ негативный сигнал).</param>
 /// <param name="SpreadVsBasketMedianFraction">ДОЛЯ; = GSpreadFraction − медиана корзины кандидата.

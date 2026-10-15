@@ -166,7 +166,7 @@ public sealed class RelativeValueSnapshotBuilder
                     Secid = h.Secid,
                     Sector = currentBySecid[h.Secid].Sector,
                     DurationYears = h.DurationYears,
-                    GSpreadFraction = h.GspreadApproxFraction,
+                    GSpreadFraction = h.ResolvedGspreadFraction,
                     // bond_universe_history не хранит is_floater (см. doc-comment
                     // BondUniverseHistoryPoint) — берём из ТЕКУЩЕГО снимка, как и Sector выше.
                     // На практике всегда false здесь: dayGroup уже отфильтрован eligibleSecids
@@ -220,7 +220,7 @@ public sealed class RelativeValueSnapshotBuilder
                 Secid = h.Secid,
                 Sector = currentBySecid[h.Secid].Sector,
                 DurationYears = h.DurationYears,
-                GSpreadFraction = h.GspreadApproxFraction,
+                GSpreadFraction = h.ResolvedGspreadFraction,
                 IsFloater = currentBySecid[h.Secid].IsFloater == true,
             })
             .ToList();
@@ -246,7 +246,7 @@ public sealed class RelativeValueSnapshotBuilder
                 Secid = e.Secid,
                 Sector = e.Sector,
                 DurationYears = e.DurationYears,
-                GSpreadFraction = e.GspreadApproxFraction,
+                GSpreadFraction = e.EffectiveGspreadFraction,
                 IsFloater = e.IsFloater == true,
             })
             .ToList();

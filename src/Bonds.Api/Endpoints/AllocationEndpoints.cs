@@ -427,12 +427,15 @@ public static class AllocationEndpoints
     }
 
     /// <summary>
-    /// Маппинг банк-записи в кандидата аллокации. Цена лота (рубли) =
-    /// PricePercent/100 × FaceValue (контракт единиц — см. docs/CODEBASE-GUIDE.md) + комиссия
-    /// покупки; банк НЕ хранит НКД отдельной строкой на бумагу (нет поля в <c>BondUniverseEntry</c>)
-    /// — приближение "чистая цена без НКД" (AccruedRub=0), задокументировано, тот же уровень
-    /// точности, что и остальная банк-статистика (не точный движок). InstrumentId — null (см.
-    /// doc-comment <c>CashAllocationCandidate.InstrumentId</c>), идентификатор — Secid. Issuer — null
+    /// Маппинг банк-записи в кандидата аллокации. Цена лота (рубли за одну бумагу) =
+    /// <c>PricePercent/100 × FaceValue</c> (чистая цена) + <c>AccruedRub</c> (НКД в рублях на бумагу,
+    /// MOEX ACCRUEDINT — задача 42; контракт единиц — docs/CODEBASE-GUIDE.md) + комиссия покупки
+    /// от ГРЯЗНОЙ цены (как в ветке source=portfolio: <c>pricePerUnit × rate</c>). Пример: цена 95%,
+    /// номинал 1000, НКД 12.34 ₽, комиссия 0.3% → (950 + 12.34) × 1.003 = 965.23 ₽.
+    /// Если НКД банк-записи неизвестен (<c>accrued_rub IS NULL</c> — снимок до миграции 017 или
+    /// биржа не отдала) — прежнее приближение "чистая цена без НКД" (AccruedRub=0): цена лота
+    /// занижена на величину НКД. InstrumentId — null (см. doc-comment
+    /// <c>CashAllocationCandidate.InstrumentId</c>), идентификатор — Secid. Issuer — null
     /// (банк эмитента не хранит), Sector — из банка (альтернативная ось концентрации).
     /// IsComparable=true безусловно: флоатеры уже исключены фильтром вызывающего кода
     /// (<c>entry.IsFloater != true</c>), других "несравнимых" типов на банк-слое нет (тот же принцип,
@@ -441,8 +444,10 @@ public static class AllocationEndpoints
     private static CashAllocationCandidate ToAllocationCandidate(BondUniverseEntry entry, decimal commissionRate)
     {
         var cleanPriceRub = entry.PricePercent!.Value / 100m * entry.FaceValue!.Value;
-        var commissionRub = cleanPriceRub * commissionRate;
-        var pricePerLotRub = cleanPriceRub + commissionRub;
+        var accruedRub = entry.AccruedRub ?? 0m;
+        var dirtyPriceRub = cleanPriceRub + accruedRub;
+        var commissionRub = dirtyPriceRub * commissionRate;
+        var pricePerLotRub = dirtyPriceRub + commissionRub;
 
         return new CashAllocationCandidate
         {
@@ -457,7 +462,7 @@ public static class AllocationEndpoints
             LotSizeIsAssumed = true,
             CurrentIssuerMarketValueRub = 0m,
             CleanPriceRub = cleanPriceRub,
-            AccruedRub = 0m,
+            AccruedRub = accruedRub,
             CommissionRub = commissionRub,
             IsComparable = true,
         };
