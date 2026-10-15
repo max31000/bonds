@@ -411,4 +411,59 @@ public class ReliabilityScorecardEndpointsTests
             risk.GetProperty("valueVerdict").GetString().Should().Be("Cheap");
         }
     }
+
+    /// <summary>Ревью В2: мусорный год отчётности (9999 — потолок DateOnly, AddMonths переполняется) в БД не должен ронять
+    /// скоркарты всего банка: проблемная бумага откатывается к «неоценённой» (Yellow), соседняя считается как обычно.</summary>
+    [Fact]
+    public async Task GarbageReportingYear_FailsOnlyThatBond_NotTheWholeBank()
+    {
+        var marker = Marker();
+        var sector = $"Sector{marker}";
+        var universe = new BondUniverseRepository(Conn);
+        var broken = Bond($"BR{marker}", sector, 0.0300m);
+        var healthy = Bond($"HL{marker}", sector, 0.0300m);
+        await universe.UpsertSnapshotBatchAsync([broken, healthy]);
+        await ReliabilitySeed.SeedHealthyIssuerAsync(Conn, healthy.Secid, healthy.Isin!);
+
+        var innBroken = ReliabilitySeed.NewInn();
+        await ReliabilitySeed.AttachIssuerAsync(Conn, broken.Secid, ReliabilitySeed.NewEmitentId(), innBroken);
+        var garbage = ReliabilitySeed.HealthyFinancials(innBroken, IssuerFinancialsSources.Manual);
+        garbage[0].Period = 9999;
+        await ReliabilitySeed.SeedFinancialsAsync(Conn, innBroken, IssuerFinancialsStatuses.Ok, garbage);
+
+        var client = await AuthorizedClientAsync();
+
+        var brokenRisk = await GetReliabilityAsync(client, broken.Secid);
+        brokenRisk.GetProperty("reliability").GetString().Should().Be("Yellow");
+        brokenRisk.GetProperty("components").GetArrayLength().Should().Be(0, "откат к Unknown-скоркарте");
+        brokenRisk.GetProperty("reliabilityReason").GetString().Should().Contain("не удался");
+
+        var healthyRisk = await GetReliabilityAsync(client, healthy.Secid);
+        healthyRisk.GetProperty("components").GetArrayLength().Should().BeGreaterThan(0, "соседняя бумага не пострадала");
+
+        (await client.GetAsync($"/api/universe?search=BR{marker}")).StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    /// <summary>Ревью В2: G-спред флоатера несравним с фиксированными корзинами — valueVerdict = InsufficientData, а
+    /// «расширение спреда» флоатера не даёт SpreadShock (spread_momentum — Missing).</summary>
+    [Fact]
+    public async Task Floater_ValueVerdictIsInsufficientData_AndSpreadMomentumIsMissing()
+    {
+        var marker = Marker();
+        var sector = $"Sector{marker}";
+        var peers = Enumerable.Range(0, 5).Select(i => Bond($"PF{i}{marker}", sector, 0.0300m)).ToList();
+        var fixedBond = Bond($"FX{marker}", sector, 0.0400m);
+        var floater = Bond($"FL{marker}", sector, 0.0400m);
+        floater.IsFloater = true;
+        await new BondUniverseRepository(Conn).UpsertSnapshotBatchAsync([.. peers, fixedBond, floater]);
+
+        var client = await AuthorizedClientAsync();
+
+        (await GetReliabilityAsync(client, fixedBond.Secid)).GetProperty("valueVerdict").GetString().Should().Be("Cheap");
+
+        var floaterRisk = await GetReliabilityAsync(client, floater.Secid);
+        floaterRisk.GetProperty("valueVerdict").GetString().Should().Be("InsufficientData");
+        Component(floaterRisk, "spread_momentum").GetProperty("missing").GetBoolean().Should().BeTrue();
+        floaterRisk.GetProperty("criticalFlags").EnumerateArray().Select(f => f.GetString()).Should().NotContain("SpreadShock");
+    }
 }

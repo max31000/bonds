@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Bonds.Core.Models;
+using Microsoft.Extensions.Logging;
 
 namespace Bonds.Infrastructure.Connectors.GirBo;
 
@@ -20,6 +21,16 @@ public static class GirBoParser
 
     /// <summary><c>periodType</c> годовой отчётности в подаче (12 месяцев); остальные — промежуточные.</summary>
     public const int AnnualPeriodType = 12;
+
+    /// <summary>Нижняя граница правдоподобного отчётного года (ГИР БО — российская отчётность 1990+).</summary>
+    public const int MinReportingYear = 1990;
+
+    /// <summary>Верхняя граница отчётного года (потолок <see cref="DateOnly"/>); мусор вроде 20245 отсекается.</summary>
+    public const int MaxReportingYear = 9999;
+
+    /// <summary>Отчётный год в правдоподобном диапазоне [<see cref="MinReportingYear"/>, <see cref="MaxReportingYear"/>]:
+    /// мусорный год из внешнего JSON иначе дошёл бы до <c>new DateOnly(year, 12, 31)</c> скоркарты и уронил расчёт.</summary>
+    public static bool IsPlausibleYear(int year) => year is >= MinReportingYear and <= MaxReportingYear;
 
     private static readonly Regex HtmlTag = new("<[^>]+>", RegexOptions.Compiled);
 
@@ -60,8 +71,9 @@ public static class GirBoParser
             .FirstOrDefault();
     }
 
-    /// <summary>Список подач организации (<c>/nbo/organizations/{id}/bfo/</c>); записи без числового года пропускаются.</summary>
-    public static IReadOnlyList<GirBoFiling> ParseFilings(string json)
+    /// <summary>Список подач организации (<c>/nbo/organizations/{id}/bfo/</c>); записи без числового года или с
+    /// неправдоподобным годом (<see cref="IsPlausibleYear"/>) пропускаются, второе — с предупреждением в <paramref name="logger"/>.</summary>
+    public static IReadOnlyList<GirBoFiling> ParseFilings(string json, ILogger? logger = null)
     {
         using var doc = JsonDocument.Parse(json);
         if (doc.RootElement.ValueKind != JsonValueKind.Array) return [];
@@ -73,6 +85,12 @@ public static class GirBoParser
                 || !item.TryGetProperty("id", out var id) || id.ValueKind != JsonValueKind.Number
                 || !int.TryParse(GetString(item, "period"), NumberStyles.None, CultureInfo.InvariantCulture, out var period))
             {
+                continue;
+            }
+
+            if (!IsPlausibleYear(period))
+            {
+                logger?.LogWarning("ГИР БО: подача {FilingId} пропущена — неправдоподобный отчётный год {Period}", id.GetInt64(), period);
                 continue;
             }
 
@@ -90,9 +108,11 @@ public static class GirBoParser
     /// (current → period, previous → period−1, beforePrevious → period−2): так одна свежая подача даёт тренд.
     /// Год без единой ключевой цифры (ни баланса 1600, ни выручки 2110) пропускается. Разбираются только
     /// нужные строки; форма 2 (ОФР) содержит лишь current/previous — у третьего года ОФР-поля null.
-    /// Все суммы ×<see cref="ThousandsToRubles"/>. Пустой список — годовых данных нет.
+    /// Все суммы ×<see cref="ThousandsToRubles"/>. Пустой список — годовых данных нет. Год вне диапазона
+    /// <see cref="IsPlausibleYear"/> (сам <paramref name="period"/> или период−1/−2) пропускается с предупреждением в <paramref name="logger"/>.
     /// </summary>
-    public static IReadOnlyList<IssuerFinancials> ParseAnnualFinancials(string json, string inn, int period, DateTime fetchedAtUtc)
+    public static IReadOnlyList<IssuerFinancials> ParseAnnualFinancials(
+        string json, string inn, int period, DateTime fetchedAtUtc, ILogger? logger = null)
     {
         using var doc = JsonDocument.Parse(json);
         if (doc.RootElement.ValueKind != JsonValueKind.Array) return [];
@@ -128,6 +148,12 @@ public static class GirBoParser
         for (var offset = 0; offset < YearPrefixes.Length; offset++)
         {
             var prefix = YearPrefixes[offset];
+            if (!IsPlausibleYear(period - offset))
+            {
+                logger?.LogWarning("ГИР БО: отчётность ИНН {Inn} за {Period} пропущена — неправдоподобный отчётный год", inn, period - offset);
+                continue;
+            }
+
             var row = new IssuerFinancials
             {
                 Inn = inn,

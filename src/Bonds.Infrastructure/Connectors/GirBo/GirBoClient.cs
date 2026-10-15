@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text.Json;
 using Bonds.Core.Models;
+using Microsoft.Extensions.Logging;
 
 namespace Bonds.Infrastructure.Connectors.GirBo;
 
@@ -15,8 +16,13 @@ public sealed class GirBoClient : IGirBoClient
     public const string HttpClientName = "girbo";
 
     private readonly HttpClient _http;
+    private readonly ILogger? _logger;
 
-    public GirBoClient(IHttpClientFactory httpClientFactory) => _http = httpClientFactory.CreateClient(HttpClientName);
+    public GirBoClient(IHttpClientFactory httpClientFactory, ILogger<GirBoClient>? logger = null)
+    {
+        _http = httpClientFactory.CreateClient(HttpClientName);
+        _logger = logger;
+    }
 
     public async Task<GirBoOrganization?> FindOrganizationAsync(string inn, CancellationToken ct = default)
     {
@@ -27,14 +33,14 @@ public sealed class GirBoClient : IGirBoClient
     public async Task<IReadOnlyList<GirBoFiling>> GetFilingsAsync(long organizationId, CancellationToken ct = default)
     {
         var json = await GetStringAsync($"/nbo/organizations/{organizationId}/bfo/", ct);
-        return json is null ? [] : Parse(() => GirBoParser.ParseFilings(json), "bfo list");
+        return json is null ? [] : Parse(() => GirBoParser.ParseFilings(json, _logger), "bfo list");
     }
 
     public async Task<IReadOnlyList<IssuerFinancials>> GetAnnualFinancialsAsync(
         long bfoId, string inn, int period, DateTime fetchedAtUtc, CancellationToken ct = default)
     {
         var json = await GetStringAsync($"/nbo/bfo/{bfoId}/details", ct);
-        return json is null ? [] : Parse(() => GirBoParser.ParseAnnualFinancials(json, inn, period, fetchedAtUtc), "details");
+        return json is null ? [] : Parse(() => GirBoParser.ParseAnnualFinancials(json, inn, period, fetchedAtUtc, _logger), "details");
     }
 
     /// <summary>GET → тело; null на 404 («не найдено» — нормально); недоступность → <see cref="GirBoUnavailableException"/>.</summary>

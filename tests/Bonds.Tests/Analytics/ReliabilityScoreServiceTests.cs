@@ -632,15 +632,61 @@ public class ReliabilityScoreServiceTests
     }
 
     [Fact]
-    public void LowScore_BelowThirtyFive_IsRed_ButNoData_IsNotRed()
+    public void LowScore_BelowThirtyFive_IsRed_OnlyWhenCoverageIsSufficient_OtherwiseYellow()
     {
-        // Листинг 3 (0/15), оферта есть (0/5), квал-only (0/3): доступно 23, набрано 0 → Score 0 → Red.
-        var bad = Base() with { ListLevel = 3, OfferDate = Today.AddMonths(6), IsQualifiedInvestors = true };
-        ReliabilityScoreService.Evaluate(bad).Level.Should().Be(ReliabilityLight.Red);
+        // Мало данных: листинг 3 (0/15), оферта есть (0/5), квал-only (0/3): доступно 23 из 105, набрано 0 →
+        // Score 0, но Coverage 23/105 = 0.219 < 0.3 → «почти нет данных» → Yellow, не Red.
+        var sparse = Base() with { ListLevel = 3, OfferDate = Today.AddMonths(6), IsQualifiedInvestors = true };
+        var sparseScore = ReliabilityScoreService.Evaluate(sparse);
+        sparseScore.Score.Should().Be(0m);
+        sparseScore.Coverage.Should().BeLessThan(ReliabilityScoreOptions.RedScoreMinCoverage);
+        sparseScore.Level.Should().Be(ReliabilityLight.Yellow);
+        sparseScore.Reason.Should().Contain("данных слишком мало");
+
+        // Достаточно данных и низкий балл: добавлены «чистая» дефолт-история (12/12) и брокер High (0/10):
+        // доступно 45 из 105 (Coverage 0.429 ≥ 0.3), набрано 12 → Score 26.7 < 35 → Red.
+        var enough = sparse with { IssuerHasDefault = false, IssuerHasTechnicalDefault = false, BrokerRiskLevel = BrokerRiskLevel.High };
+        var enoughScore = ReliabilityScoreService.Evaluate(enough);
+        enoughScore.Score.Should().BeLessThan(ReliabilityScoreOptions.RedScoreBelow);
+        enoughScore.Coverage.Should().BeGreaterThanOrEqualTo(ReliabilityScoreOptions.RedScoreMinCoverage);
+        enoughScore.CriticalFlags.Should().BeEmpty("Red здесь — именно по порогу балла, не по флагу");
+        enoughScore.Level.Should().Be(ReliabilityLight.Red);
+        enoughScore.Reason.Should().Contain("ниже порога");
 
         // Пустой вход: «нет данных» не превращается в ноль молча — считаются только listing (вне списков, 0/15) и no_offer (5/5).
         var empty = ReliabilityScoreService.Evaluate(Base());
         empty.Components.Where(c => !c.Missing).Select(c => c.Key).Should().BeEquivalentTo("listing", "no_offer");
+        empty.Level.Should().NotBe(ReliabilityLight.Red);
+    }
+
+    [Fact]
+    public void CriticalFlag_StillRed_EvenWithTinyCoverage()
+    {
+        // Данных мало: listing (15) + no_offer (5) + spread_momentum (8) = 28 из 105 → Coverage 0.267 < 0.3,
+        // но спред-шок (+70 б.п.) — критический флаг: Red от Coverage не зависит.
+        var s = ReliabilityScoreService.Evaluate(Base() with
+        {
+            GSpreadFraction = 0.0300m, GSpreadHistory = Enumerable.Repeat(0.0230m, 12).ToList(),
+        });
+
+        s.CriticalFlags.Should().Contain(ReliabilityFlags.SpreadShock);
+        s.Coverage.Should().BeLessThan(ReliabilityScoreOptions.RedScoreMinCoverage);
+        s.Level.Should().Be(ReliabilityLight.Red);
+    }
+
+    [Fact]
+    public void Floater_WideningSpread_IsMissing_NoSpreadShock()
+    {
+        // Те же вход и «расширение» +70 б.п., что даёт SpreadShock/Red у фиксированного купона (тест SpreadShock_IsCriticalAndRed…).
+        var fixedCoupon = CalmMarket(CleanStructure(Base())) with { GSpreadFraction = 0.0300m, GSpreadHistory = Enumerable.Repeat(0.0230m, 12).ToList() };
+        ReliabilityScoreService.Evaluate(fixedCoupon).CriticalFlags.Should().Contain(ReliabilityFlags.SpreadShock);
+
+        var floater = ReliabilityScoreService.Evaluate(fixedCoupon with { IsFloater = true });
+
+        Component(floater, "spread_momentum").Missing.Should().BeTrue();
+        Component(floater, "spread_momentum").RawDisplay.Should().Contain("флоатер");
+        floater.CriticalFlags.Should().NotContain(ReliabilityFlags.SpreadShock);
+        floater.Level.Should().NotBe(ReliabilityLight.Red);
     }
 
     [Fact]

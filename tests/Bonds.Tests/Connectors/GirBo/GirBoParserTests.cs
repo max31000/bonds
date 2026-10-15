@@ -1,6 +1,8 @@
 using Bonds.Core.Models;
 using Bonds.Infrastructure.Connectors.GirBo;
 using FluentAssertions;
+using Microsoft.Extensions.Logging;
+using Moq;
 using Xunit;
 
 namespace Bonds.Tests.Connectors.GirBo;
@@ -87,6 +89,61 @@ public class GirBoParserTests
         var filings = GirBoParser.ParseFilings(json);
 
         filings.Should().ContainSingle().Which.Should().Be(new GirBoFiling(1, 2024, true));
+    }
+
+    private static void VerifyWarnings(Mock<ILogger> logger, int times) =>
+        logger.Verify(l => l.Log(LogLevel.Warning, It.IsAny<EventId>(), It.IsAny<It.IsAnyType>(), null, It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Exactly(times));
+
+    [Theory]
+    [InlineData("1989")]
+    [InlineData("20245")]
+    [InlineData("0")]
+    public void ParseFilings_SkipsImplausibleYear_WithWarning(string year)
+    {
+        var json = $$"""[{"id":1,"period":"2024","isCb":false},{"id":2,"period":"{{year}}"}]""";
+        var logger = new Mock<ILogger>();
+
+        var filings = GirBoParser.ParseFilings(json, logger.Object);
+
+        filings.Should().ContainSingle().Which.Period.Should().Be(2024);
+        VerifyWarnings(logger, 1);
+    }
+
+    [Fact]
+    public void ParseFilings_AcceptsBoundaryYears()
+    {
+        var json = """[{"id":1,"period":"1990"},{"id":2,"period":"9999"}]""";
+
+        GirBoParser.ParseFilings(json).Select(f => f.Period).Should().Equal(1990, 9999);
+    }
+
+    [Fact]
+    public void ParseAnnualFinancials_ImplausibleReportingYear_IsSkippedWithWarning()
+    {
+        var json = Details(Correction(version: 0, periodType: 12, revenue: 100, assets: 1000));
+        var logger = new Mock<ILogger>();
+
+        GirBoParser.ParseAnnualFinancials(json, "7700000003", 20245, Now, logger.Object).Should().BeEmpty();
+
+        VerifyWarnings(logger, 3);
+    }
+
+    [Fact]
+    public void ParseAnnualFinancials_EarlierYearsBelowFloor_AreDropped_PlausibleOnesKept()
+    {
+        // period = 1991 → previous = 1990 (ок), beforePrevious = 1989 (мусор). В корректировке данные есть только за current.
+        var json = """
+        [{"periodType":12,"correctionVersion":0,"auditReport":null,
+          "balance":{"current1600":5.0,"previous1600":4.0,"beforePrevious1600":3.0},
+          "financialResult":{"current2110":7.0,"previous2110":6.0,"beforePrevious2110":5.0}}]
+        """;
+        var logger = new Mock<ILogger>();
+
+        var rows = GirBoParser.ParseAnnualFinancials(json, "7700000003", 1991, Now, logger.Object);
+
+        rows.Select(r => r.Period).Should().Equal(1991, 1990);
+        VerifyWarnings(logger, 1);
     }
 
     // ─── details ──────────────────────────────────────────────────────────────────────────────

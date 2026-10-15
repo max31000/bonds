@@ -116,7 +116,9 @@ internal static class AnalyticsSupport
     /// <summary>См. <see cref="AssessValueVerdict"/>; дополнительно отдаёт медиану корзины (= G-спред − отклонение) и порог.</summary>
     internal static ValueAssessment AssessValue(BondUniverseEntry? entry, RelativeValueSnapshotBuilder.RelativeValueSnapshot snapshot)
     {
-        if (entry?.EffectiveGspreadFraction is not { } spread)
+        // Флоатер несравним с фиксированными корзинами (его доходность — текущая по плавающему купону, а корзины
+        // строятся без флоатеров — RelativeValueSnapshotBuilder), поэтому вердикт — InsufficientData, а не сравнение.
+        if (entry?.EffectiveGspreadFraction is not { } spread || entry.IsFloater == true)
         {
             return new ValueAssessment(RelativeValueVerdict.InsufficientData.ToString(), null, null);
         }

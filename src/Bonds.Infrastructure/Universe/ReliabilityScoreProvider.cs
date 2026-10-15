@@ -4,6 +4,7 @@ using Bonds.Core.Models;
 using Bonds.Core.Time;
 using Bonds.Core.Universe;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 namespace Bonds.Infrastructure.Universe;
@@ -64,6 +65,7 @@ public sealed class ReliabilityScoreProvider
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly RelativeValueSnapshotBuilder _snapshotBuilder;
     private readonly TimeSpan _cacheDuration;
+    private readonly ILogger<ReliabilityScoreProvider> _logger;
     private readonly SemaphoreSlim _buildGate = new(1, 1);
 
     private ReliabilityBook? _cached;
@@ -72,8 +74,10 @@ public sealed class ReliabilityScoreProvider
     public ReliabilityScoreProvider(
         IServiceScopeFactory scopeFactory,
         RelativeValueSnapshotBuilder snapshotBuilder,
-        IOptions<BondUniverseRefreshOptions> options)
+        IOptions<BondUniverseRefreshOptions> options,
+        ILogger<ReliabilityScoreProvider> logger)
     {
+        _logger = logger;
         _scopeFactory = scopeFactory;
         _snapshotBuilder = snapshotBuilder;
         _cacheDuration = options.Value.RelativeValueCacheDuration;
@@ -182,6 +186,7 @@ public sealed class ReliabilityScoreProvider
             {
                 Today = today,
                 Sector = entry.Sector,
+                IsFloater = entry.IsFloater == true,
                 IssuerHasDefault = issuerWide ? emitentDefaults!.HasDefault : card?.HasDefault,
                 IssuerHasTechnicalDefault = issuerWide ? emitentDefaults!.HasTechnicalDefault : card?.HasTechnicalDefault,
                 DefaultHistoryIsIssuerWide = issuerWide,
@@ -203,7 +208,18 @@ public sealed class ReliabilityScoreProvider
                 TurnoverMedianRub = snapshot.LiquidityTurnoverRub(entry),
             };
 
-            bySecid[entry.Secid] = ReliabilityScoreService.Evaluate(input);
+            // Сбой расчёта ОДНОЙ бумаги (мусорные данные в отчётности и т.п.) не должен ронять скоркарты всего банка:
+            // откат этой бумаги к «неизвестной» (Yellow без компонентов) и предупреждение в лог.
+            try
+            {
+                bySecid[entry.Secid] = ReliabilityScoreService.Evaluate(input);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogWarning(ex, "Скоркарта надёжности: расчёт по {Secid} не удался, бумага помечена как неоценённая", entry.Secid);
+                bySecid[entry.Secid] = ReliabilityScoreService.Unknown("Жёлтый: расчёт надёжности по этой бумаге не удался (некорректные входные данные) — оценка недоступна.");
+            }
+
             if (!string.IsNullOrWhiteSpace(entry.Isin)) secidByIsin[entry.Isin] = entry.Secid;
         }
 

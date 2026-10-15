@@ -27,6 +27,10 @@ public sealed record ReliabilityScoreInput
     /// <summary>«Сегодня» (МСК) — для свежести рейтингов, отчётности и неисполненной оферты.</summary>
     public required DateOnly Today { get; init; }
 
+    /// <summary>Флоатер (<c>BondUniverseEntry.IsFloater == true</c>): его G-спред — не сравнимая величина (YIELD
+    /// флоатера — текущая доходность по плавающему купону), поэтому spread_momentum → Missing, SpreadShock не ставится.</summary>
+    public bool IsFloater { get; init; }
+
     /// <summary>Сектор банка (<c>BondUniverseEntry.Sector</c>): «Гособлигации»/«Муниципальные» → бонус sovereign вместо слоя B.</summary>
     public string? Sector { get; init; }
 
@@ -203,15 +207,19 @@ public static class ReliabilityScoreService
     /// Скоркарта для бумаги, которой нет в банке облигаций (нечего оценивать): ни одного компонента, Score 0,
     /// Coverage 0, Yellow — «нет данных» не краснит и не зеленит бумагу.
     /// </summary>
-    public static ReliabilityScore Unknown() => new(
-        0m, 0m, ReliabilityLight.Yellow, "Жёлтый: бумаги нет в банке облигаций MOEX — оценка надёжности невозможна.", [], [], []);
+    public static ReliabilityScore Unknown() => Unknown("Жёлтый: бумаги нет в банке облигаций MOEX — оценка надёжности невозможна.");
+
+    /// <summary>Скоркарта-заглушка с заданной причиной (например, сбой расчёта по одной бумаге): та же форма, что
+    /// <see cref="Unknown()"/> — Yellow, Score 0, Coverage 0, без компонентов.</summary>
+    public static ReliabilityScore Unknown(string reason) => new(0m, 0m, ReliabilityLight.Yellow, reason, [], [], []);
 
     // ─── Светофор ─────────────────────────────────────────────────────────────────────────
 
     /// <summary>
     /// Маппинг на светофор. Red: IssuerDefaulted | InterestUncovered | NegativeEquity | SpreadShock | (ось
     /// ликвидности Caution И медианный оборот &lt; <see cref="ReliabilityScoreOptions.DeadLiquidityTurnoverRub"/>) |
-    /// Score &lt; <see cref="ReliabilityScoreOptions.RedScoreBelow"/> (только когда есть хоть один компонент с данными).
+    /// Score &lt; <see cref="ReliabilityScoreOptions.RedScoreBelow"/> при Coverage ≥
+    /// <see cref="ReliabilityScoreOptions.RedScoreMinCoverage"/> (при меньшем покрытии «почти нет данных» → Yellow).
     /// Green: Score ≥ 65, Coverage ≥ 0.6, листинг ∈ {1,2}, нет критических флагов и — для несуверенных —
     /// есть данные слоя B («Green — при живом фундаментале», docs §7.1; иначе банк с полным набором A+C
     /// набирал бы Coverage 0.62 и краснел бы зелёным без отчётности). Остальное — Yellow.
@@ -239,7 +247,9 @@ public static class ReliabilityScoreService
             redCauses.Add("ликвидность в зоне риска, медианный оборот ниже 300 тыс. ₽/день");
         }
 
-        if (available > 0 && score < Opt.RedScoreBelow)
+        // Red по баллу — только при достаточном Coverage: «почти нет данных» не краснит бумагу (→ Yellow).
+        var lowScoreWithoutEvidence = available > 0 && score < Opt.RedScoreBelow && coverage < Opt.RedScoreMinCoverage;
+        if (available > 0 && score < Opt.RedScoreBelow && coverage >= Opt.RedScoreMinCoverage)
         {
             redCauses.Add($"балл {score.ToString("0.#", Inv)} ниже порога {Opt.RedScoreBelow.ToString("0", Inv)}");
         }
@@ -263,7 +273,12 @@ public static class ReliabilityScoreService
         }
 
         var gaps = new List<string>();
-        if (score < Opt.GreenScoreAtLeast) gaps.Add($"балл {score.ToString("0.#", Inv)} ниже {Opt.GreenScoreAtLeast.ToString("0", Inv)}");
+        if (lowScoreWithoutEvidence)
+        {
+            gaps.Add($"балл {score.ToString("0.#", Inv)} ниже {Opt.RedScoreBelow.ToString("0", Inv)}, но данных слишком мало " +
+                     $"(покрытие < {(Opt.RedScoreMinCoverage * 100m).ToString("0", Inv)}%) для красного");
+        }
+        else if (score < Opt.GreenScoreAtLeast) gaps.Add($"балл {score.ToString("0.#", Inv)} ниже {Opt.GreenScoreAtLeast.ToString("0", Inv)}");
         if (coverage < Opt.GreenCoverageAtLeast)
         {
             gaps.Add($"покрытие данных {(coverage * 100m).ToString("0", Inv)}% ниже {(Opt.GreenCoverageAtLeast * 100m).ToString("0", Inv)}%");
@@ -687,6 +702,12 @@ public static class ReliabilityScoreService
         const string key = "spread_momentum";
         const string title = "Динамика G-спреда";
         var history = input.GSpreadHistory ?? [];
+        if (input.IsFloater)
+        {
+            return Missing(key, title, Opt.SpreadMomentumMaxPoints, SourceHistory, LayerC,
+                "флоатер: G-спред несравним (доходность — текущая, не к погашению)");
+        }
+
         if (input.GSpreadFraction is not { } today || history.Count < Opt.MinHistoryDays)
         {
             return Missing(key, title, Opt.SpreadMomentumMaxPoints, SourceHistory, LayerC,

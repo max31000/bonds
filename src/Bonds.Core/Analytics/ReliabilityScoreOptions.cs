@@ -139,8 +139,15 @@ public static class ReliabilityScoreOptions
 
     // ─── Светофор ─────────────────────────────────────────────────────────────────────────
 
-    /// <summary>Red: Score ниже этого (по доступным компонентам).</summary>
+    /// <summary>Red: Score ниже этого (по доступным компонентам) — но только при Coverage не ниже
+    /// <see cref="RedScoreMinCoverage"/>.</summary>
     public const decimal RedScoreBelow = 35m;
+
+    /// <summary>Red по порогу <see cref="RedScoreBelow"/> требует Coverage не ниже этого (ДОЛЯ максимума, закрытая
+    /// данными, 0.3 = 30%). Иначе Score «по трём-четырём компонентам» (например листинг 3 без всех остальных данных)
+    /// краснил бы бумагу, о которой почти ничего не известно; «почти нет данных» → Yellow, а не Red. Критические
+    /// флаги (дефолт, непокрытые проценты, …) от Coverage не зависят и по-прежнему дают Red.</summary>
+    public const decimal RedScoreMinCoverage = 0.3m;
 
     /// <summary>Green: Score не ниже этого.</summary>
     public const decimal GreenScoreAtLeast = 65m;
