@@ -83,6 +83,10 @@ public static class DependencyInjection
         // Задача 45: отчётность эмитентов (ГИР БО) и статусы проверки по ИНН.
         services.AddScoped<IIssuerFinancialsRepository>(sp => new IssuerFinancialsRepository(GetConnStr(sp)));
 
+        // Задача 46: суточный кэш risk_level облигаций T-Invest и ручные рейтинги эмитентов.
+        services.AddScoped<IInstrumentRiskLevelRepository>(sp => new InstrumentRiskLevelRepository(GetConnStr(sp)));
+        services.AddScoped<IIssuerRatingRepository>(sp => new IssuerRatingRepository(GetConnStr(sp)));
+
         // Migration runner
         services.AddSingleton(sp => new MigrationRunner(
             GetConnStr(sp),
@@ -135,6 +139,9 @@ public static class DependencyInjection
         // Оркестрация синка — без HTTP-эндпоинта/шедулера на этом этапе,
         // вызывается программно/из тестов.
         services.AddScoped<BondSyncService>();
+
+        // Задача 46: суточное обновление risk_level облигаций T-Invest (один bulk-вызов Bonds(), шаг цикла синка).
+        services.AddScoped<InstrumentRiskLevelRefresher>();
 
         // Единый путь "обогатить одну бумагу по ISIN" (резолв инструмента +
         // MOEX-котировка), вынесенный из WatchlistSyncService — переиспользуется watchlist
@@ -221,6 +228,9 @@ public static class DependencyInjection
         // корзин relative value + кэш ~1 час в памяти — Singleton (кэш переживает HTTP-запросы),
         // резолвит Scoped IBondUniverseRepository через IServiceScopeFactory (см. doc-comment).
         services.AddSingleton<Bonds.Infrastructure.Universe.RelativeValueSnapshotBuilder>();
+
+        // Задача 46: скоркарта надёжности всего банка (батчевая сборка входов + кэш; Invalidate при ручном вводе).
+        services.AddSingleton<Bonds.Infrastructure.Universe.ReliabilityScoreProvider>();
 
         return services;
     }

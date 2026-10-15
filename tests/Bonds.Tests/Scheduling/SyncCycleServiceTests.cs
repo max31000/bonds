@@ -51,6 +51,7 @@ public class SyncCycleServiceTests
     private readonly Mock<ITelegramAlertSender> _alertSender = new();
     private readonly Mock<ITInvestTokenProvider> _tokenProvider = new();
     private readonly Mock<IWatchlistItemRepository> _watchlistItems = new();
+    private readonly Mock<IInstrumentRiskLevelRepository> _riskLevels = new();
 
     private void SetupNoPositionsHappyPath()
     {
@@ -104,6 +105,7 @@ public class SyncCycleServiceTests
         services.AddSingleton(_userSettings.Object);
         services.AddSingleton(_alertSender.Object);
         services.AddSingleton(_watchlistItems.Object);
+        services.AddSingleton(_riskLevels.Object);
 
         services.AddSingleton(NullLoggerFactory.Instance);
         services.AddSingleton(typeof(Microsoft.Extensions.Logging.ILogger<>), typeof(NullLogger<>));
@@ -115,6 +117,7 @@ public class SyncCycleServiceTests
         services.AddScoped<InstrumentEnrichmentService>();
         services.AddScoped<WatchlistSyncService>();
         services.AddScoped<PortfolioHistoryBackfillService>();
+        services.AddScoped<InstrumentRiskLevelRefresher>();
 
         services.AddSingleton<IOptions<SignalEngineOptions>>(Options.Create(new SignalEngineOptions()));
         services.AddSingleton<ISyncCycleRunner, SyncCycleService>();
@@ -182,6 +185,33 @@ public class SyncCycleServiceTests
         status.LastRunStartedAtUtc.Should().NotBeNull();
 
         _snapshots.Verify(s => s.UpsertAsync(It.Is<PortfolioValueSnapshot>(snap => snap.AccountId == AccountId)), Times.Once);
+    }
+
+    [Fact]
+    public async Task RunCycleAsync_RiskLevelStepRunsOnceBulkCall_AndItsFailureDoesNotFailTheCycle()
+    {
+        SetupNoPositionsHappyPath();
+        _riskLevels.Setup(r => r.GetLastFetchedAtAsync(It.IsAny<CancellationToken>())).ReturnsAsync((DateTime?)null);
+        _tInvest.Setup(c => c.GetBondRiskLevelsAsync(It.IsAny<CancellationToken>())).ThrowsAsync(new Exception("grpc down"));
+        var runner = BuildServiceProvider().GetRequiredService<ISyncCycleRunner>();
+
+        var result = await runner.RunCycleAsync();
+
+        _tInvest.Verify(c => c.GetBondRiskLevelsAsync(It.IsAny<CancellationToken>()), Times.Once);
+        result.HasErrors.Should().BeFalse("risk_level — необязательный вход скоркарты, сбой не краснит синк");
+        result.SnapshotStored.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task RunCycleAsync_TokenInvalid_RiskLevelStepIsSkipped()
+    {
+        SetupNoPositionsHappyPath();
+        _tokenProvider.Setup(t => t.GetTokenStatusAsync(It.IsAny<CancellationToken>())).ReturnsAsync(TInvestTokenStatus.NotConfigured);
+        var runner = BuildServiceProvider().GetRequiredService<ISyncCycleRunner>();
+
+        await runner.RunCycleAsync();
+
+        _tInvest.Verify(c => c.GetBondRiskLevelsAsync(It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]

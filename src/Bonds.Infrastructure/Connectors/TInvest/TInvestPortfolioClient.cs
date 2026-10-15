@@ -280,4 +280,32 @@ public sealed class TInvestPortfolioClient : ITInvestPortfolioClient
 
         return result;
     }
+
+    public async Task<IReadOnlyList<TInvestBondRiskLevel>> GetBondRiskLevelsAsync(CancellationToken ct = default)
+    {
+        var client = await GetClientAsync(ct);
+        var response = await client.Instruments.BondsAsync(
+            new InstrumentsRequest { InstrumentStatus = InstrumentStatus.Base }, cancellationToken: ct);
+
+        var result = new List<TInvestBondRiskLevel>(response.Instruments.Count);
+        foreach (var bond in response.Instruments)
+        {
+            if (string.IsNullOrWhiteSpace(bond.Isin)) continue;
+            result.Add(new TInvestBondRiskLevel(bond.Isin.Trim(), MapRiskLevel(bond.RiskLevel)));
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Протобуф-enum <c>RiskLevel</c> (UNSPECIFIED=0, LOW=1, MODERATE=2, HIGH=3) → доменный
+    /// <see cref="Bonds.Core.Models.BrokerRiskLevel"/>; неизвестное значение (новые версии API) → Unspecified.
+    /// </summary>
+    internal static Bonds.Core.Models.BrokerRiskLevel MapRiskLevel(RiskLevel level) => level switch
+    {
+        RiskLevel.Low => Bonds.Core.Models.BrokerRiskLevel.Low,
+        RiskLevel.Moderate => Bonds.Core.Models.BrokerRiskLevel.Moderate,
+        RiskLevel.High => Bonds.Core.Models.BrokerRiskLevel.High,
+        _ => Bonds.Core.Models.BrokerRiskLevel.Unspecified,
+    };
 }
