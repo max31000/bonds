@@ -8,6 +8,7 @@ import { Positions } from './Positions';
 import { usePositionsStore } from '../store/usePositionsStore';
 import { useLiveStore } from '../store/useLiveStore';
 import { useRelativeValueStore } from '../store/useRelativeValueStore';
+import { usePositionVerdictStore } from '../store/usePositionVerdictStore';
 import type { PositionRow } from '../api/types';
 
 function renderPositions() {
@@ -86,6 +87,7 @@ describe('Positions', () => {
     usePositionsStore.setState({ positions: [], disclaimer: '', isLoading: false, error: null });
     useLiveStore.setState({ positionsById: {}, totalMarketValueRub: null, asOfUtc: null });
     useRelativeValueStore.setState({ positionsById: {}, disclaimer: '', isLoading: false, error: null, hasLoaded: false });
+    usePositionVerdictStore.setState({ verdictsById: {}, disclaimer: '', isLoading: false, error: null, hasLoaded: false });
   });
 
   it('renders a regular bond using ytmEffective as the yield', async () => {
@@ -740,6 +742,89 @@ describe('Positions', () => {
       expect(screen.getByTestId('accrued-caption-card-45')).toHaveTextContent('900');
 
       restore();
+    });
+  });
+
+  // ─── Задача 49: вердикт позиции ──────────────────────────────────────────────────────
+
+  describe('position verdict badge (T-49)', () => {
+    const verdictFixture = (kind: string, reasons: string[] = ['Причина А', 'Причина Б']) => ({
+      positionId: basePosition.positionId,
+      instrumentId: basePosition.instrumentId,
+      verdict: kind,
+      reasons,
+      confidence: 'High',
+      bestReplacement: null,
+    });
+
+    it.each([
+      ['Hold', 'Без изменений'],
+      ['BuyMoreCandidate', 'Кандидат на докупку'],
+      ['ConsiderReplace', 'Рассмотреть замену'],
+      ['ConsiderExit', 'Рассмотреть выход'],
+    ])('shows the %s verdict badge in the table row', async (kind, label) => {
+      server.use(
+        http.get('*/api/positions', () => HttpResponse.json({ positions: [basePosition], disclaimer: '' })),
+        http.get('*/api/analytics/position-verdicts', () =>
+          HttpResponse.json({ verdicts: [verdictFixture(kind)], disclaimer: 'дисклеймер вердиктов' }),
+        ),
+      );
+
+      renderPositions();
+
+      await waitFor(() => expect(screen.getByTestId(`position-verdict-${basePosition.positionId}`)).toBeInTheDocument());
+      const badge = screen.getByTestId(`position-verdict-${basePosition.positionId}`);
+      expect(badge).toHaveTextContent(label);
+      expect(badge).toHaveAttribute('data-verdict', kind);
+    });
+
+    it('shows the reasons in the tooltip on hover', async () => {
+      server.use(
+        http.get('*/api/positions', () => HttpResponse.json({ positions: [basePosition], disclaimer: '' })),
+        http.get('*/api/analytics/position-verdicts', () =>
+          HttpResponse.json({ verdicts: [verdictFixture('ConsiderExit', ['Критическая причина'])], disclaimer: '' }),
+        ),
+      );
+      const { default: userEvent } = await import('@testing-library/user-event');
+
+      renderPositions();
+
+      await waitFor(() => expect(screen.getByTestId(`position-verdict-${basePosition.positionId}`)).toBeInTheDocument());
+      await userEvent.hover(screen.getByTestId(`position-verdict-${basePosition.positionId}`));
+
+      await waitFor(() => expect(screen.getByText('Критическая причина')).toBeInTheDocument());
+    });
+
+    it('shows the verdict on the mobile card as well', async () => {
+      const restore = mockMobileViewport();
+      server.use(
+        http.get('*/api/positions', () => HttpResponse.json({ positions: [basePosition], disclaimer: '' })),
+        http.get('*/api/analytics/position-verdicts', () =>
+          HttpResponse.json({ verdicts: [verdictFixture('BuyMoreCandidate')], disclaimer: '' }),
+        ),
+      );
+
+      renderPositions();
+
+      await waitFor(() => expect(screen.getByTestId(`position-verdict-${basePosition.positionId}`)).toBeInTheDocument());
+      expect(screen.getByTestId(`position-card-${basePosition.positionId}`)).toContainElement(
+        screen.getByTestId(`position-verdict-${basePosition.positionId}`),
+      );
+
+      restore();
+    });
+
+    it('does not crash the positions table when GET /api/analytics/position-verdicts fails', async () => {
+      server.use(
+        http.get('*/api/positions', () => HttpResponse.json({ positions: [basePosition], disclaimer: '' })),
+        http.get('*/api/analytics/position-verdicts', () => HttpResponse.json({ error: 'boom' }, { status: 500 })),
+      );
+
+      renderPositions();
+
+      await waitFor(() => expect(screen.getByTestId('positions-table')).toBeInTheDocument());
+      await waitFor(() => expect(usePositionVerdictStore.getState().hasLoaded).toBe(true));
+      expect(screen.queryByTestId(`position-verdict-${basePosition.positionId}`)).not.toBeInTheDocument();
     });
   });
 });

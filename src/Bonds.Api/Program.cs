@@ -88,6 +88,7 @@ app.MapCashFlowEndpoints();
 app.MapXirrEndpoints();
 app.MapPortfolioAnalyticsEndpoints();
 app.MapReplacementEndpoints();
+app.MapPositionVerdictEndpoints();
 app.MapAllocationEndpoints();
 app.MapSignalsEndpoints();
 app.MapSyncEndpoints();

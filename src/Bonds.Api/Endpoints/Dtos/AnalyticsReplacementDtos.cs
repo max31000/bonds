@@ -247,7 +247,9 @@ public sealed record ReplacementRequestDto
 
     /// <summary>target — бумага БЕЗ позиции (watchlist), ищется по InstrumentId. Взаимно исключим с TargetPositionId — если задан, он приоритетнее.</summary>
     public ulong? TargetInstrumentId { get; init; }
-    public required decimal HorizonYears { get; init; }
+
+    /// <summary>Горизонт, ГОДЫ. Null — взять из настроек пользователя (<c>user_settings.replacement_horizon_years</c>, дефолт 2.0), задача 48.</summary>
+    public decimal? HorizonYears { get; init; }
     public decimal? SellCommissionRate { get; init; }
     public decimal? BuyCommissionRate { get; init; }
 }
@@ -264,7 +266,9 @@ public sealed record ReplacementResponseDto
     public required decimal HorizonYears { get; init; }
     public required decimal SellCommissionRub { get; init; }
     public required decimal BuyCommissionRub { get; init; }
+    /// <summary>Комиссии обеих сделок (продажа + покупка), рубли; слиппедж и налог — отдельные поля.</summary>
     public required decimal TotalSwitchCostRub { get; init; }
+    /// <summary>FV_switch − FV_hold БЕЗ налога продажи (но после НДФЛ на купоны, комиссий и слиппеджа), рубли.</summary>
     public required decimal NetBenefitRub { get; init; }
     public required bool IsSwitchFavorable { get; init; }
     public decimal? BreakEvenYears { get; init; }
@@ -283,19 +287,19 @@ public sealed record ReplacementResponseDto
     /// <summary>Спред эффективных доходностей (targetYield − holdYield) — ДОЛЯ. Null — YieldDataIncomplete.</summary>
     public decimal? SpreadFraction { get; init; }
 
-    /// <summary>Капитал, реально переходящий в target (MarketValueRub hold минус комиссия продажи), в рублях — та же величина, что MatrixPair.CapitalRub.</summary>
+    /// <summary>Капитал, реально вложенный в цель: выручка hold минус комиссия/слиппедж покупки (и минус комиссия, слиппедж, налог продажи — до этого), рубли.</summary>
     public required decimal CapitalRub { get; init; }
 
-    /// <summary>Валовая выгода (спред × капитал × горизонт) ДО вычета комиссий, в рублях. Null — YieldDataIncomplete.</summary>
+    /// <summary>Валовая выгода: MV × ((1+y_target_at)^h − (1+y_hold_at)^h) — разница доходностей после НДФЛ на полной стоимости hold ДО издержек, рубли. Null — YieldDataIncomplete.</summary>
     public decimal? GrossGainRub { get; init; }
 
-    /// <summary>NetBenefitRub / CapitalRub / HorizonYears — ДОЛЯ (не процент), та же формула, что MatrixPair.AnnualizedBenefitFraction.</summary>
+    /// <summary>(FV_switch / FV_hold)^(1/EffectiveHorizonYears) − 1 — годовая выгода ДОЛЕЙ (не процент). Null — YieldDataIncomplete.</summary>
     public decimal? AnnualizedBenefitFraction { get; init; }
 
     /// <summary>Оценка НДФЛ от продажи hold-позиции (13% с прибыли к средней цене входа) — null, если cost basis недоступен/журнал неполон.</summary>
     public decimal? SellTaxEstimateRub { get; init; }
 
-    /// <summary>NetBenefitRub − SellTaxEstimateRub — выгода после налога. Null, если SellTaxEstimateRub недоступен.</summary>
+    /// <summary>FV_switch − FV_hold С налогом продажи (он уже вычтен из выручки). Null, если SellTaxEstimateRub недоступен.</summary>
     public decimal? NetBenefitAfterTaxRub { get; init; }
 
     /// <summary>
@@ -305,4 +309,56 @@ public sealed record ReplacementResponseDto
     /// не показывает сигналы. См. doc-comment <see cref="RiskSignalsDto"/> — НЕ рейтинг агентств.
     /// </summary>
     public RiskSignalsDto? TargetRiskSignals { get; init; }
+
+    // ─── Задача 48: математика замены v2 (additive; поля выше сохраняют имена, семантика обновлена — см. doc-comment полей) ───
+
+    /// <summary>Откуда взят <see cref="HorizonYears"/>: "Request" (явно в запросе) | "Settings" (настройка пользователя).</summary>
+    public required string HorizonSource { get; init; }
+
+    /// <summary>Горизонт, на котором сравнены ноги: min(HorizonYears, срок до оферты/погашения цели), не меньше 0.25, ГОДЫ.</summary>
+    public required decimal EffectiveHorizonYears { get; init; }
+
+    /// <summary>true — горизонт урезан сроком цели; тогда заданы <see cref="TargetHorizonDate"/>/<see cref="TargetHorizonIsOffer"/>.</summary>
+    public required bool HorizonLimitedByTarget { get; init; }
+    public DateOnly? TargetHorizonDate { get; init; }
+
+    /// <summary>true — <see cref="TargetHorizonDate"/> это оферта, false — погашение.</summary>
+    public bool TargetHorizonIsOffer { get; init; }
+
+    /// <summary>Ставка НДФЛ на купоны/дисконт, применённая к доходностям обеих ног — ДОЛЯ (0.13). Упрощение: ко всей доходности, без сальдирования/ЛДВ.</summary>
+    public required decimal CouponTaxRate { get; init; }
+
+    /// <summary>Доходность hold после НДФЛ — ДОЛЯ (y × (1 − 0.13)).</summary>
+    public required decimal HoldYieldAfterTaxFraction { get; init; }
+
+    /// <summary>Доходность цели после НДФЛ — ДОЛЯ.</summary>
+    public required decimal TargetYieldAfterTaxFraction { get; init; }
+
+    /// <summary>Слиппедж продажи hold (MV × полуспред стакана), рубли; 0 при <see cref="SlippageUnknown"/>.</summary>
+    public required decimal SellSlippageRub { get; init; }
+
+    /// <summary>Слиппедж покупки цели (выручка × полуспред стакана), рубли.</summary>
+    public required decimal BuySlippageRub { get; init; }
+
+    /// <summary>true — у одной из ног стакан (bid/offer) неизвестен: слиппедж этой ноги НЕ учтён.</summary>
+    public required bool SlippageUnknown { get; init; }
+
+    /// <summary>Выручка продажи hold после комиссии, слиппеджа и налога продажи, рубли.</summary>
+    public required decimal ProceedsRub { get; init; }
+
+    /// <summary>Будущая стоимость hold на эффективном горизонте (MV × (1+y_at)^h), рубли.</summary>
+    public required decimal HoldFutureValueRub { get; init; }
+
+    /// <summary>Будущая стоимость варианта «переложиться» (вложено × (1+y_at)^h), рубли.</summary>
+    public required decimal SwitchFutureValueRub { get; init; }
+
+    /// <summary>Дюрации Маколея, ГОДЫ (null — не посчитаны).</summary>
+    public decimal? HoldMacaulayDurationYears { get; init; }
+    public decimal? TargetMacaulayDurationYears { get; init; }
+
+    /// <summary>|Маколей цели − Маколей hold| &gt; 1.5 года.</summary>
+    public required bool DurationMismatch { get; init; }
+
+    /// <summary>Текст предупреждения «Процентный риск изменится: дюрация X → Y лет» при <see cref="DurationMismatch"/>.</summary>
+    public string? DurationMismatchWarning { get; init; }
 }

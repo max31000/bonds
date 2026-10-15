@@ -10,6 +10,7 @@ import type {
   ReplacementCandidatesMode,
   ReplacementCandidatesResponse,
   RelativeValueResponse,
+  PositionVerdictsResponse,
 } from './types';
 
 /** GET /api/analytics/comparison — сравнительная таблица позиций (секция «Слабые звенья»). */
@@ -80,4 +81,12 @@ export function postBasket(request: BasketRequest): Promise<BasketResponse> {
  */
 export function fetchRelativeValue(): Promise<RelativeValueResponse> {
   return apiClient.get<RelativeValueResponse>('/analytics/relative-value');
+}
+
+/**
+ * GET /api/analytics/position-verdicts (задача 49) — вердикт по КАЖДОЙ позиции одним запросом (батчево на бэке).
+ * Грузится отдельно от остальных виджетов страницы: отказ эндпоинта не должен ронять таблицу позиций.
+ */
+export function fetchPositionVerdicts(): Promise<PositionVerdictsResponse> {
+  return apiClient.get<PositionVerdictsResponse>('/analytics/position-verdicts');
 }

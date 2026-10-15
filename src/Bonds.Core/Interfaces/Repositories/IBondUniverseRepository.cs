@@ -62,4 +62,18 @@ public interface IBondUniverseRepository
     /// <summary>Сколько строк банка уже имеют эмитента (<c>emitent_id</c> или <c>emitent_inn</c> не NULL) —
     /// 0 означает «обогащение эмитентами ещё ни разу не отрабатывало».</summary>
     Task<int> CountWithEmitentAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// Задача 49: банк-записи по ISIN одним запросом (<c>WHERE isin IN</c>, без N+1) — рыночный контекст открытых
+    /// позиций (событие SpreadWidening/PriceDrawdown, вердикт позиции). Неизвестные ISIN просто не возвращаются.
+    /// </summary>
+    Task<IReadOnlyList<BondUniverseEntry>> GetByIsinsAsync(IReadOnlyCollection<string> isins, CancellationToken ct = default);
+
+    /// <summary>
+    /// Задача 49: история только по заданным <paramref name="secids"/> за <paramref name="tradingDaysBack"/> САМЫХ
+    /// ПОСЛЕДНИХ отличных дат снимка (даты считаются по всей таблице, как в <see cref="GetRecentHistoryAsync"/>) —
+    /// одним запросом, без выгрузки всего банка ради десятка позиций.
+    /// </summary>
+    Task<IReadOnlyList<BondUniverseHistoryPoint>> GetRecentHistoryForSecidsAsync(
+        IReadOnlyCollection<string> secids, int tradingDaysBack, CancellationToken ct = default);
 }

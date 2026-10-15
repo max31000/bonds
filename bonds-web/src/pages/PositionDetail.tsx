@@ -10,6 +10,8 @@ import { Disclaimer } from '../components/Disclaimer';
 import { IssuerDataBlock } from '../components/IssuerDataBlock';
 import { ReliabilityScoreCard } from '../components/ReliabilityScoreCard';
 import { useReliability } from '../hooks/useReliability';
+import { PositionVerdictBlock } from '../components/PositionVerdictBadge';
+import { usePositionVerdictStore } from '../store/usePositionVerdictStore';
 
 import type { PositionDetail as PositionDetailDto, PriceHistoryRange } from '../api/types';
 import { formatRub, formatPercent, formatBp, formatNumber, formatDate, commissionSourceLabel, formatDaysUntil } from '../utils/format';
@@ -116,6 +118,13 @@ export function PositionDetail() {
   const [range, setRange] = useState<PriceHistoryRange>('6m');
   const [state, setState] = useState<DetailFetchState>({ detail: null, isLoading: true, error: null });
   const { detail, isLoading, error } = state;
+  // Вердикт позиции (задача 49): отдельный bulk-стор; отказ эндпоинта блок просто скрывает.
+  const verdict = usePositionVerdictStore((s) => (id ? s.verdictsById[Number(id)] : undefined));
+  const verdictDisclaimer = usePositionVerdictStore((s) => s.disclaimer);
+  const loadVerdicts = usePositionVerdictStore((s) => s.load);
+  useEffect(() => {
+    loadVerdicts();
+  }, [loadVerdicts]);
 
   useEffect(() => {
     if (!id) return;
@@ -279,6 +288,9 @@ export function PositionDetail() {
               extra={nextCoupon?.valueForPositionRub !== undefined ? formatRub(nextCoupon?.valueForPositionRub ?? null) : undefined}
             />
           </MetricGrid>
+
+          {/* ── Вердикт: сводка по позиции (задача 49) ─────────────────────────────── */}
+          {verdict && <PositionVerdictBlock verdict={verdict} disclaimer={verdictDisclaimer} />}
 
           {/* ── Надёжность: скоркарта + ручной ввод данных эмитента ───────────────── */}
           <ReliabilitySection isin={detail.isin} />

@@ -224,6 +224,9 @@ public static class DependencyInjection
         // Задача 45: суточное наполнение отчётности эмитентов портфеля/watchlist из ГИР БО (тот же тик).
         services.AddScoped<Bonds.Infrastructure.Universe.IssuerFinancialsEnricher>();
 
+        // Задача 49: батчевая сборка входов рыночных/кредитных событий (Scoped: репозитории Scoped).
+        services.AddScoped<Bonds.Infrastructure.Universe.PositionMarketContextBuilder>();
+
         // Сглаженная (медиана дневных медиан за 5 торговых дней) статистика
         // корзин relative value + кэш ~1 час в памяти — Singleton (кэш переживает HTTP-запросы),
         // резолвит Scoped IBondUniverseRepository через IServiceScopeFactory (см. doc-comment).

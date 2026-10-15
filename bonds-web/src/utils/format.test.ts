@@ -11,6 +11,7 @@ import {
   formatDate,
   formatSharePercent,
   formatBp,
+  formatYearsWord,
 } from './format';
 
 describe('formatRub', () => {
@@ -231,5 +232,20 @@ describe('formatBp', () => {
     expect(formatBp(null)).toBe('—');
     expect(formatBp(undefined)).toBe('—');
     expect(formatBp(NaN)).toBe('—');
+  });
+});
+
+describe('formatYearsWord', () => {
+  it('declines whole years in Russian', () => {
+    expect(formatYearsWord(1)).toBe('1 год');
+    expect(formatYearsWord(2)).toBe('2 года');
+    expect(formatYearsWord(4)).toBe('4 года');
+    expect(formatYearsWord(5)).toBe('5 лет');
+    expect(formatYearsWord(10)).toBe('10 лет');
+  });
+
+  it('uses the genitive singular for fractional years', () => {
+    expect(formatYearsWord(0.5)).toBe('0.5 года');
+    expect(formatYearsWord(2.5)).toBe('2.5 года');
   });
 });

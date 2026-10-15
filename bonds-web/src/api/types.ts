@@ -362,7 +362,11 @@ export type SignalType =
   | 'UpcomingOffer'
   | 'FloaterRateReset'
   | 'UninvestedCashThreshold'
-  | 'ConcentrationLimitBreached';
+  | 'ConcentrationLimitBreached'
+  // Задача 49: рыночные и кредитные события.
+  | 'SpreadWidening'
+  | 'PriceDrawdown'
+  | 'IssuerDefaultEvent';
 
 /**
  * Событие портфеля, требующее внимания (бэкенд `SignalDto`). Это текущее состояние, а не лог:
@@ -501,7 +505,8 @@ export interface ReplacementRequest {
   targetPositionId?: number;
   /** target — watchlist-бумага без позиции, по InstrumentId. */
   targetInstrumentId?: number;
-  horizonYears: number;
+  /** Горизонт, ГОДЫ. Не передан — бэкенд берёт настройку пользователя (replacementHorizonYears). */
+  horizonYears?: number;
   sellCommissionRate?: number;
   buyCommissionRate?: number;
 }
@@ -515,7 +520,9 @@ export interface ReplacementResponse {
   horizonYears: number;
   sellCommissionRub: number;
   buyCommissionRub: number;
+  /** Комиссии обеих сделок (продажа + покупка), рубли; слиппедж и налог — отдельные поля. */
   totalSwitchCostRub: number;
+  /** FV_switch − FV_hold БЕЗ налога продажи (но после НДФЛ на купоны, комиссий и слиппеджа), рубли. */
   netBenefitRub: number;
   isSwitchFavorable: boolean;
   breakEvenYears: number | null;
@@ -530,19 +537,54 @@ export interface ReplacementResponse {
 
   /** Та же формула-разбивка, что MatrixPair — спред эффективных доходностей (targetYield − holdYield), ДОЛЯ. Null — yieldDataIncomplete. */
   spreadFraction: number | null;
-  /** Капитал, реально переходящий в target (marketValueRub hold минус комиссия продажи), в рублях. */
+  /** Капитал, реально вложенный в цель: выручка hold минус комиссия/слиппедж покупки (и минус комиссия, слиппедж, налог продажи — до этого), рубли. */
   capitalRub: number;
-  /** Валовая выгода (спред × капитал × горизонт) ДО вычета комиссий, в рублях. Null — yieldDataIncomplete. */
+  /** Валовая выгода: MV × ((1+y_target_at)^h − (1+y_hold_at)^h) — разница доходностей после НДФЛ на полной стоимости hold ДО издержек, рубли. Null — yieldDataIncomplete. */
   grossGainRub: number | null;
-  /** netBenefitRub / capitalRub / horizonYears — ДОЛЯ (не процент). */
+  /** (FV_switch / FV_hold)^(1/effectiveHorizonYears) − 1 — годовая выгода ДОЛЕЙ (не процент). Null — yieldDataIncomplete. */
   annualizedBenefitFraction: number | null;
   /** Оценка НДФЛ от продажи hold-позиции — null, если cost basis недоступен/журнал неполон. */
   sellTaxEstimateRub: number | null;
-  /** netBenefitRub − sellTaxEstimateRub. Null, если sellTaxEstimateRub недоступен. */
+  /** FV_switch − FV_hold С налогом продажи (он уже вычтен из выручки, поэтому разница с netBenefitRub больше самого налога — налог ещё и «не растёт» на горизонте). Null, если sellTaxEstimateRub недоступен. */
   netBenefitAfterTaxRub: number | null;
   /** Риск-сигналы таргета (см. <see>RiskSignals</see>) — только если таргет
    * найден в банке (bond_universe) по ISIN, иначе null (бумага вне биржевой статистики MOEX). */
   targetRiskSignals?: RiskSignals | null;
+
+  // ---- Задача 48: математика замены v2 (additive). Доходности — ДОЛИ, деньги — рубли, горизонты/дюрации — годы. ----
+
+  /** Откуда взят horizonYears: 'Request' (явно в запросе) | 'Settings' (настройка пользователя). */
+  horizonSource: 'Request' | 'Settings';
+  /** Горизонт, на котором сравнены ноги: min(horizonYears, срок до оферты/погашения цели), не меньше 0.25 года. */
+  effectiveHorizonYears: number;
+  /** true — горизонт урезан сроком цели; тогда заданы targetHorizonDate/targetHorizonIsOffer. */
+  horizonLimitedByTarget: boolean;
+  /** Дата оферты/погашения цели, обрезавшая горизонт (ISO yyyy-MM-dd). */
+  targetHorizonDate?: string | null;
+  /** true — targetHorizonDate это оферта, false — погашение. */
+  targetHorizonIsOffer: boolean;
+  /** Ставка НДФЛ на купоны/дисконт — ДОЛЯ (0.13). Упрощение: ко всей доходности, без сальдирования/ЛДВ. */
+  couponTaxRate: number;
+  /** Доходность hold/цели после НДФЛ — ДОЛЯ. */
+  holdYieldAfterTaxFraction: number;
+  targetYieldAfterTaxFraction: number;
+  /** Слиппедж продажи/покупки (половина спреда стакана), рубли; 0 при slippageUnknown. */
+  sellSlippageRub: number;
+  buySlippageRub: number;
+  /** true — у одной из ног стакан (bid/offer) неизвестен, слиппедж этой ноги НЕ учтён. */
+  slippageUnknown: boolean;
+  /** Выручка продажи hold после комиссии, слиппеджа и налога продажи, рубли. */
+  proceedsRub: number;
+  /** Будущая стоимость hold / варианта «переложиться» на эффективном горизонте, рубли. */
+  holdFutureValueRub: number;
+  switchFutureValueRub: number;
+  /** Дюрации Маколея hold/цели, ГОДЫ (null — не посчитаны). */
+  holdMacaulayDurationYears?: number | null;
+  targetMacaulayDurationYears?: number | null;
+  /** |Маколей цели − Маколей hold| > 1.5 года. */
+  durationMismatch: boolean;
+  /** «Процентный риск изменится: дюрация X → Y лет» при durationMismatch. */
+  durationMismatchWarning?: string | null;
 }
 
 // ---- GET /api/analytics/replacement-candidates (фронт — задача 35 §A) ----
@@ -883,6 +925,12 @@ export interface SettingsResponse {
 
   /** Ручной override ставки комиссии — ДОЛЯ (0.0005 = 0.05%). Null — не задан. UI вводит в %, конвертация на границе API. */
   commissionRateOverride: number | null;
+  /** Горизонт анализа замены, ГОДЫ (0.5–10, шаг 0.5; дефолт 2) — задача 48. */
+  replacementHorizonYears: number;
+  /** Порог события «расширение G-спреда» — ДОЛЯ (0.003 = 30 б.п. по умолчанию), задача 49. UI вводит в б.п., конвертация на границе API. */
+  spreadWideningThresholdFraction: number;
+  /** Порог события «просадка цены» — ДОЛЯ (0.05 = 5%), задача 49. UI вводит в %, конвертация на границе API. */
+  priceDrawdownThresholdFraction: number;
   /** Read-only: авто-оценка ставки из журнала операций (часть A). Null — журнал не позволяет оценить. */
   commissionAutoEstimate: CommissionAutoEstimate | null;
   /** Read-only: имя тарифа T-Invest (GetInfo) — только контекст, не участвует в расчётах. Null — не удалось получить. */
@@ -1054,7 +1102,11 @@ export type SettingsUpdateRequest = Omit<
   | 'tInvestTariff'
   | 'commissionEffectiveRate'
   | 'commissionEffectiveSource'
->;
+  | 'spreadWideningThresholdFraction'
+  | 'priceDrawdownThresholdFraction'
+> &
+  // Пороги рыночных событий (задача 49) в запросе необязательны: отсутствие поля = «не менять» (частичный PUT).
+  Partial<Pick<SettingsResponse, 'spreadWideningThresholdFraction' | 'priceDrawdownThresholdFraction'>>;
 
 /** Ответ PUT /api/settings/tinvest-token. */
 export interface TInvestTokenResponse {
@@ -1245,3 +1297,39 @@ export type IssuerFinancialsAmountKey =
 
 /** Тело POST /api/issuers/{inn}/financials. */
 export type IssuerFinancialsRequest = { period: number } & Partial<Record<IssuerFinancialsAmountKey, number>>;
+
+// ---- GET /api/analytics/position-verdicts (задача 49) ----
+
+/** Вердикт позиции — имя enum бэка `PositionVerdictKind`. Формулировки — «кандидат/рассмотреть», не «купите/продайте». */
+export type PositionVerdictKind = 'Hold' | 'BuyMoreCandidate' | 'ConsiderReplace' | 'ConsiderExit';
+
+/** Уверенность вердикта — имя enum бэка `VerdictConfidence` (по покрытию данными скоркарты). */
+export type VerdictConfidence = 'Low' | 'Medium' | 'High';
+
+/** Лучшая замена, вынесшая вердикт ConsiderReplace. Выгода — ДОЛЯ годовых (0.008 = 80 б.п.), рубли — за эффективный горизонт, горизонт — ГОДЫ. */
+export interface BestReplacement {
+  name: string;
+  secid: string | null;
+  isin: string | null;
+  /** Светофор цели: 'Green' | 'Yellow' | 'Red'. */
+  targetReliability: string;
+  annualizedBenefitFraction: number | null;
+  /** null — налог продажи оценить нельзя (журнал неполон): в выгоду он не вошёл. */
+  netBenefitAfterTaxRub: number | null;
+  effectiveHorizonYears: number;
+}
+
+/** Вердикт одной позиции (бэкенд `PositionVerdictDto`). `reasons` — до 3 причин словами, главная первой. */
+export interface PositionVerdict {
+  positionId: number;
+  instrumentId: number;
+  verdict: PositionVerdictKind;
+  reasons: string[];
+  confidence: VerdictConfidence;
+  bestReplacement: BestReplacement | null;
+}
+
+export interface PositionVerdictsResponse {
+  verdicts: PositionVerdict[];
+  disclaimer: string;
+}

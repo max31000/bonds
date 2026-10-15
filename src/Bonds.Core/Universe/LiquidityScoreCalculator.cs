@@ -61,7 +61,7 @@ public static class LiquidityScoreCalculator
     public static LiquidityAssessment Assess(decimal? turnoverRub, decimal? bidPercent, decimal? offerPercent, int? numTrades)
     {
         var spreadFraction = ComputeSpreadFraction(bidPercent, offerPercent);
-        var slippageEstimate = spreadFraction is { } s ? s / 2m : (decimal?)null;
+        var slippageEstimate = HalfSpreadFraction(bidPercent, offerPercent);
 
         if (turnoverRub is null && spreadFraction is null && numTrades is null)
         {
@@ -102,6 +102,16 @@ public static class LiquidityScoreCalculator
         var mid = sorted.Count / 2;
         return sorted.Count % 2 == 0 ? (sorted[mid - 1] + sorted[mid]) / 2m : sorted[mid];
     }
+
+    /// <summary>
+    /// Половина спреда стакана — оценка проскальзывания одной стороны сделки (по рынку покупаешь по offer,
+    /// продаёшь по bid, «справедливая» цена ≈ mid): (offer − bid) / ((offer + bid) / 2) / 2 = (offer − bid) /
+    /// (offer + bid). ДОЛЯ от цены. Единый источник формулы для <see cref="Assess"/> и анализа замены
+    /// (<c>SwitchAnalysisService</c>, задача 48) — не дублировать. bid/offer — в % от номинала (единица
+    /// сокращается, важно только отношение). Null — стакан не виден (bid/offer нет или ≤ 0).
+    /// </summary>
+    public static decimal? HalfSpreadFraction(decimal? bidPercent, decimal? offerPercent) =>
+        ComputeSpreadFraction(bidPercent, offerPercent) is { } s ? s / 2m : null;
 
     /// <summary>Спред в долях от средней цены bid/offer: (offer − bid) / ((offer + bid) / 2).
     /// Null, если bid или offer отсутствует, либо средняя цена ≤ 0 (защита от деления на ноль).</summary>

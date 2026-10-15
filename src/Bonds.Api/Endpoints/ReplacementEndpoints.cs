@@ -93,6 +93,7 @@ public static class ReplacementEndpoints
         ICommissionRateProvider commissionRateProvider,
         RelativeValueSnapshotBuilder snapshotBuilder,
         ReliabilityScoreProvider scoreProvider,
+        IUserSettingsRepository settingsRepo,
         CancellationToken ct)
     {
         var accountId = await PositionsEndpoints.ResolveAccountIdAsync(currentUser, accountRepo);
@@ -135,23 +136,49 @@ public static class ReplacementEndpoints
                 "бумагой — выберите фикс-купонную бумагу для сравнения.");
         }
 
-        if (request.HorizonYears <= 0m) throw new ValidationException("HorizonYears должен быть положительным");
-
-        var holdCandidate = new SwitchCandidate
+        // Горизонт: явное значение запроса побеждает, иначе — настройка пользователя (user_settings.replacement_horizon_years,
+        // дефолт 2.0), задача 48. Единица — ГОДЫ.
+        decimal horizonYears;
+        string horizonSource;
+        if (request.HorizonYears is { } requestedHorizon)
         {
-            PositionId = holdPosition.PositionId,
-            MarketValueRub = holdPosition.MarketValueRub,
-            EffectiveYield = (holdPosition.IsFloater || holdPosition.IsIndexed) ? holdPosition.CurrentYield : holdPosition.YtmEffective,
-        };
+            if (!SettingsEndpoints.IsValidReplacementHorizonRequest(requestedHorizon))
+            {
+                return ValidationError(
+                    $"HorizonYears должен быть больше 0 и не больше {SettingsEndpoints.MaxReplacementHorizonYears:0.#} лет");
+            }
+
+            horizonYears = requestedHorizon;
+            horizonSource = "Request";
+        }
+        else
+        {
+            var userId = await currentUser.GetUserIdAsync();
+            var settings = userId is { } uid ? await settingsRepo.GetByUserIdAsync(uid) : null;
+            horizonYears = settings?.ReplacementHorizonYears ?? UserSettings.DefaultReplacementHorizonYears;
+            horizonSource = "Settings";
+        }
+
+        // Банк (bond_universe) — источник bid/offer для слиппеджа обеих ног (по ISIN; снимок — singleton-кэш, лишнего I/O нет).
+        var snapshotForTarget = await snapshotBuilder.GetSnapshotAsync(ct);
+        var bookForTarget = await scoreProvider.GetBookAsync(ct);
+
+        var holdCandidate = BuildHoldSwitchCandidate(holdPosition, snapshotForTarget);
         var targetCandidate = new SwitchCandidate
         {
             // SwitchAnalysisService.Compare не использует targetPosition.MarketValueRub в расчёте
-            // (капитал перехода — netProceedsAfterSale от holdPosition, см. doc-comment сервиса) —
-            // поле сохраняется как есть для watchlist-target'а (MarketValueRub holding'а без позиции
-            // = грязная цена ОДНОЙ бумаги, см. BuildForInstrumentsAsync), значение не искажает результат.
+            // (капитал перехода идёт от holdPosition, см. doc-comment сервиса) — поле сохраняется как есть
+            // для watchlist-target'а (MarketValueRub holding'а без позиции = грязная цена ОДНОЙ бумаги,
+            // см. BuildForInstrumentsAsync), значение не искажает результат.
             PositionId = targetPosition.PositionId,
             MarketValueRub = targetPosition.MarketValueRub,
             EffectiveYield = (targetPosition.IsFloater || targetPosition.IsIndexed) ? targetPosition.CurrentYield : targetPosition.YtmEffective,
+            MacaulayDurationYears = targetPosition.MacaulayDuration,
+            HalfSpreadFraction = HalfSpreadForIsin(targetPosition.Isin, snapshotForTarget),
+            // HorizonDate движка — ближайшая оферта (IsCalculatedToOffer) либо погашение: после неё доходность
+            // цели «закончится», горизонт сравнения режется (задача 48).
+            TargetHorizonDate = targetPosition.HorizonDate,
+            TargetHorizonIsOffer = targetPosition.IsCalculatedToOffer,
         };
 
         // Явные ставки в запросе по-прежнему побеждают резолвер (контракт не
@@ -165,35 +192,13 @@ public static class ReplacementEndpoints
         var sellRate = request.SellCommissionRate ?? resolved!.Rate;
         var buyRate = request.BuyCommissionRate ?? resolved!.Rate;
 
-        var result = SwitchAnalysisService.Compare(holdCandidate, targetCandidate, request.HorizonYears, sellRate, buyRate);
-
-        // Построчная формула-разбивка для ОДНОЙ явно выбранной пары hold/target:
-        // спред → капитал → горизонт → валовая выгода → минус комиссии → чистая → минус налог.
-        var netProceedsAfterSale = holdPosition.MarketValueRub - result.SellCommissionRub;
-        decimal? spreadFraction = null;
-        decimal? grossGainRub = null;
-        decimal? annualizedBenefitFraction = null;
-        if (holdCandidate.EffectiveYield is { } holdYield && targetCandidate.EffectiveYield is { } targetYield)
-        {
-            spreadFraction = targetYield - holdYield;
-            grossGainRub = netProceedsAfterSale * spreadFraction.Value * request.HorizonYears;
-            annualizedBenefitFraction = (netProceedsAfterSale > 0m && request.HorizonYears > 0m)
-                ? result.NetBenefitRub / netProceedsAfterSale / request.HorizonYears
-                : null;
-        }
-
-        var sellTaxEstimate = SaleTaxEstimator.Estimate(
-            netProceedsAfterSale, holdPosition.CostBasis?.InvestedRub, holdPosition.CostBasis?.HasUnknownLots ?? true);
-        var sellTaxEstimateRub = sellTaxEstimate?.TaxRub;
-        var netBenefitAfterTaxRub = sellTaxEstimateRub is decimal tax ? result.NetBenefitRub - tax : (decimal?)null;
+        var result = SwitchAnalysisService.Compare(holdCandidate, targetCandidate, horizonYears, sellRate, buyRate, asOf);
 
         // Риск-сигналы для ВЫБРАННОЙ цели (не hold — план ограничивает объём
         // до "для выбранной цели") по её банк-записи (bond_universe), найденной по ISIN — снимок RV
         // уже загружен (singleton-кэш, ~раз в час), лишний I/O не добавляется. Null, если целевая
         // бумага не найдена в банке (не покрыта биржевой статистикой MOEX — например, только что
         // купленный внебиржевой инструмент) — тогда фронт просто не показывает сигналы, это не ошибка.
-        var snapshotForTarget = await snapshotBuilder.GetSnapshotAsync(ct);
-        var bookForTarget = await scoreProvider.GetBookAsync(ct);
         var targetRiskSignals = targetPosition.Isin is { } targetIsin
             ? BuildRiskSignalsForIsin(targetIsin, snapshotForTarget, bookForTarget)
             : null;
@@ -217,19 +222,56 @@ public static class ReplacementEndpoints
             SellCommissionRateUsed = sellRate,
             BuyCommissionRateUsed = buyRate,
             CommissionRateSource = resolved?.Source.ToString() ?? "ExplicitRequest",
-            // Формула-разбивка (см. doc-comment выше) — null, если доходность
+            // Формула-разбивка — доходностные поля null, если доходность
             // одной из сторон не определена (YieldDataIncomplete=true).
-            SpreadFraction = spreadFraction,
-            CapitalRub = netProceedsAfterSale,
-            GrossGainRub = grossGainRub,
-            AnnualizedBenefitFraction = annualizedBenefitFraction,
-            SellTaxEstimateRub = sellTaxEstimateRub,
-            NetBenefitAfterTaxRub = netBenefitAfterTaxRub,
+            SpreadFraction = result.SpreadFraction,
+            CapitalRub = result.CapitalRub,
+            GrossGainRub = result.GrossGainRub,
+            AnnualizedBenefitFraction = result.AnnualizedBenefitFraction,
+            SellTaxEstimateRub = result.SellTaxEstimateRub,
+            NetBenefitAfterTaxRub = result.NetBenefitAfterTaxRub,
             TargetRiskSignals = targetRiskSignals,
+            // Задача 48 (additive): горизонт, налог на купоны, слиппедж, будущие стоимости ног, дюрации.
+            HorizonSource = horizonSource,
+            EffectiveHorizonYears = result.EffectiveHorizonYears,
+            HorizonLimitedByTarget = result.HorizonLimitedByTarget,
+            TargetHorizonDate = result.TargetHorizonDate,
+            TargetHorizonIsOffer = result.TargetHorizonIsOffer,
+            CouponTaxRate = SwitchAnalysisService.CouponTaxRate,
+            HoldYieldAfterTaxFraction = result.HoldYieldAfterTaxFraction,
+            TargetYieldAfterTaxFraction = result.TargetYieldAfterTaxFraction,
+            SellSlippageRub = result.SellSlippageRub,
+            BuySlippageRub = result.BuySlippageRub,
+            SlippageUnknown = result.SlippageUnknown,
+            ProceedsRub = result.ProceedsRub,
+            HoldFutureValueRub = result.HoldFutureValueRub,
+            SwitchFutureValueRub = result.SwitchFutureValueRub,
+            HoldMacaulayDurationYears = result.HoldMacaulayDurationYears,
+            TargetMacaulayDurationYears = result.TargetMacaulayDurationYears,
+            DurationMismatch = result.DurationMismatch,
+            DurationMismatchWarning = result.DurationMismatchWarning,
         };
 
         return Results.Ok(dto);
     }
+
+    /// <summary>
+    /// Нога «удерживать» анализа замены по позиции портфеля: стоимость, доходность (YTM; для флоатера — текущая), Маколей,
+    /// полуспред банка (слиппедж) и cost basis для налога продажи. Общая сборка для POST /replacement и вердиктов позиций
+    /// (задача 49) — чтобы оба считали «hold» одинаково.
+    /// </summary>
+    internal static SwitchCandidate BuildHoldSwitchCandidate(
+        Core.Analytics.PortfolioHolding holdPosition, RelativeValueSnapshotBuilder.RelativeValueSnapshot snapshot) => new()
+    {
+        PositionId = holdPosition.PositionId,
+        MarketValueRub = holdPosition.MarketValueRub,
+        EffectiveYield = (holdPosition.IsFloater || holdPosition.IsIndexed) ? holdPosition.CurrentYield : holdPosition.YtmEffective,
+        MacaulayDurationYears = holdPosition.MacaulayDuration,
+        HalfSpreadFraction = HalfSpreadForIsin(holdPosition.Isin, snapshot),
+        // Налог продажи — из cost basis позиции (average cost); без него/при неполном журнале налог не оценивается.
+        InvestedRub = holdPosition.CostBasis?.InvestedRub,
+        HasUnknownLots = holdPosition.CostBasis?.HasUnknownLots ?? true,
+    };
 
     // ─── GET /api/analytics/relative-value ─────────────────────────────────────────────────────
 
@@ -363,7 +405,7 @@ public static class ReplacementEndpoints
     /// только с настраиваемым <paramref name="take"/> вместо константы
     /// <see cref="TopCheapCandidatesPerRichPosition"/>.
     /// </summary>
-    private static List<BasketMember> ResolveCheapBasketMembers(
+    internal static List<BasketMember> ResolveCheapBasketMembers(
         BasketKey effectiveBasket,
         decimal basketMedian,
         RelativeValueSnapshotBuilder.RelativeValueSnapshot snapshot,
@@ -371,9 +413,8 @@ public static class ReplacementEndpoints
         int take)
     {
         return snapshot.AllMembers
-            .Where(m => string.Equals(m.Sector ?? UnknownSector, effectiveBasket.Sector, StringComparison.OrdinalIgnoreCase))
-            .Where(m => effectiveBasket.DurationBucket is SectorWideBucketLabel or MarketWideLabel
-                || Bonds.Core.Analytics.DurationBucketClassifier.Label(m.DurationYears) == effectiveBasket.DurationBucket)
+            // «Весь рынок» (Low-откат) — все члены банка (раньше фильтр по Sector=="Весь рынок" отсекал всех, mode=rv был молча пуст).
+            .Where(m => IsBasketMember(m, effectiveBasket))
             .Where(m => m.GSpreadFraction is not null)
             // Self-exclusion (ревью T-30, MAJOR): банк — вся вселенная MOEX, оцениваемая позиция
             // почти наверняка присутствует в нём под своим secid, а её approx-спред из банка
@@ -620,10 +661,25 @@ public static class ReplacementEndpoints
     private static RiskSignalsDto? BuildRiskSignalsForIsin(
         string isin, RelativeValueSnapshotBuilder.RelativeValueSnapshot snapshot, ReliabilityBook book)
     {
-        var entry = snapshot.CurrentEntriesBySecid.Values
-            .FirstOrDefault(e => string.Equals(e.Isin, isin, StringComparison.OrdinalIgnoreCase));
+        var entry = FindBankEntryByIsin(isin, snapshot);
         if (entry is null) return null;
 
         return ToReplacementCandidateDto(entry, snapshot, book).RiskSignals;
+    }
+
+    private static BondUniverseEntry? FindBankEntryByIsin(string isin, RelativeValueSnapshotBuilder.RelativeValueSnapshot snapshot) =>
+        snapshot.CurrentEntriesBySecid.Values
+            .FirstOrDefault(e => string.Equals(e.Isin, isin, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// Полуспред стакана бумаги (ДОЛЯ) по её банк-записи — оценка слиппеджа одной стороны сделки для
+    /// <see cref="SwitchAnalysisService"/>. Формула — единая, <see cref="LiquidityScoreCalculator.HalfSpreadFraction"/>
+    /// (bid/offer банка — % от номинала, единица сокращается). Null — бумаги нет в банке или стакан не виден.
+    /// </summary>
+    internal static decimal? HalfSpreadForIsin(string? isin, RelativeValueSnapshotBuilder.RelativeValueSnapshot snapshot)
+    {
+        if (isin is null) return null;
+        var entry = FindBankEntryByIsin(isin, snapshot);
+        return entry is null ? null : LiquidityScoreCalculator.HalfSpreadFraction(entry.BidPercent, entry.OfferPercent);
     }
 }

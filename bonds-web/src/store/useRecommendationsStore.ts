@@ -80,6 +80,8 @@ function buildSellCandidates(
 
 interface RecommendationsStore {
   sellCandidates: SellCandidate[];
+  /** Все строки сравнения (задача 49: ссылка «подобрать замену» из вердикта может вести на позицию вне топ-3 слабых). */
+  comparisonRows: ComparisonRow[];
   outOfComparison: ComparisonRow[];
   comparisonDisclaimer: string;
 
@@ -100,6 +102,7 @@ interface RecommendationsStore {
  */
 export const useRecommendationsStore = create<RecommendationsStore>()((set) => ({
   sellCandidates: [],
+  comparisonRows: [],
   outOfComparison: [],
   comparisonDisclaimer: '',
 
@@ -116,6 +119,7 @@ export const useRecommendationsStore = create<RecommendationsStore>()((set) => (
 
       set({
         sellCandidates: candidates,
+        comparisonRows: comparison.rows,
         outOfComparison,
         comparisonDisclaimer: comparison.disclaimer,
         isLoading: false,

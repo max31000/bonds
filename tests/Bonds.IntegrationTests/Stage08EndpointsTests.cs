@@ -110,6 +110,7 @@ public class Stage08EndpointsTests
     [InlineData("GET", "/api/analytics/comparison")]
     [InlineData("POST", "/api/analytics/replacement")]
     [InlineData("GET", "/api/analytics/replacement-matrix")]
+    [InlineData("GET", "/api/analytics/position-verdicts")]
     [InlineData("GET", "/api/analytics/replacement-candidates?positionId=1&mode=market")]
     [InlineData("GET", "/api/analytics/allocation?amountRub=1000")]
     [InlineData("GET", "/api/signals")]

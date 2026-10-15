@@ -19,12 +19,14 @@ import { useNavigate } from 'react-router-dom';
 import { usePositionsStore } from '../store/usePositionsStore';
 import { useSettingsStore } from '../store/useSettingsStore';
 import { useRelativeValueStore } from '../store/useRelativeValueStore';
+import { usePositionVerdictStore } from '../store/usePositionVerdictStore';
 import { useLiveQuotes } from '../hooks/useLiveQuotes';
 import { Disclaimer } from '../components/Disclaimer';
 import { PortfolioIntradayChart } from '../components/PortfolioIntradayChart';
 import { PositionCard } from '../components/PositionCard';
 import { LiveMarketValueCell } from '../components/positionsShared';
 import { CompactRelativeValueIndicator } from '../components/RelativeValueBadge';
+import { PositionVerdictBadge } from '../components/PositionVerdictBadge';
 import {
   effectiveYield,
   COUPON_TYPE_LABEL,
@@ -48,6 +50,8 @@ export function Positions() {
   const { settings, load: loadSettings } = useSettingsStore();
   const relativeValueByPosition = useRelativeValueStore((s) => s.positionsById);
   const loadRelativeValue = useRelativeValueStore((s) => s.load);
+  const verdictsByPosition = usePositionVerdictStore((s) => s.verdictsById);
+  const loadVerdicts = usePositionVerdictStore((s) => s.load);
   const navigate = useNavigate();
   const [sort, setSort] = useState<SortState>({ key: 'yield', direction: 'desc' });
   // < 768px — карточки вместо таблицы (10+ колонок нечитаемы на телефоне).
@@ -64,7 +68,9 @@ export function Positions() {
     // позиций) — useRelativeValueStore.load() сам не даёт себе выполниться дважды и молча
     // проглатывает ошибку (индикатор просто не покажется, см. doc-comment стора).
     loadRelativeValue();
-  }, [load, loadSettings, loadRelativeValue]);
+    // Вердикты позиций (задача 49) — тоже ленивый независимый запрос: отказ не роняет таблицу, бейдж просто не рисуется.
+    loadVerdicts();
+  }, [load, loadSettings, loadRelativeValue, loadVerdicts]);
 
   const sorted = useMemo(() => {
     const copy = [...positions];
@@ -191,7 +197,12 @@ export function Positions() {
               </Paper>
 
               {sorted.map((row) => (
-                <PositionCard key={row.positionId} row={row} onClick={() => navigate(`/positions/${row.positionId}`)} />
+                <PositionCard
+                  key={row.positionId}
+                  row={row}
+                  verdict={verdictsByPosition[row.positionId]}
+                  onClick={() => navigate(`/positions/${row.positionId}`)}
+                />
               ))}
             </Stack>
           ) : (
@@ -273,6 +284,7 @@ export function Positions() {
                   <Table.Th>Дюрация, лет</Table.Th>
                   <Table.Th>G-спред, б.п.</Table.Th>
                   <Table.Th>До погашения/оферты</Table.Th>
+                  <Table.Th>Вердикт</Table.Th>
                   <Table.Th>Пометки</Table.Th>
                 </Table.Tr>
               </Table.Thead>
@@ -346,6 +358,9 @@ export function Positions() {
                         {formatDaysUntil(row.calculatedToOffer ? row.horizonDate : row.maturityDate)}{row.calculatedToOffer ? ' (оферта)' : ''}
                       </Table.Td>
                       <Table.Td>
+                        <PositionVerdictBadge verdict={verdictsByPosition[row.positionId]} />
+                      </Table.Td>
+                      <Table.Td>
                         <Group gap={4} wrap="wrap">
                           <Tooltip label={`Сектор: ${row.sector ?? '—'}. Тип купона: ${COUPON_TYPE_LABEL[row.couponType]}.`} withArrow>
                             <Badge size="sm" color="gray" variant="outline">
@@ -413,10 +428,11 @@ export function Positions() {
                   <Table.Th />
                   <Table.Th />
                   <Table.Th />
+                  <Table.Th />
                 </Table.Tr>
                 {totals.hasExcludedFloaters && (
                   <Table.Tr>
-                    <Table.Th colSpan={11} fw={400}>
+                    <Table.Th colSpan={12} fw={400}>
                       <Text size="xs" c="dimmed">
                         * средневзвешенная доходность без флоатеров/индексируемых — их доходность несравнима с YTM
                       </Text>

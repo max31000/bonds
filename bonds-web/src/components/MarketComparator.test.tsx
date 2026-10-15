@@ -3,6 +3,8 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { MantineProvider } from '@mantine/core';
 import { http, HttpResponse } from 'msw';
 import { server } from '../test/msw-handlers';
+import { replacementResponseFixture } from '../test/replacementFixtures';
+import { useSettingsStore } from '../store/useSettingsStore';
 import { MarketComparator } from './MarketComparator';
 import type { UniverseRow, MaterializeResponse, ReplacementResponse } from '../api/types';
 
@@ -96,32 +98,11 @@ const materializeResponse: MaterializeResponse = {
   disclaimer: 'watchlist disclaimer text',
 };
 
-const replacementResponse: ReplacementResponse = {
-  holdPositionId: 1,
-  targetPositionId: 0,
-  targetInstrumentId: 555,
-  horizonYears: 2,
-  sellCommissionRub: 30,
-  buyCommissionRub: 30,
-  totalSwitchCostRub: 60,
-  netBenefitRub: 1500,
-  isSwitchFavorable: true,
-  breakEvenYears: 0.5,
-  yieldDataIncomplete: false,
-  disclaimer: 'Анализ замены сравнивает только текущие позиции портфеля.',
-  sellCommissionRateUsed: 0.003,
-  buyCommissionRateUsed: 0.003,
-  commissionRateSource: 'Default',
-  spreadFraction: 0.08,
-  capitalRub: 1490,
-  grossGainRub: 1560,
-  annualizedBenefitFraction: 0.21,
-  sellTaxEstimateRub: 200,
-  netBenefitAfterTaxRub: 1300,
-};
+const replacementResponse: ReplacementResponse = replacementResponseFixture();
 
 describe('MarketComparator', () => {
   beforeEach(() => {
+    useSettingsStore.setState({ settings: null, isLoading: false, error: null });
   });
 
   it('shows top-10 by yield by default when the search input is empty', async () => {
@@ -189,6 +170,55 @@ describe('MarketComparator', () => {
     expect(within(result).getByTestId('market-comparator-benefit-1').textContent).toMatch(/после налога/);
     expect(within(result).getByTestId('replacement-details-market-1')).toBeInTheDocument();
     expect(within(result).getByTestId('replacement-details-market-1').textContent).toMatch(/спред доходностей/);
+  });
+
+  // ─── Задача 48: горизонт из настроек пользователя уходит в запрос ──────────────────────────
+
+  it('sends the horizon from the settings store (not a hard-coded constant) in the replacement request', async () => {
+    useSettingsStore.setState({
+      settings: {
+        baseCurrency: 'RUB',
+        tInvestTokenConfigured: false,
+        tInvestTokenMasked: null,
+        upcomingEventDaysThreshold: 14,
+        uninvestedCashThresholdRub: 10000,
+        defaultMaxConcentrationPercent: 25,
+        commissionRateOverride: null,
+        replacementHorizonYears: 4.5,
+        spreadWideningThresholdFraction: 0.005,
+        priceDrawdownThresholdFraction: 0.05,
+        commissionAutoEstimate: null,
+        tInvestTariff: null,
+        commissionEffectiveRate: 0.003,
+        commissionEffectiveSource: 'Default',
+      },
+      isLoading: false,
+      error: null,
+    });
+    let requestBody: Record<string, unknown> | null = null;
+    server.use(
+      http.get('*/api/universe', () => HttpResponse.json({ rows: [gazpromRow], total: 1, hiddenCount: 0, disclaimer: '' })),
+      http.post('*/api/universe/:secid/materialize', () => HttpResponse.json(materializeResponse)),
+      http.post('*/api/analytics/replacement', async ({ request }) => {
+        requestBody = (await request.json()) as Record<string, unknown>;
+        return HttpResponse.json(
+          replacementResponseFixture({ horizonYears: 4.5, effectiveHorizonYears: 1.5, horizonLimitedByTarget: true, targetHorizonDate: '2028-04-01' }),
+        );
+      }),
+    );
+
+    renderComparator();
+    const input = screen.getByTestId('market-comparator-select-1');
+    fireEvent.click(input);
+    fireEvent.change(input, { target: { value: '' } });
+    await waitFor(() => expect(screen.getByText(gazpromRow.name!)).toBeInTheDocument());
+    fireEvent.click(screen.getByText(gazpromRow.name!));
+
+    await waitFor(() => expect(screen.getByTestId('market-comparator-result-1')).toBeInTheDocument());
+    expect(requestBody!.horizonYears).toBe(4.5);
+    expect(screen.getByTestId('market-comparator-horizon-1').textContent).toMatch(
+      /^на горизонте 4\.5 года \(настройка\), сокращён до 1\.5 г\.: погашение цели 01\.04\.2028$/,
+    );
   });
 
   // ─── Задача 32 часть C: флоатеры-цели исключены из выпадашки сравнивалки ─────────────────

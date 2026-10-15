@@ -12,6 +12,9 @@ public static class PortfolioCompositionService
 {
     private const string UnknownLabel = "Не определено";
 
+    /// <summary>Ключ эмитента в <see cref="PortfolioComposition.ByIssuer"/> для позиции без эмитента.</summary>
+    public const string UnknownIssuerLabel = UnknownLabel;
+
     public static PortfolioComposition Calculate(IReadOnlyList<PortfolioHolding> holdings)
     {
         var totalMarketValue = holdings.Sum(h => h.MarketValueRub);

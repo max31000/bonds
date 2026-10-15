@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Paper, Group, Stack, Text, Badge, Collapse, UnstyledButton } from '@mantine/core';
-import type { PositionRow } from '../api/types';
+import type { PositionRow, PositionVerdict } from '../api/types';
+import { PositionVerdictBadge } from './PositionVerdictBadge';
 import { LiveMarketValueCell } from './positionsShared';
 import { effectiveYield, COUPON_TYPE_LABEL } from '../utils/positionsDisplay';
 import { formatRub, formatDaysUntil, formatPercent, formatNumber, formatBp } from '../utils/format';
@@ -15,7 +16,16 @@ import { formatRub, formatDaysUntil, formatPercent, formatNumber, formatBp } fro
  * (Positions.tsx) через components/positionsShared.tsx — числа не должны разъезжаться между
  * версткой для десктопа и мобилы.
  */
-export function PositionCard({ row, onClick }: { row: PositionRow; onClick: () => void }) {
+export function PositionCard({
+  row,
+  verdict,
+  onClick,
+}: {
+  row: PositionRow;
+  /** Вердикт позиции (задача 49); undefined — ещё не загружен/эндпоинт отказал: бейдж не рисуется. */
+  verdict?: PositionVerdict;
+  onClick: () => void;
+}) {
   const [expanded, setExpanded] = useState(false);
   const yieldValue = effectiveYield(row);
   const isCurrentYield = row.isFloater || row.isIndexed;
@@ -70,6 +80,7 @@ export function PositionCard({ row, onClick }: { row: PositionRow; onClick: () =
                 валютная / вне скоупа
               </Badge>
             )}
+            <PositionVerdictBadge verdict={verdict} />
           </Group>
 
           <Group justify="space-between" mt={4}>

@@ -6,6 +6,7 @@ import { http, HttpResponse } from 'msw';
 import { server } from '../test/msw-handlers';
 import { PositionDetail } from './PositionDetail';
 import { greenFairSignals, reliabilityResponse } from '../test/scorecardFixtures';
+import { usePositionVerdictStore } from '../store/usePositionVerdictStore';
 import type { PositionDetail as PositionDetailDto } from '../api/types';
 
 function renderDetail(positionId = '1') {
@@ -99,6 +100,7 @@ const baseDetail: PositionDetailDto = {
 
 describe('PositionDetail', () => {
   beforeEach(() => {
+    usePositionVerdictStore.setState({ verdictsById: {}, disclaimer: '', isLoading: false, error: null, hasLoaded: false });
   });
 
   it('renders all sections from the mocked response', async () => {
@@ -114,6 +116,51 @@ describe('PositionDetail', () => {
     expect(screen.getByTestId('position-operations')).toBeInTheDocument();
     expect(screen.getByTestId('if-sold-now-card')).toBeInTheDocument();
     expect(screen.getByText('Тестовый дисклеймер карточки позиции.')).toBeInTheDocument();
+  });
+
+  // ─── Задача 49: блок «Вердикт» ────────────────────────────────────────────────────────
+
+  it('shows the verdict block with reasons, confidence, disclaimer and a link to pick a replacement', async () => {
+    server.use(
+      http.get('*/api/positions/1', () => HttpResponse.json(baseDetail)),
+      http.get('*/api/analytics/position-verdicts', () =>
+        HttpResponse.json({
+          verdicts: [
+            {
+              positionId: 1,
+              instrumentId: 10,
+              verdict: 'ConsiderReplace',
+              reasons: ['Кандидат на замену «Бумага Б»: +0.8% годовых', 'Светофор цели не хуже'],
+              confidence: 'Medium',
+              bestReplacement: null,
+            },
+          ],
+          disclaimer: 'Вердикт — оценка по открытым данным.',
+        }),
+      ),
+    );
+
+    renderDetail();
+
+    await waitFor(() => expect(screen.getByTestId('position-verdict-block')).toBeInTheDocument());
+    expect(screen.getByTestId('position-verdict-block-badge')).toHaveTextContent('Рассмотреть замену');
+    expect(screen.getByTestId('position-verdict-reasons')).toHaveTextContent('Кандидат на замену «Бумага Б»');
+    expect(screen.getByTestId('position-verdict-confidence')).toHaveTextContent('средняя');
+    expect(screen.getByTestId('position-verdict-disclaimer')).toHaveTextContent('Оценка, не рекомендация');
+    expect(screen.getByTestId('position-verdict-find-replacement')).toHaveAttribute('href', '/recommendations?positionId=1');
+  });
+
+  it('hides the verdict block (page still works) when the verdicts endpoint fails', async () => {
+    server.use(
+      http.get('*/api/positions/1', () => HttpResponse.json(baseDetail)),
+      http.get('*/api/analytics/position-verdicts', () => HttpResponse.json({ error: 'boom' }, { status: 500 })),
+    );
+
+    renderDetail();
+
+    await waitFor(() => expect(screen.getByTestId('position-detail-header')).toBeInTheDocument());
+    await waitFor(() => expect(usePositionVerdictStore.getState().hasLoaded).toBe(true));
+    expect(screen.queryByTestId('position-verdict-block')).not.toBeInTheDocument();
   });
 
   it('shows the если-продать-сейчас net proceeds and total return', async () => {

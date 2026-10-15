@@ -19,11 +19,14 @@ import {
   Switch,
 } from '@mantine/core';
 import { Page } from '@mvv42/kit';
+import { useSearchParams } from 'react-router-dom';
 import { useRecommendationsStore } from '../store/useRecommendationsStore';
 import { useWatchlistStore } from '../store/useWatchlistStore';
 import { useRelativeValueStore } from '../store/useRelativeValueStore';
 import { Disclaimer } from '../components/Disclaimer';
 import { ReplacementBreakdown } from '../components/ReplacementBreakdown';
+import { horizonCaption, toBreakdownData } from '../utils/replacementBreakdown';
+import { getReplacementHorizonYears, useSettingsStore } from '../store/useSettingsStore';
 import { MarketComparator } from '../components/MarketComparator';
 import { BasketConstructor } from '../components/BasketConstructor';
 import { RelativeValueBadge } from '../components/RelativeValueBadge';
@@ -41,7 +44,6 @@ import type {
   ReplacementResponse,
 } from '../api/types';
 
-const REPLACEMENT_HORIZON_YEARS = 2;
 
 /**
  * Окно фильтра «похожая дюрация» на кандидатах, ГОДЫ (±1.5 г.). Фильтрация клиентская, по уже
@@ -190,6 +192,12 @@ function ReplacementPanel({
   // set-ом результата проверяем, что id всё ещё актуален.
   const selectRequestIdRef = useRef(0);
 
+  // Настройки (горизонт замены) нужны фоном; ensureLoaded не плодит повторных GET при многих карточках.
+  const ensureSettingsLoaded = useSettingsStore((s) => s.ensureLoaded);
+  useEffect(() => {
+    void ensureSettingsLoaded();
+  }, [ensureSettingsLoaded]);
+
   useEffect(() => {
     if (mode === 'search') return;
     let cancelled = false;
@@ -257,7 +265,8 @@ function ReplacementPanel({
       const replacementResult = await postReplacement({
         holdPositionId,
         targetInstrumentId: materializeResult.instrumentId,
-        horizonYears: REPLACEMENT_HORIZON_YEARS,
+        // Горизонт — настройка пользователя (Settings), не константа; не загружена — бэкенд подставит её сам.
+        horizonYears: getReplacementHorizonYears(),
       });
       if (selectRequestIdRef.current !== myRequestId) return;
       setReplacement(replacementResult);
@@ -311,32 +320,17 @@ function ReplacementPanel({
             {replacement.annualizedBenefitFraction !== null && (
               <> (~{formatPercent(replacement.annualizedBenefitFraction)} годовых)</>
             )}{' '}
-            за {formatHorizon(replacement.horizonYears)}
+            за {formatHorizon(replacement.effectiveHorizonYears)}
+          </Text>
+          <Text size="xs" c="dimmed" data-testid={`replace-horizon-${holdPositionId}`}>
+            {horizonCaption(toBreakdownData(replacement))}
           </Text>
 
           {replacement.targetRiskSignals && (
             <RiskSignalBadges signals={replacement.targetRiskSignals} testIdSuffix={`replace-${holdPositionId}`} />
           )}
 
-          <ReplacementBreakdown
-            data={{
-              spreadFraction: replacement.spreadFraction,
-              capitalRub: replacement.capitalRub,
-              horizonYears: replacement.horizonYears,
-              grossGainRub: replacement.grossGainRub,
-              sellCommissionRub: replacement.sellCommissionRub,
-              buyCommissionRub: replacement.buyCommissionRub,
-              netBenefitRub: replacement.netBenefitRub,
-              annualizedBenefitFraction: replacement.annualizedBenefitFraction,
-              // ReplacementResponse несёт раздельные ставки продажи/покупки (обычно совпадают) —
-              // берём ставку продажи как представительную (тот же приём, что MarketComparator).
-              commissionRateUsed: replacement.sellCommissionRateUsed,
-              commissionRateSource: replacement.commissionRateSource,
-              sellTaxEstimateRub: replacement.sellTaxEstimateRub,
-              netBenefitAfterTaxRub: replacement.netBenefitAfterTaxRub,
-            }}
-            testIdSuffix={`candidate-${holdPositionId}`}
-          />
+          <ReplacementBreakdown data={toBreakdownData(replacement)} testIdSuffix={`candidate-${holdPositionId}`} />
         </Paper>
       )}
     </div>
@@ -433,8 +427,17 @@ function ReplacementPanel({
  * (оценочные, «кандидат», не «продайте»), RV-бейдж (отказ GET /relative-value не роняет
  * карточку — undefined просто не рендерится), раскрывашка «подобрать замену» → <see>ReplacementPanel</see>.
  */
-function WeakPositionCard({ row, reasons }: { row: ComparisonRow; reasons: { kind: string; label: string }[] }) {
-  const [expanded, setExpanded] = useState(false);
+function WeakPositionCard({
+  row,
+  reasons,
+  initiallyExpanded = false,
+}: {
+  row: ComparisonRow;
+  reasons: { kind: string; label: string }[];
+  /** Задача 49: переход «подобрать замену» из вердикта позиции (`?positionId=`) сразу раскрывает панель подбора. */
+  initiallyExpanded?: boolean;
+}) {
+  const [expanded, setExpanded] = useState(initiallyExpanded);
   const rv = useRelativeValueStore((s) => s.positionsById[row.positionId]);
 
   return (
@@ -479,7 +482,14 @@ function WeakPositionCard({ row, reasons }: { row: ComparisonRow; reasons: { kin
  * позиций, у каждой — раскрывашка режимов подбора замены (см. <see>ReplacementPanel</see>).
  */
 function WeakLinksSection() {
-  const { sellCandidates, outOfComparison, comparisonDisclaimer, isLoading, error } = useRecommendationsStore();
+  const { sellCandidates, outOfComparison, comparisonRows, comparisonDisclaimer, isLoading, error } = useRecommendationsStore();
+
+  // Задача 49: `?positionId=N` (ссылка «подобрать замену» из вердикта позиции) — выбранная позиция раскрыта сразу;
+  // если она не среди «слабых» (топ-3 по доходности), показываем её отдельной карточкой над списком.
+  const [searchParams] = useSearchParams();
+  const selectedId = Number(searchParams.get('positionId')) || null;
+  const selectedRow = selectedId === null ? undefined : comparisonRows.find((r) => r.positionId === selectedId);
+  const pinnedRow = selectedRow && !sellCandidates.some((c) => c.row.positionId === selectedRow.positionId) ? selectedRow : null;
 
   return (
     <Paper withBorder p="md" radius="md" data-testid="weak-links-section">
@@ -509,10 +519,24 @@ function WeakLinksSection() {
         </Text>
       )}
 
+      {!isLoading && !error && pinnedRow && (
+        <Stack gap="sm" mb="sm" data-testid="selected-position-section">
+          <Text size="xs" fw={600} c="dimmed">
+            Выбранная позиция
+          </Text>
+          <WeakPositionCard row={pinnedRow} reasons={[]} initiallyExpanded />
+        </Stack>
+      )}
+
       {!isLoading && !error && sellCandidates.length > 0 && (
         <Stack gap="sm">
           {sellCandidates.map((c) => (
-            <WeakPositionCard key={c.row.positionId} row={c.row} reasons={c.reasons} />
+            <WeakPositionCard
+              key={c.row.positionId}
+              row={c.row}
+              reasons={c.reasons}
+              initiallyExpanded={c.row.positionId === selectedId}
+            />
           ))}
         </Stack>
       )}

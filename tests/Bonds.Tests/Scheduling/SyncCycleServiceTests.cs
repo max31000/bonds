@@ -52,6 +52,8 @@ public class SyncCycleServiceTests
     private readonly Mock<ITInvestTokenProvider> _tokenProvider = new();
     private readonly Mock<IWatchlistItemRepository> _watchlistItems = new();
     private readonly Mock<IInstrumentRiskLevelRepository> _riskLevels = new();
+    private readonly Mock<IBondUniverseRepository> _universe = new();
+    private readonly Mock<ISecurityDetailsRepository> _securityDetails = new();
 
     private void SetupNoPositionsHappyPath()
     {
@@ -80,6 +82,13 @@ public class SyncCycleServiceTests
 
         // Задача 20 часть A: шаг синка watchlist — пустой список по умолчанию (ни одной watchlist-записи).
         _watchlistItems.Setup(w => w.GetAllAsync()).ReturnsAsync(new List<WatchlistItem>());
+
+        // Задача 49: банк/карточки по умолчанию пусты (рыночные/кредитные события не порождаются).
+        _universe.Setup(u => u.GetByIsinsAsync(It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        _universe.Setup(u => u.GetRecentHistoryForSecidsAsync(It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        _securityDetails.Setup(d => d.GetBySecidsAsync(It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        _securityDetails.Setup(d => d.GetEmitentDefaultHistoryAsync(It.IsAny<IReadOnlyCollection<int>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<int, EmitentDefaultHistory>());
     }
 
     private ServiceProvider BuildServiceProvider()
@@ -106,6 +115,8 @@ public class SyncCycleServiceTests
         services.AddSingleton(_alertSender.Object);
         services.AddSingleton(_watchlistItems.Object);
         services.AddSingleton(_riskLevels.Object);
+        services.AddSingleton(_universe.Object);
+        services.AddSingleton(_securityDetails.Object);
 
         services.AddSingleton(NullLoggerFactory.Instance);
         services.AddSingleton(typeof(Microsoft.Extensions.Logging.ILogger<>), typeof(NullLogger<>));
@@ -118,6 +129,7 @@ public class SyncCycleServiceTests
         services.AddScoped<WatchlistSyncService>();
         services.AddScoped<PortfolioHistoryBackfillService>();
         services.AddScoped<InstrumentRiskLevelRefresher>();
+        services.AddScoped<Bonds.Infrastructure.Universe.PositionMarketContextBuilder>();
 
         services.AddSingleton<IOptions<SignalEngineOptions>>(Options.Create(new SignalEngineOptions()));
         services.AddSingleton<ISyncCycleRunner, SyncCycleService>();
@@ -416,5 +428,93 @@ public class SyncCycleServiceTests
 
         gate.SetResult();
         await firstCallTask;
+    }
+
+    // ─── Задача 49: рыночные и кредитные события ───────────────────────────────────────────
+
+    private void SetupBankEntryForOpenPosition(decimal gspread, int emitentId = 777)
+    {
+        _universe.Setup(u => u.GetByIsinsAsync(It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([new BondUniverseEntry
+            {
+                Secid = "SU49", Isin = "RU000TEST001", EmitentId = emitentId, GspreadOfficialFraction = gspread, PricePercent = 99m, IsFloater = false,
+            }]);
+    }
+
+    [Fact]
+    public async Task RunCycleAsync_IssuerDefaultAppears_InsertsCriticalEvent_AndSendsTelegramAlertOnce()
+    {
+        SetupNoPositionsHappyPath();
+        SetupOpenPosition(BusinessClock.MoscowToday().AddYears(3));
+        SetupBankEntryForOpenPosition(gspread: 0.02m);
+        _securityDetails.Setup(d => d.GetEmitentDefaultHistoryAsync(It.IsAny<IReadOnlyCollection<int>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<int, EmitentDefaultHistory> { [777] = new(777, true, false) });
+
+        await BuildServiceProvider().GetRequiredService<ISyncCycleRunner>().RunCycleAsync();
+
+        _signals.Verify(s => s.InsertAsync(It.Is<Signal>(x =>
+            x.Type == SignalType.IssuerDefaultEvent && x.Severity == SignalSeverity.Critical && x.Subject == "Тест-Эмитент")), Times.Once);
+        _alertSender.Verify(a => a.SendAsync(It.Is<string>(m => m.Contains("Тест-Эмитент") && m.Contains("дефолт")), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task RunCycleAsync_IssuerDefaultAlreadyKnown_RefreshesWithoutSecondTelegramAlert()
+    {
+        SetupNoPositionsHappyPath();
+        SetupOpenPosition(BusinessClock.MoscowToday().AddYears(3));
+        SetupBankEntryForOpenPosition(gspread: 0.02m);
+        _securityDetails.Setup(d => d.GetEmitentDefaultHistoryAsync(It.IsAny<IReadOnlyCollection<int>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<int, EmitentDefaultHistory> { [777] = new(777, true, false) });
+        _signals.Setup(s => s.GetByAccountIdAsync(AccountId, true)).ReturnsAsync(new List<Signal>
+        {
+            new() { Id = 5, AccountId = AccountId, EventKey = Signal.BuildKey(SignalType.IssuerDefaultEvent, "777:default", null), Type = SignalType.IssuerDefaultEvent },
+        });
+
+        await BuildServiceProvider().GetRequiredService<ISyncCycleRunner>().RunCycleAsync();
+
+        _signals.Verify(s => s.InsertAsync(It.Is<Signal>(x => x.Type == SignalType.IssuerDefaultEvent)), Times.Never);
+        _signals.Verify(s => s.RefreshAsync(5ul, SignalSeverity.Critical, It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<DateTime>()), Times.Once);
+        _alertSender.Verify(a => a.SendAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task RunCycleAsync_IssuerDefaultFlagCleared_ResolvesEvent()
+    {
+        SetupNoPositionsHappyPath();
+        SetupOpenPosition(BusinessClock.MoscowToday().AddYears(3));
+        SetupBankEntryForOpenPosition(gspread: 0.02m);
+        // флага больше нет (агрегат false/false)
+        _securityDetails.Setup(d => d.GetEmitentDefaultHistoryAsync(It.IsAny<IReadOnlyCollection<int>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<int, EmitentDefaultHistory> { [777] = new(777, false, false) });
+        _signals.Setup(s => s.GetByAccountIdAsync(AccountId, true)).ReturnsAsync(new List<Signal>
+        {
+            new() { Id = 5, AccountId = AccountId, EventKey = Signal.BuildKey(SignalType.IssuerDefaultEvent, "777:default", null), Type = SignalType.IssuerDefaultEvent },
+        });
+
+        await BuildServiceProvider().GetRequiredService<ISyncCycleRunner>().RunCycleAsync();
+
+        _signals.Verify(s => s.ResolveAsync(It.Is<IReadOnlyCollection<ulong>>(ids => ids.Single() == 5ul), It.IsAny<DateTime>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task RunCycleAsync_SpreadWidening_InsertsWarning_FromBatchedHistory_WithoutTelegram()
+    {
+        SetupNoPositionsHappyPath();
+        var today = BusinessClock.MoscowToday();
+        SetupOpenPosition(today.AddYears(3));
+        SetupBankEntryForOpenPosition(gspread: 0.0300m);
+        // 12 прошлых торговых дней со спредом 0.0200 → сегодня +100 б.п. > 50 б.п.
+        _universe.Setup(u => u.GetRecentHistoryForSecidsAsync(
+                It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Enumerable.Range(1, 12).Select(d => new BondUniverseHistoryPoint
+            {
+                Secid = "SU49", SnapshotDate = today.AddDays(-d), GspreadEffectiveFraction = 0.0200m, PricePercent = 99m,
+            }).ToList());
+
+        await BuildServiceProvider().GetRequiredService<ISyncCycleRunner>().RunCycleAsync();
+
+        _signals.Verify(s => s.InsertAsync(It.Is<Signal>(x => x.Type == SignalType.SpreadWidening && x.Severity == SignalSeverity.Warning)), Times.Once);
+        _alertSender.Verify(a => a.SendAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        _universe.Verify(u => u.GetByIsinsAsync(It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 }

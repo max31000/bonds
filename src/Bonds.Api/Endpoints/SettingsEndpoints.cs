@@ -43,6 +43,34 @@ public static class SettingsEndpoints
     /// <summary>Валидация override: null допустим (сброс), иначе строго 0 &lt; x &lt; 0.05 — ставка ≥5% явно опечатка (ввод в % на фронте, доля на бэкенде).</summary>
     private const decimal MaxCommissionRateOverride = 0.05m;
 
+    /// <summary>Допустимый диапазон горизонта анализа замены, годы (задача 48): 0.5–10 с шагом 0.5.</summary>
+    public const decimal MinReplacementHorizonYears = 0.5m;
+    public const decimal MaxReplacementHorizonYears = 10m;
+    public const decimal ReplacementHorizonStepYears = 0.5m;
+
+    /// <summary>true — горизонт в допустимом диапазоне и кратен шагу 0.5 года.</summary>
+    public static bool IsValidReplacementHorizon(decimal years) =>
+        years >= MinReplacementHorizonYears && years <= MaxReplacementHorizonYears
+        && years % ReplacementHorizonStepYears == 0m;
+
+    /// <summary>
+    /// true — горизонт ЯВНОГО запроса анализа замены в допустимом диапазоне 0 &lt; h ≤ <see cref="MaxReplacementHorizonYears"/>, ГОДЫ.
+    /// Верхняя граница общая с настройкой; шаг <see cref="ReplacementHorizonStepYears"/> и нижняя граница настройки (0.5) для
+    /// запроса не требуются — API-клиент вправе спросить, например, 0.25 г.
+    /// </summary>
+    public static bool IsValidReplacementHorizonRequest(decimal years) =>
+        years > 0m && years <= MaxReplacementHorizonYears;
+
+    /// <summary>
+    /// Допустимые диапазоны порогов рыночных событий (задача 49), ДОЛИ: спред — (0, 0.05] (до 500 б.п.), просадка цены — (0, 0.5].
+    /// Ввод в б.п./% и конверсия в долю — на фронте.
+    /// </summary>
+    public const decimal MaxSpreadWideningThresholdFraction = 0.05m;
+    public const decimal MaxPriceDrawdownThresholdFraction = 0.5m;
+
+    private static IResult ValidationFailure(string error) =>
+        Results.Json(new { error, type = "ValidationException" }, statusCode: StatusCodes.Status422UnprocessableEntity);
+
     private static async Task<IResult> GetSettings(
         ICurrentUser currentUser,
         IUserRepository userRepo,
@@ -93,6 +121,29 @@ public static class SettingsEndpoints
                 statusCode: StatusCodes.Status422UnprocessableEntity);
         }
 
+        if (request.ReplacementHorizonYears is decimal horizon && !IsValidReplacementHorizon(horizon))
+        {
+            return Results.Json(
+                new
+                {
+                    error = $"Горизонт анализа замены должен быть от {MinReplacementHorizonYears:0.#} до {MaxReplacementHorizonYears:0.#} лет с шагом {ReplacementHorizonStepYears:0.#}",
+                    type = "ValidationException",
+                },
+                statusCode: StatusCodes.Status422UnprocessableEntity);
+        }
+
+        if (request.SpreadWideningThresholdFraction is decimal spreadFraction
+            && (spreadFraction <= 0m || spreadFraction > MaxSpreadWideningThresholdFraction))
+        {
+            return ValidationFailure($"Порог расширения спреда должен быть в диапазоне (0; {MaxSpreadWideningThresholdFraction * 10000m:0} б.п.]");
+        }
+
+        if (request.PriceDrawdownThresholdFraction is decimal drawdownFraction
+            && (drawdownFraction <= 0m || drawdownFraction > MaxPriceDrawdownThresholdFraction))
+        {
+            return ValidationFailure($"Порог просадки цены должен быть в диапазоне (0; {MaxPriceDrawdownThresholdFraction * 100m:0}%]");
+        }
+
         if (request.BaseCurrency is not null)
         {
             user.BaseCurrency = request.BaseCurrency;
@@ -109,6 +160,13 @@ public static class SettingsEndpoints
         // остальные пороги ниже в Settings.tsx), поэтому null здесь означает "убрать override",
         // не "не менять" (в отличие от полей выше, где PUT — частичное обновление per-поле).
         existing.CommissionRateOverride = request.CommissionRateOverride;
+
+        // Горизонт замены — колонка NOT NULL, поэтому null в запросе = «не менять» (частичное обновление).
+        existing.ReplacementHorizonYears = request.ReplacementHorizonYears ?? existing.ReplacementHorizonYears;
+
+        // Пороги рыночных событий (задача 49) — nullable-колонки: null в запросе = «не менять» (как пороги выше).
+        existing.SpreadWideningThresholdFraction = request.SpreadWideningThresholdFraction ?? existing.SpreadWideningThresholdFraction;
+        existing.PriceDrawdownThresholdFraction = request.PriceDrawdownThresholdFraction ?? existing.PriceDrawdownThresholdFraction;
 
         await settingsRepo.UpsertAsync(existing);
 
@@ -182,6 +240,9 @@ public static class SettingsEndpoints
         UninvestedCashThresholdRub = settings?.UninvestedCashThresholdRub ?? defaults.UninvestedCashThresholdRub,
         DefaultMaxConcentrationPercent = settings?.DefaultMaxConcentrationPercent ?? defaults.DefaultMaxConcentrationPercent,
         CommissionRateOverride = settings?.CommissionRateOverride,
+        ReplacementHorizonYears = settings?.ReplacementHorizonYears ?? UserSettings.DefaultReplacementHorizonYears,
+        SpreadWideningThresholdFraction = settings?.SpreadWideningThresholdFraction ?? defaults.SpreadWideningThresholdFraction,
+        PriceDrawdownThresholdFraction = settings?.PriceDrawdownThresholdFraction ?? defaults.PriceDrawdownThresholdFraction,
         CommissionAutoEstimate = commission.AutoEstimate,
         TInvestTariff = commission.TInvestTariff,
         CommissionEffectiveRate = commission.CommissionEffectiveRate,
@@ -281,6 +342,15 @@ public sealed record SettingsResponseDto
     /// <summary>Ручной override ставки комиссии — ДОЛЯ (0.0005 = 0.05%). Null — не задан.</summary>
     public decimal? CommissionRateOverride { get; init; }
 
+    /// <summary>Горизонт анализа замены, ГОДЫ (0.5–10, шаг 0.5; дефолт 2.0) — задача 48.</summary>
+    public required decimal ReplacementHorizonYears { get; init; }
+
+    /// <summary>Порог события «расширение G-спреда», ДОЛЯ (0.0030 = 30 б.п. по умолчанию; задача 49) — эффективное значение (настройка либо дефолт).</summary>
+    public required decimal SpreadWideningThresholdFraction { get; init; }
+
+    /// <summary>Порог события «просадка цены», ДОЛЯ (0.05 = 5%; задача 49) — эффективное значение (настройка либо дефолт).</summary>
+    public required decimal PriceDrawdownThresholdFraction { get; init; }
+
     /// <summary>Read-only: авто-оценка ставки из журнала операций (часть A). Null — журнал не позволяет оценить (нет сделок/оборот 0).</summary>
     public CommissionAutoEstimateDto? CommissionAutoEstimate { get; init; }
 
@@ -314,6 +384,15 @@ public sealed record SettingsUpdateRequestDto
 
     /// <summary>override ставки комиссии — ДОЛЯ (не процент; конвертация из % на фронте). Null — убрать override. Валидация: 0 &lt; x &lt; 0.05, иначе 422.</summary>
     public decimal? CommissionRateOverride { get; init; }
+
+    /// <summary>Горизонт анализа замены, ГОДЫ. Null — не менять. Валидация: 0.5–10 с шагом 0.5, иначе 422.</summary>
+    public decimal? ReplacementHorizonYears { get; init; }
+
+    /// <summary>Порог SpreadWidening, ДОЛЯ (0.0030 = 30 б.п. по умолчанию). Null — не менять. Валидация: (0; 0.05], иначе 422.</summary>
+    public decimal? SpreadWideningThresholdFraction { get; init; }
+
+    /// <summary>Порог PriceDrawdown, ДОЛЯ (0.05 = 5%). Null — не менять. Валидация: (0; 0.5], иначе 422.</summary>
+    public decimal? PriceDrawdownThresholdFraction { get; init; }
 }
 
 public sealed record TInvestTokenRequestDto

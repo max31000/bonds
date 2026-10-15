@@ -94,6 +94,8 @@ export const handlers = [
   // Дефолтный кейс для 30 (relative value) — пусто; конкретные сценарии переопределяются в тестах
   // Recommendations/Positions.
   http.get('*/api/analytics/relative-value', () => HttpResponse.json({ positions: [], disclaimer: '' })),
+  // Задача 49: вердикты позиций — по умолчанию пусто (бейджи не рисуются); сценарии переопределяются в тестах.
+  http.get('*/api/analytics/position-verdicts', () => HttpResponse.json({ verdicts: [], disclaimer: '' })),
   // Дефолтный кейс для 29 (BasketConstructor) — конкретные сценарии переопределяются в тестах компонента.
   http.post('*/api/analytics/basket', () =>
     HttpResponse.json({
@@ -172,6 +174,9 @@ export const handlers = [
       upcomingEventDaysThreshold: 14,
       uninvestedCashThresholdRub: 10000,
       defaultMaxConcentrationPercent: 25,
+      replacementHorizonYears: 2,
+      spreadWideningThresholdFraction: 0.003,
+      priceDrawdownThresholdFraction: 0.05,
     }),
   ),
   http.put('*/api/settings', async ({ request }) => {

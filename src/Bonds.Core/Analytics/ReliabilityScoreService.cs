@@ -797,7 +797,8 @@ public static class ReliabilityScoreService
         return false;
     }
 
-    private static decimal Median(IReadOnlyList<decimal> values)
+    /// <summary>Медиана (для чётного числа — среднее двух центральных). Общий хелпер скоркарты и правил событий (задача 49).</summary>
+    internal static decimal Median(IReadOnlyList<decimal> values)
     {
         var sorted = values.OrderBy(v => v).ToList();
         var mid = sorted.Count / 2;

@@ -1,52 +1,69 @@
 import { Stack, Text } from '@mantine/core';
-import { formatRub, formatPercent, formatHorizon, commissionSourceLabel } from '../utils/format';
-import type { CommissionRateSource } from '../api/types';
+import { formatRub, formatPercent, formatHorizon, formatDate, commissionSourceLabel } from '../utils/format';
+import { reconcileBreakdown, type ReplacementBreakdownData } from '../utils/replacementBreakdown';
 
 /**
- * Поля построчной формулы «держать vs переложиться», общие для карточки матрицы замен
- * (MatrixPair) и карточки market-сравнивалки (ReplacementResponse) — вытащено
- * в один компонент, чтобы обе карточки рендерили ОДИНАКОВУЮ формулу без копипасты.
- */
-export interface ReplacementBreakdownData {
-  spreadFraction: number | null;
-  capitalRub: number;
-  horizonYears: number;
-  grossGainRub: number | null;
-  sellCommissionRub: number;
-  buyCommissionRub: number;
-  netBenefitRub: number;
-  annualizedBenefitFraction: number | null;
-  commissionRateUsed: number;
-  commissionRateSource: CommissionRateSource | 'ExplicitRequest';
-  sellTaxEstimateRub: number | null;
-  netBenefitAfterTaxRub: number | null;
-}
-
-/**
- * Построчная формула-разбивка: спред → капитал → горизонт → валовая выгода → минус обе комиссии →
- * чистая выгода ≈ % годовых → минус НДФЛ → выгода после налога.
- * data-testid принимает суффикс, чтобы вызывающий код мог задать уникальный ключ (пара матрицы или
+ * Построчная формула-разбивка: доходности после НДФЛ → спред → вложено → горизонт (с причиной обрезки) →
+ * валовая выгода → минус комиссии → минус слиппедж → эффект роста издержек на горизонте → чистая выгода ≈ % годовых →
+ * минус налог продажи (с учётом роста на горизонте) → выгода после налога; предупреждение о смене дюрации.
+ * Строки сходятся арифметически: валовая − комиссии − слиппедж + эффект = чистая выгода; чистая − налог = выгода после налога
+ * (сводящие строки считает <see>reconcileBreakdown</see>: издержки и налог уходят из капитала СЕГОДНЯ и лишают его роста
+ * на горизонте, поэтому влияют на итог сильнее номинала).
+ * data-testid принимает суффикс, чтобы вызывающий код мог задать уникальный ключ (карточка кандидата или
  * market-сравнивалка используют разные префиксы).
  */
 export function ReplacementBreakdown({ data, testIdSuffix }: { data: ReplacementBreakdownData; testIdSuffix: string }) {
+  const slippageTotal = data.sellSlippageRub + data.buySlippageRub;
+  const { costGrowthEffectRub, saleTaxRub } = reconcileBreakdown(data);
   return (
     <Stack gap={2} mt="xs" data-testid={`replacement-details-${testIdSuffix}`}>
-      <Text size="xs">спред доходностей: {formatPercent(data.spreadFraction)}</Text>
-      <Text size="xs">капитал после продажи: {formatRub(data.capitalRub)}</Text>
-      <Text size="xs">горизонт: {formatHorizon(data.horizonYears)}</Text>
-      <Text size="xs">валовая выгода: {formatRub(data.grossGainRub)}</Text>
+      <Text size="xs" data-testid={`replacement-yield-after-tax-${testIdSuffix}`}>
+        доходность после НДФЛ {formatPercent(data.couponTaxRate)}: текущая {formatPercent(data.holdYieldAfterTaxFraction)} → цель{' '}
+        {formatPercent(data.targetYieldAfterTaxFraction)}
+      </Text>
+      <Text size="xs">спред доходностей (до налога): {formatPercent(data.spreadFraction)}</Text>
+      <Text size="xs">вложено в цель после издержек: {formatRub(data.capitalRub)}</Text>
+      <Text size="xs" data-testid={`replacement-horizon-${testIdSuffix}`}>
+        горизонт: {formatHorizon(data.effectiveHorizonYears)}
+        {data.horizonLimitedByTarget && (
+          <>
+            {' '}
+            (сокращён с {formatHorizon(data.horizonYears)}: {data.targetHorizonIsOffer ? 'оферта' : 'погашение'} цели
+            {data.targetHorizonDate ? ` ${formatDate(data.targetHorizonDate)}` : ''})
+          </>
+        )}
+      </Text>
+      <Text size="xs">валовая выгода (разница доходностей после НДФЛ): {formatRub(data.grossGainRub)}</Text>
       <Text size="xs">
         − комиссия продажи {formatRub(data.sellCommissionRub)} − комиссия покупки {formatRub(data.buyCommissionRub)} (
         {formatPercent(data.commissionRateUsed)}, {commissionSourceLabel(data.commissionRateSource)})
       </Text>
+      {data.slippageUnknown && (
+        <Text size="xs" c="dimmed" data-testid={`replacement-slippage-unknown-${testIdSuffix}`}>
+          спред стакана неизвестен, слиппедж{slippageTotal > 0 ? ' одной из сторон' : ''} не учтён
+        </Text>
+      )}
+      {!(data.slippageUnknown && slippageTotal === 0) && (
+        <Text size="xs" data-testid={`replacement-slippage-${testIdSuffix}`}>
+          − слиппедж продажи {formatRub(data.sellSlippageRub)} − слиппедж покупки {formatRub(data.buySlippageRub)} (половина
+          спреда стакана)
+        </Text>
+      )}
+      {costGrowthEffectRub !== null && (
+        <Text size="xs" data-testid={`replacement-cost-growth-${testIdSuffix}`}>
+          {costGrowthEffectRub < 0 ? '−' : '+'} эффект роста издержек на горизонте {formatRub(Math.abs(costGrowthEffectRub))} (издержки уходят
+          из капитала сегодня и не растут вместе с ним)
+        </Text>
+      )}
       <Text size="xs" fw={600}>
         = чистая выгода {formatRub(data.netBenefitRub)}
         {data.annualizedBenefitFraction !== null && <> ≈ {formatPercent(data.annualizedBenefitFraction)} годовых</>}
       </Text>
-      {data.sellTaxEstimateRub !== null ? (
+      {saleTaxRub !== null ? (
         <>
           <Text size="xs" data-testid={`replacement-sell-tax-${testIdSuffix}`}>
-            − НДФЛ от продажи ≈ {formatRub(data.sellTaxEstimateRub)} (оценка, 13% с прибыли к средней цене входа)
+            − налог продажи (с учётом роста на горизонте) {formatRub(saleTaxRub)}
+            {data.sellTaxEstimateRub !== null && <> (сам НДФЛ ≈ {formatRub(data.sellTaxEstimateRub)}: оценка, 13% с прибыли к средней цене входа)</>}
           </Text>
           <Text size="xs" fw={600} data-testid={`replacement-net-after-tax-${testIdSuffix}`}>
             = выгода после налога {formatRub(data.netBenefitAfterTaxRub)}
@@ -55,6 +72,11 @@ export function ReplacementBreakdown({ data, testIdSuffix }: { data: Replacement
       ) : (
         <Text size="xs" c="dimmed" data-testid={`replacement-tax-unavailable-${testIdSuffix}`}>
           налог не оценён: журнал операций по hold-позиции неполон
+        </Text>
+      )}
+      {data.durationMismatch && data.durationMismatchWarning && (
+        <Text size="xs" c="orange" data-testid={`replacement-duration-warning-${testIdSuffix}`}>
+          {data.durationMismatchWarning}
         </Text>
       )}
     </Stack>

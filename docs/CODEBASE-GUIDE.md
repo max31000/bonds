@@ -19,6 +19,9 @@ MySQL для интеграционных), vitest + Testing Library + MSW.
 | Исключения из «долей» | `RateScenarioService.DeltaPercent`, `PortfolioCompositionService.SharePercent` (+их DTO) — уже В ПРОЦЕНТАХ | задокументировано на полях, закреплено тестами; новых исключений не заводить |
 | Деньги | везде | `decimal`, рубли за одну бумагу если не сказано иное |
 | Дюрация | движок/модели | годы (`decimal`) |
+| Горизонт анализа замены | `user_settings.replacement_horizon_years`, DTO `horizonYears`/`effectiveHorizonYears` | годы (`decimal`, 0.5–10) |
+| Пороги рыночных событий | `SignalEngineOptions.SpreadWideningThresholdFraction` (0.0030 = 30 б.п.), `PriceDrawdownThresholdFraction` (0.05 = 5%), `user_settings.spread_widening_threshold_fraction`/`price_drawdown_threshold_fraction`, DTO настроек | **ДОЛИ**; Settings-UI вводит б.п./% и конвертирует один раз на границе API |
+| Вердикт позиции | `PositionVerdictService.MinReplacementBenefitFraction` (0.005 = 50 б.п. годовых), `ReplacementOption.AnnualizedBenefitFraction` — **ДОЛИ**; `IssuerSharePercentAfterBuy`/`ConcentrationLimitPercent` — **ПРОЦЕНТЫ** (как `SharePercent`) | не смешивать: сравнение долей портфеля идёт в процентах с обеих сторон |
 | Какая дюрация | сравнение позиции с банком/корзинами (бакет RV, фильтр «похожая дюрация», `macaulayDurationYears` в `/comparison`) | **Маколей** — банк хранит MOEX DURATION = Маколей; модифицированная — только мера чувствительности (сценарии ставок, PVBP, композиция портфеля) |
 | MOEX ISS: YIELD | вход | **проценты** → храним долю (÷100) |
 | MOEX ISS: DURATION | вход | **дни** → храним годы (÷365) |
@@ -74,6 +77,27 @@ DTO этих эндпоинтов — `Endpoints/Dtos/Analytics*Dtos.cs`; общ
 событий на дату (состояние), `SignalSetSynchronizer` сводит его с таблицей `signals` по
 `EventKey` (insert/refresh/resolve); лимит концентрации — из `UserSettings`
 (`DefaultMaxConcentrationPercent`), индивидуальный лимит по эмитенту — `target_allocations`.
+**Рыночные и кредитные события (задача 49).** Три правила `SignalsEngine` поверх позиций Quantity > 0: `SpreadWidening` (Warning:
+эффективный G-спред сегодня − МЕДИАНА его же значений за прошлые ≤ 20 торговых дней > порога 30 б.п. (раннее предупреждение; критический `SpreadShock` скоркарты — отдельная, более высокая ступень 50 б.п.), флоатеры/бумаги вне банка
+пропускаются), `PriceDrawdown` (Warning: чистая цена ниже максимума за 20 дней > 5%; формула та же, что компонент `price_drawdown`
+скоркарты) и `IssuerDefaultEvent` (Critical: у эмитента позиции в `security_details` хотя бы по одному выпуску `has_default`/`has_technical_default`
+= 1; `null` = неизвестно — не событие). Ключи: рыночные — `Type|ISIN|ISO-неделя` (событие не мигает день-к-дню, при нормализации
+исчезает из набора и закрывается синхронизатором; < 10 дней истории — молчат), кредитное — `Type|emitent_id:default|technical` без даты
+(живёт, пока флаг есть). Входы (`SignalEvaluationInput.MarketContexts`/`IssuerDefaults`) собирает БАТЧЕВО `PositionMarketContextBuilder`
+(банк по ISIN `GetByIsinsAsync`, история только по нужным secid `GetRecentHistoryForSecidsAsync` — сегодняшняя строка истории в сравнение
+не входит, карточки, дефолт-агрегаты) в `SyncCycleService.RunSignalsAsync`; сбой чтения НЕ глотается (пустой набор закрыл бы активные события и
+повторил Critical-алерт). Новое Critical-событие попадает в тот же Telegram-алерт цикла, что и put-оферта (только при `ToInsert`).
+Пороги — `SignalEngineOptions`, поверх них `user_settings` (миграция 022: `ENUM signals.type` + две nullable-колонки).
+**Вердикт позиции (задача 49).** `PositionVerdictService` (Core, чистая функция): приоритет — ConsiderExit (критический флаг скоркарты /
+Red / активное `IssuerDefaultEvent`) → Hold при Coverage 0 («мало данных», Confidence Low) → ConsiderReplace (позиция сравнима по доходности,
+годовая выгода лучшей замены ≥ 0.005 после налогов и издержек, светофор цели не хуже hold) → BuyMoreCandidate (Green + Value=Cheap +
+доля эмитента после условной докупки на 1% портфеля ≤ лимита + нет активных SpreadWidening/PriceDrawdown/тех. дефолта) → Hold. Confidence —
+по Coverage скоркарты (< 0.3 Low, < 0.6 Medium, иначе High). Эндпоинт `GET /api/analytics/position-verdicts` (`PositionVerdictEndpoints`)
+собирает входы разом: holdings, `ReliabilityBook`, снимок банка, активные события, цели концентрации, настройки, ставка комиссии; лучшая
+замена = топ-3 RV-кандидата корзины позиции (`ResolveCheapBasketMembers`, как `mode=rv`) → `SwitchAnalysisService.Compare` v2 с ногой цели из
+БАНК-записи (доходность MOEX YIELD, Маколей, полуспред стакана, оферта/погашение) → `SelectBestReplacement`; Red/критические/без данных/
+несравнимые позиции замену не считают. Нога hold в расчёте замены — доходность БАНК-записи позиции (`YieldFraction`, одна методика с ногами-целями; YTM движка — только fallback, если позиции нет в банке), поэтому цифры вердикта могут отличаться от ручного `POST /replacement`. Дефолт эмитента — флаг уровня эмитента (`PositionVerdictInput.HasIssuerDefaultEvent`): событие привязано к одной позиции, а вердикт `ConsiderExit` получают ВСЕ позиции того же `emitent_id`. Сбой расчёта одной позиции даёт ей Hold «не удалось оценить» (LogWarning), остальные считаются; группировка эмитентов для концентрации — регистронезависимая, с суммированием. UI: `PositionVerdictBadge` (таблица/карточка), блок «Вердикт» в карточке позиции, ссылка
+`/recommendations?positionId=` раскрывает панель подбора замены (позиция вне топ-3 слабых показывается отдельной карточкой).
 
 **Auth** (`Bonds.Api/Auth`): только общий mvv42-auth — `Mvv42Auth.cs` (copy-in SDK, не править),
 `BondsAuth.cs`: схема `mvv42` (JWT из cookie `__Host-mvv42_at`, ключи из JWKS `mvv42-auth:8080`),
@@ -107,6 +131,12 @@ XIRR), дата погашения прошла, а выплаты нет — н
 НКД, XIRR, G-спред: интерполяция кривой — `GSpreadCalculator.CurveValue`); портфельные —
 `Analytics/*` (cost basis, сравнение/замена `SwitchAnalysisService`, аллокация/корзина, what-if,
 налог продажи `SaleTaxEstimator`, RV `RelativeValueService`, бакеты — `DurationBucketClassifier`).
+Анализ замены (`SwitchAnalysisService`, задача 48) — компаундирование обеих ног на эффективном горизонте
+`h_eff = min(горизонт пользователя, срок до оферты/погашения ЦЕЛИ)`, не меньше 0.25 г.: доходности после НДФЛ 13% (`CouponTaxRate`,
+упрощение — ко всей доходности), слиппедж = полуспред стакана банка `LiquidityScoreCalculator.HalfSpreadFraction` (единая формула;
+нет bid/offer → 0 + `SlippageUnknown`), налог продажи — `SaleTaxEstimator` внутри выручки, `FV_switch − FV_hold`, срок окупаемости
+аналитически, предупреждение `DurationMismatch` (|Маколей| > 1.5 г.). Горизонт — `user_settings.replacement_horizon_years`
+(годы, 0.5–10, шаг 0.5, дефолт 2): фронт шлёт его из `useSettingsStore` (не константа), без поля в запросе бэкенд берёт настройку сам.
 Правило сравнимости доходностей: floater/indexed/dataIncomplete — «вне сравнения»
 (`YieldComparability.IsComparable`). Порог отклонения спреда (RV-вердикт и ось спреда
 светофора) — `SpreadThresholds.ForBasket(P25, P75)` = max(`DeviationFraction` 0.0020 = 20 б.п., `IqrMultiplier` 0.25 × IQR корзины);
