@@ -758,7 +758,7 @@ describe('Positions', () => {
     });
 
     it.each([
-      ['Hold', 'Держать'],
+      ['Hold', 'Без изменений'],
       ['BuyMoreCandidate', 'Кандидат на докупку'],
       ['ConsiderReplace', 'Рассмотреть замену'],
       ['ConsiderExit', 'Рассмотреть выход'],

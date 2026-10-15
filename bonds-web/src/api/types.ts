@@ -927,7 +927,7 @@ export interface SettingsResponse {
   commissionRateOverride: number | null;
   /** Горизонт анализа замены, ГОДЫ (0.5–10, шаг 0.5; дефолт 2) — задача 48. */
   replacementHorizonYears: number;
-  /** Порог события «расширение G-спреда» — ДОЛЯ (0.005 = 50 б.п.), задача 49. UI вводит в б.п., конвертация на границе API. */
+  /** Порог события «расширение G-спреда» — ДОЛЯ (0.003 = 30 б.п. по умолчанию), задача 49. UI вводит в б.п., конвертация на границе API. */
   spreadWideningThresholdFraction: number;
   /** Порог события «просадка цены» — ДОЛЯ (0.05 = 5%), задача 49. UI вводит в %, конвертация на границе API. */
   priceDrawdownThresholdFraction: number;

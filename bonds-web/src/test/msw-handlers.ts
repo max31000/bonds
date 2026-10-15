@@ -175,7 +175,7 @@ export const handlers = [
       uninvestedCashThresholdRub: 10000,
       defaultMaxConcentrationPercent: 25,
       replacementHorizonYears: 2,
-      spreadWideningThresholdFraction: 0.005,
+      spreadWideningThresholdFraction: 0.003,
       priceDrawdownThresholdFraction: 0.05,
     }),
   ),

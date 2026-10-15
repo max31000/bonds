@@ -5,7 +5,7 @@ import type { PositionVerdictKind, VerdictConfidence } from '../api/types';
  * ConsiderReplace — жёлтый, ConsiderExit — красный. Формулировки — «кандидат/рассмотреть», не «купите/продайте».
  */
 export const VERDICT_META: Record<PositionVerdictKind, { label: string; color: string }> = {
-  Hold: { label: 'Держать', color: 'gray' },
+  Hold: { label: 'Без изменений', color: 'gray' },
   BuyMoreCandidate: { label: 'Кандидат на докупку', color: 'blue' },
   ConsiderReplace: { label: 'Рассмотреть замену', color: 'yellow' },
   ConsiderExit: { label: 'Рассмотреть выход', color: 'red' },
