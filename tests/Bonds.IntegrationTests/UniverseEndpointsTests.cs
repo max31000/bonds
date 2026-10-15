@@ -142,6 +142,35 @@ public class UniverseEndpointsTests
         non.GetProperty("gspreadSource").ValueKind.Should().Be(JsonValueKind.Null);
     }
 
+    /// <summary>
+    /// Задача 43 — DTO скринера отдаёт эмитента (emitentTitle/emitentInn, additive), null — когда MOEX
+    /// эмитента не отдаёт; часовой upsert снимка эмитента не затирает.
+    /// </summary>
+    [Fact]
+    public async Task GetUniverse_ExposesEmitentTitleAndInn_NullWhenUnknown_SurvivesSnapshotRefresh()
+    {
+        var repo = new BondUniverseRepository(_factory.Database.ConnectionString);
+        var marker = Guid.NewGuid().ToString("N")[..6];
+        var known = HealthyEntry($"EMK{marker}", $"ISE{marker}A", 0.15m, 2m);
+        var unknown = HealthyEntry($"EMU{marker}", $"ISE{marker}B", 0.15m, 2m);
+        await repo.UpsertSnapshotBatchAsync([known, unknown]);
+        await repo.UpdateEmitentsAsync([new UniverseEmitent(known.Secid, 4321, "7810962785", "АО Тест-эмитент")]);
+        await repo.UpsertSnapshotBatchAsync([known, unknown]); // следующий часовой цикл
+
+        var client = await CreateAuthorizedClientAsync();
+        var response = await client.GetAsync($"/api/universe?search={marker}&limit=10");
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var rows = (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("rows").EnumerateArray().ToList();
+        var k = rows.Single(r => r.GetProperty("secid").GetString() == $"EMK{marker}");
+        k.GetProperty("emitentTitle").GetString().Should().Be("АО Тест-эмитент");
+        k.GetProperty("emitentInn").GetString().Should().Be("7810962785");
+
+        var u = rows.Single(r => r.GetProperty("secid").GetString() == $"EMU{marker}");
+        u.GetProperty("emitentTitle").ValueKind.Should().Be(JsonValueKind.Null);
+        u.GetProperty("emitentInn").ValueKind.Should().Be(JsonValueKind.Null);
+    }
+
     [Fact]
     public async Task UpsertSnapshotBatch_RoundTripsOfficialYieldColumns_AndOverwritesOnSecondUpsert()
     {

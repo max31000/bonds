@@ -28,6 +28,16 @@ public sealed class BondUniverseRefreshOptions
     /// не дожидаясь первого интервала (план часть C.1).</summary>
     public TimeSpan StaleThreshold { get; set; } = TimeSpan.FromHours(6);
 
+    /// <summary>Задача 43: максимум карточек бумаг (security_details), обрабатываемых за один суточный шаг.
+    /// ~3400 бумаг банка прогреваются примерно за 17 суток, портфель и watchlist — в первый же шаг.</summary>
+    public int SecurityDetailsBatchSize { get; set; } = 200;
+
+    /// <summary>Задача 43: карточка старше этого срока считается устаревшей и обновляется (приоритет 3).</summary>
+    public TimeSpan SecurityDetailsStaleAfter { get; set; } = TimeSpan.FromDays(30);
+
+    /// <summary>Задача 43: пауза между запросами карточек к ISS (не напрягаем публичный API). В тестах 0.</summary>
+    public TimeSpan SecurityDetailsRequestDelay { get; set; } = TimeSpan.FromMilliseconds(100);
+
     /// <summary>Retention дневной истории — план: ~400 дней.</summary>
     public int HistoryRetentionDays { get; set; } = 400;
 

@@ -24,6 +24,7 @@ MySQL для интеграционных), vitest + Testing Library + MSW.
 | MOEX ISS: цены (PREVPRICE/LAST/CLOSE) | вход | **% от номинала** → рубли = `pct/100 × FaceValue` |
 | MOEX ISS `marketdata_yields`: EFFECTIVEYIELD, YIELDTOOFFER | вход | **проценты** → доля (÷100) |
 | MOEX ISS `marketdata_yields`: GSPREADBP, ZSPREADBP | вход | **базисные пункты** → доля (÷10000: 35 б.п. = 0.0035) |
+| MOEX ISS карточка `description`: COUPON_BENCHMARK_SPREAD | вход | **проценты** (строка "1.90") → доля (÷100: 0.019), `security_details.coupon_benchmark_spread_fraction` |
 | MOEX ISS `securities`: ACCRUEDINT (НКД) | вход | **рубли на одну бумагу** (не %, не на лот) — конверсии нет |
 | T-Invest `GetPortfolio` (CurrentPrice/CurrentNkd/AveragePositionPrice) | вход | **рубли** за бумагу — конверсия не нужна |
 | T-Invest `GetLastPrices` (marketdata `LastPrice`) | вход | **ПУНКТЫ** (% от номинала) → рубли = `pts/100 × FaceValue` (см. `LiveQuoteConverter`) |
@@ -157,7 +158,12 @@ Single-user, один счёт. Т-Invest токен — read-only секрет:
 блок ISS `marketdata_yields`; внутри кода спред банка читать ТОЛЬКО через
 `BondUniverseEntry.EffectiveGspreadFraction` = биржевой ?? наше приближение по кривой,
 источник — `GspreadSource` "moex"/"approx"; DTO-поле `gspreadApproxFraction` историческое имя,
-наполняется эффективным); точный движок — по требованию через
+наполняется эффективным); эмитент выпуска (`emitent_id/inn/title`) — отдельный суточный UPDATE из bulk-справочника ISS
+(`UniverseEmitentEnricher`, часовой upsert снимка эти колонки не трогает); карточки бумаг (флаги
+`HASDEFAULT`/`HASTECHNICALDEFAULT`, квал-инвесторы, бенчмарк купона) — персистентный кэш
+`security_details` (`SecurityDetailsRepository`, наполняет `SecurityDetailsEnricher` по 200 бумаг в сутки:
+портфель/watchlist → банк без карточки → старше 30 дней); флаги `null` = «неизвестно», НЕ «нет»; дефолт-история
+эмитента — `GetEmitentDefaultHistoryAsync` (потребители — светофор, задача 46); точный движок — по требованию через
 `POST /api/universe/{secid}/materialize` (единый путь обогащения —
 `InstrumentEnrichmentService`).
 

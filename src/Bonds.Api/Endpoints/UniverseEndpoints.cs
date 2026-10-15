@@ -219,6 +219,8 @@ public static class UniverseEndpoints
             GspreadSource = entry.GspreadSource,
             AccruedRub = entry.AccruedRub,
             IssueSize = entry.IssueSize,
+            EmitentTitle = entry.EmitentTitle,
+            EmitentInn = entry.EmitentInn,
             YieldToOfferFraction = entry.YieldToOfferFraction,
             MaturityDate = entry.MaturityDate,
             OfferDate = entry.OfferDate,
@@ -401,6 +403,13 @@ public sealed record UniverseRowDto
 
     /// <summary>Объём выпуска, штук бумаг (MOEX ISSUESIZE).</summary>
     public long? IssueSize { get; init; }
+
+    /// <summary>Задача 43: название эмитента (справочник MOEX). Null — биржа не отдала эмитента либо суточное
+    /// обогащение ещё не отрабатывало. Только отображение (фильтров/скоринга по нему пока нет).</summary>
+    public string? EmitentTitle { get; init; }
+
+    /// <summary>Задача 43: ИНН эмитента (строка, ведущие нули значимы). Null — неизвестен.</summary>
+    public string? EmitentInn { get; init; }
 
     /// <summary>ДОЛЯ. Доходность к оферте по расчёту биржи (MOEX YIELDTOOFFER в % ÷ 100). Null — оферты нет.</summary>
     public decimal? YieldToOfferFraction { get; init; }

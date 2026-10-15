@@ -897,6 +897,10 @@ export interface UniverseRow {
   issueSize?: number | null;
   /** Задача 42: ДОЛЯ. Доходность к оферте по расчёту биржи; null — оферты нет. */
   yieldToOfferFraction?: number | null;
+  /** Задача 43: название эмитента (справочник MOEX); null — биржа не отдала либо обогащение ещё не отработало. Только отображение. */
+  emitentTitle?: string | null;
+  /** Задача 43: ИНН эмитента (строка, ведущие нули значимы); null — неизвестен. */
+  emitentInn?: string | null;
   maturityDate: string | null;
   offerDate: string | null;
   isHidden: boolean;

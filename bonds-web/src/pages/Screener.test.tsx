@@ -307,6 +307,30 @@ describe('Screener', () => {
     await waitFor(() => expect(screen.getByText('Источник: расчётный (по кривой)')).toBeInTheDocument());
   });
 
+  it('shows the issuer under the bond name and its INN in the tooltip — task 43', async () => {
+    const withIssuer: UniverseRow = {
+      ...gazpromRow,
+      secid: 'RU000EMIT001',
+      name: 'Селектел БО-01',
+      emitentTitle: 'Акционерное общество "Селектел"',
+      emitentInn: '7810962785',
+    };
+    const noIssuer: UniverseRow = { ...gazpromRow, secid: 'RU000EMIT002', name: 'Старый выпуск', emitentTitle: null, emitentInn: null };
+    const legacy: UniverseRow = { ...gazpromRow, secid: 'RU000EMIT003', name: 'Ответ без полей эмитента' };
+    server.use(http.get('*/api/universe', () => HttpResponse.json(universeResponse([withIssuer, noIssuer, legacy]))));
+    renderScreener();
+
+    await waitFor(() => expect(screen.getByTestId(`screener-row-${withIssuer.secid}`)).toBeInTheDocument());
+
+    const issuerLine = within(screen.getByTestId(`screener-row-${withIssuer.secid}`)).getByTestId(`screener-emitent-${withIssuer.secid}`);
+    expect(issuerLine.textContent).toBe('Акционерное общество "Селектел"');
+    expect(within(screen.getByTestId(`screener-row-${noIssuer.secid}`)).queryByTestId(`screener-emitent-${noIssuer.secid}`)).toBeNull();
+    expect(within(screen.getByTestId(`screener-row-${legacy.secid}`)).queryByTestId(`screener-emitent-${legacy.secid}`)).toBeNull();
+
+    fireEvent.mouseEnter(issuerLine.parentElement as HTMLElement); // Tooltip висит на Stack ячейки названия
+    await waitFor(() => expect(screen.getByText(/ИНН 7810962785/)).toBeInTheDocument());
+  });
+
   it('shows a floater badge instead of a YTM number for floater rows', async () => {
     server.use(http.get('*/api/universe', () => HttpResponse.json(universeResponse([gazpromRow, floaterRow]))));
     renderScreener();

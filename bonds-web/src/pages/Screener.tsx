@@ -312,6 +312,25 @@ function StatusBar() {
   );
 }
 
+/** Задача 43: подпись тултипа ячейки названия — ISIN, а при известном эмитенте ещё и эмитент с ИНН. */
+function nameTooltipLabel(row: UniverseRow): string {
+  const parts = [row.isin ?? '—'];
+  if (row.emitentTitle) {
+    parts.push(`Эмитент: ${row.emitentTitle}${row.emitentInn ? ` (ИНН ${row.emitentInn})` : ''}`);
+  }
+  return parts.join(' · ');
+}
+
+/** Задача 43: эмитент под названием бумаги (только отображение). Нет данных — ничего не рисуем. */
+function EmitentLine({ row }: { row: UniverseRow }) {
+  if (!row.emitentTitle) return null;
+  return (
+    <Text size="xs" c="dimmed" lineClamp={1} data-testid={`screener-emitent-${row.secid}`}>
+      {row.emitentTitle}
+    </Text>
+  );
+}
+
 /** Мобильная карточка строки скринера (паттерн PositionCard). */
 function ScreenerCard({ row }: { row: UniverseRow }) {
   const [expanded, { toggle }] = useDisclosure(false);
@@ -330,6 +349,7 @@ function ScreenerCard({ row }: { row: UniverseRow }) {
             <Text fw={600} size="sm" lineClamp={2}>
               {row.name ?? row.secid}
             </Text>
+            <EmitentLine row={row} />
             <Text size="xs" c="dimmed">
               {row.sector ?? '—'}
             </Text>
@@ -578,9 +598,10 @@ export function Screener() {
                         style={row.isHidden ? { opacity: 0.6 } : undefined}
                       >
                         <Table.Td>
-                          <Tooltip label={row.isin ?? '—'} withArrow>
+                          <Tooltip label={nameTooltipLabel(row)} withArrow>
                             <Stack gap={2}>
                               <Text size="sm">{row.name ?? row.secid}</Text>
+                              <EmitentLine row={row} />
                               <Group gap={4} wrap="wrap">
                                 <OwnershipBadges row={row} />
                                 {row.isHidden && (
