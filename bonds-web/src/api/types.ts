@@ -551,9 +551,9 @@ export interface ReplacementResponse {
 export type RiskSignalLevel = 'Good' | 'Neutral' | 'Caution';
 
 /**
- * Светофор надёжности: ОДИН агрегат поверх двух риск-сигналов (см.
- * `RiskSignals`) + листинга + сектора. Зеркалит backend `ReliabilityLight`. <b>НЕ кредитный
- * рейтинг</b> — сигнал по биржевой статистике MOEX, см. `RiskSignalsCaption`/тултип
+ * Светофор надёжности v2 (задача 46): результат скоркарты (структура выпуска + отчётность эмитента + динамика
+ * рынка), а не оси спреда. Зеркалит backend `ReliabilityLight`. <b>НЕ кредитный
+ * рейтинг</b> — оценка по открытым данным, см. `RiskSignalsCaption`/тултип
  * `RiskSignalBadges` для обязательного дисклеймера.
  */
 export type ReliabilityLevel = 'Green' | 'Yellow' | 'Red';
@@ -576,6 +576,45 @@ export interface RiskSignals {
   reliability: ReliabilityLevel;
   /** Человекочитаемое обоснование `reliability` — задача 38 часть A.2. */
   reliabilityReason: string;
+  /**
+   * Задача 46 (скоркарта надёжности v2; UI-разбивка — задача 47). Поля additive, необязательны в типе, чтобы не
+   * ломать фикстуры: бэкенд отдаёт их всегда. Светофор `reliability` теперь считает скоркарта, а НЕ ось спреда.
+   */
+  /** Скор 0–100 по компонентам с данными. НЕ из G-спреда. */
+  score?: number;
+  /** Покрытие данными 0–1 (низкое — скор опирается на мало данных). */
+  coverage?: number;
+  /** Разбивка скоркарты: каждый компонент с источником и признаком «нет данных». */
+  components?: ScoreComponent[];
+  /** Критические флаги: IssuerDefaulted | InterestUncovered | NegativeEquity | SpreadShock. */
+  criticalFlags?: string[];
+  /** Предупреждения (не краснят светофор): IssuerTechDefault | PriceDrawdown | JunkRating. */
+  warningFlags?: string[];
+  /** Ось Value (цена, НЕ риск) — отдельно от `reliability`. */
+  valueVerdict?: ValueVerdict;
+}
+
+/** Ось Value: G-спред бумаги против медианы её корзины. `InsufficientData` — корзина нерепрезентативна. */
+export type ValueVerdict = 'Cheap' | 'Fair' | 'Rich' | 'InsufficientData';
+
+/** Один компонент скоркарты надёжности — зеркалит `ScoreComponentDto`. */
+export interface ScoreComponent {
+  /** issuer_default_history | listing | no_offer | not_qual_only | broker_risk_level | manual_rating | revenue_size | interest_coverage | leverage | current_ratio | trend | altman_z_em | sovereign | spread_momentum | price_drawdown | liquidity. */
+  key: string;
+  title: string;
+  /** Число показателя (ДОЛЯ для spread_momentum/price_drawdown, РУБЛИ для revenue_size, «раз» для коэффициентов). */
+  rawValue: number | null;
+  /** Значение/причина словами, напр. «2200/2330 = 2.4×» или «нет данных: …». */
+  rawDisplay: string | null;
+  points: number;
+  maxPoints: number;
+  source: string;
+  /** `true` — данных нет: компонент не входит в скор (в отличие от честного нуля). */
+  missing: boolean;
+  /** `A` структурный | `B` фундаментальный | `C` рыночный. */
+  layer: 'A' | 'B' | 'C';
+  /** `true` — отчётность старше 20 месяцев. */
+  stale: boolean;
 }
 
 /** Режим подбора кандидатов-замен для одной позиции портфеля (GET /replacement-candidates). */
@@ -920,6 +959,14 @@ export interface UniverseRow {
   reliability: ReliabilityLevel;
   /** Человекочитаемое обоснование `reliability`. */
   reliabilityReason: string;
+  /** Задача 46: скор 0–100 скоркарты надёжности (additive; полная разбивка — GET /api/universe/{secid}/reliability). */
+  score?: number;
+  /** Задача 46: покрытие данными 0–1. */
+  coverage?: number;
+  /** Задача 46: критические флаги, краснящие светофор. */
+  criticalFlags?: string[];
+  /** Задача 46: ось Value отдельным полем. */
+  valueVerdict?: ValueVerdict;
 }
 
 /** Ответ GET /api/universe. */
