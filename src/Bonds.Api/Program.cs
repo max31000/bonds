@@ -2,8 +2,26 @@ using Bonds.Api.Auth;
 using Bonds.Api.Endpoints;
 using Bonds.Api.Middleware;
 using Bonds.Infrastructure;
+using Prometheus;
+
+// Prometheus: процесс/рантайм .NET — да; EventCounters и адаптер .NET Meters — выключены, чтобы не
+// плодить серии (контракт mvv42-infra-mon docs/specs/2026-10-16-app-metrics.md). Должно идти до
+// создания первой метрики.
+Metrics.SuppressDefaultMetrics(new SuppressDefaultMetricOptions
+{
+    SuppressEventCounters = true,
+    SuppressMeters = true,
+});
 
 var builder = WebApplication.CreateBuilder(args);
+
+// /metrics — только на отдельном KestrelMetricServer (в контейнере 9091, на хосте 127.0.0.1:9501);
+// основной порт приложения (и nginx) метрики не отдаёт. Metrics:Port = 0 отключает сервер (тесты).
+var metricsPort = builder.Configuration.GetValue("Metrics:Port", 9091);
+if (metricsPort > 0)
+{
+    builder.Services.AddMetricServer(o => o.Port = (ushort)metricsPort);
+}
 
 // CORS — origins читаются из конфига, чтобы не хардкодить домен в коде
 builder.Services.AddCors(options =>
@@ -62,6 +80,11 @@ if (app.Environment.IsDevelopment())
         c.SwaggerEndpoint("/swagger/v1/swagger.json", "Bonds API v1");
     });
 }
+
+// Явный UseRouting, чтобы UseHttpMetrics видел совпавший эндпоинт: метка endpoint = шаблон маршрута
+// (/api/positions/{id}), никогда сырой путь; без совпадения — endpoint="".
+app.UseRouting();
+app.UseHttpMetrics(o => o.ReduceStatusCodeCardinality());
 
 app.UseCors();
 app.UseAuthentication();
