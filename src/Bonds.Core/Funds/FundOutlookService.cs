@@ -168,8 +168,8 @@ public static class FundOutlookService
     {
         var warnings = new List<FundOutlookWarning>();
         var w12 = FundPerformanceCalculator.ComputeWindow(i.Prices, i.Distributions, i.AsOf.AddMonths(-12), i.AsOf);
-        if (w12 is not null)
-            return Build(i, FundForecastMethod.TrailingReturn, w12.AnnualizedFraction, "фактическая доходность за 12 мес.",
+        if (w12 is { AnnualizedFraction: { } a12 })
+            return Build(i, FundForecastMethod.TrailingReturn, a12, "фактическая доходность за 12 мес.",
                 FundOutlookConfidence.Medium, warnings, monthlyRub: null);
 
         if (i.Prices.Count == 0)
@@ -181,10 +181,10 @@ public static class FundOutlookService
             return Unavailable(i, FundForecastMethod.TrailingReturn, $"мало данных: история цен {span} дн. (нужно не менее {MinTrailingHistoryDays})");
 
         var w = FundPerformanceCalculator.ComputeWindow(i.Prices, i.Distributions, first, i.AsOf);
-        if (w is null) return Unavailable(i, FundForecastMethod.TrailingReturn, "мало данных");
+        if (w is not { AnnualizedFraction: { } annualized }) return Unavailable(i, FundForecastMethod.TrailingReturn, "мало данных");
 
         warnings.Add(FundOutlookWarning.ShortHistory);
-        return Build(i, FundForecastMethod.TrailingReturn, w.AnnualizedFraction,
+        return Build(i, FundForecastMethod.TrailingReturn, annualized,
             $"фактическая доходность за {w.Days} дн., пересчитанная в годовую",
             span >= FullTrailingHistoryDays ? FundOutlookConfidence.Medium : FundOutlookConfidence.Low, warnings, monthlyRub: null);
     }

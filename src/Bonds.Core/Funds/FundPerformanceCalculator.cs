@@ -6,7 +6,7 @@ namespace Bonds.Core.Funds;
 /// Доходность фонда за окно по рыночным данным. <see cref="ReturnFraction"/> — ДОЛЯ за окно целиком (0.046 = 4.6%),
 /// <see cref="AnnualizedFraction"/> — ДОЛЯ годовых <c>(1+TR)^(365/Days) − 1</c>, <see cref="Days"/> — календарные дни окна.
 /// </summary>
-public sealed record FundWindowReturn(decimal ReturnFraction, decimal AnnualizedFraction, int Days);
+public sealed record FundWindowReturn(decimal ReturnFraction, decimal? AnnualizedFraction, int Days);
 
 /// <summary>Фактическая доходность по стандартным окнам. Окно без цены на старте = null.</summary>
 public sealed record FundPerformance(
@@ -60,10 +60,16 @@ public static class FundPerformanceCalculator
         return new FundWindowReturn(tr, Annualize(tr, days), days);
     }
 
-    /// <summary>ДОЛЯ за <paramref name="days"/> дней → ДОЛЯ годовых: <c>(1+tr)^(365/days) − 1</c>; при tr ≤ −1 → −1.</summary>
-    public static decimal Annualize(decimal totalReturn, int days)
+    /// <summary>Минимум дней окна для пересчёта в годовую: на коротких окнах экстраполяция бессмысленна (месяц роста ×12 ≠ год).</summary>
+    public const int MinAnnualizeDays = 30;
+
+    /// <summary>
+    /// ДОЛЯ за <paramref name="days"/> дней → ДОЛЯ годовых: <c>(1+tr)^(365/days) − 1</c>; при tr ≤ −1 → −1;
+    /// окно короче <see cref="MinAnnualizeDays"/> дней → null (не аннуализируем).
+    /// </summary>
+    public static decimal? Annualize(decimal totalReturn, int days)
     {
-        if (days <= 0) return 0m;
+        if (days < MinAnnualizeDays) return null;
         if (totalReturn <= -1m) return -1m;
         var value = Math.Pow((double)(1m + totalReturn), 365.0 / days) - 1.0;
         // Защита от переполнения decimal на экстремальных коротких окнах: такие оценки всё равно бессмысленны.

@@ -45,12 +45,20 @@ public static class IncomeEndpoints
             : await builder.BuildAsync(accountId.Value, asOf, filter, ct);
 
         // includeClosed=false — вид таблицы: итоги и ряд считаются по показанным позициям, чтобы суммы сходились с таблицей.
+        // Актив с упавшим расчётом (Result == null) не скрываем: пользователь должен видеть строку с пометкой «данные неполные».
         var shown = data.Assets
-            .Where(a => includeClosed != false || a.Result?.Income.Status == PositionIncomeStatus.Open)
+            .Where(a => includeClosed != false || a.Result is null || a.Result.Income.Status == PositionIncomeStatus.Open)
             .ToList();
         var calculated = shown.Where(a => a.Result is not null).Select(a => a.Result!).ToList();
 
         var stats = IncomeStatisticsService.Compute(calculated, data.AccountEntries, from, to, asOf);
+
+        // XIRR портфеля — характеристика всего портфеля и не зависит от вида таблицы: при скрытии закрытых считаем по всем активам.
+        var portfolioXirr = includeClosed != false
+            ? stats.PortfolioXirrFraction
+            : IncomeStatisticsService.Compute(
+                data.Assets.Where(a => a.Result is not null).Select(a => a.Result!).ToList(),
+                data.AccountEntries, from, to, asOf).PortfolioXirrFraction;
 
         var positions = shown.Select(a => ToPositionDto(a, asOf, stats)).ToList();
 
@@ -60,7 +68,7 @@ public static class IncomeEndpoints
             From = from,
             To = to,
             AssetKind = filterName,
-            Totals = ToDto(stats.Totals),
+            Totals = ToDto(stats.Totals, positions.Count),
             AccountLevel = new IncomeAccountLevelDto
             {
                 TaxesRub = stats.Totals.AccountTaxesRub,
@@ -69,7 +77,7 @@ public static class IncomeEndpoints
             Period = ToDto(stats.Period),
             Monthly = stats.Months.Select(ToDto).ToList(),
             Positions = positions,
-            PortfolioXirrFraction = stats.PortfolioXirrFraction,
+            PortfolioXirrFraction = portfolioXirr,
             Disclaimer = IncomeDisclaimer,
         });
     }
@@ -173,9 +181,10 @@ public static class IncomeEndpoints
         };
     }
 
-    private static IncomeTotalsDto ToDto(IncomeTotals t) => new()
+    /// <summary><paramref name="positionsCount"/> — число показанных строк (включая активы с упавшим расчётом): совпадает с <c>positions</c>.</summary>
+    private static IncomeTotalsDto ToDto(IncomeTotals t, int positionsCount) => new()
     {
-        PositionsCount = t.PositionsCount,
+        PositionsCount = positionsCount,
         InvestedTotalRub = t.InvestedTotalRub,
         MarketValueCleanRub = t.MarketValueCleanRub,
         AccruedNowRub = t.AccruedNowRub,

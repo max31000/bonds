@@ -142,6 +142,22 @@ public class IncomeEndpointTests
     }
 
     [Fact]
+    public async Task Income_PortfolioXirr_DoesNotDependOnIncludeClosed_AndCountMatchesRows()
+    {
+        var s = await SeedAsync();
+
+        var all = await (await s.Client.GetAsync("/api/income")).Content.ReadFromJsonAsync<JsonElement>();
+        var openOnly = await (await s.Client.GetAsync("/api/income?includeClosed=false")).Content.ReadFromJsonAsync<JsonElement>();
+
+        openOnly.GetProperty("portfolioXirrFraction").GetDecimal()
+            .Should().Be(all.GetProperty("portfolioXirrFraction").GetDecimal(), "XIRR портфеля считается по всем активам, фильтр — только вид таблицы");
+        openOnly.GetProperty("totals").GetProperty("positionsCount").GetInt32()
+            .Should().Be(openOnly.GetProperty("positions").GetArrayLength());
+        all.GetProperty("totals").GetProperty("positionsCount").GetInt32()
+            .Should().Be(all.GetProperty("positions").GetArrayLength());
+    }
+
+    [Fact]
     public async Task Income_Period_CutsMoneyEvents_AndPerPositionPeriodFields()
     {
         var s = await SeedAsync();

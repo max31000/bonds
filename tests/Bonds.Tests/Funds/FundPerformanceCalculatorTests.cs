@@ -33,6 +33,21 @@ public class FundPerformanceCalculatorTests
         w.AnnualizedFraction.Should().BeApproximately((decimal)(Math.Pow(1.046, 365.0 / 90) - 1), 0.0001m);
     }
 
+    [Theory]
+    [InlineData(29, false)]
+    [InlineData(30, true)]
+    public void Annualize_ShortWindows_AreNull(int days, bool hasValue)
+        => FundPerformanceCalculator.Annualize(0.01m, days).HasValue.Should().Be(hasValue);
+
+    [Fact]
+    public void Window_ShorterThan30Days_HasNullAnnualized()
+    {
+        var start = Today.AddDays(-20);
+        var w = FundPerformanceCalculator.ComputeWindow([P(start, 100m), P(Today, 101m)], [], start, Today);
+        w!.ReturnFraction.Should().Be(0.01m);
+        w.AnnualizedFraction.Should().BeNull();
+    }
+
     [Fact]
     public void Window_ForwardFillsStartPrice()
     {

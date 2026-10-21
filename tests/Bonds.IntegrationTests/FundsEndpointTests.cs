@@ -250,4 +250,54 @@ public class FundsEndpointTests
         body.GetProperty("brokerDiffRub").ValueKind.Should().Be(JsonValueKind.Null);
         body.GetProperty("totalRub").GetDecimal().Should().Be(20_250m);
     }
+
+    [Fact]
+    public async Task PositionWithoutPrice_FallsBackToLastHistoryClose_ConsistentEverywhere()
+    {
+        var s = await SeedAsync(cash: 500m, brokerTotal: null);
+        // current_price_rub исчез (напр. T-Invest не вернул цену) — берём последнее закрытие 101 из fund_price_history.
+        await new FundPositionRepository(Conn).UpsertAsync(new FundPosition
+        {
+            AccountId = s.AccountId, FundId = s.FundId, Quantity = 100, AvgPurchasePriceRub = 100m, CurrentPriceRub = null,
+        });
+
+        var funds = await (await s.Client.GetAsync("/api/funds")).Content.ReadFromJsonAsync<JsonElement>();
+        var f = funds.GetProperty("funds")[0];
+        f.GetProperty("currentPriceRub").GetDecimal().Should().Be(101m);
+        f.GetProperty("marketValueRub").GetDecimal().Should().Be(10_100m, "стоимость = цена × паи от той же цены");
+        f.GetProperty("unrealizedPnlRub").GetDecimal().Should().Be(100m);
+        f.GetProperty("dataIncomplete").GetBoolean().Should().BeFalse();
+
+        var summary = await (await s.Client.GetAsync("/api/portfolio/summary")).Content.ReadFromJsonAsync<JsonElement>();
+        summary.GetProperty("fundsValueRub").GetDecimal().Should().Be(10_100m);
+        summary.GetProperty("fundsDataIncomplete").GetBoolean().Should().BeFalse();
+
+        var income = await (await s.Client.GetAsync("/api/income?assetKind=fund")).Content.ReadFromJsonAsync<JsonElement>();
+        income.GetProperty("positions")[0].GetProperty("marketValueCleanRub").GetDecimal().Should().Be(10_100m);
+    }
+
+    [Fact]
+    public async Task PositionWithoutAnyPrice_IsZeroValueAndFlaggedIncomplete()
+    {
+        var s = await SeedAsync(cash: 0m, brokerTotal: null);
+        var suffix = Guid.NewGuid().ToString("N")[..10];
+        var noPriceId = await new FundRepository(Conn).UpsertAsync(new Fund { Figi = $"FIGI{suffix}", Isin = $"RU{suffix}", Ticker = "TNOPR", Name = "Без цены" });
+        await new FundPositionRepository(Conn).UpsertAsync(new FundPosition
+        {
+            AccountId = s.AccountId, FundId = noPriceId, Quantity = 10, AvgPurchasePriceRub = 50m, CurrentPriceRub = null,
+        });
+        await new FundOperationRepository(Conn).UpsertManyByExternalIdAsync([
+            new FundOperation { AccountId = s.AccountId, FundId = noPriceId, Type = FundOperationType.Buy, Date = Ago(30), AmountRub = -500m, Quantity = 10, ExternalId = $"fund-{Guid.NewGuid():N}" },
+        ]);
+
+        var funds = await (await s.Client.GetAsync("/api/funds")).Content.ReadFromJsonAsync<JsonElement>();
+        var row = funds.GetProperty("funds").EnumerateArray().Single(x => x.GetProperty("fundId").GetUInt64() == noPriceId);
+        row.GetProperty("dataIncomplete").GetBoolean().Should().BeTrue();
+        row.GetProperty("marketValueRub").GetDecimal().Should().Be(0m);
+        funds.GetProperty("totals").GetProperty("dataIncomplete").GetBoolean().Should().BeTrue();
+
+        var summary = await (await s.Client.GetAsync("/api/portfolio/summary")).Content.ReadFromJsonAsync<JsonElement>();
+        summary.GetProperty("fundsValueRub").GetDecimal().Should().Be(10_100m, "фонд без цены вклада не даёт");
+        summary.GetProperty("fundsDataIncomplete").GetBoolean().Should().BeTrue();
+    }
 }

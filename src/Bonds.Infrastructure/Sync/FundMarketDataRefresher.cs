@@ -25,6 +25,13 @@ public sealed class FundMarketDataRefresher
     /// <summary>Глубина первичной загрузки истории и выплат.</summary>
     public const int HistoryYears = 2;
 
+    /// <summary>
+    /// Фонды, по которым в БД так и нет ни одной цены, и дата последней попытки (аналог <c>BondSyncService.EmptyPortfolioSeen</c>):
+    /// такой фонд (нет secid / MOEX пуст) иначе дёргал бы MOEX/T-Invest каждый цикл — пробуем не чаще раза в календарный день.
+    /// In-memory (сервис scoped): после рестарта первая попытка повторяется, это безвредно.
+    /// </summary>
+    internal static readonly System.Collections.Concurrent.ConcurrentDictionary<ulong, DateOnly> EmptyAttemptedOn = new();
+
     private readonly IFundRepository _funds;
     private readonly IFundMarketDataRepository _marketData;
     private readonly IMoexIssClient _moex;
@@ -72,6 +79,8 @@ public sealed class FundMarketDataRefresher
             {
                 var lastDate = await _marketData.GetLastPriceDateAsync(fund.Id, ct);
                 if (lastDate is { } last && last >= expected) continue;
+                var pricesBefore = prices;
+                if (lastDate is null && EmptyAttemptedOn.TryGetValue(fund.Id, out var attempted) && attempted >= today) continue;
 
                 var secid = fund.Secid ?? fund.Ticker;
                 if (!string.IsNullOrEmpty(secid))
@@ -102,6 +111,9 @@ public sealed class FundMarketDataRefresher
                         distributions += dist.Count;
                     }
                 }
+
+                if (lastDate is null && prices == pricesBefore) EmptyAttemptedOn[fund.Id] = today;
+                else EmptyAttemptedOn.TryRemove(fund.Id, out _);
 
                 refreshed++;
             }

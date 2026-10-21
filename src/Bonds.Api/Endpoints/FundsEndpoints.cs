@@ -55,6 +55,7 @@ public static partial class FundsEndpoints
             UnrealizedPnlRub = rows.Sum(r => r.UnrealizedPnlRub ?? 0m),
             IncomeNetRub = rows.Sum(r => r.DistributionsNetRub),
             TotalResultRub = rows.Sum(r => r.TotalResultRub),
+            DataIncomplete = rows.Any(r => r.DataIncomplete),
         };
         return Results.Ok(new FundsResponseDto { AsOf = asOf, Funds = rows, Totals = totals, Disclaimer = FundsDisclaimer });
     }
@@ -75,7 +76,7 @@ public static partial class FundsEndpoints
         if (item is null) return Results.NotFound();
 
         var bondsValue = await overview.GetBondsValueRubAsync(accountId.Value, asOf, ct);
-        var portfolioValue = bondsValue + await overview.GetFundsValueRubAsync(accountId.Value);
+        var portfolioValue = bondsValue + await overview.GetFundsValueRubAsync(accountId.Value, ct);
 
         var ops = await fundOperations.GetByFundAsync(accountId.Value, fundId);
         var from = asOf.AddYears(-FundOverviewBuilder.HistoryYears);
@@ -141,7 +142,7 @@ public static partial class FundsEndpoints
         var asOf = BusinessClock.MoscowToday();
         var account = await accountRepo.GetByIdAsync(accountId.Value);
         var bonds = await overview.GetBondsValueRubAsync(accountId.Value, asOf, ct);
-        var funds = await overview.GetFundsValueRubAsync(accountId.Value);
+        var (funds, fundsIncomplete) = await overview.GetFundsValueAsync(accountId.Value, ct);
         var total = bonds + funds + (account?.CashRub ?? 0m);
 
         // XIRR портфеля — тот же сервис и тот же набор активов, что у GET /api/income (без периода).
@@ -168,6 +169,7 @@ public static partial class FundsEndpoints
             BrokerDiffRub = account?.BrokerTotalRub is { } broker ? broker - total : null,
             BalanceSyncedAt = account?.BalanceSyncedAt,
             PortfolioXirrFraction = xirr,
+            FundsDataIncomplete = fundsIncomplete,
             Disclaimer = FundsDisclaimer,
         });
     }
@@ -188,8 +190,7 @@ public static partial class FundsEndpoints
     {
         var inc = item.Income.Result!.Income;
         var qty = inc.QuantityNow;
-        var price = item.Position?.CurrentPriceRub
-            ?? item.Prices.OrderByDescending(p => p.TradeDate).Select(p => (decimal?)p.CloseRub).FirstOrDefault();
+        var price = item.Income.PriceRub; // та же цена, от которой посчитаны стоимость и P&L
         var net = inc.IncomeGrossRub + inc.TaxesRub;
 
         return new FundRowDto

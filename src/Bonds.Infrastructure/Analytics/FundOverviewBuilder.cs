@@ -82,7 +82,7 @@ public sealed class FundOverviewBuilder
             }
 
             var income = asset.Result.Income;
-            var price = position?.CurrentPriceRub ?? prices.OrderByDescending(p => p.TradeDate).Select(p => (decimal?)p.CloseRub).FirstOrDefault();
+            var price = asset.PriceRub; // единая цена пая (IncomeLedgerBuilder.ResolveFundPriceAsync)
             var performance = FundPerformanceCalculator.Compute(
                 prices, distributions, asOf, income.QuantityNow > 0m || income.InvestedTotalRub > 0m ? income.FirstDate : null);
             var outlook = FundOutlookService.Compute(new FundOutlookInput(
@@ -103,10 +103,24 @@ public sealed class FundOverviewBuilder
         return holdings.Sum(h => h.MarketValueRub);
     }
 
-    /// <summary>Σ стоимости паёв счёта: <c>current_price_rub × quantity</c> (рубли; позиция без цены вклада не даёт — как в «Доходах»).</summary>
-    public async Task<decimal> GetFundsValueRubAsync(ulong accountId)
+    /// <summary>
+    /// Σ стоимости паёв счёта: единая цена пая (<see cref="IncomeLedgerBuilder.ResolveFundPriceAsync"/>: current_price_rub, иначе последнее
+    /// закрытие) × кол-во, рубли. <c>Incomplete</c> = true, если у открытой позиции нет цены вообще (вклад 0).
+    /// </summary>
+    public async Task<(decimal ValueRub, bool Incomplete)> GetFundsValueAsync(ulong accountId, CancellationToken ct = default)
     {
         var positions = await _positions.GetByAccountAsync(accountId);
-        return positions.Sum(p => (p.CurrentPriceRub ?? 0m) * p.Quantity);
+        decimal sum = 0m;
+        var incomplete = false;
+        foreach (var p in positions.Where(p => p.Quantity > 0m))
+        {
+            var price = await _income.ResolveFundPriceAsync(p, p.FundId, ct);
+            if (price is null) incomplete = true;
+            else sum += price.Value * p.Quantity;
+        }
+        return (sum, incomplete);
     }
+
+    public async Task<decimal> GetFundsValueRubAsync(ulong accountId, CancellationToken ct = default) =>
+        (await GetFundsValueAsync(accountId, ct)).ValueRub;
 }

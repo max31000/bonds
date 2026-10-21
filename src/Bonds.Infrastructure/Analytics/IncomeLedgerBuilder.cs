@@ -19,7 +19,8 @@ public sealed record IncomeAssetInfo(
     ulong? PositionId,
     ulong? FundId,
     bool DataIncomplete,
-    AssetIncome? Result);
+    AssetIncome? Result,
+    decimal? PriceRub = null);
 
 /// <summary>Результат сборки: активы (включая закрытые) + записи «по счёту» (налоги/комиссии без актива).</summary>
 public sealed record IncomeLedgerData(
@@ -44,6 +45,7 @@ public sealed class IncomeLedgerBuilder
     private readonly IFundRepository _funds;
     private readonly IFundPositionRepository _fundPositions;
     private readonly IFundOperationRepository _fundOperations;
+    private readonly IFundMarketDataRepository _fundMarket;
     private readonly ILogger<IncomeLedgerBuilder> _logger;
 
     public IncomeLedgerBuilder(
@@ -53,6 +55,7 @@ public sealed class IncomeLedgerBuilder
         IFundRepository funds,
         IFundPositionRepository fundPositions,
         IFundOperationRepository fundOperations,
+        IFundMarketDataRepository fundMarket,
         ILogger<IncomeLedgerBuilder> logger)
     {
         _holdings = holdings;
@@ -61,6 +64,7 @@ public sealed class IncomeLedgerBuilder
         _funds = funds;
         _fundPositions = fundPositions;
         _fundOperations = fundOperations;
+        _fundMarket = fundMarket;
         _logger = logger;
     }
 
@@ -118,13 +122,14 @@ public sealed class IncomeLedgerBuilder
                     ? list.Select(LedgerEntryMapper.FromFundOperation).ToList()
                     : [];
                 var qty = position?.Quantity ?? 0m;
-                var price = position?.CurrentPriceRub;
-                // Рубли за пай × паи; цены нет — стоимость 0 и актив помечен неполным (в итог не попадёт «лишнее»).
+                // Единая цена фонда: current_price_rub позиции, иначе последнее закрытие из fund_price_history.
+                var price = qty > 0m ? await ResolveFundPriceAsync(position, id, ct) : position?.CurrentPriceRub;
+                // Рубли за пай × паи; цены нет вообще — стоимость 0 и актив помечен неполным.
                 var marketValue = price is { } p ? p * qty : 0m;
                 var result = PositionIncomeCalculator.CalculateDetailed(AssetKind.Fund, id, entries, qty, marketValue, 0m, asOf);
                 assets.Add(new IncomeAssetInfo(
                     AssetKind.Fund, id, fund?.Name, fund?.Ticker, fund?.Isin, null, id,
-                    DataIncomplete: qty > 0m && price is null, result));
+                    DataIncomplete: qty > 0m && price is null, result, price));
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -134,6 +139,18 @@ public sealed class IncomeLedgerBuilder
         }
 
         return new IncomeLedgerData(assets, account);
+    }
+
+    /// <summary>
+    /// ЕДИНАЯ точка цены пая (рубли за пай): <c>fund_positions.current_price_rub</c>, а если его нет — последнее закрытие из
+    /// <c>fund_price_history</c>; null — цены нет вообще (стоимость 0 + DataIncomplete). Аналог правила стоимости облигаций:
+    /// все потребители (журнал доходов, /api/funds, /api/portfolio/summary) берут цену только отсюда.
+    /// </summary>
+    public async Task<decimal?> ResolveFundPriceAsync(FundPosition? position, ulong fundId, CancellationToken ct = default)
+    {
+        if (position?.CurrentPriceRub is > 0m and var direct) return direct;
+        var last = await _fundMarket.GetLatestPriceAsync(fundId, ct);
+        return last is { CloseRub: > 0m } ? last.CloseRub : null;
     }
 
     private async Task<IncomeLedgerData> BuildBondsAsync(ulong accountId, DateOnly asOf, CancellationToken ct)

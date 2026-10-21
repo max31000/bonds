@@ -47,6 +47,9 @@ public interface IFundMarketDataRepository
     Task UpsertPricesAsync(ulong fundId, IReadOnlyList<FundPricePoint> points, CancellationToken ct = default);
 
     Task<IReadOnlyList<FundPricePoint>> GetPricesAsync(ulong fundId, DateOnly from, DateOnly to, CancellationToken ct = default);
+    /// <summary>Последнее закрытие пая (рубли) из истории; null — истории нет.</summary>
+    Task<FundPricePoint?> GetLatestPriceAsync(ulong fundId, CancellationToken ct = default);
+
     Task<DateOnly?> GetLastPriceDateAsync(ulong fundId, CancellationToken ct = default);
 
     /// <summary>Батчевый upsert выплат на пай по (fund_id, record_date).</summary>

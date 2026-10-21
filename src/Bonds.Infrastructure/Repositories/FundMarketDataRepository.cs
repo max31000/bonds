@@ -47,6 +47,16 @@ public class FundMarketDataRepository : IFundMarketDataRepository
         return rows.Select(r => new FundPricePoint(r.TradeDate, r.CloseRub)).ToList();
     }
 
+    public async Task<FundPricePoint?> GetLatestPriceAsync(ulong fundId, CancellationToken ct = default)
+    {
+        using var conn = CreateConnection();
+        var row = await conn.QueryFirstOrDefaultAsync<PriceRow>(
+            @"SELECT trade_date AS TradeDate, close_rub AS CloseRub FROM fund_price_history
+              WHERE fund_id = @FundId ORDER BY trade_date DESC LIMIT 1",
+            new { FundId = fundId });
+        return row is null ? null : new FundPricePoint(row.TradeDate, row.CloseRub);
+    }
+
     public async Task<DateOnly?> GetLastPriceDateAsync(ulong fundId, CancellationToken ct = default)
     {
         using var conn = CreateConnection();

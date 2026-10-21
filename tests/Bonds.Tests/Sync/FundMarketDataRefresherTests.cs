@@ -21,6 +21,8 @@ public class FundMarketDataRefresherTests
     // Среда 2026-10-21: завершённая сессия — вторник 2026-10-20.
     private static readonly DateOnly Today = new(2026, 10, 21);
 
+    public FundMarketDataRefresherTests() => FundMarketDataRefresher.EmptyAttemptedOn.Clear();
+
     private FundMarketDataRefresher Create() => new(_funds.Object, _market.Object, _moex.Object, _tInvest.Object, NullLogger<FundMarketDataRefresher>.Instance);
 
     private void SetupFund()
@@ -56,6 +58,24 @@ public class FundMarketDataRefresherTests
         _market.Verify(m => m.UpsertPricesAsync(5, It.Is<IReadOnlyList<FundPricePoint>>(l => l.Count == 1 && l[0].CloseRub == 101.08m), It.IsAny<CancellationToken>()), Times.Once);
         _market.Verify(m => m.UpsertDistributionsAsync(5, It.Is<IReadOnlyList<FundDistribution>>(l => l.Single().AmountPerShareRub == 0.85m), It.IsAny<CancellationToken>()), Times.Once);
         _market.Verify(m => m.UpsertIndexHistoryAsync("RGBI", It.Is<IReadOnlyList<MarketIndexPoint>>(l => l.Single().YieldFraction == 0.1608m), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Refresh_FundWithoutAnyData_IsNotRetriedWithinTheSameDay()
+    {
+        SetupFund();
+        _market.Setup(m => m.GetLastPriceDateAsync(5, It.IsAny<CancellationToken>())).ReturnsAsync((DateOnly?)null);
+        _moex.Setup(m => m.GetSharesHistoryAsync("TPAY", It.IsAny<DateOnly>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+
+        await Create().RefreshIfDueAsync(Today, tInvestAvailable: false);
+        await Create().RefreshIfDueAsync(Today, tInvestAvailable: false);
+
+        _moex.Verify(m => m.GetSharesHistoryAsync("TPAY", It.IsAny<DateOnly>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()), Times.Once);
+
+        // На следующий день — новая попытка.
+        await Create().RefreshIfDueAsync(Today.AddDays(1), tInvestAvailable: false);
+        _moex.Verify(m => m.GetSharesHistoryAsync("TPAY", It.IsAny<DateOnly>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()), Times.Exactly(2));
     }
 
     [Fact]

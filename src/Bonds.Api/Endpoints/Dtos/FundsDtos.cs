@@ -27,6 +27,9 @@ public sealed record FundsTotalsDto
     public required decimal UnrealizedPnlRub { get; init; }
     public required decimal IncomeNetRub { get; init; }
     public required decimal TotalResultRub { get; init; }
+
+    /// <summary>У какого-либо показанного фонда нет цены вообще (стоимость взята как 0) — итоги занижены.</summary>
+    public bool DataIncomplete { get; init; }
 }
 
 public sealed record FundWindowReturnDto
@@ -34,8 +37,8 @@ public sealed record FundWindowReturnDto
     /// <summary>Доходность за окно, ДОЛЯ.</summary>
     public required decimal ReturnFraction { get; init; }
 
-    /// <summary>Пересчёт в годовую, ДОЛЯ годовых.</summary>
-    public required decimal AnnualizedFraction { get; init; }
+    /// <summary>Пересчёт в годовую, ДОЛЯ годовых; null — окно короче 30 дней (не аннуализируем).</summary>
+    public decimal? AnnualizedFraction { get; init; }
 
     public required int Days { get; init; }
 }
@@ -219,6 +222,9 @@ public sealed record PortfolioSummaryDto
 
     /// <summary>XIRR всего портфеля (облигации + фонды) — тот же расчёт, что на странице «Доходы».</summary>
     public decimal? PortfolioXirrFraction { get; init; }
+
+    /// <summary>У открытого фонда нет цены вообще — <c>FundsValueRub</c>/<c>TotalRub</c> занижены.</summary>
+    public bool FundsDataIncomplete { get; init; }
 
     public required string Disclaimer { get; init; }
 }
