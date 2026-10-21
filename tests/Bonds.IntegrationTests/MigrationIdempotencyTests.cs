@@ -73,6 +73,7 @@ public class MigrationIdempotencyTests : IAsyncLifetime
             "021_replacement_horizon_setting.sql",
             "022_market_credit_events.sql",
             "023_funds.sql",
+            "024_operations_accrued.sql",
         });
 
         var expectedTables = new[]
@@ -109,7 +110,7 @@ public class MigrationIdempotencyTests : IAsyncLifetime
         await conn.OpenAsync();
 
         var migrationCount = await conn.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM _migrations");
-        migrationCount.Should().Be(23, "повторный запуск не должен заново применять уже применённые миграции");
+        migrationCount.Should().Be(24, "повторный запуск не должен заново применять уже применённые миграции");
 
         // users.base_currency существует ровно один раз (ALTER ... ADD COLUMN IF NOT EXISTS не падает повторно).
         var columnCount = await conn.ExecuteScalarAsync<long>(
@@ -339,5 +340,19 @@ public class MigrationIdempotencyTests : IAsyncLifetime
                 new { Column = column });
             nullable.Should().Be("YES", $"user_settings.{column} nullable: NULL = дефолт движка событий");
         }
+    }
+    [Fact]
+    public async Task RunAsync_Migration024_OperationsHaveNullableAccruedColumn()
+    {
+        var connectionString = _container.GetConnectionString();
+        await new MigrationRunner(connectionString, NullLogger<MigrationRunner>.Instance).RunAsync();
+
+        await using var conn = new MySqlConnection(connectionString);
+        await conn.OpenAsync();
+
+        var nullable = await conn.ExecuteScalarAsync<string>(
+            @"SELECT is_nullable FROM information_schema.columns
+              WHERE table_schema = DATABASE() AND table_name = 'operations' AND column_name = 'accrued_rub'");
+        nullable.Should().Be("YES", "operations.accrued_rub nullable: NULL = брокер НКД не отдал (миграция 024)");
     }
 }

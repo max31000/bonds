@@ -163,6 +163,11 @@ public sealed class BondSyncService
                     Date = op.Date,
                     AmountRub = op.PaymentRub,
                     Quantity = op.Quantity,
+                    // НКД операции — величина в РУБЛЯХ на всю операцию (T-Invest AccruedInt, знак отбрасываем: направление
+                    // задаёт тип). Только для Buy/Sell; у купонов/налогов/комиссий поле не применимо (задача 52).
+                    AccruedRub = mappedType is OperationType.Buy or OperationType.Sell && op.AccruedInterest is not null
+                        ? Math.Abs(op.AccruedInterest.Value)
+                        : null,
                     ExternalId = op.Id,
                 });
             }
