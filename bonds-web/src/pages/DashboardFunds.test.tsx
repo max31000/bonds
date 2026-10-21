@@ -42,6 +42,16 @@ describe('Dashboard — общий баланс с фондами (задача 
     await waitFor(() => expect(screen.getByTestId('kpi-xirr')).toHaveTextContent('XIRR портфеля (с фондами): 12.50%'));
   });
 
+  it('фонд без цены: предупреждение в KPI «Фонды» и «Стоимость портфеля»', async () => {
+    server.use(
+      http.get('*/api/portfolio/summary', () => HttpResponse.json({ ...baseSummary, fundsDataIncomplete: true })),
+      http.get('*/api/funds', () => HttpResponse.json({ ...baseFunds, totals: { ...baseFunds.totals, dataIncomplete: true } })),
+    );
+    renderDashboard();
+    expect(await screen.findByTestId('kpi-total-balance-incomplete')).toBeInTheDocument();
+    expect(await screen.findByTestId('kpi-funds-incomplete')).toBeInTheDocument();
+  });
+
   it('расхождение с брокером > 1% — подсказка', async () => {
     server.use(
       http.get('*/api/portfolio/summary', () => HttpResponse.json({ ...baseSummary, brokerTotalRub: 133135, brokerDiffRub: 10000 })),

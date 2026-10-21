@@ -11,6 +11,7 @@ import { CHART_EXPLANATIONS } from '../components/charts';
 import {
   FUND_AFTER_TAX_NOTE,
   FUND_CONFIDENCE_LABEL,
+  FUND_DATA_INCOMPLETE,
   FUND_KEY_RATE_NOTE,
   FUND_METHOD_LABEL,
   FUND_METHOD_OPTIONS,
@@ -121,6 +122,11 @@ export function FundDetail() {
 
       {!detailLoading && !detailError && detail && fund && outlook && (
         <>
+          {fund.dataIncomplete && (
+            <Text size="sm" c="orange" role="alert" data-testid="fund-detail-incomplete">
+              {FUND_DATA_INCOMPLETE}
+            </Text>
+          )}
           <MetricGrid cols={3} data-testid="fund-detail-metrics">
             <MetricCard
               label="Стоимость"
@@ -180,7 +186,7 @@ export function FundDetail() {
                 <div key={label} data-testid={`fund-window-${label}`}>
                   <div className="bonds-eyebrow">{label}</div>
                   <div className="bonds-figure-sm mvv-num">{w ? formatPercent(w.returnFraction) : '—'}</div>
-                  {w && label !== '12 мес.' && (
+                  {w && w.annualizedFraction !== null && label !== '12 мес.' && (
                     <Text size="xs" c="dimmed">
                       в годовых ≈ {formatPercent(w.annualizedFraction)}
                     </Text>

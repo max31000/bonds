@@ -377,6 +377,7 @@ export function Income() {
                     onSort={onSort}
                     totals={data.totals}
                     accountLevel={data.accountLevel}
+                    period={data.period}
                   />
                 )}
                 {(data.accountLevel.taxesRub !== 0 || data.accountLevel.feesRub !== 0) && (

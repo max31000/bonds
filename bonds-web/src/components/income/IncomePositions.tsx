@@ -1,7 +1,7 @@
 import type { KeyboardEvent, ReactNode } from 'react';
 import { Badge, Group, Paper, Stack, Table, Text, Tooltip, UnstyledButton } from '@mantine/core';
 import { IconAlertTriangle, IconArrowDown, IconArrowUp, IconChevronDown } from '@tabler/icons-react';
-import type { IncomeAccountLevel, IncomePosition, IncomeTotals } from '../../api/types';
+import type { IncomeAccountLevel, IncomePeriod, IncomePosition, IncomeTotals } from '../../api/types';
 import {
   costsOf,
   couponsOf,
@@ -127,9 +127,20 @@ export function IncomePositionsTable({
   onSort,
   totals,
   accountLevel,
-}: CommonProps & { sort: IncomeSortState; onSort: (k: IncomeSortKey) => void; totals: IncomeTotals; accountLevel: IncomeAccountLevel }) {
+  period,
+}: CommonProps & {
+  sort: IncomeSortState;
+  onSort: (k: IncomeSortKey) => void;
+  totals: IncomeTotals;
+  accountLevel: IncomeAccountLevel;
+  period: IncomePeriod;
+}) {
   const accountCosts = accountLevel.taxesRub + accountLevel.feesRub;
   const totalsCosts = totals.taxesRub + totals.feesRub + accountCosts;
+  // Период: налоги/комиссии «по счёту» не принадлежат строкам, но входят в KPI (`data.period`) — футер сходится с KPI.
+  const rowsPeriodCosts = rows.reduce((s, r) => s + r.periodTaxesRub + r.periodFeesRub, 0);
+  const periodCosts = period.taxesRub + period.feesRub;
+  const periodAccountCosts = periodCosts - rowsPeriodCosts;
   const colCount = periodMode ? 10 : 9;
   const suffix = periodMode ? ', за период' : '';
   return (
@@ -236,11 +247,11 @@ export function IncomePositionsTable({
               <Money value={totals.unrealizedPnlRub} signed />
             </Table.Td>
             <Table.Td ta="right">
-              <Money value={periodMode ? rows.reduce((s, r) => s + r.periodTaxesRub + r.periodFeesRub, 0) : totalsCosts} />
+              <Money value={periodMode ? periodCosts : totalsCosts} />
             </Table.Td>
             {periodMode && (
               <Table.Td ta="right">
-                <Money value={rows.reduce((s, r) => s + periodResultOf(r), 0)} signed />
+                <Money value={rows.reduce((s, r) => s + periodResultOf(r), 0) + periodAccountCosts} signed />
               </Table.Td>
             )}
             <Table.Td ta="right">

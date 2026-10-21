@@ -20,6 +20,8 @@ interface FundsStore {
   saveSettings: (fundId: number | string, method: FundForecastMethod, benchmarkIndex?: string | null) => Promise<void>;
 }
 
+let loadSeq = 0;
+
 /**
  * Фонды (задача 53): список и карточка грузятся независимо друг от друга и от облигационных сторов — отказ `/api/funds`
  * не роняет таблицу облигаций. Серверный кэш на время жизни таба, без persist.
@@ -31,11 +33,15 @@ export const useFundsStore = create<FundsStore>()((set, get) => ({
   isLoading: false,
   error: null,
   load: async () => {
+    // Устаревший ответ (повторный load до завершения предыдущего) отбрасывается по номеру запроса — как в useIncomeStore.
+    const seq = ++loadSeq;
     set({ isLoading: true, error: null });
     try {
       const r = await fetchFunds();
+      if (seq !== loadSeq) return;
       set({ funds: r.funds, totals: r.totals, disclaimer: r.disclaimer, isLoading: false });
     } catch (err) {
+      if (seq !== loadSeq) return;
       set({ error: err instanceof Error ? err.message : 'Не удалось загрузить фонды', isLoading: false });
     }
   },

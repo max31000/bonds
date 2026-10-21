@@ -52,3 +52,7 @@ export function outlookTooltip(o: FundOutlook, afterTaxFormatted: string): strin
   for (const w of o.warnings) parts.push(FUND_WARNING_LABEL[w]);
   return parts.join(' ');
 }
+
+/** Предупреждение, когда у фонда нет цены пая (ни в позиции, ни в истории): стоимость учтена как 0, итоги занижены. */
+export const FUND_DATA_INCOMPLETE =
+  'Нет цены пая (ни от брокера, ни в истории торгов) — стоимость учтена как 0, P&L и итоги приблизительные.';

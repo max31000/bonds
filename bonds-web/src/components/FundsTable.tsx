@@ -1,10 +1,35 @@
 import { Badge, Group, Paper, Stack, Table, Text, Tooltip } from '@mantine/core';
 import { useMediaQuery } from '@mantine/hooks';
+import type { KeyboardEvent } from 'react';
+import { IconAlertTriangle } from '@tabler/icons-react';
 import { useNavigate } from 'react-router-dom';
 import { Section } from '@mvv42/kit';
 import type { FundRow, FundsTotals } from '../api/types';
 import { formatPercent, formatRub, formatRubPrecise } from '../utils/format';
-import { FUND_METHOD_LABEL, outlookTooltip } from './fundsCopy';
+import { FUND_DATA_INCOMPLETE, FUND_METHOD_LABEL, outlookTooltip } from './fundsCopy';
+
+/** Иконка-предупреждение «нет цены пая» (тултип + aria-label); null, если данные полные. */
+export function FundIncompleteIcon({ fund }: { fund: FundRow }) {
+  if (!fund.dataIncomplete) return null;
+  return (
+    <Tooltip label={FUND_DATA_INCOMPLETE} multiline w={260} withArrow events={{ hover: true, focus: true, touch: true }}>
+      <span role="img" tabIndex={0} aria-label={FUND_DATA_INCOMPLETE} className="bonds-warn-icon" data-testid={`fund-incomplete-${fund.fundId}`}>
+        <IconAlertTriangle size={14} />
+      </span>
+    </Tooltip>
+  );
+}
+
+/** Enter/Space на самой строке/карточке (не на вложенном контроле) — открыть карточку фонда. */
+function activateOnKey(go: () => void) {
+  return (e: KeyboardEvent) => {
+    if (e.target !== e.currentTarget) return;
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      go();
+    }
+  };
+}
 
 /** Ячейка «Оценка доходности»: годовая доходность + бейдж метода, тултип с основой (basisLabel), после налога и предупреждениями. */
 export function FundOutlookCell({ fund }: { fund: FundRow }) {
@@ -30,12 +55,25 @@ function pnlColor(v: number | null): string | undefined {
 function FundCard({ fund, onClick }: { fund: FundRow; onClick: () => void }) {
   const color = pnlColor(fund.unrealizedPnlRub);
   return (
-    <Paper withBorder p="sm" radius="md" data-testid={`fund-card-${fund.fundId}`} onClick={onClick} style={{ cursor: 'pointer' }}>
+    <Paper
+      withBorder
+      p="sm"
+      radius="md"
+      data-testid={`fund-card-${fund.fundId}`}
+      role="link"
+      tabIndex={0}
+      onClick={onClick}
+      onKeyDown={activateOnKey(onClick)}
+      style={{ cursor: 'pointer' }}
+    >
       <Stack gap={4}>
         <Group justify="space-between" wrap="nowrap" align="flex-start">
-          <Text fw={600} size="sm" lineClamp={2}>
-            {fund.name ?? fund.ticker ?? '—'}
-          </Text>
+          <Group gap={6} wrap="nowrap">
+            <Text fw={600} size="sm" lineClamp={2}>
+              {fund.name ?? fund.ticker ?? '—'}
+            </Text>
+            <FundIncompleteIcon fund={fund} />
+          </Group>
           {fund.ticker && (
             <Badge size="sm" color="gray" variant="outline">
               {fund.ticker}
@@ -97,6 +135,11 @@ export function FundsTable({ funds, totals }: { funds: FundRow[]; totals: FundsT
           <Text size="xs" c={totalPnlColor}>
             P&amp;L {formatRub(totals?.unrealizedPnlRub)} · выплаты (нетто) {formatRub(totals?.incomeNetRub)}
           </Text>
+          {totals?.dataIncomplete && (
+            <Text size="xs" c="orange" data-testid="funds-totals-incomplete">
+              {FUND_DATA_INCOMPLETE}
+            </Text>
+          )}
         </Paper>
         {funds.map((f) => (
           <FundCard key={f.fundId} fund={f} onClick={() => navigate(`/funds/${f.fundId}`)} />
@@ -135,11 +178,16 @@ export function FundsTable({ funds, totals }: { funds: FundRow[]; totals: FundsT
                 <Table.Tr
                   key={f.fundId}
                   data-testid={`fund-row-${f.fundId}`}
+                  tabIndex={0}
                   onClick={() => navigate(`/funds/${f.fundId}`)}
+                  onKeyDown={activateOnKey(() => navigate(`/funds/${f.fundId}`))}
                   style={{ cursor: 'pointer' }}
                 >
                   <Table.Td>
-                    <Text fw={500}>{f.name ?? f.ticker ?? '—'}</Text>
+                    <Group gap={6} wrap="nowrap">
+                      <Text fw={500}>{f.name ?? f.ticker ?? '—'}</Text>
+                      <FundIncompleteIcon fund={f} />
+                    </Group>
                     {f.ticker && (
                       <Text size="xs" c="dimmed">
                         {f.ticker}
@@ -171,7 +219,14 @@ export function FundsTable({ funds, totals }: { funds: FundRow[]; totals: FundsT
           </Table.Tbody>
           <Table.Tfoot>
             <Table.Tr data-testid="funds-totals-row">
-              <Table.Th>Итого</Table.Th>
+              <Table.Th>
+                Итого
+                {totals?.dataIncomplete && (
+                  <Text size="xs" c="orange" fw={400} data-testid="funds-totals-incomplete">
+                    {FUND_DATA_INCOMPLETE}
+                  </Text>
+                )}
+              </Table.Th>
               <Table.Th />
               <Table.Th />
               <Table.Th>{formatRub(totals?.marketValueRub)}</Table.Th>

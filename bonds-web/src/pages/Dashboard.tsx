@@ -16,6 +16,7 @@ import { useWidgetData } from '../hooks/useWidgetData';
 import { Disclaimer } from '../components/Disclaimer';
 import { PortfolioIntradayChart } from '../components/PortfolioIntradayChart';
 import { CHART_EXPLANATIONS } from '../components/charts';
+import { FUND_DATA_INCOMPLETE } from '../components/fundsCopy';
 import { DIRTY_PRICE_TOOLTIP_TEXT } from '../utils/positionsDisplay';
 import type {
   CompositionSlice,
@@ -152,7 +153,9 @@ function TotalBalanceKpi({ summary, error }: { summary: PortfolioSummary | null;
       }
       value={formatRub(summary.totalRub)}
       hint={
-        mismatch ? (
+        summary.fundsDataIncomplete ? (
+          <span data-testid="kpi-total-balance-incomplete">{FUND_DATA_INCOMPLETE} Итог занижен.</span>
+        ) : mismatch ? (
           <span data-testid="kpi-total-balance-mismatch">
             расходится с брокером на {formatRub(Math.abs(diff))} (другие активы/валюта)
           </span>
@@ -167,7 +170,7 @@ function TotalBalanceKpi({ summary, error }: { summary: PortfolioSummary | null;
 /** KPI «Фонды»: стоимость паёв и нереализованный P&L — только если фонды есть. */
 function FundsKpi({ funds }: { funds: FundsResponse | null }) {
   if (!funds || funds.funds.length === 0) return null;
-  const { marketValueRub, unrealizedPnlRub } = funds.totals;
+  const { marketValueRub, unrealizedPnlRub, dataIncomplete } = funds.totals;
   return (
     <Metric
       data-testid="kpi-funds"
@@ -177,7 +180,13 @@ function FundsKpi({ funds }: { funds: FundsResponse | null }) {
         value: <span data-testid="kpi-funds-pnl">P&amp;L {formatRub(unrealizedPnlRub)}</span>,
         tone: unrealizedPnlRub > 0 ? 'positive' : unrealizedPnlRub < 0 ? 'negative' : 'neutral',
       }}
-      hint="паи БПИФ, по цене пая"
+      hint={
+        dataIncomplete ? (
+          <span data-testid="kpi-funds-incomplete">{FUND_DATA_INCOMPLETE}</span>
+        ) : (
+          'паи БПИФ, по цене пая'
+        )
+      }
     />
   );
 }

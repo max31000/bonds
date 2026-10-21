@@ -55,7 +55,7 @@ export const baseFund: FundRow = {
 export const baseFunds: FundsResponse = {
   asOf: isoDaysAgo(0),
   funds: [baseFund],
-  totals: { marketValueRub: 10135, investedRub: 10000, unrealizedPnlRub: 135, incomeNetRub: 313.2, totalResultRub: 448.2 },
+  totals: { marketValueRub: 10135, investedRub: 10000, unrealizedPnlRub: 135, incomeNetRub: 313.2, totalResultRub: 448.2, dataIncomplete: false },
   disclaimer: 'Оценка, не рекомендация.',
 };
 
@@ -88,5 +88,6 @@ export const baseSummary: PortfolioSummary = {
   brokerDiffRub: 0,
   balanceSyncedAt: new Date().toISOString(),
   portfolioXirrFraction: 0.125,
+  fundsDataIncomplete: false,
   disclaimer: '',
 };

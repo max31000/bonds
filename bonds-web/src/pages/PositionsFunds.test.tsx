@@ -95,4 +95,26 @@ describe('Positions — вкладка «Фонды» (задача 53)', () => 
     expect(cell).toHaveTextContent('—');
     expect(within(cell).queryByText('По выплатам')).not.toBeInTheDocument();
   });
+
+  it('фонд без цены (dataIncomplete): предупреждение в строке и итогах', async () => {
+    const incomplete = { ...baseFund, dataIncomplete: true };
+    server.use(http.get('*/api/funds', () => HttpResponse.json({ ...baseFunds, funds: [incomplete], totals: { ...baseFunds.totals, dataIncomplete: true } })));
+    renderPositions('/positions?tab=funds');
+
+    await screen.findByTestId('fund-row-7');
+    expect(screen.getByTestId('fund-incomplete-7')).toBeInTheDocument();
+    expect(screen.getByTestId('funds-totals-incomplete')).toBeInTheDocument();
+  });
+
+  it('строка фонда доступна с клавиатуры: tabIndex=0 и Enter открывает карточку', async () => {
+    server.use(http.get('*/api/funds', () => HttpResponse.json(baseFunds)));
+    renderPositions('/positions?tab=funds');
+
+    const row = await screen.findByTestId('fund-row-7');
+    expect(row).toHaveAttribute('tabindex', '0');
+    row.focus();
+    await userEvent.keyboard('{Enter}');
+    // Переход на /funds/7 состоялся (маршрута в тестовом роутере нет — страница «Позиции» размонтирована).
+    await waitFor(() => expect(row).not.toBeInTheDocument());
+  });
 });

@@ -115,6 +115,21 @@ describe('Income (задача 54)', () => {
     expect(screen.getByTestId('income-positions')).toHaveTextContent('за период');
   });
 
+  it('футер таблицы в режиме периода включает налоги и комиссии «по счёту» и сходится с KPI', async () => {
+    // Строки: −750 и −26 (налоги+комиссии за период) = −776; «по счёту» за период ещё −30 → KPI/футер −806.
+    mockIncome({
+      income: {
+        ...baseIncome,
+        period: { ...baseIncome.period, taxesRub: -686, feesRub: -120 },
+      },
+    });
+    renderIncome('/income?period=12m');
+    await screen.findByTestId('income-kpi');
+    const footer = await screen.findByTestId('income-totals-row');
+    expect(footer).toHaveTextContent(/806\s₽/);
+    expect(footer).not.toHaveTextContent(/776\s₽/);
+  });
+
   it('бумажная прибыль помечена «за всё время» и без периода', async () => {
     mockIncome();
     renderIncome();

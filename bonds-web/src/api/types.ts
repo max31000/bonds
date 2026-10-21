@@ -1367,8 +1367,8 @@ export type FundOperationType = 'buy' | 'sell' | 'distribution' | 'tax' | 'fee' 
 export interface FundWindowReturn {
   /** Доходность за окно, ДОЛЯ. */
   returnFraction: number;
-  /** Пересчёт в годовую, ДОЛЯ годовых. */
-  annualizedFraction: number;
+  /** Пересчёт в годовую, ДОЛЯ годовых; null — окно короче 30 дней (не аннуализируем). */
+  annualizedFraction: number | null;
   days: number;
 }
 
@@ -1437,6 +1437,8 @@ export interface FundsTotals {
   unrealizedPnlRub: number;
   incomeNetRub: number;
   totalResultRub: number;
+  /** У какого-либо фонда нет цены вообще (стоимость взята как 0) — итоги занижены. */
+  dataIncomplete: boolean;
 }
 
 /** Ответ GET /api/funds. */
@@ -1495,6 +1497,8 @@ export interface PortfolioSummary {
   balanceSyncedAt: string | null;
   /** XIRR всего портфеля (облигации + фонды), ДОЛЯ годовых. */
   portfolioXirrFraction: number | null;
+  /** У открытого фонда нет цены вообще — fundsValueRub/totalRub занижены. */
+  fundsDataIncomplete: boolean;
   disclaimer: string;
 }
 

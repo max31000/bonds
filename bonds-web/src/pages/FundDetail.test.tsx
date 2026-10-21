@@ -45,6 +45,25 @@ describe('FundDetail (задача 53)', () => {
     expect(screen.getByTestId('fund-income-link')).toHaveAttribute('href', '/income?asset=fund&focus=7');
   });
 
+  it('окно короче 30 дней (annualizedFraction = null) не показывает «в годовых»; нет цены — предупреждение', async () => {
+    const detail = {
+      ...baseFundDetail,
+      fund: {
+        ...baseFundDetail.fund,
+        dataIncomplete: true,
+        performance: { ...baseFundDetail.fund.performance, m1: { returnFraction: 0.01, annualizedFraction: null, days: 28 } },
+      },
+    };
+    server.use(http.get('*/api/funds/7', () => HttpResponse.json(detail)));
+    renderDetail();
+
+    const m1 = await screen.findByTestId('fund-window-1 мес.');
+    expect(m1).toHaveTextContent('1.00%');
+    expect(m1).not.toHaveTextContent('в годовых');
+    expect(screen.getByTestId('fund-window-3 мес.')).toHaveTextContent('в годовых');
+    expect(screen.getByTestId('fund-detail-incomplete')).toBeInTheDocument();
+  });
+
   it('смена метода прогноза отправляет PUT и рефетчит карточку', async () => {
     let putBody: unknown = null;
     let currentMethod: 'auto' | 'indexYield' = 'auto';
