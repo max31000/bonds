@@ -109,6 +109,7 @@ if (!app.Environment.IsEnvironment("Testing"))
 app.MapPositionsEndpoints();
 app.MapCashFlowEndpoints();
 app.MapXirrEndpoints();
+app.MapIncomeEndpoints();
 app.MapPortfolioAnalyticsEndpoints();
 app.MapReplacementEndpoints();
 app.MapPositionVerdictEndpoints();

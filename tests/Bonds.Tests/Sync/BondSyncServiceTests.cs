@@ -378,6 +378,34 @@ public class BondSyncServiceTests
     }
 
     [Fact]
+    public async Task SyncAsync_BuySellOperations_StoreAccruedAsAbsoluteValue_OthersNull()
+    {
+        // Задача 52: AccruedInt брокера → operations.accrued_rub как ВЕЛИЧИНА (Math.Abs) только для Buy/Sell;
+        // у купона/налога поле не заполняется даже если брокер что-то прислал; нет значения — null.
+        SetupHappyPathAccountAndPositions();
+        _tInvest.Setup(c => c.GetOperationsAsync(BrokerAccountId, It.IsAny<DateTime?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<TInvestOperation>
+            {
+                new() { Id = "buy", OperationType = "Buy", Figi = Figi, InstrumentKind = "Bond", Date = new DateTime(2026, 1, 10), PaymentRub = -10200m, Quantity = 10, AccruedInterest = -200m },
+                new() { Id = "sell", OperationType = "Sell", Figi = Figi, InstrumentKind = "Bond", Date = new DateTime(2026, 1, 11), PaymentRub = 4160m, Quantity = 4, AccruedInterest = 40m },
+                new() { Id = "buy-no-nkd", OperationType = "Buy", Figi = Figi, InstrumentKind = "Bond", Date = new DateTime(2026, 1, 12), PaymentRub = -1000m, Quantity = 1 },
+                new() { Id = "coupon", OperationType = "Coupon", Figi = Figi, InstrumentKind = "Bond", Date = new DateTime(2026, 1, 13), PaymentRub = 400m, AccruedInterest = 5m },
+            });
+        List<Operation>? stored = null;
+        _operations.Setup(o => o.UpsertManyByExternalIdAsync(It.IsAny<IEnumerable<Operation>>()))
+            .Callback((IEnumerable<Operation> ops) => stored = ops.ToList())
+            .ReturnsAsync((IEnumerable<Operation> ops) => ops.Count());
+
+        await CreateService().SyncAsync(AccountId);
+
+        stored.Should().NotBeNull();
+        stored!.Single(o => o.ExternalId == "buy").AccruedRub.Should().Be(200m);
+        stored.Single(o => o.ExternalId == "sell").AccruedRub.Should().Be(40m);
+        stored.Single(o => o.ExternalId == "buy-no-nkd").AccruedRub.Should().BeNull();
+        stored.Single(o => o.ExternalId == "coupon").AccruedRub.Should().BeNull();
+    }
+
+    [Fact]
     public async Task SyncAsync_EtfOperationsAndPositions_GoToFundSync_NotToBondJournal()
     {
         // Задача 51: операции и позиции по фондам (Etf) уходят в FundSyncService; облигационный журнал и позиции не меняются.

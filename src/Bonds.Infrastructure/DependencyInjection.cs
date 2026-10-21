@@ -180,6 +180,9 @@ public static class DependencyInjection
         // вход для positions/composition/scatter/comparison/replacement эндпоинтов.
         services.AddScoped<PortfolioHoldingsBuilder>();
 
+        // Единый журнал доходов (задача 52): входы для PositionIncomeCalculator; задача 53 берёт доходы по фондам отсюда.
+        services.AddScoped<IncomeLedgerBuilder>();
+
         // Резолвер эффективной ставки комиссии (override → оценка из журнала →
         // дефолт) — потребляется replacement/allocation/ifSoldNow эндпоинтами.
         services.AddScoped<ICommissionRateProvider, CommissionRateProvider>();

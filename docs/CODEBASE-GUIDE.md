@@ -164,6 +164,25 @@ DTO кандидата: `yieldFraction` (сырая биржевая) + `afterTa
 брокера — удалять со 2-го раза»); сбой фондов не ломает облигационный синк. Суточные рыночные данные (история цен паёв MOEX, выплаты на пай
 T-Invest, история RGBI) — `FundMarketDataRefresher`, шаг `SyncCycleService` (ворота по последней дате в БД; цикл неуспешным не помечается).
 
+**Доходы (задача 52).** Единый журнал `Bonds.Core/Income` (`LedgerEntry` = облигационные `operations` + `fund_operations`) и
+`PositionIncomeCalculator` — P&L по КАЖДОЙ позиции, включая закрытые/погашенные (набор активов строится из журнала, не из `positions`).
+Метод — average cost (как `PositionCostBasisService`, не FIFO; с налоговой отчётностью может расходиться). Правила: Buy — `cleanCost =
+|amount| − НКД`, `accruedPaid += НКД`; Sell — `proceedsClean = amount − НКД`, `realized += proceedsClean − avgCost × q` (продажа больше известного
+остатка клампится + `HasUnknownLots`); амортизация уменьшает себестоимость (избыток — в realized); погашение — `realized += amount − cost`
+(и перекрывает ещё не удалённую сверкой позицию: стоимость 0); `Income` (купон/выплата фонда) и `Tax`/`Fee` — со знаком брокера; закрытая
+позиция с «висящей» себестоимостью списывает её в realized-убыток (+ `HasUnknownLots`). `NetCouponIncome = IncomeGross − AccruedPaid +
+AccruedReceived + AccruedNow`. **Инвариант (закреплён тестами на каждом эталоне):** `TotalResult = Σ AmountRub(операции актива) + MarketValueClean +
+AccruedNow = Realized + Unrealized + NetCouponIncome + Taxes + Fees`. **`operations.accrued_rub`** (миграция 024) — НКД операции, РУБЛИ на всю
+операцию, ВЕЛИЧИНА ≥ 0 (направление из типа Buy/Sell; синк пишет `Math.Abs(AccruedInt)`); NULL = не отдан (заполнится ближайшим синком — журнал
+перечитывается целиком). Допущение: `Payment` покупки/продажи включает НКД; если `accrued ≥ |amount|` — НКД игнорируется (`AccruedUnknown`).
+`IncomeStatisticsService`: итоги all-time по позициям (+ налоги/комиссии «по счёту» — операции без актива — только в итоговом `TotalResult` и
+`accountLevel`); **период `[from,to]` (включительно) — ДЕНЕЖНЫЕ СОБЫТИЯ** (купоны/выплаты брутто, налоги, комиссии, realized на дату операции,
+НКД уплачен/получен), бумажная прибыль в периоде не считается (`unrealizedIsAllTime`); помесячный ряд `yyyy-MM` с нулевыми месяцами; XIRR портфеля —
+потоки активов + «по счёту» + терминал = чистая стоимость + НКД (деньги на счёте/пополнения не участвуют). Сборка входов —
+`IncomeLedgerBuilder` (Infrastructure; стоимость облигаций из `PortfolioHoldingsBuilder`: чистая = MV − AccruedPerBond × Qty; публичный
+`BuildFundsAsync` — вход для `/api/funds`, задача 53). Эндпоинты: `GET /api/income` и `GET /api/income/{bond|fund}/{assetId}/ledger`
+(`IncomeEndpoints`, DTO `IncomeDtos.cs`; доли — ДОЛИ, суммы — рубли; enum — camelCase-строки).
+
 ## Тесты
 
 **Юнит** (`tests/Bonds.Tests`, папки по доменам): без сети и без БД. HTTP-клиенты — вложенный
