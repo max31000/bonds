@@ -51,6 +51,19 @@ public interface ITInvestPortfolioClient
     /// (как у остальных методов клиента), сбой gRPC → исключение наружу (вызывающий шаг синка логирует и пропускает).
     /// </summary>
     Task<IReadOnlyList<TInvestBondRiskLevel>> GetBondRiskLevelsAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// Задача 51: справочник фонда по FIGI — <c>EtfBy(FIGI)</c> (isin/ticker/name/focus_type/asset_uid), затем
+    /// <c>GetAssetBy(asset_uid)</c> → <c>AssetEtf.TotalExpense</c> (TER; конверсия в ДОЛЮ — <see cref="TInvestNumeric.ExpenseRatioToFraction"/>).
+    /// Сбой второго вызова — TER null, не ошибка. Фонд не найден — null; токен не настроен → <see cref="InvalidOperationException"/>.
+    /// </summary>
+    Task<TInvestFundInfo?> GetFundInfoAsync(string figi, CancellationToken ct = default);
+
+    /// <summary>
+    /// Задача 51: выплаты фонда на пай за период (<c>GetDividends</c>; <c>DividendNet</c> — рубли за пай). Ошибка gRPC →
+    /// пустой список + LogWarning (рыночные данные необязательны). Токен не настроен → <see cref="InvalidOperationException"/>.
+    /// </summary>
+    Task<IReadOnlyList<TInvestFundDistribution>> GetFundDistributionsAsync(string figi, DateOnly from, DateOnly to, CancellationToken ct = default);
 }
 
 /// <summary>Брокерская оценка риска одной облигации (ISIN → <see cref="BrokerRiskLevel"/>).</summary>

@@ -30,6 +30,7 @@ public class BondSyncServiceTests
     private readonly Mock<IPositionRepository> _positions = new();
     private readonly Mock<IOperationRepository> _operations = new();
     private readonly Mock<IAccountRepository> _accounts = new();
+    private readonly Mock<IFundSyncService> _fundSync = new();
 
     private const ulong AccountId = 42;
     private const string BrokerAccountId = "BA-1";
@@ -49,7 +50,16 @@ public class BondSyncServiceTests
         _positions.Object,
         _operations.Object,
         _accounts.Object,
-        NullLogger<BondSyncService>.Instance);
+        NullLogger<BondSyncService>.Instance,
+        _fundSync.Object);
+
+    public BondSyncServiceTests()
+    {
+        _fundSync.Setup(f => f.ApplyAsync(
+                It.IsAny<ulong>(), It.IsAny<IReadOnlyList<TInvestPortfolioPosition>>(),
+                It.IsAny<IReadOnlyList<TInvestOperation>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new FundSyncResult());
+    }
 
     private void SetupHappyPathAccountAndPositions(decimal? currentNkd = 12.3m, decimal? currentPrice = 985.5m)
     {
@@ -365,6 +375,62 @@ public class BondSyncServiceTests
         result.OperationsUpserted.Should().Be(2);
         _operations.Verify(o => o.UpsertManyByExternalIdAsync(It.Is<IEnumerable<Operation>>(ops =>
             ops.Select(x => x.ExternalId).OrderBy(x => x).SequenceEqual(new[] { "acct-fee", "bond-buy" }))), Times.Once);
+    }
+
+    [Fact]
+    public async Task SyncAsync_EtfOperationsAndPositions_GoToFundSync_NotToBondJournal()
+    {
+        // Задача 51: операции и позиции по фондам (Etf) уходят в FundSyncService; облигационный журнал и позиции не меняются.
+        _tInvest.Setup(c => c.GetPrimaryAccountIdAsync(It.IsAny<CancellationToken>())).ReturnsAsync(BrokerAccountId);
+        SetupHappyPathAccountAndPositions();
+        var fundPosition = new TInvestPortfolioPosition { Figi = "TPAY-FIGI", InstrumentUid = "u2", Quantity = 100, AveragePositionPrice = 101m, CurrentPrice = 102m };
+        _tInvest.Setup(c => c.GetPortfolioAsync(BrokerAccountId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TInvestPortfolio
+            {
+                Bonds = [new TInvestPortfolioPosition { Figi = Figi, InstrumentUid = "uid-1", Quantity = 10, AveragePositionPrice = 980m, CurrentPrice = 985.5m, CurrentNkd = 12.3m }],
+                Funds = [fundPosition],
+            });
+        _tInvest.Setup(c => c.GetOperationsAsync(BrokerAccountId, It.IsAny<DateTime?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<TInvestOperation>
+            {
+                new() { Id = "bond-buy", OperationType = "Buy", Figi = Figi, InstrumentKind = "Bond", Date = new DateTime(2026, 1, 10), PaymentRub = -9800m, Quantity = 10 },
+                new() { Id = "fund-buy", OperationType = "Buy", Figi = "TPAY-FIGI", InstrumentKind = "Etf", Date = new DateTime(2026, 1, 11), PaymentRub = -10100m, Quantity = 100 },
+                new() { Id = "fund-div", OperationType = "Dividend", Figi = "TPAY-FIGI", InstrumentKind = "Etf", Date = new DateTime(2026, 2, 11), PaymentRub = 90m },
+                new() { Id = "fund-tax", OperationType = "DividendTax", Figi = "TPAY-FIGI", InstrumentKind = "Etf", Date = new DateTime(2026, 2, 11), PaymentRub = -12m },
+            });
+        _operations.Setup(o => o.UpsertManyByExternalIdAsync(It.IsAny<IEnumerable<Operation>>()))
+            .ReturnsAsync((IEnumerable<Operation> ops) => ops.Count());
+        _fundSync.Setup(f => f.ApplyAsync(AccountId, It.IsAny<IReadOnlyList<TInvestPortfolioPosition>>(),
+                It.IsAny<IReadOnlyList<TInvestOperation>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new FundSyncResult { FundsSynced = 1 });
+
+        var result = await CreateService().SyncAsync(AccountId);
+
+        result.HasErrors.Should().BeFalse();
+        result.FundsSynced.Should().Be(1);
+        result.InstrumentsSynced.Should().Be(1, "облигационные позиции не меняются");
+        _operations.Verify(o => o.UpsertManyByExternalIdAsync(It.Is<IEnumerable<Operation>>(ops =>
+            ops.Select(x => x.ExternalId).SequenceEqual(new[] { "bond-buy" }))), Times.Once);
+        _positions.Verify(p => p.UpsertAsync(It.IsAny<Position>()), Times.Once);
+        _fundSync.Verify(f => f.ApplyAsync(AccountId,
+            It.Is<IReadOnlyList<TInvestPortfolioPosition>>(l => l.Count == 1 && l[0].Figi == "TPAY-FIGI"),
+            It.Is<IReadOnlyList<TInvestOperation>>(l => l.Select(o => o.Id).OrderBy(x => x).SequenceEqual(new[] { "fund-buy", "fund-div", "fund-tax" })),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task SyncAsync_FundSyncThrows_BondSyncUnaffected_ErrorReported()
+    {
+        SetupHappyPathAccountAndPositions();
+        _fundSync.Setup(f => f.ApplyAsync(It.IsAny<ulong>(), It.IsAny<IReadOnlyList<TInvestPortfolioPosition>>(),
+                It.IsAny<IReadOnlyList<TInvestOperation>>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("boom"));
+
+        var result = await CreateService().SyncAsync(AccountId);
+
+        result.InstrumentsSynced.Should().Be(1, "сбой фондов не роняет облигационный синк");
+        result.Errors.Should().ContainSingle(e => e.StartsWith("Фонды:"));
+        _positions.Verify(p => p.UpsertAsync(It.IsAny<Position>()), Times.Once);
     }
 
     [Fact]

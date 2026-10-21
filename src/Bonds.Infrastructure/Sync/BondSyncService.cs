@@ -37,6 +37,7 @@ public sealed class BondSyncService
     private readonly IOperationRepository _operations;
     private readonly IAccountRepository _accounts;
     private readonly ILogger<BondSyncService> _logger;
+    private readonly IFundSyncService? _fundSync;
 
     public BondSyncService(
         ITInvestPortfolioClient tInvest,
@@ -50,8 +51,10 @@ public sealed class BondSyncService
         IPositionRepository positions,
         IOperationRepository operations,
         IAccountRepository accounts,
-        ILogger<BondSyncService> logger)
+        ILogger<BondSyncService> logger,
+        IFundSyncService? fundSync = null)
     {
+        _fundSync = fundSync;
         _tInvest = tInvest;
         _moex = moex;
         _instruments = instruments;
@@ -118,6 +121,9 @@ public sealed class BondSyncService
             result.Errors.Add("Не удалось сохранить денежный баланс счёта");
         }
 
+        // Задача 51: операции по фондам (БПИФ/ETF) собираем отдельно и отдаём FundSyncService — в облигационный
+        // журнал они не попадают (ни Buy/Sell, ни выплаты/налог).
+        var fundOperations = new List<TInvestOperation>();
         try
         {
             var tInvestOperations = await _tInvest.GetOperationsAsync(brokerAccountId, operationsFrom, ct);
@@ -127,6 +133,12 @@ public sealed class BondSyncService
             var figiCache = new Dictionary<string, ulong?>();
             foreach (var op in tInvestOperations)
             {
+                if (op.IsFund)
+                {
+                    fundOperations.Add(op);
+                    continue;
+                }
+
                 var mappedType = TInvestOperationMapper.Map(op.OperationType);
                 if (mappedType is null) continue; // нерелевантный тип операции (см. README коннектора) — пропускаем, не падаем
 
@@ -167,6 +179,26 @@ public sealed class BondSyncService
             _logger.LogError(ex, "T-Invest: failed to sync operations journal");
             result.Errors.Add("T-Invest: не удалось синхронизировать журнал операций");
             // Не return — позиции и справочник всё равно стоит обновить (частичный успех).
+        }
+
+        // --- Фонды (задача 51): отдельный домен, на уже полученных данных брокера. Сбой не страдает облигационный синк.
+        if (_fundSync is not null)
+        {
+            try
+            {
+                var fundResult = await _fundSync.ApplyAsync(accountId, portfolio.Funds, fundOperations, ct);
+                result.FundsSynced = fundResult.FundsSynced;
+                foreach (var error in fundResult.Errors) result.Errors.Add($"Фонды: {error}");
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Fund sync failed");
+                result.Errors.Add($"Фонды: ошибка синка ({ex.GetType().Name})");
+            }
         }
 
         // --- (2)+(4) Для каждой позиции — резолв инструмента + догрузка MOEX + upsert позиции ---
@@ -610,6 +642,9 @@ public sealed class SyncResult
 {
     public int InstrumentsSynced { get; set; }
     public int OperationsUpserted { get; set; }
+
+    /// <summary>Задача 51: сколько позиций в фондах (БПИФ) обновлено — отдельный домен, в <see cref="InstrumentsSynced"/> не входит.</summary>
+    public int FundsSynced { get; set; }
 
     /// <summary>Журнал операций полностью перечитан у брокера и сохранён (база для бэкфилла истории).</summary>
     public bool JournalSynced { get; set; }

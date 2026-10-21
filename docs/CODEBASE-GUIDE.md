@@ -33,6 +33,9 @@ MySQL для интеграционных), vitest + Testing Library + MSW.
 | T-Invest `GetPortfolio` (CurrentPrice/CurrentNkd/AveragePositionPrice) | вход | **рубли** за бумагу — конверсия не нужна |
 | T-Invest `GetLastPrices` (marketdata `LastPrice`) | вход | **ПУНКТЫ** (% от номинала) → рубли = `pts/100 × FaceValue` (см. `LiveQuoteConverter`) |
 | ГИР БО ФНС (`bo.nalog.gov.ru`): все суммы бухгалтерской отчётности | вход | **ТЫСЯЧИ рублей** → храним РУБЛИ (×1000, `GirBoParser.ThousandsToRubles`), `issuer_financials.*` — рубли |
+| Фонды (БПИФ): цена пая — MOEX `CLOSE` (TQBR/shares), T-Invest `GetPortfolio` `CurrentPrice`/`AveragePositionPrice`, `Dividend.DividendNet` | вход | **рубли за пай**, конверсии нет (НЕ путать с облигациями: там MOEX `CLOSE` — % номинала) → `fund_positions.*_rub`, `fund_price_history.close_rub`, `fund_distributions.amount_per_share_rub` |
+| Фонды: TER (`AssetEtf.TotalExpense`) | вход | единицы не подтверждены → `TInvestNumeric.ExpenseRatioToFraction` → **ДОЛЯ** (0.009 = 0.9%), `funds.total_expense_fraction` |
+| Фонды: индекс MOEX (`YIELD`, `DURATION`), напр. RGBI | вход | `YIELD` **проценты** → доля (÷100), `DURATION` **дни** → годы (÷365) → `market_index_history.yield_fraction/duration_years` |
 | `MarketQuote.CleanPrice/DirtyPrice/Accrued`, `intraday_quotes.dirty_price_rub` | БД | всегда рубли за бумагу (контракт в doc-comment модели) |
 | `Position.Accrued` | БД | НКД на ОДНУ бумагу (не на позицию) |
 | Знак `Operation.AmountRub` | БД | как отдал брокер — НЕ переписывать (см. `PortfolioXirrService.SignedAmount`) |
@@ -153,6 +156,13 @@ DTO кандидата: `yieldFraction` (сырая биржевая) + `afterTa
 (`RelativeValueSnapshot.LiquidityTurnoverRub`, fallback — сегодняшний VALTODAY; всегда через `AnalyticsSupport.AssessEntryLiquidity`,
 а не с `entry.TurnoverRub` напрямую); отсутствие bid/offer не даёт Low при живом обороте (High требует известного узкого спреда). Ставка комиссии — ТОЛЬКО через
 `ICommissionRateProvider` (override → оценка из журнала → дефолт), не константа.
+
+**Фонды — отдельный домен (задача 51).** БПИФ (TPAY, TOFZ) живут в своих таблицах (`funds`, `fund_positions`, `fund_operations`,
+`fund_price_history`, `fund_distributions`, `market_index_history`, миграция 023) и НЕ попадают в `instruments`/`positions`/`operations`
+и облигационный движок (YTM, скоркарта, XIRR/снимки, сигналы). `BondSyncService` отдаёт позиции `Funds` и операции `IsFund` в
+`IFundSyncService` (`FundSyncService`: резолв по FIGI, справочник раз в сутки, upsert позиций/операций, сверка с защитой «пустой ответ
+брокера — удалять со 2-го раза»); сбой фондов не ломает облигационный синк. Суточные рыночные данные (история цен паёв MOEX, выплаты на пай
+T-Invest, история RGBI) — `FundMarketDataRefresher`, шаг `SyncCycleService` (ворота по последней дате в БД; цикл неуспешным не помечается).
 
 ## Тесты
 

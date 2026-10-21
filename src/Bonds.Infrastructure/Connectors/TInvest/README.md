@@ -148,3 +148,27 @@ MVP берёт первый счёт со `Status == AccountStatus.Open` (spec �
 `instrument_risk_levels` раз в сутки шагом `SyncCycleService` (`InstrumentRiskLevelRefresher`, ворота по
 `MAX(fetched_at)` ≥ 20 ч). Потребитель — компонент `broker_risk_level` скоркарты надёжности. Реальный вызов с токеном
 в CI не выполняется (мок интерфейса).
+
+
+## Фонды (БПИФ/ETF) — отдельный домен (задача 51)
+
+Фонды не смешиваются с облигациями: `GetPortfolio` кладёт позиции с `InstrumentType == "etf"` в `TInvestPortfolio.Funds`
+(облигации — `Bonds`, акции/валюта по-прежнему пропускаются); операции с `InstrumentKind == "Etf"` (`TInvestOperation.IsFund`)
+уходят в `FundSyncService`, а не в облигационный журнал.
+
+| Величина | Источник | Единица / конверсия |
+|---|---|---|
+| `CurrentPrice`, `AveragePositionPrice` позиции фонда | `GetPortfolio` | **рубли за пай**, конверсии нет (`CurrentNkd` у фонда не используется) |
+| `Payment` операции по фонду | `GetOperationsByCursor` | рубли, знак брокера как есть (покупка −, выплата +) |
+| `Dividend.DividendNet` | `Instruments.GetDividends` | **рубли за пай**, конверсии нет; `RecordDate`/`PaymentDate` — `Timestamp` UTC → `DateOnly` |
+| `AssetEtf.TotalExpense` (TER) | `Instruments.GetAssetBy(asset_uid)` → `Asset.Security.Etf` | в SDK-доке «в процентах», на практике не подтверждено → `TInvestNumeric.ExpenseRatioToFraction`: `> 0.05` проценты (`/100`), `0 < raw <= 0.05` уже доля, `<= 0` или `> 10` — null + LogWarning. Хранится **ДОЛЕЙ** (0.009 = 0.9%) |
+| MOEX `CLOSE` пая (доска TQBR рынка shares) | `GetSharesHistoryAsync` | **рубли за пай** (у облигаций это % номинала!) |
+| MOEX индекс `YIELD` / `DURATION` | `GetIndexHistoryAsync` (RGBI) | проценты → доля (÷100); дни → годы (÷365) |
+
+Справочник фонда: `Instruments.EtfBy(FIGI)` → `Etf.Isin/Ticker/Name/FocusType/AssetUid`; затем `GetAssetBy(AssetUid)` →
+`Asset.Security.Etf.TotalExpense` и `Asset.Brand.Company` (управляющая компания). Сбой второго вызова — TER = null, не ошибка.
+
+Имена `OperationType`, сверенные по SDK 0.6.22.1 (`TInvestFundOperationMapper`): `Buy/BuyCard/BuyMargin` -> Buy;
+`Sell/SellCard/SellMargin` -> Sell; `Dividend/DividendTransfer/DivExt` -> Distribution (выплата фонда);
+`BondTax*/Tax*/TaxCorrection*/DividendTax*/BenefitTax*` -> Tax; `BrokerFee/ServiceFee/MarginFee/CashFee/OutFee/OtherFee/AdviceFee/
+SuccessFee/TrackMfee/TrackPfee/OutStampDuty` -> Fee; `InputSecurities/OutputSecurities` -> SecurityIn/Out; прочее — пропуск.

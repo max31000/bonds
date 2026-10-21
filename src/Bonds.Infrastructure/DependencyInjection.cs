@@ -87,6 +87,12 @@ public static class DependencyInjection
         services.AddScoped<IInstrumentRiskLevelRepository>(sp => new InstrumentRiskLevelRepository(GetConnStr(sp)));
         services.AddScoped<IIssuerRatingRepository>(sp => new IssuerRatingRepository(GetConnStr(sp)));
 
+        // Задача 51: фонды (БПИФ) — отдельный домен: справочник, позиции, журнал, рыночные данные.
+        services.AddScoped<IFundRepository>(sp => new FundRepository(GetConnStr(sp)));
+        services.AddScoped<IFundPositionRepository>(sp => new FundPositionRepository(GetConnStr(sp)));
+        services.AddScoped<IFundOperationRepository>(sp => new FundOperationRepository(GetConnStr(sp)));
+        services.AddScoped<IFundMarketDataRepository>(sp => new FundMarketDataRepository(GetConnStr(sp)));
+
         // Migration runner
         services.AddSingleton(sp => new MigrationRunner(
             GetConnStr(sp),
@@ -142,6 +148,11 @@ public static class DependencyInjection
 
         // Задача 46: суточное обновление risk_level облигаций T-Invest (один bulk-вызов Bonds(), шаг цикла синка).
         services.AddScoped<InstrumentRiskLevelRefresher>();
+
+        // Задача 51: синк фондов (вызывается из BondSyncService на уже полученных данных) и суточные
+        // рыночные данные фондов (шаг SyncCycleService).
+        services.AddScoped<IFundSyncService, FundSyncService>();
+        services.AddScoped<FundMarketDataRefresher>();
 
         // Единый путь "обогатить одну бумагу по ISIN" (резолв инструмента +
         // MOEX-котировка), вынесенный из WatchlistSyncService — переиспользуется watchlist

@@ -37,6 +37,22 @@ public interface IMoexIssClient
     Task<IReadOnlyList<MoexHistoryPricePoint>> GetHistoryPricesAsync(string secid, DateOnly from, DateOnly to, CancellationToken ct = default);
 
     /// <summary>
+    /// Задача 51: дневные закрытия пая/акции с доски TQBR рынка shares
+    /// (<c>/iss/history/engines/stock/markets/shares/boards/TQBR/securities/{secid}.json</c>) за [from; to] включительно.
+    /// Цена — РУБЛИ за пай, конверсии нет (в отличие от облигаций, где цена — % номинала). Пагинация — тем же паттерном,
+    /// что <see cref="GetHistoryPricesAsync"/> (страницы по 100 строк, короткая страница — последняя). Пустой список при
+    /// сбое источника/неизвестном SECID (не бросает исключение).
+    /// </summary>
+    Task<IReadOnlyList<MoexSharePricePoint>> GetSharesHistoryAsync(string secid, DateOnly from, DateOnly to, CancellationToken ct = default);
+
+    /// <summary>
+    /// Задача 51: история облигационного индекса MOEX (<c>/iss/history/engines/stock/markets/index/securities/{code}.json</c>,
+    /// напр. RGBI) за [from; to]. <c>YIELD</c> (проценты) → доля (÷100), <c>DURATION</c> (дни) → годы (÷365) — см.
+    /// <see cref="MoexIndexPoint"/>. Пустой список при сбое (не бросает исключение).
+    /// </summary>
+    Task<IReadOnlyList<MoexIndexPoint>> GetIndexHistoryAsync(string indexCode, DateOnly from, DateOnly to, CancellationToken ct = default);
+
+    /// <summary>
     /// Снимок ВСЕЙ рыночной вселенной облигаций MOEX —
     /// <c>/iss/engines/stock/markets/bonds/securities.json?iss.only=securities,marketdata</c>.
     /// Пагинация через <c>start</c> — тот же паттерн, что <see cref="GetHistoryPricesAsync"/>;

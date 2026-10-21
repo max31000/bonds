@@ -35,3 +35,10 @@ ISS (это документированный в spec §4.4 риск, но он
 в имени файла и в комментарии теста, который её использует
 (`MoexBondizationParserTests.IncompleteCoupons_SyntheticFixture_DetectedAsDataIncomplete`),
 чтобы не выдавать её за реальный ответ MOEX.
+
+## Фонды (задача 51)
+
+| Файл | Эндпоинт | Реальный ответ | Что проверяет |
+|---|---|---|---|
+| `index_history_RGBI_2026-10.json` | `/iss/history/engines/stock/markets/index/securities/RGBI.json?from=2026-10-01&till=2026-10-20` (снято 2026-10-21) | да | `YIELD` (проценты → доля), `DURATION` (дни → годы), `CLOSE` индекса |
+| `shares_history_TQBR_TPAY_2026-10.json` | `/iss/history/engines/stock/markets/shares/boards/TQBR/securities/TPAY.json?from=2026-10-01&till=2026-10-20` (снято 2026-10-21) | да | `CLOSE` пая — рубли за пай (не % номинала) |
