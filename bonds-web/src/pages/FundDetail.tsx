@@ -1,5 +1,5 @@
 import { useEffect, useMemo } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Badge, Button, Group, Loader, Select, Table, Text } from '@mantine/core';
 import { EmptyState, ErrorState, HelpHint, Metric, MetricGrid, Page, Section } from '@mvv42/kit';
 import { ChartFrame, ChartTooltip, chartColors, pickAxisTicks, useChartTheme } from '@mvv42/kit/charts';
@@ -159,6 +159,12 @@ export function FundDetail() {
               explanation="Оценка ожидаемой годовой доходности до налога по выбранному методу (см. блок «Прогноз»). Это оценка, а не обещание."
             />
           </MetricGrid>
+          <p className="bonds-note">
+            <Link to={`/income?asset=fund&focus=${fund.fundId}`} data-testid="fund-income-link">
+              Подробно в Доходах
+            </Link>{' '}
+            — выплаты, налоги и вся история операций по фонду.
+          </p>
 
           <Section title="Доходность по рынку" description="Фактическая доходность пая с учётом выплат — не зависит от вашей цены покупки" data-testid="fund-performance">
             <Group gap="xl" wrap="wrap">

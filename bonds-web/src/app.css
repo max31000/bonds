@@ -197,3 +197,139 @@
   margin-top: var(--mvv-sp-2);
 }
 
+
+/* ── Доходы (задача 54) ─────────────────────────────────────────────────────── */
+.bonds-inline-help {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--mvv-sp-2);
+}
+.bonds-income-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mvv-sp-4);
+  transition: opacity var(--mvv-dur-fast) var(--mvv-ease);
+}
+.bonds-income-body[data-loading] {
+  opacity: 0.6;
+}
+.bonds-income-footnote {
+  padding: var(--mvv-sp-3) var(--mvv-sp-4);
+  border-top: 1px solid var(--mvv-border);
+}
+.bonds-income-row {
+  cursor: pointer;
+}
+.bonds-income-row:focus-visible {
+  outline: 2px solid var(--mvv-focus-ring);
+  outline-offset: -2px;
+}
+.bonds-income-row[data-focused],
+.bonds-income-card-head[data-focused] {
+  background: var(--mvv-accent-soft);
+}
+.bonds-income-ledger-row > td {
+  background: var(--mvv-surface-2);
+  padding: var(--mvv-sp-3) var(--mvv-sp-4);
+}
+.bonds-income-totals td {
+  font-weight: 600;
+  border-top: 2px solid var(--mvv-border-strong);
+}
+.bonds-income-asset {
+  min-width: 0;
+}
+.bonds-warn-icon {
+  display: inline-flex;
+  color: var(--mvv-warning);
+  flex: none;
+}
+.bonds-sort-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font: inherit;
+  color: inherit;
+  white-space: nowrap;
+}
+.bonds-income-card-head {
+  cursor: pointer;
+  border-radius: var(--mvv-r-sm);
+}
+.bonds-income-card-head:focus-visible {
+  outline: 2px solid var(--mvv-focus-ring);
+  outline-offset: 2px;
+}
+.bonds-income-card-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--mvv-sp-3) var(--mvv-sp-4);
+  margin-top: var(--mvv-sp-3);
+}
+
+/* «Водопад» итога: подпись | плавающий бар | сумма. */
+.bonds-breakdown {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--mvv-sp-2);
+}
+.bonds-breakdown-row {
+  display: grid;
+  grid-template-columns: minmax(150px, 280px) minmax(0, 1fr) 110px;
+  align-items: center;
+  gap: var(--mvv-sp-3);
+}
+.bonds-breakdown-row[data-total] {
+  margin-top: var(--mvv-sp-2);
+  padding-top: var(--mvv-sp-3);
+  border-top: 1px solid var(--mvv-border);
+  font-weight: 600;
+}
+.bonds-breakdown-label {
+  font-size: var(--mvv-fs-13);
+  color: var(--mvv-text-2);
+  cursor: help;
+}
+.bonds-breakdown-track {
+  position: relative;
+  height: 14px;
+  background: var(--mvv-surface-2);
+  border-radius: var(--mvv-r-full);
+}
+.bonds-breakdown-zero {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 1px;
+  background: var(--mvv-border-strong);
+}
+.bonds-breakdown-bar {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: var(--mvv-r-full);
+}
+.bonds-breakdown-bar[data-tone='up'] {
+  background: var(--mvv-success);
+}
+.bonds-breakdown-bar[data-tone='down'] {
+  background: var(--mvv-danger);
+}
+.bonds-breakdown-bar[data-tone='total'] {
+  background: var(--mvv-accent);
+}
+.bonds-breakdown-value {
+  text-align: right;
+  font-size: var(--mvv-fs-13);
+}
+@media (max-width: 640px) {
+  .bonds-breakdown-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .bonds-breakdown-track {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+}

@@ -1497,3 +1497,159 @@ export interface PortfolioSummary {
   portfolioXirrFraction: number | null;
   disclaimer: string;
 }
+
+// ── Доходы (задача 54; контракт — Endpoints/Dtos/IncomeDtos.cs). Деньги — РУБЛИ, доли — ДОЛИ (0.12 = 12%). ──
+
+export type IncomeAssetKind = 'bond' | 'fund';
+export type IncomeAssetFilter = 'all' | IncomeAssetKind;
+/** open — позиция есть; closed — продана; redeemed — погашена. */
+export type IncomeStatus = 'open' | 'closed' | 'redeemed';
+export type IncomeLedgerKind =
+  | 'buy'
+  | 'sell'
+  | 'income'
+  | 'tax'
+  | 'fee'
+  | 'principalReturn'
+  | 'redemption'
+  | 'securityIn'
+  | 'securityOut';
+
+export interface IncomeTotals {
+  positionsCount: number;
+  investedTotalRub: number;
+  marketValueCleanRub: number;
+  accruedNowRub: number;
+  unrealizedPnlRub: number;
+  realizedPnlRub: number;
+  incomeGrossRub: number;
+  accruedPaidRub: number;
+  accruedReceivedRub: number;
+  /** брутто − НКД уплаченный + НКД полученный + накопленный НКД на сегодня (БЕЗ налогов). */
+  netCouponIncomeRub: number;
+  /** Налоги по позициям, знак брокера (обычно −); «по счёту» — в `accountLevel`. */
+  taxesRub: number;
+  feesRub: number;
+  principalReturnedRub: number;
+  /** Итог уже включает налоги/комиссии «по счёту». */
+  totalResultRub: number;
+  totalReturnFraction: number | null;
+}
+
+export interface IncomeAccountLevel {
+  taxesRub: number;
+  feesRub: number;
+}
+
+export interface IncomePeriod {
+  couponsGrossRub: number;
+  distributionsGrossRub: number;
+  accruedPaidRub: number;
+  accruedReceivedRub: number;
+  taxesRub: number;
+  feesRub: number;
+  realizedPnlRub: number;
+  netRub: number;
+}
+
+export interface IncomeMonth {
+  /** "yyyy-MM". */
+  month: string;
+  couponsGrossRub: number;
+  distributionsGrossRub: number;
+  /** −уплачен + получен. */
+  accruedNetRub: number;
+  taxesRub: number;
+  feesRub: number;
+  realizedPnlRub: number;
+  netRub: number;
+}
+
+export interface IncomePosition {
+  assetKind: IncomeAssetKind;
+  assetId: number;
+  name: string | null;
+  ticker: string | null;
+  isin: string | null;
+  /** Только у открытых облигаций (ссылка на карточку). */
+  positionId: number | null;
+  fundId: number | null;
+  dataIncomplete: boolean;
+  status: IncomeStatus;
+  firstDate: string;
+  lastDate: string;
+  holdingDays: number;
+  quantityNow: number;
+  investedTotalRub: number;
+  costRemainingRub: number;
+  marketValueCleanRub: number;
+  accruedNowRub: number;
+  /** null у закрытых. */
+  unrealizedPnlRub: number | null;
+  realizedPnlRub: number;
+  incomeGrossRub: number;
+  accruedPaidRub: number;
+  accruedReceivedRub: number;
+  netCouponIncomeRub: number;
+  taxesRub: number;
+  feesRub: number;
+  principalReturnedRub: number;
+  totalResultRub: number;
+  totalReturnFraction: number | null;
+  xirrFraction: number | null;
+  hasUnknownLots: boolean;
+  accruedUnknown: boolean;
+  periodIncomeGrossRub: number;
+  periodRealizedPnlRub: number;
+  periodTaxesRub: number;
+  periodFeesRub: number;
+}
+
+/** Ответ GET /api/income. */
+export interface IncomeResponse {
+  asOf: string;
+  from: string | null;
+  to: string | null;
+  assetKind: IncomeAssetFilter;
+  totals: IncomeTotals;
+  accountLevel: IncomeAccountLevel;
+  period: IncomePeriod;
+  monthly: IncomeMonth[];
+  positions: IncomePosition[];
+  portfolioXirrFraction: number | null;
+  unrealizedIsAllTime: boolean;
+  disclaimer: string;
+}
+
+export interface IncomeLedgerEntry {
+  /** ISO date-time. */
+  date: string;
+  kind: IncomeLedgerKind;
+  /** Знак брокера: покупка −, поступление +. */
+  amountRub: number;
+  quantity: number | null;
+  /** НКД операции на всю операцию, ≥ 0; null — неизвестен. */
+  accruedRub: number | null;
+  quantityAfter: number;
+  avgCostAfterRub: number;
+  realizedPnlRub: number;
+}
+
+/** Ответ GET /api/income/{bond|fund}/{assetId}/ledger. */
+export interface IncomeLedgerResponse {
+  assetKind: IncomeAssetKind;
+  assetId: number;
+  name: string | null;
+  ticker: string | null;
+  isin: string | null;
+  status: IncomeStatus;
+  disclaimer: string;
+  entries: IncomeLedgerEntry[];
+}
+
+export interface IncomeQuery {
+  from?: string;
+  to?: string;
+  assetKind: IncomeAssetFilter;
+  includeClosed: boolean;
+}

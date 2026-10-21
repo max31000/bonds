@@ -26,6 +26,7 @@ interface BondsNavItem {
 const NAV_ITEMS: BondsNavItem[] = [
   { label: 'Обзор', path: '/' },
   { label: 'Позиции', path: '/positions' },
+  { label: 'Доходы', path: '/income' },
   { label: 'Денежный поток', path: '/cashflow' },
   { label: 'Аналитика', path: '/analytics' },
   { label: 'Рекомендации', path: '/recommendations' },

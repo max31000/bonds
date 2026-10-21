@@ -42,6 +42,7 @@ describe('FundDetail (задача 53)', () => {
     expect(screen.getByTestId('fund-key-rate-note')).toHaveTextContent('ключевой ставкой');
     expect(screen.getByTestId('fund-operations')).toHaveTextContent('Покупка');
     expect(screen.getByTestId('disclaimer')).toBeInTheDocument();
+    expect(screen.getByTestId('fund-income-link')).toHaveAttribute('href', '/income?asset=fund&focus=7');
   });
 
   it('смена метода прогноза отправляет PUT и рефетчит карточку', async () => {

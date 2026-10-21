@@ -214,6 +214,28 @@ export const handlers = [
       disclaimer: '',
     }),
   ),
+  // Задача 54: доходы — по умолчанию пустой журнал; сценарии переопределяются через server.use.
+  http.get('*/api/income', () =>
+    HttpResponse.json({
+      asOf: '2026-01-01',
+      from: null,
+      to: null,
+      assetKind: 'all',
+      totals: {
+        positionsCount: 0, investedTotalRub: 0, marketValueCleanRub: 0, accruedNowRub: 0, unrealizedPnlRub: 0, realizedPnlRub: 0,
+        incomeGrossRub: 0, accruedPaidRub: 0, accruedReceivedRub: 0, netCouponIncomeRub: 0, taxesRub: 0, feesRub: 0,
+        principalReturnedRub: 0, totalResultRub: 0, totalReturnFraction: null,
+      },
+      accountLevel: { taxesRub: 0, feesRub: 0 },
+      period: { couponsGrossRub: 0, distributionsGrossRub: 0, accruedPaidRub: 0, accruedReceivedRub: 0, taxesRub: 0, feesRub: 0, realizedPnlRub: 0, netRub: 0 },
+      monthly: [],
+      positions: [],
+      portfolioXirrFraction: null,
+      unrealizedIsAllTime: true,
+      disclaimer: '',
+    }),
+  ),
+  http.get('*/api/income/:kind/:assetId/ledger', () => HttpResponse.json({ error: 'not found' }, { status: 404 })),
   // Дефолтные кейсы для plan/16 — пустые данные; конкретные сценарии переопределяются в тестах.
   http.get('*/api/live/positions', () =>
     HttpResponse.json({ positions: [], totalMarketValueRub: 0, asOfUtc: new Date().toISOString() }),

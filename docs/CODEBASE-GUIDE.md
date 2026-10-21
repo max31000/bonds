@@ -195,6 +195,13 @@ AccruedNow = Realized + Unrealized + NetCouponIncome + Taxes + Fees`. **`operati
 себестоимость ОСТАТКА (average cost), не Σ покупок. Фронт: вкладка «Фонды» на «Позициях» (`?tab=funds`), `/funds/:fundId` (`FundDetail`), `useFundsStore`, KPI «Стоимость портфеля»/«Фонды»
 на «Обзоре»; цены паёв/выплаты на пай — `formatRubPrecise` (копейки), остальное `formatRub`.
 
+**Страница «Доходы» (задача 54).** `/income` (`pages/Income.tsx`, компоненты `components/income/*`, стор `useIncomeStore`, чистые функции `utils/incomeDisplay.ts`,
+тексты подсказок `components/incomeCopy.ts`). Фильтры — в URL: `?period=all|ytd|12m|YYYY&asset=all|bond|fund&closed=0` (закрытые показываются по умолчанию, `closed=0` скрывает),
+`?asset=bond|fund&focus=<assetId>` раскрывает строку (облигация: assetId = `instrumentId`; фонд: `fundId`). Период режет только ДЕНЕЖНЫЕ события (купоны/продажи/налоги/комиссии);
+бумажная прибыль, «Вложено», «Итого» и XIRR — всегда all-time (`unrealizedIsAllTime`). `netCouponIncomeRub` = брутто − НКД уплаченный + НКД полученный + набежавший НКД, БЕЗ налогов
+(налоги — отдельный KPI). «Водопад» итога — CSS-бары (`IncomeBreakdown`, `buildBreakdown` даёт инвариант итог = Σ компонентов); журнал операций актива грузится лениво и кэшируется
+в сторе по `assetKind:assetId`. Строка таблицы — `Table.Tr` с `aria-expanded` (без вложенных кнопок), на мобильной ширине — карточки `div[role=button]`.
+
 ## Тесты
 
 **Юнит** (`tests/Bonds.Tests`, папки по доменам): без сети и без БД. HTTP-клиенты — вложенный
