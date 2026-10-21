@@ -40,3 +40,28 @@ public static class TInvestOperationMapper
         _ => null,
     };
 }
+
+/// <summary>
+/// Задача 51: маппинг <see cref="TInvestOperation.OperationType"/> (имя значения protobuf-enum
+/// <c>Tinkoff.InvestApi.V1.OperationType</c>, имена сверены по SDK 0.6.22.1) в <see cref="FundOperationType"/>
+/// для операций по фондам. Чистая функция. Отличие от <see cref="TInvestOperationMapper"/>: выплаты фонда приходят как
+/// дивидендные типы (<c>Dividend</c>, <c>DividendTransfer</c>, <c>DivExt</c>) и мапятся в <see cref="FundOperationType.Distribution"/>;
+/// купонов/погашений у фонда нет. Налоговые типы (включая <c>DividendTax*</c>) → Tax, комиссионные → Fee.
+/// </summary>
+public static class TInvestFundOperationMapper
+{
+    public static FundOperationType? Map(string tInvestOperationType) => tInvestOperationType switch
+    {
+        "Buy" or "BuyCard" or "BuyMargin" => FundOperationType.Buy,
+        "Sell" or "SellCard" or "SellMargin" => FundOperationType.Sell,
+        "Dividend" or "DividendTransfer" or "DivExt" => FundOperationType.Distribution,
+        "InputSecurities" => FundOperationType.SecurityIn,
+        "OutputSecurities" => FundOperationType.SecurityOut,
+        "BondTax" or "BondTaxProgressive" or "Tax" or "TaxProgressive"
+            or "TaxCorrection" or "TaxCorrectionProgressive" or "TaxCorrectionCoupon"
+            or "DividendTax" or "DividendTaxProgressive" or "BenefitTax" or "BenefitTaxProgressive" => FundOperationType.Tax,
+        "BrokerFee" or "ServiceFee" or "MarginFee" or "CashFee" or "OutFee" or "OtherFee"
+            or "AdviceFee" or "SuccessFee" or "TrackMfee" or "TrackPfee" or "OutStampDuty" => FundOperationType.Fee,
+        _ => null,
+    };
+}

@@ -5,6 +5,8 @@ import { ServiceLayout } from './components/ServiceLayout';
 import { Analytics } from './pages/Analytics';
 import { Cashflow } from './pages/Cashflow';
 import { Dashboard } from './pages/Dashboard';
+import { FundDetail } from './pages/FundDetail';
+import { Income } from './pages/Income';
 import { NotFound } from './pages/NotFound';
 import { PositionDetail } from './pages/PositionDetail';
 import { Positions } from './pages/Positions';
@@ -27,6 +29,8 @@ export default function App() {
             <Route index element={<Dashboard />} />
             <Route path="positions" element={<Positions />} />
             <Route path="positions/:id" element={<PositionDetail />} />
+            <Route path="funds/:fundId" element={<FundDetail />} />
+            <Route path="income" element={<Income />} />
             <Route path="cashflow" element={<Cashflow />} />
             <Route path="analytics" element={<Analytics />} />
             <Route path="recommendations" element={<Recommendations />} />

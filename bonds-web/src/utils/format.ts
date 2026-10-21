@@ -13,6 +13,12 @@ export function formatRub(value: number | null | undefined): string {
   }).format(value);
 }
 
+/** Рубли с копейками (цена пая, выплата на пай): "101,35 ₽". Для крупных сумм используйте `formatRub`. */
+export function formatRubPrecise(value: number | null | undefined): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return '—';
+  return new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'RUB', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value);
+}
+
 /**
  * Компактный формат рублёвой суммы для тесных мест (ось графика) — "1,2 млн ₽",
  * "850 тыс. ₽", "999 ₽". Округляет до 1 знака после запятой у млн/тыс. (без хвоста ",0").

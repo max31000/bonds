@@ -1351,3 +1351,309 @@ export interface PositionVerdictsResponse {
   verdicts: PositionVerdict[];
   disclaimer: string;
 }
+
+// ─── Фонды (БПИФ), задача 53 ───────────────────────────────────────────────────────────────────────────────
+// Зеркало FundsDtos.cs. Деньги — РУБЛИ (цена — за пай), доходности и доли — ДОЛИ (0.12 = 12%); ×100 только в форматтерах.
+
+/** Способ прогноза доходности фонда (enum бэкенда, camelCase). */
+export type FundForecastMethod = 'auto' | 'distributions' | 'indexYield' | 'trailingReturn';
+
+export type FundOutlookConfidence = 'low' | 'medium' | 'high';
+
+export type FundOutlookWarning = 'terUnknown' | 'indexStale' | 'fewDistributions' | 'shortHistory';
+
+export type FundOperationType = 'buy' | 'sell' | 'distribution' | 'tax' | 'fee' | 'securityIn' | 'securityOut';
+
+export interface FundWindowReturn {
+  /** Доходность за окно, ДОЛЯ. */
+  returnFraction: number;
+  /** Пересчёт в годовую, ДОЛЯ годовых; null — окно короче 30 дней (не аннуализируем). */
+  annualizedFraction: number | null;
+  days: number;
+}
+
+export interface FundPerformance {
+  m1: FundWindowReturn | null;
+  m3: FundWindowReturn | null;
+  m6: FundWindowReturn | null;
+  m12: FundWindowReturn | null;
+  sinceFirstBuy: FundWindowReturn | null;
+}
+
+export interface FundOutlook {
+  requestedMethod: FundForecastMethod;
+  /** Применённый метод (при `auto` — во что разрешился). */
+  method: FundForecastMethod;
+  /** ДОЛЯ годовых; null — оценка недоступна (см. `unavailableReason`). */
+  expectedAnnualYieldFraction: number | null;
+  /** После НДФЛ (единая ставка 13%, упрощение — ко всей доходности), ДОЛЯ. */
+  afterTaxYieldFraction: number | null;
+  basisLabel: string;
+  expectedIncome1yRub: number | null;
+  expectedMonthlyIncomeRub: number | null;
+  confidence: FundOutlookConfidence;
+  asOf: string;
+  warnings: FundOutlookWarning[];
+  unavailableReason: string | null;
+}
+
+export interface FundRow {
+  fundId: number;
+  ticker: string | null;
+  name: string | null;
+  managementCompany: string | null;
+  quantity: number;
+  /** Рубли за пай. */
+  currentPriceRub: number | null;
+  priceAsOf: string | null;
+  marketValueRub: number;
+  /** Средняя цена остатка за пай (average cost), рубли. */
+  avgCostRub: number;
+  /** Себестоимость остатка, рубли. */
+  investedRub: number;
+  unrealizedPnlRub: number | null;
+  /** ДОЛЯ от себестоимости остатка. */
+  unrealizedPnlFraction: number | null;
+  distributionsGrossRub: number;
+  /** Со знаком брокера (удержание −). */
+  taxesRub: number;
+  distributionsNetRub: number;
+  totalResultRub: number;
+  totalReturnFraction: number | null;
+  xirrFraction: number | null;
+  /** TER, ДОЛЯ годовых. */
+  totalExpenseFraction: number | null;
+  performance: FundPerformance;
+  outlook: FundOutlook;
+  /** Доля в (облигации + фонды), ДОЛЯ. */
+  shareOfPortfolioFraction: number | null;
+  hasUnknownLots: boolean;
+  dataIncomplete: boolean;
+}
+
+export interface FundsTotals {
+  marketValueRub: number;
+  investedRub: number;
+  unrealizedPnlRub: number;
+  incomeNetRub: number;
+  totalResultRub: number;
+  /** У какого-либо фонда нет цены вообще (стоимость взята как 0) — итоги занижены. */
+  dataIncomplete: boolean;
+}
+
+/** Ответ GET /api/funds. */
+export interface FundsResponse {
+  asOf: string;
+  funds: FundRow[];
+  totals: FundsTotals;
+  disclaimer: string;
+}
+
+export interface FundPricePoint {
+  date: string;
+  closeRub: number;
+}
+
+export interface FundDistribution {
+  recordDate: string;
+  paymentDate: string | null;
+  amountPerShareRub: number;
+  /** Выплата / цена пая на дату фиксации, ДОЛЯ за период (не годовая). */
+  yieldOnPriceFraction: number | null;
+}
+
+export interface FundOperation {
+  date: string;
+  type: FundOperationType;
+  amountRub: number;
+  quantity: number | null;
+}
+
+export interface FundSettings {
+  forecastMethod: FundForecastMethod;
+  benchmarkIndex: string | null;
+}
+
+/** Ответ GET /api/funds/{id}. */
+export interface FundDetail {
+  asOf: string;
+  fund: FundRow;
+  priceHistory: FundPricePoint[];
+  distributions: FundDistribution[];
+  operations: FundOperation[];
+  settings: FundSettings;
+  disclaimer: string;
+}
+
+/** Ответ GET /api/portfolio/summary. */
+export interface PortfolioSummary {
+  bondsValueRub: number;
+  fundsValueRub: number;
+  cashRub: number | null;
+  totalRub: number;
+  brokerTotalRub: number | null;
+  /** brokerTotal − total; null — брокерского итога нет. */
+  brokerDiffRub: number | null;
+  balanceSyncedAt: string | null;
+  /** XIRR всего портфеля (облигации + фонды), ДОЛЯ годовых. */
+  portfolioXirrFraction: number | null;
+  /** У открытого фонда нет цены вообще — fundsValueRub/totalRub занижены. */
+  fundsDataIncomplete: boolean;
+  disclaimer: string;
+}
+
+// ── Доходы (задача 54; контракт — Endpoints/Dtos/IncomeDtos.cs). Деньги — РУБЛИ, доли — ДОЛИ (0.12 = 12%). ──
+
+export type IncomeAssetKind = 'bond' | 'fund';
+export type IncomeAssetFilter = 'all' | IncomeAssetKind;
+/** open — позиция есть; closed — продана; redeemed — погашена. */
+export type IncomeStatus = 'open' | 'closed' | 'redeemed';
+export type IncomeLedgerKind =
+  | 'buy'
+  | 'sell'
+  | 'income'
+  | 'tax'
+  | 'fee'
+  | 'principalReturn'
+  | 'redemption'
+  | 'securityIn'
+  | 'securityOut';
+
+export interface IncomeTotals {
+  positionsCount: number;
+  investedTotalRub: number;
+  marketValueCleanRub: number;
+  accruedNowRub: number;
+  unrealizedPnlRub: number;
+  realizedPnlRub: number;
+  incomeGrossRub: number;
+  accruedPaidRub: number;
+  accruedReceivedRub: number;
+  /** брутто − НКД уплаченный + НКД полученный + накопленный НКД на сегодня (БЕЗ налогов). */
+  netCouponIncomeRub: number;
+  /** Налоги по позициям, знак брокера (обычно −); «по счёту» — в `accountLevel`. */
+  taxesRub: number;
+  feesRub: number;
+  principalReturnedRub: number;
+  /** Итог уже включает налоги/комиссии «по счёту». */
+  totalResultRub: number;
+  totalReturnFraction: number | null;
+}
+
+export interface IncomeAccountLevel {
+  taxesRub: number;
+  feesRub: number;
+}
+
+export interface IncomePeriod {
+  couponsGrossRub: number;
+  distributionsGrossRub: number;
+  accruedPaidRub: number;
+  accruedReceivedRub: number;
+  taxesRub: number;
+  feesRub: number;
+  realizedPnlRub: number;
+  netRub: number;
+}
+
+export interface IncomeMonth {
+  /** "yyyy-MM". */
+  month: string;
+  couponsGrossRub: number;
+  distributionsGrossRub: number;
+  /** −уплачен + получен. */
+  accruedNetRub: number;
+  taxesRub: number;
+  feesRub: number;
+  realizedPnlRub: number;
+  netRub: number;
+}
+
+export interface IncomePosition {
+  assetKind: IncomeAssetKind;
+  assetId: number;
+  name: string | null;
+  ticker: string | null;
+  isin: string | null;
+  /** Только у открытых облигаций (ссылка на карточку). */
+  positionId: number | null;
+  fundId: number | null;
+  dataIncomplete: boolean;
+  status: IncomeStatus;
+  firstDate: string;
+  lastDate: string;
+  holdingDays: number;
+  quantityNow: number;
+  investedTotalRub: number;
+  costRemainingRub: number;
+  marketValueCleanRub: number;
+  accruedNowRub: number;
+  /** null у закрытых. */
+  unrealizedPnlRub: number | null;
+  realizedPnlRub: number;
+  incomeGrossRub: number;
+  accruedPaidRub: number;
+  accruedReceivedRub: number;
+  netCouponIncomeRub: number;
+  taxesRub: number;
+  feesRub: number;
+  principalReturnedRub: number;
+  totalResultRub: number;
+  totalReturnFraction: number | null;
+  xirrFraction: number | null;
+  hasUnknownLots: boolean;
+  accruedUnknown: boolean;
+  periodIncomeGrossRub: number;
+  periodRealizedPnlRub: number;
+  periodTaxesRub: number;
+  periodFeesRub: number;
+}
+
+/** Ответ GET /api/income. */
+export interface IncomeResponse {
+  asOf: string;
+  from: string | null;
+  to: string | null;
+  assetKind: IncomeAssetFilter;
+  totals: IncomeTotals;
+  accountLevel: IncomeAccountLevel;
+  period: IncomePeriod;
+  monthly: IncomeMonth[];
+  positions: IncomePosition[];
+  portfolioXirrFraction: number | null;
+  unrealizedIsAllTime: boolean;
+  disclaimer: string;
+}
+
+export interface IncomeLedgerEntry {
+  /** ISO date-time. */
+  date: string;
+  kind: IncomeLedgerKind;
+  /** Знак брокера: покупка −, поступление +. */
+  amountRub: number;
+  quantity: number | null;
+  /** НКД операции на всю операцию, ≥ 0; null — неизвестен. */
+  accruedRub: number | null;
+  quantityAfter: number;
+  avgCostAfterRub: number;
+  realizedPnlRub: number;
+}
+
+/** Ответ GET /api/income/{bond|fund}/{assetId}/ledger. */
+export interface IncomeLedgerResponse {
+  assetKind: IncomeAssetKind;
+  assetId: number;
+  name: string | null;
+  ticker: string | null;
+  isin: string | null;
+  status: IncomeStatus;
+  disclaimer: string;
+  entries: IncomeLedgerEntry[];
+}
+
+export interface IncomeQuery {
+  from?: string;
+  to?: string;
+  assetKind: IncomeAssetFilter;
+  includeClosed: boolean;
+}

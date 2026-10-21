@@ -8,6 +8,7 @@ import { fetchPositions } from '../api/positions';
 import { fetchXirr, fetchComposition } from '../api/analytics';
 import { fetchCashflow } from '../api/cashflow';
 import { fetchLivePositions } from '../api/live';
+import { fetchFunds, fetchPortfolioSummary } from '../api/funds';
 import { useLiveStore } from '../store/useLiveStore';
 import { countAttention, useSignalsStore } from '../store/useSignalsStore';
 import { useLiveQuotes } from '../hooks/useLiveQuotes';
@@ -15,8 +16,17 @@ import { useWidgetData } from '../hooks/useWidgetData';
 import { Disclaimer } from '../components/Disclaimer';
 import { PortfolioIntradayChart } from '../components/PortfolioIntradayChart';
 import { CHART_EXPLANATIONS } from '../components/charts';
+import { FUND_DATA_INCOMPLETE } from '../components/fundsCopy';
 import { DIRTY_PRICE_TOOLTIP_TEXT } from '../utils/positionsDisplay';
-import type { CompositionSlice, XirrResponse, CashflowResponse, LivePositionsResponse, PositionsResponse } from '../api/types';
+import type {
+  CompositionSlice,
+  XirrResponse,
+  CashflowResponse,
+  LivePositionsResponse,
+  PositionsResponse,
+  PortfolioSummary,
+  FundsResponse,
+} from '../api/types';
 import { formatRub, formatPercent, formatSharePercent, formatDate } from '../utils/format';
 
 /** Та же подсказка про «грязные» цены, что и у таблицы позиций (positionsDisplay.ts) — один источник текста. */
@@ -93,13 +103,90 @@ function CashKpi({ live, bondsTotal }: { live: LivePositionsResponse | null; bon
   );
 }
 
-function XirrKpi({ xirr, error }: { xirr: XirrResponse | null; error: string | null }) {
+function XirrKpi({ xirr, error, summary }: { xirr: XirrResponse | null; error: string | null; summary: PortfolioSummary | null }) {
+  // «XIRR портфеля» (облигации + фонды) — из /api/portfolio/summary, та же методика, что на странице «Доходы».
+  const portfolioXirr = summary?.portfolioXirrFraction ?? null;
   return (
     <Metric
       data-testid="kpi-xirr"
-      label="Доходность (XIRR)"
+      label="XIRR облигаций"
       value={error ? <span data-testid="kpi-xirr-error">—</span> : formatPercent(xirr?.currentXirr ?? null)}
-      hint={error ? 'нет данных' : 'годовых, по операциям счёта'}
+      hint={
+        error
+          ? 'нет данных'
+          : portfolioXirr !== null
+            ? `годовых · XIRR портфеля (с фондами): ${formatPercent(portfolioXirr)}`
+            : 'годовых, по операциям счёта'
+      }
+    />
+  );
+}
+
+/**
+ * Общий баланс = облигации + фонды + деньги (GET /api/portfolio/summary). Подсказка с разбивкой; если итог расходится с
+ * брокерским больше чем на 1% — пояснение (другие активы/валюта на счёте). Отказ эндпоинта даёт «—», остальные KPI не затронуты.
+ */
+function TotalBalanceKpi({ summary, error }: { summary: PortfolioSummary | null; error: string | null }) {
+  if (error || !summary) {
+    return (
+      <Metric
+        data-testid="kpi-total-balance"
+        label="Стоимость портфеля"
+        value={<span data-testid="kpi-total-balance-error">—</span>}
+        hint={error ? 'нет данных' : 'загрузка…'}
+      />
+    );
+  }
+  const diff = summary.brokerDiffRub;
+  const mismatch = diff !== null && summary.totalRub > 0 && Math.abs(diff) / summary.totalRub > 0.01;
+  const breakdown = `облигации ${formatRub(summary.bondsValueRub)} · фонды ${formatRub(summary.fundsValueRub)} · деньги ${formatRub(summary.cashRub)}`;
+  return (
+    <Metric
+      data-testid="kpi-total-balance"
+      label={
+        <Group gap={4} wrap="nowrap" component="span">
+          Стоимость портфеля
+          <HelpHint label="Пояснение: Стоимость портфеля" data-testid="kpi-total-balance-explain-icon">
+            Облигации + фонды + свободные деньги на счёте по последнему синку. Облигации — по грязным ценам (с НКД). {breakdown}.
+          </HelpHint>
+        </Group>
+      }
+      value={formatRub(summary.totalRub)}
+      hint={
+        summary.fundsDataIncomplete ? (
+          <span data-testid="kpi-total-balance-incomplete">{FUND_DATA_INCOMPLETE} Итог занижен.</span>
+        ) : mismatch ? (
+          <span data-testid="kpi-total-balance-mismatch">
+            расходится с брокером на {formatRub(Math.abs(diff))} (другие активы/валюта)
+          </span>
+        ) : (
+          breakdown
+        )
+      }
+    />
+  );
+}
+
+/** KPI «Фонды»: стоимость паёв и нереализованный P&L — только если фонды есть. */
+function FundsKpi({ funds }: { funds: FundsResponse | null }) {
+  if (!funds || funds.funds.length === 0) return null;
+  const { marketValueRub, unrealizedPnlRub, dataIncomplete } = funds.totals;
+  return (
+    <Metric
+      data-testid="kpi-funds"
+      label="Фонды"
+      value={formatRub(marketValueRub)}
+      delta={{
+        value: <span data-testid="kpi-funds-pnl">P&amp;L {formatRub(unrealizedPnlRub)}</span>,
+        tone: unrealizedPnlRub > 0 ? 'positive' : unrealizedPnlRub < 0 ? 'negative' : 'neutral',
+      }}
+      hint={
+        dataIncomplete ? (
+          <span data-testid="kpi-funds-incomplete">{FUND_DATA_INCOMPLETE}</span>
+        ) : (
+          'паи БПИФ, по цене пая'
+        )
+      }
     />
   );
 }
@@ -314,14 +401,19 @@ export function Dashboard() {
     [liveTotal, live, positions],
   );
   const { data: xirr, error: xirrError } = useWidgetData(fetchXirr, []);
+  // Фонды (задача 53): независимые виджеты — отказ любого не роняет остальные KPI.
+  const { data: summary, error: summaryError } = useWidgetData(fetchPortfolioSummary, []);
+  const { data: funds } = useWidgetData(fetchFunds, []);
   const { data: cashflow, error: cashflowError } = useWidgetData(fetchCashflow, []);
 
   return (
     <Page title="Обзор" description="Стоимость, доходность и ближайшие поступления портфеля" width="wide">
       <MetricGrid data-testid="dashboard-kpi-row">
+        <TotalBalanceKpi summary={summary} error={summaryError} />
         <PortfolioValueKpi positions={positions} />
+        <FundsKpi funds={funds} />
         <CashKpi live={live} bondsTotal={bondsTotal} />
-        <XirrKpi xirr={xirr} error={xirrError} />
+        <XirrKpi xirr={xirr} error={xirrError} summary={summary} />
         <NextPaymentKpi cashflow={cashflow} error={cashflowError} />
         <UnreadSignalsKpi />
       </MetricGrid>

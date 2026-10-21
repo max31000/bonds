@@ -201,6 +201,11 @@ public sealed class SyncCycleService : ISyncCycleRunner
             await RefreshRiskLevelsAsync(sp, ct);
         }
 
+        // --- 1a''. Рыночные данные фондов (задача 51): история цен паёв, выплаты, индекс RGBI — раз в сутки (ворота
+        // по БД внутри). Необязательный шаг: сбой — только лог, цикл НЕ помечается неуспешным. MOEX-часть работает и без
+        // токена T-Invest (выплаты в этом случае пропускаются).
+        await RefreshFundMarketDataAsync(sp, tInvestAvailable: !result.TokenMissingOrInvalid, ct);
+
         // --- 1b. Бэкфилл истории стоимости, если она пуста/почти пуста (первый запуск, или миграция
         // пересчёта истории её очистила). Строго ПОСЛЕ успешного перечитывания журнала: история
         // строится из журнала, и бэкфилл из неполного журнала закрепился бы навсегда (бэкфилл
@@ -266,6 +271,26 @@ public sealed class SyncCycleService : ISyncCycleRunner
         }
 
         return result;
+    }
+
+    private async Task RefreshFundMarketDataAsync(IServiceProvider sp, bool tInvestAvailable, CancellationToken ct)
+    {
+        try
+        {
+            // GetService (не Required): цикл не должен падать, если шаг не зарегистрирован (юнит-тесты цикла).
+            var refresher = sp.GetService<FundMarketDataRefresher>();
+            if (refresher is null) return;
+
+            await refresher.RefreshIfDueAsync(BusinessClock.MoscowToday(), tInvestAvailable, ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Fund market data refresh failed — fund prices/distributions keep the previous values");
+        }
     }
 
     private async Task RefreshRiskLevelsAsync(IServiceProvider sp, CancellationToken ct)

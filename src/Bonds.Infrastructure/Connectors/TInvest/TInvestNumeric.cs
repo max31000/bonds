@@ -23,4 +23,23 @@ public static class TInvestNumeric
 
     public static decimal? ToNullableDecimal(this Quotation? value)
         => value is null ? null : value.ToDecimal();
+
+    /// <summary>Порог различения единиц TER: выше — «проценты», в диапазоне (0, порог] — уже «доля».</summary>
+    private const decimal ExpenseFractionCeiling = 0.05m;
+
+    /// <summary>Верхняя граница правдоподобного TER в процентах: выше — считаем мусором.</summary>
+    private const decimal ExpensePercentCeiling = 10m;
+
+    /// <summary>
+    /// <c>AssetEtf.TotalExpense</c> (T-Invest) → ДОЛЯ годовых. Документация SDK говорит «в процентах», но на практике единицы
+    /// не подтверждены, поэтому конверсия по правдоподобию: реальные TER фондов — 0.1–3% (доля 0.001–0.03), TER &lt; 0.05%
+    /// (доля &lt; 0.0005) не бывает, значит значение <c>raw &gt; 0.05</c> — это проценты (<c>raw/100</c>: 0.9 → 0.009),
+    /// а <c>0 &lt; raw ≤ 0.05</c> — уже доля (0.009 → 0.009). Неправдоподобное (<c>≤ 0</c> или <c>&gt; 10</c>, т.е. TER &gt; 10%) → null;
+    /// вызывающий логирует предупреждение. Чистая функция — граничные случаи закреплены тестами.
+    /// </summary>
+    public static decimal? ExpenseRatioToFraction(decimal raw)
+    {
+        if (raw <= 0m || raw > ExpensePercentCeiling) return null;
+        return raw > ExpenseFractionCeiling ? raw / 100m : raw;
+    }
 }

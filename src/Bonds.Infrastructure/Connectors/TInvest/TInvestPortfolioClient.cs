@@ -101,16 +101,20 @@ public sealed class TInvestPortfolioClient : ITInvestPortfolioClient
             cancellationToken: ct);
 
         var result = new List<TInvestPortfolioPosition>();
+        var funds = new List<TInvestPortfolioPosition>();
         foreach (var position in response.Positions)
         {
             // InstrumentType приходит как нижнерегистровая строка протокола ("bond", "share", ...) —
-            // не enum (verified §12.2, см. README.md). Только облигации релевантны спеке (§3).
-            if (!string.Equals(position.InstrumentType, "bond", StringComparison.OrdinalIgnoreCase))
+            // не enum (verified §12.2, см. README.md). Облигации — основной домен; фонды ("etf", задача 51) —
+            // отдельный домен; акции/валюта по-прежнему пропускаются.
+            var isBond = string.Equals(position.InstrumentType, "bond", StringComparison.OrdinalIgnoreCase);
+            var isFund = string.Equals(position.InstrumentType, "etf", StringComparison.OrdinalIgnoreCase);
+            if (!isBond && !isFund)
             {
                 continue;
             }
 
-            result.Add(new TInvestPortfolioPosition
+            var mapped = new TInvestPortfolioPosition
             {
                 Figi = position.Figi,
                 InstrumentUid = position.InstrumentUid,
@@ -118,12 +122,14 @@ public sealed class TInvestPortfolioClient : ITInvestPortfolioClient
                 AveragePositionPrice = position.AveragePositionPrice.ToDecimal(),
                 CurrentPrice = position.CurrentPrice.ToNullableDecimal(),
                 CurrentNkd = position.CurrentNkd.ToNullableDecimal(),
-            });
+            };
+            (isBond ? result : funds).Add(mapped);
         }
 
         return new TInvestPortfolio
         {
             Bonds = result,
+            Funds = funds,
             CashRub = response.TotalAmountCurrencies.ToNullableDecimal(),
             TotalPortfolioRub = response.TotalAmountPortfolio.ToNullableDecimal(),
         };
@@ -308,4 +314,92 @@ public sealed class TInvestPortfolioClient : ITInvestPortfolioClient
         RiskLevel.High => Bonds.Core.Models.BrokerRiskLevel.High,
         _ => Bonds.Core.Models.BrokerRiskLevel.Unspecified,
     };
+
+    public async Task<TInvestFundInfo?> GetFundInfoAsync(string figi, CancellationToken ct = default)
+    {
+        var client = await GetClientAsync(ct);
+        Etf etf;
+        try
+        {
+            var response = await client.Instruments.EtfByAsync(
+                new InstrumentRequest { IdType = InstrumentIdType.Figi, Id = figi }, cancellationToken: ct);
+            etf = response.Instrument;
+        }
+        catch (Grpc.Core.RpcException ex)
+        {
+            _logger.LogWarning(ex, "T-Invest: failed to resolve fund for FIGI {Figi}", figi);
+            return null;
+        }
+
+        if (string.IsNullOrWhiteSpace(etf.Isin)) return null;
+
+        decimal? ter = null;
+        string? company = null;
+        if (!string.IsNullOrEmpty(etf.AssetUid))
+        {
+            try
+            {
+                var asset = await client.Instruments.GetAssetByAsync(
+                    new AssetRequest { Id = etf.AssetUid }, cancellationToken: ct);
+                company = string.IsNullOrWhiteSpace(asset.Asset?.Brand?.Company) ? null : asset.Asset.Brand.Company;
+                var raw = asset.Asset?.Security?.Etf?.TotalExpense.ToNullableDecimal();
+                if (raw is not null)
+                {
+                    ter = TInvestNumeric.ExpenseRatioToFraction(raw.Value);
+                    if (ter is null)
+                    {
+                        _logger.LogWarning(
+                            "T-Invest: implausible TotalExpense {Raw} for fund {Figi} — TER ignored", raw, figi);
+                    }
+                }
+            }
+            catch (Grpc.Core.RpcException ex)
+            {
+                // TER — необязательный атрибут справочника: сбой GetAssetBy не должен ронять резолв фонда.
+                _logger.LogWarning(ex, "T-Invest: failed to fetch asset (TER) for fund {Figi}", figi);
+            }
+        }
+
+        return new TInvestFundInfo
+        {
+            Isin = etf.Isin.Trim(),
+            Ticker = string.IsNullOrWhiteSpace(etf.Ticker) ? null : etf.Ticker.Trim(),
+            Name = string.IsNullOrWhiteSpace(etf.Name) ? null : etf.Name,
+            FocusType = string.IsNullOrWhiteSpace(etf.FocusType) ? null : etf.FocusType,
+            ManagementCompany = company,
+            TotalExpenseFraction = ter,
+        };
+    }
+
+    public async Task<IReadOnlyList<TInvestFundDistribution>> GetFundDistributionsAsync(
+        string figi, DateOnly from, DateOnly to, CancellationToken ct = default)
+    {
+        var client = await GetClientAsync(ct);
+        try
+        {
+            var response = await client.Instruments.GetDividendsAsync(new GetDividendsRequest
+            {
+                InstrumentId = figi,
+                From = Timestamp.FromDateTime(DateTime.SpecifyKind(from.ToDateTime(TimeOnly.MinValue), DateTimeKind.Utc)),
+                To = Timestamp.FromDateTime(DateTime.SpecifyKind(to.ToDateTime(TimeOnly.MinValue), DateTimeKind.Utc)),
+            }, cancellationToken: ct);
+
+            var result = new List<TInvestFundDistribution>();
+            foreach (var d in response.Dividends)
+            {
+                if (d.RecordDate is null || d.RecordDate.Seconds == 0) continue;
+                var amount = d.DividendNet.ToDecimal(); // рубли за пай, конверсии нет
+                if (amount <= 0m) continue;
+                DateOnly? payment = d.PaymentDate is { Seconds: > 0 } p ? DateOnly.FromDateTime(p.ToDateTime()) : null;
+                result.Add(new TInvestFundDistribution(DateOnly.FromDateTime(d.RecordDate.ToDateTime()), payment, amount));
+            }
+
+            return result;
+        }
+        catch (Grpc.Core.RpcException ex)
+        {
+            _logger.LogWarning(ex, "T-Invest: failed to fetch distributions for fund {Figi}", figi);
+            return [];
+        }
+    }
 }

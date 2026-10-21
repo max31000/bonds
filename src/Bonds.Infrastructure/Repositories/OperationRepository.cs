@@ -17,7 +17,7 @@ public class OperationRepository : IOperationRepository
 
     private const string SelectColumns = @"
         id AS Id, account_id AS AccountId, instrument_id AS InstrumentId, type AS Type, date AS Date,
-        amount_rub AS AmountRub, quantity AS Quantity, external_id AS ExternalId, created_at AS CreatedAt";
+        amount_rub AS AmountRub, quantity AS Quantity, accrued_rub AS AccruedRub, external_id AS ExternalId, created_at AS CreatedAt";
 
     public async Task<Operation?> GetByIdAsync(ulong id, ulong accountId)
     {
@@ -89,11 +89,11 @@ public class OperationRepository : IOperationRepository
     private static async Task<ulong> UpsertOneAsync(IDbConnection conn, IDbTransaction? tx, Operation operation)
     {
         const string sql = @"
-            INSERT INTO operations (account_id, instrument_id, type, date, amount_rub, quantity, external_id)
-            VALUES (@AccountId, @InstrumentId, @Type, @Date, @AmountRub, @Quantity, @ExternalId)
+            INSERT INTO operations (account_id, instrument_id, type, date, amount_rub, quantity, accrued_rub, external_id)
+            VALUES (@AccountId, @InstrumentId, @Type, @Date, @AmountRub, @Quantity, @AccruedRub, @ExternalId)
             ON DUPLICATE KEY UPDATE
                 account_id = @AccountId, instrument_id = @InstrumentId, type = @Type, date = @Date,
-                amount_rub = @AmountRub, quantity = @Quantity,
+                amount_rub = @AmountRub, quantity = @Quantity, accrued_rub = @AccruedRub,
                 id = LAST_INSERT_ID(id);
             SELECT LAST_INSERT_ID();";
 
@@ -106,6 +106,7 @@ public class OperationRepository : IOperationRepository
             operation.Date,
             operation.AmountRub,
             operation.Quantity,
+            operation.AccruedRub,
             operation.ExternalId,
         }, tx);
     }

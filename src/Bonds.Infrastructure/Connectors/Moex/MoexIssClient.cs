@@ -290,6 +290,92 @@ public sealed class MoexIssClient : IMoexIssClient
         return points;
     }
 
+    public async Task<IReadOnlyList<MoexSharePricePoint>> GetSharesHistoryAsync(
+        string secid, DateOnly from, DateOnly to, CancellationToken ct = default)
+    {
+        var points = new List<MoexSharePricePoint>();
+        await foreach (var row in PageHistoryRowsAsync(
+            $"/iss/history/engines/stock/markets/shares/boards/TQBR/securities/{Uri.EscapeDataString(secid)}.json",
+            from, to, secid, ct))
+        {
+            var date = row.GetDateOnly("TRADEDATE");
+            if (date is null) continue;
+
+            // CLOSE пая на TQBR — рубли за пай, конверсии нет.
+            points.Add(new MoexSharePricePoint(date.Value, row.GetDecimal("CLOSE")));
+        }
+
+        return points;
+    }
+
+    private const decimal DaysPerYear = 365m;
+
+    public async Task<IReadOnlyList<MoexIndexPoint>> GetIndexHistoryAsync(
+        string indexCode, DateOnly from, DateOnly to, CancellationToken ct = default)
+    {
+        // ISS может отдать несколько строк на дату (разные торговые сессии) — оставляем последнюю.
+        var byDate = new Dictionary<DateOnly, MoexIndexPoint>();
+        await foreach (var row in PageHistoryRowsAsync(
+            $"/iss/history/engines/stock/markets/index/securities/{Uri.EscapeDataString(indexCode)}.json",
+            from, to, indexCode, ct))
+        {
+            var date = row.GetDateOnly("TRADEDATE");
+            if (date is null) continue;
+
+            // YIELD приходит в ПРОЦЕНТАХ -> доля (÷100). DURATION приходит в ДНЯХ -> годы (÷365).
+            var yieldPercent = row.GetDecimal("YIELD");
+            var durationDays = row.GetDecimal("DURATION");
+            byDate[date.Value] = new MoexIndexPoint(
+                date.Value,
+                row.GetDecimal("CLOSE"),
+                yieldPercent / 100m,
+                durationDays / DaysPerYear);
+        }
+
+        return byDate.Values.OrderBy(p => p.TradeDate).ToList();
+    }
+
+    /// <summary>
+    /// Общий постраничный обход блока <c>history</c> ISS (страницы по <see cref="IssHistoryPageSize"/>, короткая страница —
+    /// последняя, как в <see cref="GetHistoryPricesAsync"/>). Сбой на странице — обход прекращается, отданное сохраняется.
+    /// </summary>
+    private async IAsyncEnumerable<IssRow> PageHistoryRowsAsync(
+        string path, DateOnly from, DateOnly to, string subject,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
+    {
+        for (var page = 0; page < IssHistoryMaxPages; page++)
+        {
+            var start = page * IssHistoryPageSize;
+            var url = $"{path}?from={from:yyyy-MM-dd}&till={to:yyyy-MM-dd}&start={start}&iss.meta=off";
+            var json = await GetStringSafeAsync(url, ct);
+            if (json is null) yield break;
+
+            IssTable? table;
+            try
+            {
+                using var doc = JsonDocument.Parse(json);
+                // Clone: строки таблицы держат JsonElement'ы, которые должны пережить Dispose документа.
+                table = IssTable.Parse(doc.RootElement.Clone(), "history");
+            }
+            catch (JsonException ex)
+            {
+                _logger.LogWarning(ex, "Failed to parse MOEX history page for {Subject} start {Start}", subject, start);
+                yield break;
+            }
+
+            if (table is null || table.RowCount == 0) yield break;
+
+            foreach (var row in table.Rows()) yield return row;
+
+            if (table.RowCount < IssHistoryPageSize) yield break;
+
+            if (page == IssHistoryMaxPages - 1)
+            {
+                _logger.LogWarning("MOEX history paging hit page limit for {Subject}", subject);
+            }
+        }
+    }
+
     /// <summary>Размер страницы для снимка вселенной облигаций. ISS на этом
     /// эндпоинте эмпирически игнорирует start/limit и отдаёт весь рынок (~3000-3500 строк) одной
     /// страницей — 1000 запрошено "про запас", реальный размер страницы определяется ответом ISS

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Badge, Button, Group, Loader, SegmentedControl, Table } from '@mantine/core';
 import { EmptyState, ErrorState, HelpHint, Metric, MetricGrid, Page, Section } from '@mvv42/kit';
 import { ChartFrame, ChartTooltip, chartColors, pickAxisTicks, useChartTheme } from '@mvv42/kit/charts';
@@ -433,6 +433,12 @@ export function PositionDetail() {
                 {commissionSourceLabel(detail.ifSoldNow.commissionRateSource)}
               </p>
               <p className="bonds-note">{detail.ifSoldNow.disclaimer}</p>
+              <p className="bonds-note">
+                <Link to={`/income?asset=bond&focus=${detail.instrumentId}`} data-testid="position-income-link">
+                  Подробно в Доходах
+                </Link>{' '}
+                — купоны, НКД, налоги и вся история операций по бумаге.
+              </p>
             </div>
           </Section>
 

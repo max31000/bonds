@@ -33,6 +33,9 @@ MySQL для интеграционных), vitest + Testing Library + MSW.
 | T-Invest `GetPortfolio` (CurrentPrice/CurrentNkd/AveragePositionPrice) | вход | **рубли** за бумагу — конверсия не нужна |
 | T-Invest `GetLastPrices` (marketdata `LastPrice`) | вход | **ПУНКТЫ** (% от номинала) → рубли = `pts/100 × FaceValue` (см. `LiveQuoteConverter`) |
 | ГИР БО ФНС (`bo.nalog.gov.ru`): все суммы бухгалтерской отчётности | вход | **ТЫСЯЧИ рублей** → храним РУБЛИ (×1000, `GirBoParser.ThousandsToRubles`), `issuer_financials.*` — рубли |
+| Фонды (БПИФ): цена пая — MOEX `CLOSE` (TQBR/shares), T-Invest `GetPortfolio` `CurrentPrice`/`AveragePositionPrice`, `Dividend.DividendNet` | вход | **рубли за пай**, конверсии нет (НЕ путать с облигациями: там MOEX `CLOSE` — % номинала) → `fund_positions.*_rub`, `fund_price_history.close_rub`, `fund_distributions.amount_per_share_rub` |
+| Фонды: TER (`AssetEtf.TotalExpense`) | вход | единицы не подтверждены → `TInvestNumeric.ExpenseRatioToFraction` → **ДОЛЯ** (0.009 = 0.9%), `funds.total_expense_fraction` |
+| Фонды: индекс MOEX (`YIELD`, `DURATION`), напр. RGBI | вход | `YIELD` **проценты** → доля (÷100), `DURATION` **дни** → годы (÷365) → `market_index_history.yield_fraction/duration_years` |
 | `MarketQuote.CleanPrice/DirtyPrice/Accrued`, `intraday_quotes.dirty_price_rub` | БД | всегда рубли за бумагу (контракт в doc-comment модели) |
 | `Position.Accrued` | БД | НКД на ОДНУ бумагу (не на позицию) |
 | Знак `Operation.AmountRub` | БД | как отдал брокер — НЕ переписывать (см. `PortfolioXirrService.SignedAmount`) |
@@ -153,6 +156,53 @@ DTO кандидата: `yieldFraction` (сырая биржевая) + `afterTa
 (`RelativeValueSnapshot.LiquidityTurnoverRub`, fallback — сегодняшний VALTODAY; всегда через `AnalyticsSupport.AssessEntryLiquidity`,
 а не с `entry.TurnoverRub` напрямую); отсутствие bid/offer не даёт Low при живом обороте (High требует известного узкого спреда). Ставка комиссии — ТОЛЬКО через
 `ICommissionRateProvider` (override → оценка из журнала → дефолт), не константа.
+
+**Цена пая — одна точка:** `IncomeLedgerBuilder.ResolveFundPriceAsync` (`fund_positions.current_price_rub` → последнее закрытие `fund_price_history` → нет цены = стоимость 0 + `dataIncomplete`); `/api/funds`, `/api/income`, `/api/portfolio/summary` берут её оттуда, свою цену не считают.
+
+**Фонды — отдельный домен (задача 51).** БПИФ (TPAY, TOFZ) живут в своих таблицах (`funds`, `fund_positions`, `fund_operations`,
+`fund_price_history`, `fund_distributions`, `market_index_history`, миграция 023) и НЕ попадают в `instruments`/`positions`/`operations`
+и облигационный движок (YTM, скоркарта, XIRR/снимки, сигналы). `BondSyncService` отдаёт позиции `Funds` и операции `IsFund` в
+`IFundSyncService` (`FundSyncService`: резолв по FIGI, справочник раз в сутки, upsert позиций/операций, сверка с защитой «пустой ответ
+брокера — удалять со 2-го раза»); сбой фондов не ломает облигационный синк. Суточные рыночные данные (история цен паёв MOEX, выплаты на пай
+T-Invest, история RGBI) — `FundMarketDataRefresher`, шаг `SyncCycleService` (ворота по последней дате в БД; цикл неуспешным не помечается).
+
+**Доходы (задача 52).** Единый журнал `Bonds.Core/Income` (`LedgerEntry` = облигационные `operations` + `fund_operations`) и
+`PositionIncomeCalculator` — P&L по КАЖДОЙ позиции, включая закрытые/погашенные (набор активов строится из журнала, не из `positions`).
+Метод — average cost (как `PositionCostBasisService`, не FIFO; с налоговой отчётностью может расходиться). Правила: Buy — `cleanCost =
+|amount| − НКД`, `accruedPaid += НКД`; Sell — `proceedsClean = amount − НКД`, `realized += proceedsClean − avgCost × q` (продажа больше известного
+остатка клампится + `HasUnknownLots`); амортизация уменьшает себестоимость (избыток — в realized); погашение — `realized += amount − cost`
+(и перекрывает ещё не удалённую сверкой позицию: стоимость 0); `Income` (купон/выплата фонда) и `Tax`/`Fee` — со знаком брокера; закрытая
+позиция с «висящей» себестоимостью списывает её в realized-убыток (+ `HasUnknownLots`). `NetCouponIncome = IncomeGross − AccruedPaid +
+AccruedReceived + AccruedNow`. **Инвариант (закреплён тестами на каждом эталоне):** `TotalResult = Σ AmountRub(операции актива) + MarketValueClean +
+AccruedNow = Realized + Unrealized + NetCouponIncome + Taxes + Fees`. **`operations.accrued_rub`** (миграция 024) — НКД операции, РУБЛИ на всю
+операцию, ВЕЛИЧИНА ≥ 0 (направление из типа Buy/Sell; синк пишет `Math.Abs(AccruedInt)`); NULL = не отдан (заполнится ближайшим синком — журнал
+перечитывается целиком). Допущение: `Payment` покупки/продажи включает НКД; если `accrued ≥ |amount|` — НКД игнорируется (`AccruedUnknown`).
+`IncomeStatisticsService`: итоги all-time по позициям (+ налоги/комиссии «по счёту» — операции без актива — только в итоговом `TotalResult` и
+`accountLevel`); **период `[from,to]` (включительно) — ДЕНЕЖНЫЕ СОБЫТИЯ** (купоны/выплаты брутто, налоги, комиссии, realized на дату операции,
+НКД уплачен/получен), бумажная прибыль в периоде не считается (`unrealizedIsAllTime`); помесячный ряд `yyyy-MM` с нулевыми месяцами; XIRR портфеля —
+потоки активов + «по счёту» + терминал = чистая стоимость + НКД (деньги на счёте/пополнения не участвуют). Сборка входов —
+`IncomeLedgerBuilder` (Infrastructure; стоимость облигаций из `PortfolioHoldingsBuilder`: чистая = MV − AccruedPerBond × Qty; публичный
+`BuildFundsAsync` — вход для `/api/funds`, задача 53). Эндпоинты: `GET /api/income` и `GET /api/income/{bond|fund}/{assetId}/ledger`
+(`IncomeEndpoints`, DTO `IncomeDtos.cs`; доли — ДОЛИ, суммы — рубли; enum — camelCase-строки).
+
+**Фонды в продукте (задача 53).** Чистые функции `Bonds.Core/Funds`: `FundPerformanceCalculator` (тотал-ретёрн `(P_end + Σ выплат на пай в (start,end]) / P_start − 1`, ДОЛИ;
+окна 1/3/6/12м и «с первой покупки»; цена старта — forward fill, нет цены — окно null; годовая `(1+TR)^(365/дни) − 1`) и `FundOutlookService` (оценка ожидаемой
+годовой доходности, ДОЛЯ: `Distributions` = Σ выплат за 92 дня × 365/92 / цена; `IndexYield` = YIELD индекса (RGBI) − TER, TER неизвестен → 0 + `TerUnknown`, точка старше 10 дней
+используется, но с `IndexStale` и Low; `TrailingReturn` = 12м, иначе окно от первой цены ≥ 90 дней + `ShortHistory`; `Auto` = Distributions при ≥ 2 выплатах за 6 мес. → IndexYield для
+ОФЗ-фондов/явного benchmark (нет данных индекса — откат на Trailing, только для Auto) → Trailing; явный метод без данных → null + `unavailableReason`, без тихого фолбэка;
+после налога — `AfterTaxYield.Apply`). `FundOverviewBuilder` (Infrastructure) собирает фонды счёта: P&L — `IncomeLedgerBuilder.BuildFundsAsync` (ОДНА методика со страницей «Доходы»),
+рынок — `IFundMarketDataRepository`. Эндпоинты `FundsEndpoints`: `GET /api/funds` (только qty > 0), `GET /api/funds/{id}` (и проданные; чужой/неизвестный → 404),
+`PUT /api/funds/{id}/settings` (enum/код индекса `^[A-Z0-9]{2,16}$` → 422), `GET /api/portfolio/summary` (облигации по `PortfolioHoldingsBuilder` + фонды `price × qty` +
+`accounts.cash_rub`, сверка с `broker_total_rub`: `brokerDiff = broker − total`; XIRR портфеля — `IncomeStatisticsService`, тот же расчёт, что `/api/income`). `FundRowDto.InvestedRub` —
+себестоимость ОСТАТКА (average cost), не Σ покупок. Фронт: вкладка «Фонды» на «Позициях» (`?tab=funds`), `/funds/:fundId` (`FundDetail`), `useFundsStore`, KPI «Стоимость портфеля»/«Фонды»
+на «Обзоре»; цены паёв/выплаты на пай — `formatRubPrecise` (копейки), остальное `formatRub`.
+
+**Страница «Доходы» (задача 54).** `/income` (`pages/Income.tsx`, компоненты `components/income/*`, стор `useIncomeStore`, чистые функции `utils/incomeDisplay.ts`,
+тексты подсказок `components/incomeCopy.ts`). Фильтры — в URL: `?period=all|ytd|12m|YYYY&asset=all|bond|fund&closed=0` (закрытые показываются по умолчанию, `closed=0` скрывает),
+`?asset=bond|fund&focus=<assetId>` раскрывает строку (облигация: assetId = `instrumentId`; фонд: `fundId`). Период режет только ДЕНЕЖНЫЕ события (купоны/продажи/налоги/комиссии);
+бумажная прибыль, «Вложено», «Итого» и XIRR — всегда all-time (`unrealizedIsAllTime`). `netCouponIncomeRub` = брутто − НКД уплаченный + НКД полученный + набежавший НКД, БЕЗ налогов
+(налоги — отдельный KPI). «Водопад» итога — CSS-бары (`IncomeBreakdown`, `buildBreakdown` даёт инвариант итог = Σ компонентов); журнал операций актива грузится лениво и кэшируется
+в сторе по `assetKind:assetId`. Строка таблицы — `Table.Tr` с `aria-expanded` (без вложенных кнопок), на мобильной ширине — карточки `div[role=button]`.
 
 ## Тесты
 

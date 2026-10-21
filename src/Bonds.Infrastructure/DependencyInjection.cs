@@ -87,6 +87,12 @@ public static class DependencyInjection
         services.AddScoped<IInstrumentRiskLevelRepository>(sp => new InstrumentRiskLevelRepository(GetConnStr(sp)));
         services.AddScoped<IIssuerRatingRepository>(sp => new IssuerRatingRepository(GetConnStr(sp)));
 
+        // Задача 51: фонды (БПИФ) — отдельный домен: справочник, позиции, журнал, рыночные данные.
+        services.AddScoped<IFundRepository>(sp => new FundRepository(GetConnStr(sp)));
+        services.AddScoped<IFundPositionRepository>(sp => new FundPositionRepository(GetConnStr(sp)));
+        services.AddScoped<IFundOperationRepository>(sp => new FundOperationRepository(GetConnStr(sp)));
+        services.AddScoped<IFundMarketDataRepository>(sp => new FundMarketDataRepository(GetConnStr(sp)));
+
         // Migration runner
         services.AddSingleton(sp => new MigrationRunner(
             GetConnStr(sp),
@@ -143,6 +149,11 @@ public static class DependencyInjection
         // Задача 46: суточное обновление risk_level облигаций T-Invest (один bulk-вызов Bonds(), шаг цикла синка).
         services.AddScoped<InstrumentRiskLevelRefresher>();
 
+        // Задача 51: синк фондов (вызывается из BondSyncService на уже полученных данных) и суточные
+        // рыночные данные фондов (шаг SyncCycleService).
+        services.AddScoped<IFundSyncService, FundSyncService>();
+        services.AddScoped<FundMarketDataRefresher>();
+
         // Единый путь "обогатить одну бумагу по ISIN" (резолв инструмента +
         // MOEX-котировка), вынесенный из WatchlistSyncService — переиспользуется watchlist
         // и материализацией из банка облигаций (POST /api/universe/{secid}/materialize).
@@ -168,6 +179,10 @@ public static class DependencyInjection
         // Сборщик holdings (между репозиториями и аналитическими сервисами) — общий
         // вход для positions/composition/scatter/comparison/replacement эндпоинтов.
         services.AddScoped<PortfolioHoldingsBuilder>();
+
+        // Единый журнал доходов (задача 52): входы для PositionIncomeCalculator; задача 53 берёт доходы по фондам отсюда.
+        services.AddScoped<IncomeLedgerBuilder>();
+        services.AddScoped<FundOverviewBuilder>();
 
         // Резолвер эффективной ставки комиссии (override → оценка из журнала →
         // дефолт) — потребляется replacement/allocation/ifSoldNow эндпоинтами.
