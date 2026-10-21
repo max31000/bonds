@@ -191,6 +191,29 @@ export const handlers = [
   http.put('*/api/settings/tinvest-token', () =>
     HttpResponse.json({ tInvestTokenConfigured: true, tInvestTokenMasked: '...1234' }),
   ),
+  // Задача 53: фонды и общий баланс — по умолчанию «фондов нет» / нулевой баланс; сценарии переопределяются через server.use.
+  http.get('*/api/funds', () =>
+    HttpResponse.json({
+      asOf: '2026-01-01',
+      funds: [],
+      totals: { marketValueRub: 0, investedRub: 0, unrealizedPnlRub: 0, incomeNetRub: 0, totalResultRub: 0 },
+      disclaimer: '',
+    }),
+  ),
+  http.get('*/api/funds/:fundId', () => HttpResponse.json({ error: 'not found' }, { status: 404 })),
+  http.get('*/api/portfolio/summary', () =>
+    HttpResponse.json({
+      bondsValueRub: 0,
+      fundsValueRub: 0,
+      cashRub: null,
+      totalRub: 0,
+      brokerTotalRub: null,
+      brokerDiffRub: null,
+      balanceSyncedAt: null,
+      portfolioXirrFraction: null,
+      disclaimer: '',
+    }),
+  ),
   // Дефолтные кейсы для plan/16 — пустые данные; конкретные сценарии переопределяются в тестах.
   http.get('*/api/live/positions', () =>
     HttpResponse.json({ positions: [], totalMarketValueRub: 0, asOfUtc: new Date().toISOString() }),

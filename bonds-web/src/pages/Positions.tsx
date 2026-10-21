@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { EmptyState, ErrorState, Page, Section } from '@mvv42/kit';
 import {
   Stack,
@@ -13,15 +13,19 @@ import {
   ActionIcon,
   Select,
   Paper,
+  SegmentedControl,
 } from '@mantine/core';
 import { useMediaQuery } from '@mantine/hooks';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { usePositionsStore } from '../store/usePositionsStore';
+import { useFundsStore } from '../store/useFundsStore';
 import { useSettingsStore } from '../store/useSettingsStore';
 import { useRelativeValueStore } from '../store/useRelativeValueStore';
 import { usePositionVerdictStore } from '../store/usePositionVerdictStore';
 import { useLiveQuotes } from '../hooks/useLiveQuotes';
 import { Disclaimer } from '../components/Disclaimer';
+import { FundsTable } from '../components/FundsTable';
+import { FUND_KEY_RATE_NOTE } from '../components/fundsCopy';
 import { PortfolioIntradayChart } from '../components/PortfolioIntradayChart';
 import { PositionCard } from '../components/PositionCard';
 import { LiveMarketValueCell } from '../components/positionsShared';
@@ -40,12 +44,91 @@ import { formatRub, formatDaysUntil, formatPercent, formatNumber, formatBp } fro
 import { computePositionsTotals } from '../utils/positionsAggregation';
 import { buildYieldHeatmapScale } from '../utils/yieldHeatmap';
 
+type PositionsTab = 'bonds' | 'funds';
+
 /**
- * Главный экран приложения после логина — таблица позиций с расчётными метриками (
+ * Экран «Позиции»: вкладки «Облигации | Фонды» (задача 53). Вкладка живёт в URL (`?tab=funds`), по умолчанию —
+ * облигации: существующая таблица без изменений. Фонды — отдельный домен, в облигационные виджеты не подмешиваются.
+ */
+export function Positions() {
+  const [params, setParams] = useSearchParams();
+  const tab: PositionsTab = params.get('tab') === 'funds' ? 'funds' : 'bonds';
+
+  const tabs = (
+    <SegmentedControl
+      size="sm"
+      value={tab}
+      onChange={(v) => {
+        const next = new URLSearchParams(params);
+        if (v === 'funds') next.set('tab', 'funds');
+        else next.delete('tab');
+        setParams(next, { replace: true });
+      }}
+      data={[
+        { value: 'bonds', label: 'Облигации' },
+        { value: 'funds', label: 'Фонды' },
+      ]}
+      data-testid="positions-tab-toggle"
+    />
+  );
+
+  return tab === 'funds' ? <FundsPositionsView tabs={tabs} /> : <BondsPositionsView tabs={tabs} />;
+}
+
+/** Вкладка «Фонды»: список паёв с P&L, фактической доходностью и оценкой (GET /api/funds). */
+function FundsPositionsView({ tabs }: { tabs: ReactNode }) {
+  const { funds, totals, disclaimer, isLoading, error, load } = useFundsStore();
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  return (
+    <Page title="Позиции" description="Паи фондов (БПИФ): стоимость, P&L, выплаты и оценка доходности" width="wide">
+      {tabs}
+
+      {isLoading && (
+        <div className="bonds-center">
+          <Loader />
+        </div>
+      )}
+
+      {!isLoading && error && (
+        <Section>
+          <ErrorState title="Не удалось загрузить фонды" error={error} data-testid="funds-error" />
+        </Section>
+      )}
+
+      {!isLoading && !error && funds.length === 0 && (
+        <Section>
+          <EmptyState
+            data-testid="funds-empty"
+            title="Фондов нет"
+            description="Фондов нет — они появятся после синка, если куплены в Т-Инвестициях."
+          />
+        </Section>
+      )}
+
+      {!isLoading && !error && funds.length > 0 && (
+        <>
+          <p className="bonds-note" data-testid="funds-key-rate-note">
+            {FUND_KEY_RATE_NOTE}
+          </p>
+          <FundsTable funds={funds} totals={totals} />
+        </>
+      )}
+
+      <Disclaimer text={disclaimer} />
+    </Page>
+  );
+}
+
+/**
+ * Вкладка «Облигации» — таблица позиций с расчётными метриками (
  * цена входа/P&L — plan/14).
  * Графика/календарь/сигналы — 09b/09c.
  */
-export function Positions() {
+function BondsPositionsView({ tabs }: { tabs: ReactNode }) {
   const { positions, disclaimer, isLoading, error, load } = usePositionsStore();
   const { settings, load: loadSettings } = useSettingsStore();
   const relativeValueByPosition = useRelativeValueStore((s) => s.positionsById);
@@ -104,6 +187,8 @@ export function Positions() {
 
   return (
     <Page title="Позиции" description="Бумаги портфеля: стоимость, P&L, доходность и риск" width="wide">
+      {tabs}
+
       {isLoading && (
         <div className="bonds-center">
           <Loader />

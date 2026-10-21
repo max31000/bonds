@@ -183,6 +183,18 @@ AccruedNow = Realized + Unrealized + NetCouponIncome + Taxes + Fees`. **`operati
 `BuildFundsAsync` — вход для `/api/funds`, задача 53). Эндпоинты: `GET /api/income` и `GET /api/income/{bond|fund}/{assetId}/ledger`
 (`IncomeEndpoints`, DTO `IncomeDtos.cs`; доли — ДОЛИ, суммы — рубли; enum — camelCase-строки).
 
+**Фонды в продукте (задача 53).** Чистые функции `Bonds.Core/Funds`: `FundPerformanceCalculator` (тотал-ретёрн `(P_end + Σ выплат на пай в (start,end]) / P_start − 1`, ДОЛИ;
+окна 1/3/6/12м и «с первой покупки»; цена старта — forward fill, нет цены — окно null; годовая `(1+TR)^(365/дни) − 1`) и `FundOutlookService` (оценка ожидаемой
+годовой доходности, ДОЛЯ: `Distributions` = Σ выплат за 92 дня × 365/92 / цена; `IndexYield` = YIELD индекса (RGBI) − TER, TER неизвестен → 0 + `TerUnknown`, точка старше 10 дней
+используется, но с `IndexStale` и Low; `TrailingReturn` = 12м, иначе окно от первой цены ≥ 90 дней + `ShortHistory`; `Auto` = Distributions при ≥ 2 выплатах за 6 мес. → IndexYield для
+ОФЗ-фондов/явного benchmark (нет данных индекса — откат на Trailing, только для Auto) → Trailing; явный метод без данных → null + `unavailableReason`, без тихого фолбэка;
+после налога — `AfterTaxYield.Apply`). `FundOverviewBuilder` (Infrastructure) собирает фонды счёта: P&L — `IncomeLedgerBuilder.BuildFundsAsync` (ОДНА методика со страницей «Доходы»),
+рынок — `IFundMarketDataRepository`. Эндпоинты `FundsEndpoints`: `GET /api/funds` (только qty > 0), `GET /api/funds/{id}` (и проданные; чужой/неизвестный → 404),
+`PUT /api/funds/{id}/settings` (enum/код индекса `^[A-Z0-9]{2,16}$` → 422), `GET /api/portfolio/summary` (облигации по `PortfolioHoldingsBuilder` + фонды `price × qty` +
+`accounts.cash_rub`, сверка с `broker_total_rub`: `brokerDiff = broker − total`; XIRR портфеля — `IncomeStatisticsService`, тот же расчёт, что `/api/income`). `FundRowDto.InvestedRub` —
+себестоимость ОСТАТКА (average cost), не Σ покупок. Фронт: вкладка «Фонды» на «Позициях» (`?tab=funds`), `/funds/:fundId` (`FundDetail`), `useFundsStore`, KPI «Стоимость портфеля»/«Фонды»
+на «Обзоре»; цены паёв/выплаты на пай — `formatRubPrecise` (копейки), остальное `formatRub`.
+
 ## Тесты
 
 **Юнит** (`tests/Bonds.Tests`, папки по доменам): без сети и без БД. HTTP-клиенты — вложенный

@@ -1351,3 +1351,149 @@ export interface PositionVerdictsResponse {
   verdicts: PositionVerdict[];
   disclaimer: string;
 }
+
+// ─── Фонды (БПИФ), задача 53 ───────────────────────────────────────────────────────────────────────────────
+// Зеркало FundsDtos.cs. Деньги — РУБЛИ (цена — за пай), доходности и доли — ДОЛИ (0.12 = 12%); ×100 только в форматтерах.
+
+/** Способ прогноза доходности фонда (enum бэкенда, camelCase). */
+export type FundForecastMethod = 'auto' | 'distributions' | 'indexYield' | 'trailingReturn';
+
+export type FundOutlookConfidence = 'low' | 'medium' | 'high';
+
+export type FundOutlookWarning = 'terUnknown' | 'indexStale' | 'fewDistributions' | 'shortHistory';
+
+export type FundOperationType = 'buy' | 'sell' | 'distribution' | 'tax' | 'fee' | 'securityIn' | 'securityOut';
+
+export interface FundWindowReturn {
+  /** Доходность за окно, ДОЛЯ. */
+  returnFraction: number;
+  /** Пересчёт в годовую, ДОЛЯ годовых. */
+  annualizedFraction: number;
+  days: number;
+}
+
+export interface FundPerformance {
+  m1: FundWindowReturn | null;
+  m3: FundWindowReturn | null;
+  m6: FundWindowReturn | null;
+  m12: FundWindowReturn | null;
+  sinceFirstBuy: FundWindowReturn | null;
+}
+
+export interface FundOutlook {
+  requestedMethod: FundForecastMethod;
+  /** Применённый метод (при `auto` — во что разрешился). */
+  method: FundForecastMethod;
+  /** ДОЛЯ годовых; null — оценка недоступна (см. `unavailableReason`). */
+  expectedAnnualYieldFraction: number | null;
+  /** После НДФЛ (единая ставка 13%, упрощение — ко всей доходности), ДОЛЯ. */
+  afterTaxYieldFraction: number | null;
+  basisLabel: string;
+  expectedIncome1yRub: number | null;
+  expectedMonthlyIncomeRub: number | null;
+  confidence: FundOutlookConfidence;
+  asOf: string;
+  warnings: FundOutlookWarning[];
+  unavailableReason: string | null;
+}
+
+export interface FundRow {
+  fundId: number;
+  ticker: string | null;
+  name: string | null;
+  managementCompany: string | null;
+  quantity: number;
+  /** Рубли за пай. */
+  currentPriceRub: number | null;
+  priceAsOf: string | null;
+  marketValueRub: number;
+  /** Средняя цена остатка за пай (average cost), рубли. */
+  avgCostRub: number;
+  /** Себестоимость остатка, рубли. */
+  investedRub: number;
+  unrealizedPnlRub: number | null;
+  /** ДОЛЯ от себестоимости остатка. */
+  unrealizedPnlFraction: number | null;
+  distributionsGrossRub: number;
+  /** Со знаком брокера (удержание −). */
+  taxesRub: number;
+  distributionsNetRub: number;
+  totalResultRub: number;
+  totalReturnFraction: number | null;
+  xirrFraction: number | null;
+  /** TER, ДОЛЯ годовых. */
+  totalExpenseFraction: number | null;
+  performance: FundPerformance;
+  outlook: FundOutlook;
+  /** Доля в (облигации + фонды), ДОЛЯ. */
+  shareOfPortfolioFraction: number | null;
+  hasUnknownLots: boolean;
+  dataIncomplete: boolean;
+}
+
+export interface FundsTotals {
+  marketValueRub: number;
+  investedRub: number;
+  unrealizedPnlRub: number;
+  incomeNetRub: number;
+  totalResultRub: number;
+}
+
+/** Ответ GET /api/funds. */
+export interface FundsResponse {
+  asOf: string;
+  funds: FundRow[];
+  totals: FundsTotals;
+  disclaimer: string;
+}
+
+export interface FundPricePoint {
+  date: string;
+  closeRub: number;
+}
+
+export interface FundDistribution {
+  recordDate: string;
+  paymentDate: string | null;
+  amountPerShareRub: number;
+  /** Выплата / цена пая на дату фиксации, ДОЛЯ за период (не годовая). */
+  yieldOnPriceFraction: number | null;
+}
+
+export interface FundOperation {
+  date: string;
+  type: FundOperationType;
+  amountRub: number;
+  quantity: number | null;
+}
+
+export interface FundSettings {
+  forecastMethod: FundForecastMethod;
+  benchmarkIndex: string | null;
+}
+
+/** Ответ GET /api/funds/{id}. */
+export interface FundDetail {
+  asOf: string;
+  fund: FundRow;
+  priceHistory: FundPricePoint[];
+  distributions: FundDistribution[];
+  operations: FundOperation[];
+  settings: FundSettings;
+  disclaimer: string;
+}
+
+/** Ответ GET /api/portfolio/summary. */
+export interface PortfolioSummary {
+  bondsValueRub: number;
+  fundsValueRub: number;
+  cashRub: number | null;
+  totalRub: number;
+  brokerTotalRub: number | null;
+  /** brokerTotal − total; null — брокерского итога нет. */
+  brokerDiffRub: number | null;
+  balanceSyncedAt: string | null;
+  /** XIRR всего портфеля (облигации + фонды), ДОЛЯ годовых. */
+  portfolioXirrFraction: number | null;
+  disclaimer: string;
+}
