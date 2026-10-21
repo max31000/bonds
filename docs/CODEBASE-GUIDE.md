@@ -157,6 +157,8 @@ DTO кандидата: `yieldFraction` (сырая биржевая) + `afterTa
 а не с `entry.TurnoverRub` напрямую); отсутствие bid/offer не даёт Low при живом обороте (High требует известного узкого спреда). Ставка комиссии — ТОЛЬКО через
 `ICommissionRateProvider` (override → оценка из журнала → дефолт), не константа.
 
+**Цена пая — одна точка:** `IncomeLedgerBuilder.ResolveFundPriceAsync` (`fund_positions.current_price_rub` → последнее закрытие `fund_price_history` → нет цены = стоимость 0 + `dataIncomplete`); `/api/funds`, `/api/income`, `/api/portfolio/summary` берут её оттуда, свою цену не считают.
+
 **Фонды — отдельный домен (задача 51).** БПИФ (TPAY, TOFZ) живут в своих таблицах (`funds`, `fund_positions`, `fund_operations`,
 `fund_price_history`, `fund_distributions`, `market_index_history`, миграция 023) и НЕ попадают в `instruments`/`positions`/`operations`
 и облигационный движок (YTM, скоркарта, XIRR/снимки, сигналы). `BondSyncService` отдаёт позиции `Funds` и операции `IsFund` в
