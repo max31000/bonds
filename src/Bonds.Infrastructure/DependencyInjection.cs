@@ -182,6 +182,7 @@ public static class DependencyInjection
 
         // Единый журнал доходов (задача 52): входы для PositionIncomeCalculator; задача 53 берёт доходы по фондам отсюда.
         services.AddScoped<IncomeLedgerBuilder>();
+        services.AddScoped<FundOverviewBuilder>();
 
         // Резолвер эффективной ставки комиссии (override → оценка из журнала →
         // дефолт) — потребляется replacement/allocation/ifSoldNow эндпоинтами.

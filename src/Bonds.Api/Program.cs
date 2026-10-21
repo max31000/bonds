@@ -110,6 +110,7 @@ app.MapPositionsEndpoints();
 app.MapCashFlowEndpoints();
 app.MapXirrEndpoints();
 app.MapIncomeEndpoints();
+app.MapFundsEndpoints();
 app.MapPortfolioAnalyticsEndpoints();
 app.MapReplacementEndpoints();
 app.MapPositionVerdictEndpoints();
