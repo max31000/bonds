@@ -45,12 +45,12 @@ public class CurrencyEndpointTests
         var iso1 = "T" + Suffix();
         var cnyId = await currencyRepo.UpsertAsync(new Currency
         {
-            Figi = $"FIGI{Guid.NewGuid():N}"[..20], IsoCode = iso1, Ticker = "CNYRUB_TOM", Name = "Китайский юань", MoexSecid = "CNYRUB_TOM", Lot = 1000m,
+            Figi = $"FIGI{Guid.NewGuid():N}"[..20], IsoCode = iso1, Ticker = "TEST_CNYRUB_TOM", Name = "Китайский юань", MoexSecid = "TEST_CNYRUB_TOM", Lot = 1000m,
         });
         var iso2 = "T" + Suffix();
         var soldId = await currencyRepo.UpsertAsync(new Currency
         {
-            Figi = $"FIGI{Guid.NewGuid():N}"[..20], IsoCode = iso2, Ticker = "HKDRUB_TOM", Name = "Гонконгский доллар", MoexSecid = "HKDRUB_TOM",
+            Figi = $"FIGI{Guid.NewGuid():N}"[..20], IsoCode = iso2, Ticker = "TEST_HKDRUB_TOM", Name = "Гонконгский доллар", MoexSecid = "TEST_HKDRUB_TOM",
         });
 
         await new CurrencyPositionRepository(Conn).UpsertAsync(new CurrencyPosition
@@ -98,7 +98,7 @@ public class CurrencyEndpointTests
 
         var cny = Row(body, "currencies", s.CnyId);
         cny.GetProperty("isoCode").GetString().Should().Be(s.CnyIso);
-        cny.GetProperty("ticker").GetString().Should().Be("CNYRUB_TOM");
+        cny.GetProperty("ticker").GetString().Should().Be("TEST_CNYRUB_TOM");
         cny.GetProperty("quantity").GetDecimal().Should().Be(600m, "единицы валюты, не лоты");
         cny.GetProperty("currentPriceRub").GetDecimal().Should().Be(12.20m);
         cny.GetProperty("marketValueRub").GetDecimal().Should().Be(7_320m);

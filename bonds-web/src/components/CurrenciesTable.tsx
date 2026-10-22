@@ -222,6 +222,7 @@ export function CurrenciesTable({ currencies, totals }: { currencies: CurrencyRo
               <Table.Tr
                 key={c.currencyId}
                 data-testid={`currency-row-${c.currencyId}`}
+                role="link"
                 tabIndex={0}
                 onClick={() => navigate(currencyIncomeLink(c))}
                 onKeyDown={activateOnKey(() => navigate(currencyIncomeLink(c)))}

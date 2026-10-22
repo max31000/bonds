@@ -153,8 +153,11 @@ function TotalBalanceKpi({ summary, error }: { summary: PortfolioSummary | null;
   const mismatch = diff !== null && summary.totalRub > 0 && Math.abs(diff) / summary.totalRub > 0.01;
   // Задача 56: валюта уже внутри cashRub (и totalRub) — в разбивке рубли = cashRubOnly, валюта отдельно; сумма частей = totalRub.
   const hasCurrency = summary.currencyValueRub > 0 && summary.cashRubOnly !== null;
+  // Валюта больше «денег» брокера — баланс устарел (cashRub с прошлого синка): «рубли 0» было бы ложной точностью.
+  const cashStale = hasCurrency && summary.cashRub !== null && summary.currencyValueRub > summary.cashRub;
+  const staleNote = cashStale ? ' (баланс денег устарел, разбивка приблизительна)' : '';
   const breakdown = hasCurrency
-    ? `облигации ${formatRub(summary.bondsValueRub)} · фонды ${formatRub(summary.fundsValueRub)} · валюта ${formatRub(summary.currencyValueRub)} · рубли ${formatRub(summary.cashRubOnly)}`
+    ? `облигации ${formatRub(summary.bondsValueRub)} · фонды ${formatRub(summary.fundsValueRub)} · валюта ${formatRub(summary.currencyValueRub)} · рубли ${formatRub(summary.cashRubOnly)}${staleNote}`
     : `облигации ${formatRub(summary.bondsValueRub)} · фонды ${formatRub(summary.fundsValueRub)} · деньги ${formatRub(summary.cashRub)}`;
   return (
     <Metric

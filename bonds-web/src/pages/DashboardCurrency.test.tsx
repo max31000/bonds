@@ -37,6 +37,14 @@ describe('Dashboard — валюта (задача 56)', () => {
     expect(withCurrency.bondsValueRub + withCurrency.fundsValueRub + withCurrency.currencyValueRub + withCurrency.cashRubOnly).toBe(withCurrency.totalRub);
   });
 
+  it('валюта больше денег брокера (устаревший баланс) — пометка, а не молчаливые «рубли 0»', async () => {
+    const stale = { ...withCurrency, cashRub: 5000, cashRubOnly: 0 };
+    server.use(http.get('*/api/portfolio/summary', () => HttpResponse.json(stale)));
+    renderDashboard();
+    const kpi = await screen.findByTestId('kpi-total-balance');
+    await waitFor(() => expect(kpi).toHaveTextContent(/баланс денег устарел, разбивка приблизительна/));
+  });
+
   it('«Деньги на счёте»: сумма брокера без изменений и отдельная строка «в т.ч. валюта»', async () => {
     server.use(
       http.get('*/api/portfolio/summary', () => HttpResponse.json(withCurrency)),
