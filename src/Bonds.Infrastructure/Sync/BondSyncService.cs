@@ -195,7 +195,7 @@ public sealed class BondSyncService
                 result.OperationsUpserted = await _operations.UpsertManyByExternalIdAsync(domainOperations);
             }
 
-            result.JournalSynced = true;
+            result.JournalSynced = !result.JournalIncompleteByRates;
         }
         catch (Exception ex)
         {
@@ -440,11 +440,13 @@ public sealed class BondSyncService
     }
 
     /// <summary>
-    /// Приводит платежи операций к рублям (задача 55). Рублёвые (и без валюты) - без изменений, не-рублёвые, релевантные портфелю
-    /// (тип операции мапится в облигационный/фондовый/валютный журнал), пересчитываются по курсу дня из <c>currency_rate_history</c>
-    /// (<see cref="TInvestOperationCurrency.ToRubles"/>). Курса нет - операция пропускается, в <see cref="SyncResult.Errors"/> - ОДНА строка
-    /// со счётчиком и валютами, LogWarning на каждую. Журнал читается целиком каждый синк, поэтому пропущенная операция подхватится,
-    /// как только появится курс.
+    /// Приводит платежи операций к рублям (задача 55). Рублёвые (и без валюты) и НУЛЕВЫЕ платежи (0 в любой валюте = 0 ₽, например
+    /// Input/OutputSecurities) - без курса, как есть (в рубли). Не-рублёвые, релевантные портфелю (тип операции мапится в облигационный/
+    /// фондовый/валютный журнал), пересчитываются по курсу дня из <c>currency_rate_history</c> (<see cref="TInvestOperationCurrency.ToRubles"/>).
+    /// Курса нет - операция пропускается, но это НЕ ошибка цикла (иначе постоянный HasErrors и ежедневный алерт): LogWarning +
+    /// <see cref="SyncResult.SkippedForeignOperations"/>. Если причина самолечащаяся (валюта есть, истории курса ещё нет), дополнительно
+    /// <see cref="SyncResult.JournalSynced"/> не выставляется, пока такие пропуски есть - бэкфилл истории стоимости не должен
+    /// закрепиться из неполного журнала. Журнал читается целиком каждый синк, поэтому пропущенное подхватится, когда появится курс.
     /// </summary>
     private async Task<IReadOnlyList<TInvestOperation>> NormalizePaymentCurrenciesAsync(
         IReadOnlyList<TInvestOperation> operations, SyncResult result, CancellationToken ct)
@@ -463,6 +465,13 @@ public sealed class BondSyncService
                 continue;
             }
 
+            if (op.PaymentRub == 0m)
+            {
+                // 0 в любой валюте = 0 рублей: курс не нужен. Сохраняем операцию как рублёвую.
+                normalized.Add(TInvestOperationCurrency.ToRubles(op, 1m) ?? op);
+                continue;
+            }
+
             decimal? rate = null;
             if (_rateLookup is not null)
             {
@@ -474,19 +483,23 @@ public sealed class BondSyncService
             {
                 skipped++;
                 skippedCurrencies.Add(op.PaymentCurrency!.ToUpperInvariant());
+                var miss = _rateLookup is null ? RateMissKind.NotInDirectory : await _rateLookup.ClassifyMissAsync(op.PaymentCurrency!, ct);
+                if (miss == RateMissKind.NoHistoryYet) result.JournalIncompleteByRates = true;
                 _logger.LogWarning(
-                    "Operation {OperationId} has payment in {Currency} without an exchange rate for {Date:yyyy-MM-dd} - skipped",
-                    op.Id, op.PaymentCurrency, op.Date);
+                    "Operation {OperationId} has payment in {Currency} without an exchange rate for {Date:yyyy-MM-dd} ({Reason}) - skipped",
+                    op.Id, op.PaymentCurrency, op.Date, miss);
                 continue;
             }
 
             normalized.Add(converted);
         }
 
+        result.SkippedForeignOperations += skipped;
         if (skipped > 0)
         {
-            result.Errors.Add(
-                $"Операции в валюте {string.Join(", ", skippedCurrencies)} без курса — пропущены: {skipped} (курс подтянется суточным шагом, операции учтутся со следующего синка)");
+            _logger.LogWarning(
+                "Skipped {Count} operations in foreign currency without a rate ({Currencies}); not a sync error",
+                skipped, string.Join(", ", skippedCurrencies));
         }
 
         return normalized;
@@ -763,6 +776,16 @@ public sealed class SyncResult
     /// <summary>Сколько позиций удалено сверкой (у брокера их больше нет: погашены/проданы).</summary>
     public int PositionsClosed { get; set; }
     public bool YieldCurveUpdated { get; set; }
+
+    /// <summary>
+    /// Сколько операций в чужой валюте пропущено из-за отсутствия курса (T-56fix). Информационное поле: НЕ ошибка цикла и не попадает
+    /// в <see cref="Errors"/> (иначе постоянный HasErrors -> ежедневный Telegram-алерт).
+    /// </summary>
+    public int SkippedForeignOperations { get; set; }
+
+    /// <summary>Были пропуски из-за ещё не загруженной истории курса (самолечащийся случай): журнал неполон, <see cref="JournalSynced"/> = false.</summary>
+    public bool JournalIncompleteByRates { get; set; }
+
     public List<string> Errors { get; } = [];
 
     public bool HasErrors => Errors.Count > 0;

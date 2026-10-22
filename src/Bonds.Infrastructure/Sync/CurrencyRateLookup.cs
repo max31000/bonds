@@ -12,6 +12,22 @@ public interface ICurrencyRateLookup
     /// <see cref="PaymentCurrencyConverter.MaxRateStaleDays"/> дней). Null — валюты нет в справочнике или подходящей точки нет.
     /// </summary>
     Task<decimal?> GetRubPerUnitAsync(string isoCode, DateOnly date, CancellationToken ct = default);
+
+    /// <summary>Почему курса нет (вызывать, когда <see cref="GetRubPerUnitAsync"/> вернул null). Дефолт (0) — принципиально не конвертируется.</summary>
+    Task<RateMissKind> ClassifyMissAsync(string isoCode, CancellationToken ct = default);
+}
+
+/// <summary>Причина отсутствия курса на дату.</summary>
+public enum RateMissKind
+{
+    /// <summary>Валюты нет в справочнике <c>currencies</c> — курс не появится сам.</summary>
+    NotInDirectory = 0,
+
+    /// <summary>Валюта есть, но история курса не покрывает дату (операция старше окна истории) — не конвертируется.</summary>
+    OutsideHistory = 1,
+
+    /// <summary>Валюта есть, истории курса ещё нет (первый цикл) — самолечится суточным шагом рефрешера.</summary>
+    NoHistoryYet = 2,
 }
 
 /// <summary>Реализация на <c>currencies</c> + <c>currency_rate_history</c>; история каждой валюты грузится один раз на время жизни (scoped = один синк).</summary>
@@ -39,5 +55,15 @@ public sealed class CurrencyRateLookup : ICurrencyRateLookup
         }
 
         return CurrencyRateUnits.RateOnOrBefore(history, date);
+    }
+
+    /// <inheritdoc />
+    public async Task<RateMissKind> ClassifyMissAsync(string isoCode, CancellationToken ct = default)
+    {
+        // Прогрев кэша (если курс на эту валюту ещё не запрашивали).
+        await GetRubPerUnitAsync(isoCode, DateOnly.MinValue, ct);
+        var currency = await _currencies.GetByIsoAsync(isoCode);
+        if (currency is null) return RateMissKind.NotInDirectory;
+        return _cache[isoCode].Count == 0 ? RateMissKind.NoHistoryYet : RateMissKind.OutsideHistory;
     }
 }

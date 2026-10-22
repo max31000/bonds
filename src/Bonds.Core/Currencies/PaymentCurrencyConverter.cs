@@ -34,16 +34,38 @@ public static class PaymentCurrencyConverter
 /// <summary>Количество единиц валюты в операции.</summary>
 public static class CurrencyOperationUnits
 {
+    /// <summary>Допустимое расхождение <c>quantity × цена</c> и <c>|платёж|</c> (доля от |платежа|), выше которого quantity считается лотами.</summary>
+    public const decimal CrossCheckTolerance = 0.05m;
+
     /// <summary>
-    /// Единицы валюты операции. T-Invest <c>OperationItem.Quantity</c> — «количество единиц инструмента» (для валюты — единицы,
-    /// а не лоты; подтвердить на реальных данных, см. README коннектора) и берётся как есть. Если оно не отдано (0/null), а
-    /// известна цена за единицу, количество восстанавливается как <c>|платёж| ÷ цена</c>. Иначе null (журнал пометит неизвестный остаток).
+    /// Единицы валюты операции. T-Invest <c>OperationItem.Quantity</c> — «количество единиц инструмента», но для валюты не подтверждено,
+    /// единицы это или ЛОТЫ (лот юаня = 1000 единиц). Кросс-проверка: если известна цена за единицу (<paramref name="unitPriceRub"/>,
+    /// РУБЛИ) и <c>|quantity × цена − |платёж||</c> &gt; 5% от |платежа|, quantity считается лотами и берутся единицы
+    /// <c>|платёж| ÷ цена</c> (независимо от лотности), <paramref name="mismatch"/> = true (вызывающий пишет LogWarning). Без цены —
+    /// quantity как есть. Если quantity не отдано (0/null), единицы восстанавливаются как <c>|платёж| ÷ цена</c>. Иначе null.
     /// </summary>
-    public static decimal? Resolve(decimal? quantity, decimal paymentRub, decimal? unitPriceRub)
+    public static decimal? Resolve(decimal? quantity, decimal paymentRub, decimal? unitPriceRub, out bool mismatch)
     {
-        if (quantity is > 0m) return quantity;
-        return unitPriceRub is > 0m && paymentRub != 0m ? Math.Abs(paymentRub) / unitPriceRub.Value : null;
+        mismatch = false;
+        var fromPayment = unitPriceRub is > 0m && paymentRub != 0m ? Math.Abs(paymentRub) / unitPriceRub.Value : (decimal?)null;
+        if (quantity is > 0m)
+        {
+            if (unitPriceRub is > 0m && paymentRub != 0m && fromPayment is > 0m
+                && Math.Abs(quantity.Value * unitPriceRub.Value - Math.Abs(paymentRub)) > CrossCheckTolerance * Math.Abs(paymentRub))
+            {
+                mismatch = true;
+                return fromPayment;
+            }
+
+            return quantity;
+        }
+
+        return fromPayment;
     }
+
+    /// <inheritdoc cref="Resolve(decimal?, decimal, decimal?, out bool)"/>
+    public static decimal? Resolve(decimal? quantity, decimal paymentRub, decimal? unitPriceRub) =>
+        Resolve(quantity, paymentRub, unitPriceRub, out _);
 }
 
 /// <summary>Разбивка «денег на счёте» (задача 55).</summary>

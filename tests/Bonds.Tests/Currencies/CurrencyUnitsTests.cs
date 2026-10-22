@@ -82,6 +82,31 @@ public class CurrencyUnitsTests
     }
 
     [Fact]
+    public void OperationUnits_QuantityInLots_CrossCheckUsesPaymentOverPrice()
+    {
+        // покупка 1000 CNY по 12.5, платёж -12 500; брокер отдал quantity=1 (лот) -> 1000 единиц
+        CurrencyOperationUnits.Resolve(1m, -12_500m, 12.5m, out var mismatch).Should().Be(1000m);
+        mismatch.Should().BeTrue();
+    }
+
+    [Fact]
+    public void OperationUnits_QuantityInUnits_UnchangedWithinTolerance()
+    {
+        CurrencyOperationUnits.Resolve(1000m, -12_500m, 12.5m, out var m1).Should().Be(1000m);
+        m1.Should().BeFalse();
+        // комиссия/округление цены в пределах 5% - не расхождение
+        CurrencyOperationUnits.Resolve(1000m, -12_700m, 12.5m, out var m2).Should().Be(1000m);
+        m2.Should().BeFalse();
+    }
+
+    [Fact]
+    public void OperationUnits_NoPrice_QuantityAsIs()
+    {
+        CurrencyOperationUnits.Resolve(1m, -12_500m, null, out var mismatch).Should().Be(1m);
+        mismatch.Should().BeFalse();
+    }
+
+    [Fact]
     public void CashRubOnly_SubtractsCurrency_FlooredAtZero_AndSumsBackToCash()
     {
         var cash = 100_000m;

@@ -50,6 +50,7 @@ public sealed class SyncCycleService : ISyncCycleRunner
     private DateTime? _lastFailureAtUtc;
     private List<string> _lastRunErrors = [];
     private bool _tokenMissingOrInvalid;
+    private int _skippedForeignOperations;
 
     public SyncCycleService(
         IServiceScopeFactory scopeFactory,
@@ -73,6 +74,7 @@ public sealed class SyncCycleService : ISyncCycleRunner
                 LastFailureAtUtc = _lastFailureAtUtc,
                 LastRunErrors = _lastRunErrors,
                 TokenMissingOrInvalid = _tokenMissingOrInvalid,
+                SkippedForeignOperations = _skippedForeignOperations,
             };
         }
     }
@@ -99,6 +101,7 @@ public sealed class SyncCycleService : ISyncCycleRunner
             {
                 _lastRunErrors = result.Errors;
                 _tokenMissingOrInvalid = result.TokenMissingOrInvalid;
+                _skippedForeignOperations = result.SkippedForeignOperations;
                 if (result.HasErrors)
                 {
                     _lastFailureAtUtc = DateTime.UtcNow;
@@ -161,6 +164,7 @@ public sealed class SyncCycleService : ISyncCycleRunner
             result.OperationsUpserted = syncResult.OperationsUpserted;
             result.YieldCurveUpdated = syncResult.YieldCurveUpdated;
             journalSynced = syncResult.JournalSynced;
+            result.SkippedForeignOperations = syncResult.SkippedForeignOperations;
             if (syncResult.HasErrors) result.Errors.AddRange(syncResult.Errors.Select(e => $"Sync: {e}"));
         }
         catch (InvalidOperationException ex)

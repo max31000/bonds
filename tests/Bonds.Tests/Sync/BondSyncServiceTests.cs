@@ -530,31 +530,75 @@ public class BondSyncServiceTests
             ops.Single(x => x.ExternalId == "fee-cny").AmountRub == -125m && ops.Single(x => x.ExternalId == "fee-rub").AmountRub == -7m)), Times.Once);
     }
 
-    [Fact]
-    public async Task SyncAsync_PaymentInForeignCurrency_NoRate_SkippedWithSingleCountedError()
+    private void SetupForeignOps(params TInvestOperation[] ops)
     {
         SetupHappyPathAccountAndPositions();
-        var date = new DateTime(2026, 9, 1);
         _rateLookup.Setup(r => r.GetRubPerUnitAsync(It.IsAny<string>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>())).ReturnsAsync((decimal?)null);
         _tInvest.Setup(c => c.GetOperationsAsync(BrokerAccountId, It.IsAny<DateTime?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<TInvestOperation>
-            {
-                new() { Id = "fee-cny-1", OperationType = "BrokerFee", Figi = Figi, InstrumentKind = "Bond", Date = date, PaymentRub = -10m, PaymentCurrency = "cny" },
-                new() { Id = "fee-cny-2", OperationType = "ServiceFee", InstrumentKind = null, Date = date, PaymentRub = -3m, PaymentCurrency = "cny" },
-                new() { Id = "fee-rub", OperationType = "BrokerFee", Figi = Figi, InstrumentKind = "Bond", Date = date, PaymentRub = -7m, PaymentCurrency = "rub" },
-                // не релевантные портфелю операции в чужой валюте (дивиденд по акции, пополнение в USD) шума не создают
-                new() { Id = "share-div", OperationType = "Dividend", Figi = "SH", InstrumentKind = "Share", Date = date, PaymentRub = 5m, PaymentCurrency = "usd" },
-                new() { Id = "deposit", OperationType = "Input", InstrumentKind = null, Date = date, PaymentRub = 100m, PaymentCurrency = "usd" },
-            });
+            .ReturnsAsync(ops.ToList());
         _operations.Setup(o => o.UpsertManyByExternalIdAsync(It.IsAny<IEnumerable<Operation>>()))
-            .ReturnsAsync((IEnumerable<Operation> ops) => ops.Count());
+            .ReturnsAsync((IEnumerable<Operation> o) => o.Count());
+    }
+
+    [Fact]
+    public async Task SyncAsync_PaymentInForeignCurrency_NoRate_SkippedNotAnError()
+    {
+        var date = new DateTime(2026, 9, 1);
+        SetupForeignOps(
+            new() { Id = "fee-cny-1", OperationType = "BrokerFee", Figi = Figi, InstrumentKind = "Bond", Date = date, PaymentRub = -10m, PaymentCurrency = "cny" },
+            new() { Id = "fee-cny-2", OperationType = "ServiceFee", InstrumentKind = null, Date = date, PaymentRub = -3m, PaymentCurrency = "cny" },
+            new() { Id = "fee-rub", OperationType = "BrokerFee", Figi = Figi, InstrumentKind = "Bond", Date = date, PaymentRub = -7m, PaymentCurrency = "rub" },
+            // не релевантные портфелю операции в чужой валюте (дивиденд по акции, пополнение в USD) шума не создают
+            new() { Id = "share-div", OperationType = "Dividend", Figi = "SH", InstrumentKind = "Share", Date = date, PaymentRub = 5m, PaymentCurrency = "usd" },
+            new() { Id = "deposit", OperationType = "Input", InstrumentKind = null, Date = date, PaymentRub = 100m, PaymentCurrency = "usd" });
 
         var result = await CreateService().SyncAsync(AccountId);
 
         _operations.Verify(o => o.UpsertManyByExternalIdAsync(It.Is<IEnumerable<Operation>>(ops =>
             ops.Select(x => x.ExternalId).SequenceEqual(new[] { "fee-rub" }))), Times.Once, "операции в CNY без курса не записаны как рубли");
-        result.Errors.Should().ContainSingle(e => e.Contains("CNY") && e.Contains("пропущены: 2") && !e.Contains("USD"));
+        result.HasErrors.Should().BeFalse("пропуск без курса - не ошибка цикла (иначе постоянный алерт)");
+        result.SkippedForeignOperations.Should().Be(2);
         result.InstrumentsSynced.Should().Be(1, "позиции и остальной синк не страдают");
+    }
+
+    [Fact]
+    public async Task SyncAsync_UsdOperation_CurrencyNotInDirectory_NoErrorAndCounted()
+    {
+        SetupForeignOps(new() { Id = "fee-usd", OperationType = "BrokerFee", Figi = Figi, InstrumentKind = "Bond", Date = new DateTime(2026, 9, 1), PaymentRub = -2m, PaymentCurrency = "usd" });
+        _rateLookup.Setup(r => r.ClassifyMissAsync("usd", It.IsAny<CancellationToken>())).ReturnsAsync(RateMissKind.NotInDirectory);
+
+        var result = await CreateService().SyncAsync(AccountId);
+
+        result.HasErrors.Should().BeFalse();
+        result.SkippedForeignOperations.Should().Be(1);
+        result.JournalSynced.Should().BeTrue("принципиально не конвертируемая операция журнал неполным не делает");
+    }
+
+    [Fact]
+    public async Task SyncAsync_ZeroPaymentInForeignCurrency_SavedAsZeroWithoutRate()
+    {
+        SetupForeignOps(new() { Id = "sec-in", OperationType = "BrokerFee", Figi = Figi, InstrumentKind = "Bond", Date = new DateTime(2026, 9, 1), PaymentRub = 0m, PaymentCurrency = "usd" });
+
+        var result = await CreateService().SyncAsync(AccountId);
+
+        _operations.Verify(o => o.UpsertManyByExternalIdAsync(It.Is<IEnumerable<Operation>>(ops =>
+            ops.Single().ExternalId == "sec-in" && ops.Single().AmountRub == 0m)), Times.Once);
+        result.HasErrors.Should().BeFalse();
+        result.SkippedForeignOperations.Should().Be(0);
+        _rateLookup.Verify(r => r.GetRubPerUnitAsync(It.IsAny<string>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task SyncAsync_SelfHealingSkip_RateHistoryNotLoadedYet_JournalNotMarkedSynced()
+    {
+        SetupForeignOps(new() { Id = "fee-cny", OperationType = "BrokerFee", Figi = Figi, InstrumentKind = "Bond", Date = new DateTime(2026, 9, 1), PaymentRub = -10m, PaymentCurrency = "cny" });
+        _rateLookup.Setup(r => r.ClassifyMissAsync("cny", It.IsAny<CancellationToken>())).ReturnsAsync(RateMissKind.NoHistoryYet);
+
+        var result = await CreateService().SyncAsync(AccountId);
+
+        result.HasErrors.Should().BeFalse();
+        result.SkippedForeignOperations.Should().Be(1);
+        result.JournalSynced.Should().BeFalse("бэкфилл истории не должен закрепиться из неполного журнала");
     }
 
     [Fact]

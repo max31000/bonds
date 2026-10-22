@@ -139,6 +139,16 @@ public sealed class CurrencySyncService : ICurrencySyncService
                     }
                 }
 
+                var isTrade = mapped is CurrencyOperationType.Buy or CurrencyOperationType.Sell;
+                var unitsMismatch = false;
+                var units = isTrade ? CurrencyOperationUnits.Resolve(op.Quantity, op.PaymentRub, op.UnitPrice, out unitsMismatch) : null;
+                if (unitsMismatch)
+                {
+                    _logger.LogWarning(
+                        "Currency operation {OperationId}: quantity {Quantity} x price {Price} != payment {Payment}; quantity looks like lots, using payment / price = {Units} units",
+                        op.Id, op.Quantity, op.UnitPrice, op.PaymentRub, units);
+                }
+
                 domainOps.Add(new CurrencyOperation
                 {
                     AccountId = accountId,
@@ -146,9 +156,7 @@ public sealed class CurrencySyncService : ICurrencySyncService
                     Type = mapped.Value,
                     Date = op.Date,
                     AmountRub = op.PaymentRub, // РУБЛИ, знак брокера — как есть (валюта платежа проверена выше по стеку)
-                    Quantity = mapped is CurrencyOperationType.Buy or CurrencyOperationType.Sell
-                        ? CurrencyOperationUnits.Resolve(op.Quantity, op.PaymentRub, op.UnitPrice)
-                        : null,
+                    Quantity = units,
                     ExternalId = op.Id,
                 });
             }
