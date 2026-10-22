@@ -5,7 +5,7 @@ import { EmptyState, ErrorState, HelpHint, Metric, MetricGrid, Page, Section } f
 import { useSearchParams } from 'react-router-dom';
 import type { IncomePosition, IncomeResponse } from '../api/types';
 import { Disclaimer } from '../components/Disclaimer';
-import { INCOME_HELP } from '../components/incomeCopy';
+import { INCOME_CURRENCY_NOTE, INCOME_HELP } from '../components/incomeCopy';
 import { IncomeBreakdown } from '../components/income/IncomeBreakdown';
 import { IncomeMonthlyChart } from '../components/income/IncomeMonthlyChart';
 import { IncomePositionCards, IncomePositionsTable } from '../components/income/IncomePositions';
@@ -157,7 +157,7 @@ function KpiBlock({ data, periodMode }: { data: IncomeResponse; periodMode: bool
         help={INCOME_HELP.xirr}
         value={formatPercent(data.portfolioXirrFraction)}
         tone={data.portfolioXirrFraction}
-        hint="годовых, облигации и фонды"
+        hint="годовых, облигации, фонды и валюта"
       />
     </MetricGrid>
   );
@@ -175,7 +175,7 @@ function PageSkeleton() {
 
 /**
  * Экран «Доходы» (задача 54): сколько реально заработано по всем бумагам — облигациям и фондам, открытым и закрытым.
- * Фильтры живут в URL (`?period=all|ytd|12m|YYYY&asset=all|bond|fund&closed=0|1`), `?asset=bond&focus=<assetId>`
+ * Фильтры живут в URL (`?period=all|ytd|12m|YYYY&asset=all|bond|fund|currency&closed=0|1`), `?asset=bond&focus=<assetId>` (для валюты — `?asset=currency&focus=<currencyId>`)
  * раскрывает и подсвечивает нужную строку. Все расчёты — на бэкенде (задача 52); здесь только показ.
  */
 export function Income() {
@@ -298,6 +298,7 @@ export function Income() {
           { value: 'all', label: 'Все' },
           { value: 'bond', label: 'Облигации' },
           { value: 'fund', label: 'Фонды' },
+          { value: 'currency', label: 'Валюта' },
         ]}
         aria-label="Тип актива"
       />
@@ -379,6 +380,11 @@ export function Income() {
                     accountLevel={data.accountLevel}
                     period={data.period}
                   />
+                )}
+                {data.positions.some((p) => p.assetKind === 'currency') && (
+                  <p className="bonds-note bonds-income-footnote" data-testid="income-currency-note">
+                    {INCOME_CURRENCY_NOTE}
+                  </p>
                 )}
                 {(data.accountLevel.taxesRub !== 0 || data.accountLevel.feesRub !== 0) && (
                   <p className="bonds-note bonds-income-footnote" data-testid="income-account-level-note">

@@ -19,7 +19,7 @@ export function parsePeriod(raw: string | null): IncomePeriodKey {
 }
 
 export function parseAssetFilter(raw: string | null): IncomeAssetFilter {
-  return raw === 'bond' || raw === 'fund' ? raw : 'all';
+  return raw === 'bond' || raw === 'fund' || raw === 'currency' ? raw : 'all';
 }
 
 /**
@@ -68,9 +68,9 @@ export const STATUS_LABEL: Record<IncomeStatus, string> = { open: 'Открыт�
 export function ledgerKindLabel(kind: IncomeLedgerKind, assetKind: IncomeAssetKind): string {
   switch (kind) {
     case 'buy':
-      return 'Покупка';
+      return assetKind === 'currency' ? 'Покупка валюты' : 'Покупка';
     case 'sell':
-      return 'Продажа';
+      return assetKind === 'currency' ? 'Продажа валюты' : 'Продажа';
     case 'income':
       return assetKind === 'fund' ? 'Выплата фонда' : assetKind === 'currency' ? 'Проценты на остаток' : 'Купон';
     case 'tax':
@@ -235,8 +235,9 @@ export function buildBreakdown(t: IncomeTotals, acc: IncomeAccountLevel): Breakd
   return items;
 }
 
-/** Ссылка на карточку: открытая облигация → /positions/:positionId, фонд → /funds/:fundId; у закрытых карточки нет. */
+/** Ссылка на карточку: открытая облигация → /positions/:positionId, фонд → /funds/:fundId, валюта → вкладка «Валюта»; у закрытых облигаций карточки нет. */
 export function cardLinkOf(p: IncomePosition): string | null {
+  if (p.assetKind === 'currency') return '/positions?tab=currency';
   if (p.assetKind === 'fund' && p.fundId !== null) return `/funds/${p.fundId}`;
   if (p.assetKind === 'bond' && p.positionId !== null) return `/positions/${p.positionId}`;
   return null;

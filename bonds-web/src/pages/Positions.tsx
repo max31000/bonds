@@ -19,12 +19,15 @@ import { useMediaQuery } from '@mantine/hooks';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { usePositionsStore } from '../store/usePositionsStore';
 import { useFundsStore } from '../store/useFundsStore';
+import { useCurrenciesStore } from '../store/useCurrenciesStore';
 import { useSettingsStore } from '../store/useSettingsStore';
 import { useRelativeValueStore } from '../store/useRelativeValueStore';
 import { usePositionVerdictStore } from '../store/usePositionVerdictStore';
 import { useLiveQuotes } from '../hooks/useLiveQuotes';
 import { Disclaimer } from '../components/Disclaimer';
 import { FundsTable } from '../components/FundsTable';
+import { CurrenciesTable } from '../components/CurrenciesTable';
+import { CURRENCY_FX_DISCLAIMER } from '../components/currenciesCopy';
 import { FUND_KEY_RATE_NOTE } from '../components/fundsCopy';
 import { PortfolioIntradayChart } from '../components/PortfolioIntradayChart';
 import { PositionCard } from '../components/PositionCard';
@@ -44,15 +47,30 @@ import { formatRub, formatDaysUntil, formatPercent, formatNumber, formatBp } fro
 import { computePositionsTotals } from '../utils/positionsAggregation';
 import { buildYieldHeatmapScale } from '../utils/yieldHeatmap';
 
-type PositionsTab = 'bonds' | 'funds';
+type PositionsTab = 'bonds' | 'funds' | 'currency';
 
 /**
- * Экран «Позиции»: вкладки «Облигации | Фонды» (задача 53). Вкладка живёт в URL (`?tab=funds`), по умолчанию —
- * облигации: существующая таблица без изменений. Фонды — отдельный домен, в облигационные виджеты не подмешиваются.
+ * Экран «Позиции»: вкладки «Облигации | Фонды | Валюта» (задачи 53, 56). Вкладка живёт в URL (`?tab=funds|currency`),
+ * по умолчанию — облигации: существующая таблица без изменений. Фонды и валюта — отдельные домены, в облигационные
+ * виджеты не подмешиваются. Вкладка «Валюта» показывается, только если `/api/currencies` вернул хотя бы одну валюту
+ * (включая проданную) — либо если открыта по прямой ссылке.
  */
 export function Positions() {
   const [params, setParams] = useSearchParams();
-  const tab: PositionsTab = params.get('tab') === 'funds' ? 'funds' : 'bonds';
+  const rawTab = params.get('tab');
+  const tab: PositionsTab = rawTab === 'funds' ? 'funds' : rawTab === 'currency' ? 'currency' : 'bonds';
+  const hasCurrencies = useCurrenciesStore((s) => s.currencies.length > 0);
+  const loadCurrencies = useCurrenciesStore((s) => s.load);
+
+  useEffect(() => {
+    void loadCurrencies();
+  }, [loadCurrencies]);
+
+  const data = [
+    { value: 'bonds', label: 'Облигации' },
+    { value: 'funds', label: 'Фонды' },
+    ...(hasCurrencies || tab === 'currency' ? [{ value: 'currency', label: 'Валюта' }] : []),
+  ];
 
   const tabs = (
     <SegmentedControl
@@ -60,19 +78,61 @@ export function Positions() {
       value={tab}
       onChange={(v) => {
         const next = new URLSearchParams(params);
-        if (v === 'funds') next.set('tab', 'funds');
+        if (v === 'funds' || v === 'currency') next.set('tab', v);
         else next.delete('tab');
         setParams(next, { replace: true });
       }}
-      data={[
-        { value: 'bonds', label: 'Облигации' },
-        { value: 'funds', label: 'Фонды' },
-      ]}
+      data={data}
       data-testid="positions-tab-toggle"
     />
   );
 
+  if (tab === 'currency') return <CurrencyPositionsView tabs={tabs} />;
   return tab === 'funds' ? <FundsPositionsView tabs={tabs} /> : <BondsPositionsView tabs={tabs} />;
+}
+
+/** Вкладка «Валюта»: юани и т.п. — курс, стоимость, курсовая разница (GET /api/currencies, данные грузит родитель). */
+function CurrencyPositionsView({ tabs }: { tabs: ReactNode }) {
+  const { currencies, totals, disclaimer, loaded, isLoading, error } = useCurrenciesStore();
+
+  return (
+    <Page title="Позиции" description="Валюта на счёте: курс, стоимость и курсовая разница" width="wide">
+      {tabs}
+
+      {(isLoading || !loaded) && !error && (
+        <div className="bonds-center">
+          <Loader />
+        </div>
+      )}
+
+      {!isLoading && error && (
+        <Section>
+          <ErrorState title="Не удалось загрузить валюту" error={error} data-testid="currencies-error" />
+        </Section>
+      )}
+
+      {!isLoading && loaded && !error && currencies.length === 0 && (
+        <Section>
+          <EmptyState
+            data-testid="currencies-empty"
+            title="Валюты нет"
+            description="Валюта появится после синка, если куплена в Т-Инвестициях."
+          />
+        </Section>
+      )}
+
+      {!isLoading && !error && currencies.length > 0 && (
+        <>
+          <p className="bonds-note" data-testid="currencies-fx-note">
+            {CURRENCY_FX_DISCLAIMER}
+          </p>
+          <CurrenciesTable currencies={currencies} totals={totals} />
+        </>
+      )}
+
+      <Disclaimer text={disclaimer} />
+    </Page>
+  );
 }
 
 /** Вкладка «Фонды»: список паёв с P&L, фактической доходностью и оценкой (GET /api/funds). */

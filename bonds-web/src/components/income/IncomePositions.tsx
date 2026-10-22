@@ -50,6 +50,12 @@ function Warnings({ p }: { p: IncomePosition }) {
   );
 }
 
+/** Купоны/выплаты строки; у валюты это проценты на остаток — если их нет (брокер не отдаёт), честный прочерк. */
+function CouponsMoney({ p, periodMode }: { p: IncomePosition; periodMode: boolean }) {
+  if (p.assetKind === 'currency' && Math.abs(couponsOf(p, periodMode)) < 0.005) return <span className="bonds-note">—</span>;
+  return <Money value={couponsOf(p, periodMode)} />;
+}
+
 function AssetCell({ p }: { p: IncomePosition }) {
   const sub = [p.ticker, p.isin].filter(Boolean).join(' · ');
   return (
@@ -64,6 +70,11 @@ function AssetCell({ p }: { p: IncomePosition }) {
         {p.assetKind === 'fund' && (
           <Badge size="xs" color="violet" variant="light">
             Фонд
+          </Badge>
+        )}
+        {p.assetKind === 'currency' && (
+          <Badge size="xs" color="teal" variant="light" data-testid={`income-badge-currency-${p.assetId}`}>
+            Валюта
           </Badge>
         )}
         {p.status !== 'open' && (
@@ -156,10 +167,10 @@ export function IncomePositionsTable({
               k="coupons"
               sort={sort}
               onSort={onSort}
-              hint={periodMode ? 'Купоны и выплаты фондов за период до налога.' : 'Брутто − НКД уплаченный + НКД полученный + накопленный НКД.'}
+              hint={periodMode ? 'Купоны, выплаты фондов и проценты на остаток валюты за период до налога.' : 'Брутто − НКД уплаченный + НКД полученный + накопленный НКД.'}
             />
-            <SortTh label={`Продажи${suffix}`} k="realized" sort={sort} onSort={onSort} hint="Прибыль или убыток от продаж и погашений." />
-            <SortTh label="Бумажная" k="unrealized" sort={sort} onSort={onSort} hint="На сегодня, за всё время. У закрытых позиций нет." />
+            <SortTh label={`Продажи${suffix}`} k="realized" sort={sort} onSort={onSort} hint="Прибыль или убыток от продаж и погашений; у валюты — реализованная курсовая разница." />
+            <SortTh label="Бумажная" k="unrealized" sort={sort} onSort={onSort} hint="На сегодня, за всё время. У закрытых позиций нет. У валюты — курсовая разница по текущему курсу." />
             <SortTh label={`Налоги и комиссии${suffix}`} k="costs" sort={sort} onSort={onSort} />
             {periodMode && <SortTh label="Итого за период" k="periodNet" sort={sort} onSort={onSort} hint="Купоны + продажи − налоги − комиссии за период. Без НКД и бумажной прибыли." />}
             <SortTh label="Итого, всё время" k="total" sort={sort} onSort={onSort} hint="Всё заработанное по бумаге за всё время владения, ₽ и % к вложенному." />
@@ -197,7 +208,7 @@ export function IncomePositionsTable({
                   <Money value={p.investedTotalRub} />
                 </Table.Td>
                 <Table.Td ta="right">
-                  <Money value={couponsOf(p, periodMode)} />
+                  <CouponsMoney p={p} periodMode={periodMode} />
                 </Table.Td>
                 <Table.Td ta="right">
                   <Money value={realizedOf(p, periodMode)} signed />
@@ -298,7 +309,7 @@ export function IncomePositionCards({ rows, periodMode, expanded, focusKey, onTo
                 </div>
                 <div>
                   <div className="bonds-eyebrow">{periodMode ? 'Купоны, брутто' : 'Купоны, нетто'}</div>
-                  <Money value={couponsOf(p, periodMode)} />
+                  <CouponsMoney p={p} periodMode={periodMode} />
                 </div>
                 <div>
                   <div className="bonds-eyebrow">Продажи</div>

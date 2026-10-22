@@ -8,6 +8,7 @@ import { formatMonthLabel, formatRub, formatRubCompact } from '../../utils/forma
 const SERIES = {
   coupons: { name: 'Купоны', color: chartColors.accent },
   distributions: { name: 'Выплаты фондов', color: chartColors.series[1] },
+  currency: { name: 'Проценты по валюте', color: chartColors.series[4] },
   realized: { name: 'Продажи и погашения', color: chartColors.series[2] },
   accrued: { name: 'НКД (нетто)', color: chartColors.series[3] },
   taxes: { name: 'Налоги', color: chartColors.negative },
@@ -27,6 +28,7 @@ export function IncomeMonthlyChart({ monthly }: { monthly: IncomeMonth[] }) {
         month: formatMonthLabel(m.month),
         [SERIES.coupons.name]: m.couponsGrossRub,
         [SERIES.distributions.name]: m.distributionsGrossRub,
+        [SERIES.currency.name]: m.currencyIncomeGrossRub ?? 0,
         [SERIES.realized.name]: m.realizedPnlRub,
         [SERIES.accrued.name]: m.accruedNetRub,
         [SERIES.taxes.name]: m.taxesRub,
@@ -71,7 +73,7 @@ export function IncomeMonthlyChart({ monthly }: { monthly: IncomeMonth[] }) {
           }}
         />
         <Legend {...t.legend} />
-        {(['coupons', 'distributions', 'realized', 'accrued', 'taxes', 'fees'] as const).map((k) => (
+        {(['coupons', 'distributions', 'currency', 'realized', 'accrued', 'taxes', 'fees'] as const).map((k) => (
           <Bar key={k} {...t.bar} dataKey={SERIES[k].name} stackId="income" fill={SERIES[k].color} isAnimationActive={false} />
         ))}
         <Line {...t.line} dataKey={SERIES.net.name} stroke={SERIES.net.color} dot={{ r: 2 }} isAnimationActive={false} />

@@ -76,7 +76,8 @@ export function IncomeLedger({ position }: { position: IncomePosition }) {
                     {e.accruedRub === null ? '—' : formatRubPrecise(e.accruedRub)}
                   </Table.Td>
                   <Table.Td ta="right" className="mvv-num">
-                    {formatNumber(e.quantityAfter, Number.isInteger(e.quantityAfter) ? 0 : 2)} · {formatRub(e.avgCostAfterRub)}
+                    {formatNumber(e.quantityAfter, Number.isInteger(e.quantityAfter) ? 0 : 2)} ·{' '}
+                    {position.assetKind === 'currency' ? formatRubPrecise(e.avgCostAfterRub) : formatRub(e.avgCostAfterRub)}
                   </Table.Td>
                   <Table.Td ta="right" className={`mvv-num ${signClass(e.realizedPnlRub)}`}>
                     {Math.abs(e.realizedPnlRub) < 0.005 ? '—' : formatRubPrecise(e.realizedPnlRub)}

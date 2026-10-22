@@ -5,7 +5,7 @@ import { http, HttpResponse } from 'msw';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { server } from '../test/msw-handlers';
-import { baseIncome, bondLedger, closedBond, fundLedger } from '../test/incomeFixtures';
+import { baseIncome, bondLedger, closedBond, currencyLedger, currencyPosition, fundLedger } from '../test/incomeFixtures';
 import { useIncomeStore } from '../store/useIncomeStore';
 import { Income } from './Income';
 
@@ -38,7 +38,7 @@ function mockIncome(opts: { income?: unknown } = {}) {
     }),
     http.get('*/api/income/:kind/:assetId/ledger', ({ params }) => {
       ledgerCalls.push(`${params.kind}:${params.assetId}`);
-      return HttpResponse.json(params.kind === 'fund' ? fundLedger : bondLedger);
+      return HttpResponse.json(params.kind === 'fund' ? fundLedger : params.kind === 'currency' ? currencyLedger : bondLedger);
     }),
   );
   return { incomeUrls, ledgerCalls };
@@ -238,5 +238,41 @@ describe('Income (задача 54)', () => {
     fail = false;
     await userEvent.click(within(err).getByRole('button'));
     await within(await screen.findByTestId('income-ledger-bond-1')).findByText('Покупка');
+  });
+
+  it('фильтр «Валюта» уходит в запрос assetKind=currency и в URL', async () => {
+    const { incomeUrls } = mockIncome();
+    renderIncome();
+    await screen.findByTestId('income-kpi');
+    await userEvent.click(screen.getByLabelText('Валюта'));
+    await waitFor(() => expect(screen.getByTestId('loc')).toHaveTextContent('asset=currency'));
+    await waitFor(() => expect(incomeUrls.some((u) => u.searchParams.get('assetKind') === 'currency')).toBe(true));
+  });
+
+  it('?asset=currency&focus=<id>: бейдж «Валюта», раскрытие грузит ledger, операции названы по-человечески, курсовая разница в итогах', async () => {
+    const { ledgerCalls } = mockIncome({ income: { ...baseIncome, assetKind: 'currency', positions: [currencyPosition] } });
+    renderIncome('/income?asset=currency&focus=3');
+    const row = await screen.findByTestId('income-row-currency:3');
+    expect(within(row).getByTestId('income-badge-currency-3')).toHaveTextContent('Валюта');
+    await waitFor(() => expect(row).toHaveAttribute('aria-expanded', 'true'));
+    const ledger = await screen.findByTestId('income-ledger-currency-3');
+    expect(ledger).toHaveTextContent('Покупка валюты');
+    expect(ledger).toHaveTextContent('Продажа валюты');
+    expect(ledger).toHaveTextContent('11,25'); // средний курс с копейками
+    expect(ledgerCalls).toEqual(['currency:3']);
+    // Нет процентов на остаток — в колонке купонов честный прочерк, а курсовая разница в «Продажах» и «Бумажной».
+    expect(row).toHaveTextContent('+120');
+    expect(row).toHaveTextContent('+500');
+    expect(screen.getByTestId('income-currency-note')).toHaveTextContent('Налог с курсовой разницы');
+    expect(screen.getByTestId('income-kpi-realized')).toBeInTheDocument();
+  });
+
+  it('проценты на остаток валюты показываются в колонке купонов, а не прочерком', async () => {
+    mockIncome({
+      income: { ...baseIncome, positions: [{ ...currencyPosition, incomeGrossRub: 80, netCouponIncomeRub: 80 }] },
+    });
+    renderIncome();
+    const row = await screen.findByTestId('income-row-currency:3');
+    expect(row).toHaveTextContent(/80\s₽/);
   });
 });
