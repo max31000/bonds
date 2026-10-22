@@ -32,8 +32,14 @@ public static class PortfolioAnalyticsEndpoints
     private static async Task<IResult> GetComposition(
         ICurrentUser currentUser,
         IAccountRepository accountRepo,
-        PortfolioHoldingsBuilder holdingsBuilder)
+        PortfolioHoldingsBuilder holdingsBuilder,
+        FundOverviewBuilder fundOverview,
+        bool? includeFunds,
+        CancellationToken ct)
     {
+        // includeFunds по умолчанию true: «Аналитика» показывает картину всего портфеля. false — прежний облигационный ответ
+        // (SignalsEngine и вердикты позиций считают композицию через Calculate и фонды не видят).
+        var withFunds = includeFunds ?? true;
         var accountId = await PositionsEndpoints.ResolveAccountIdAsync(currentUser, accountRepo);
         if (accountId is null)
         {
@@ -44,13 +50,17 @@ public static class PortfolioAnalyticsEndpoints
                 BySector = [],
                 ByCouponType = [],
                 ByDurationBucket = [],
+                FundsIncluded = withFunds,
                 Disclaimer = Disclaimers.Metrics,
             });
         }
 
         var asOf = BusinessClock.MoscowToday();
-        var holdings = await holdingsBuilder.BuildForAccountAsync(accountId.Value, asOf);
-        var composition = PortfolioCompositionService.Calculate(holdings);
+        var holdings = await holdingsBuilder.BuildForAccountAsync(accountId.Value, asOf, ct);
+        var fundItems = await fundOverview.BuildExposuresAsync(accountId.Value, asOf, ct);
+        var composition = withFunds
+            ? PortfolioCompositionService.CalculateWithFunds(holdings, fundItems.Select(f => f.Exposure).ToList())
+            : PortfolioCompositionService.Calculate(holdings);
 
         var dto = new CompositionResponseDto
         {
@@ -59,6 +69,9 @@ public static class PortfolioAnalyticsEndpoints
             BySector = composition.BySector.Select(ToShareDto).ToList(),
             ByCouponType = composition.ByCouponType.Select(ToShareDto).ToList(),
             ByDurationBucket = composition.ByDurationBucket.Select(ToShareDto).ToList(),
+            ByAssetClass = composition.ByAssetClass.Select(ToShareDto).ToList(),
+            FundsIncluded = withFunds,
+            HasFunds = fundItems.Count > 0,
             Disclaimer = Disclaimers.Metrics,
         };
 
@@ -192,8 +205,12 @@ public static class PortfolioAnalyticsEndpoints
         ICurrentUser currentUser,
         IAccountRepository accountRepo,
         PortfolioHoldingsBuilder holdingsBuilder,
-        string? shiftsBp)
+        FundOverviewBuilder fundOverview,
+        string? shiftsBp,
+        bool? includeFunds,
+        CancellationToken ct)
     {
+        var withFunds = includeFunds ?? true;
         var accountId = await PositionsEndpoints.ResolveAccountIdAsync(currentUser, accountRepo);
         if (accountId is null)
         {
@@ -201,24 +218,39 @@ public static class PortfolioAnalyticsEndpoints
             {
                 CurrentValueRub = 0,
                 Scenarios = [],
+                FundsIncluded = withFunds,
                 Disclaimer = Disclaimers.Metrics,
             });
         }
 
         var asOf = BusinessClock.MoscowToday();
-        var holdings = (await holdingsBuilder.BuildForAccountAsync(accountId.Value, asOf)).ToList();
-        var currentValue = holdings.Sum(h => h.MarketValueRub);
+        var holdings = (await holdingsBuilder.BuildForAccountAsync(accountId.Value, asOf, ct)).ToList();
+        var fundItems = await fundOverview.BuildExposuresAsync(accountId.Value, asOf, ct);
+        var funds = withFunds ? fundItems.Select(f => f.Exposure).ToList() : [];
+        var currentValue = holdings.Sum(h => h.MarketValueRub) + funds.Sum(f => f.MarketValueRub);
 
         var shifts = string.IsNullOrEmpty(shiftsBp)
             ? RateScenarioService.DefaultShiftsBp
             : shiftsBp.Split(',').Select(int.Parse).ToArray();
 
-        var scenarios = RateScenarioService.Compute(holdings, shifts);
+        var scenarios = RateScenarioService.Compute(holdings, funds, shifts);
 
         return Results.Ok(new RateScenarioResponseDto
         {
             CurrentValueRub = currentValue,
-            RateSensitiveValueRub = RateScenarioService.RateSensitiveValue(holdings),
+            RateSensitiveValueRub = RateScenarioService.RateSensitiveValue(holdings, funds),
+            FundsIncluded = withFunds,
+            HasFunds = fundItems.Count > 0,
+            Funds = funds.Select(f => new RateScenarioFundDto
+            {
+                FundId = f.FundId,
+                Ticker = f.Ticker,
+                Name = f.Name,
+                MarketValueRub = f.MarketValueRub,
+                ModifiedDurationYears = f.ModifiedDurationYears,
+                DurationSource = fundItems.First(x => x.Exposure.FundId == f.FundId).Estimate.Source ?? "unknown",
+                DeltaAtPlus100bpRub = RateScenarioService.FundDelta(f, 100),
+            }).ToList(),
             Scenarios = scenarios.Select(s => new RateScenarioPointDto
             {
                 ShiftBp = s.ShiftBp,

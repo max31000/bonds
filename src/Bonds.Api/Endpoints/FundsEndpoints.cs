@@ -22,6 +22,9 @@ public static partial class FundsEndpoints
         "Оценка на основе истории цен паёв и выплат; не гарантия будущей доходности и не инвестиционная рекомендация. " +
         "У фондов с плавающим купоном выплаты следуют за ключевой ставкой. P&L — метод средней цены, налоги — как удержал брокер.";
 
+    /// <summary>Верхняя граница ручной модифицированной дюрации фонда, ГОДЫ.</summary>
+    internal const decimal MaxDurationOverrideYears = 30m;
+
     [GeneratedRegex("^[A-Z0-9]{2,16}$")]
     private static partial Regex IndexCodeRegex();
 
@@ -98,7 +101,13 @@ public static partial class FundsEndpoints
                 }).ToList(),
             Operations = ops.OrderByDescending(o => o.Date)
                 .Select(o => new FundOperationDto { Date = o.Date, Type = o.Type, AmountRub = o.AmountRub, Quantity = o.Quantity }).ToList(),
-            Settings = new FundSettingsDto { ForecastMethod = item.Fund.ForecastMethod, BenchmarkIndex = item.Fund.BenchmarkIndex },
+            Settings = new FundSettingsDto
+            {
+                ForecastMethod = item.Fund.ForecastMethod,
+                BenchmarkIndex = item.Fund.BenchmarkIndex,
+                DurationOverrideYears = item.Fund.DurationOverrideYears,
+                DurationEstimate = FundDurationEstimateDto.From(item.DurationEstimate),
+            },
             Disclaimer = FundsDisclaimer,
         });
     }
@@ -106,7 +115,9 @@ public static partial class FundsEndpoints
     private static async Task<IResult> UpdateSettings(
         ulong fundId,
         UpdateFundSettingsRequest request,
-        IFundRepository funds)
+        IFundRepository funds,
+        FundOverviewBuilder overview,
+        CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(request.ForecastMethod)
             || int.TryParse(request.ForecastMethod, out _)
@@ -122,10 +133,23 @@ public static partial class FundsEndpoints
                 return ValidationError("benchmarkIndex должен соответствовать ^[A-Z0-9]{2,16}$ (например, RGBI).");
         }
 
+        // Ручная модифицированная дюрация — ГОДЫ; null = сброс. Предел 30 лет — заведомо выше любой облигации.
+        if (request.DurationOverrideYears is { } duration && (duration < 0m || duration > MaxDurationOverrideYears))
+            return ValidationError($"durationOverrideYears должна быть в диапазоне 0–{MaxDurationOverrideYears} лет (модифицированная дюрация, годы).");
+        var durationOverride = request.DurationOverrideYears is { } d ? Math.Round(d, 4, MidpointRounding.AwayFromZero) : (decimal?)null;
+
         if (await funds.GetByIdAsync(fundId) is null) return Results.NotFound();
 
-        await funds.UpdateSettingsAsync(fundId, method, benchmark);
-        return Results.Ok(new FundSettingsDto { ForecastMethod = method, BenchmarkIndex = benchmark });
+        await funds.UpdateSettingsAsync(fundId, method, benchmark, durationOverride);
+        var updated = await funds.GetByIdAsync(fundId);
+        var estimate = updated is null ? null : await overview.GetDurationEstimateAsync(updated, BusinessClock.MoscowToday(), ct);
+        return Results.Ok(new FundSettingsDto
+        {
+            ForecastMethod = method,
+            BenchmarkIndex = benchmark,
+            DurationOverrideYears = durationOverride,
+            DurationEstimate = estimate is null ? null : FundDurationEstimateDto.From(estimate),
+        });
     }
 
     private static async Task<IResult> GetPortfolioSummary(
@@ -224,6 +248,7 @@ public static partial class FundsEndpoints
             TotalExpenseFraction = item.Fund.TotalExpenseFraction,
             Performance = ToDto(item.Performance),
             Outlook = FundOutlookDto.From(item.Outlook),
+            DurationEstimate = FundDurationEstimateDto.From(item.DurationEstimate),
             ShareOfPortfolioFraction = portfolioValueRub > 0m ? inc.MarketValueCleanRub / portfolioValueRub : null,
             HasUnknownLots = inc.HasUnknownLots,
             DataIncomplete = item.Income.DataIncomplete,

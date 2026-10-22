@@ -94,6 +94,87 @@ describe('FundDetail (задача 53)', () => {
     await waitFor(() => expect(screen.getByTestId('fund-outlook-basis')).toHaveTextContent('RGBI'));
   });
 
+  it('ручная дюрация: плейсхолдер из авто-оценки, сохранение отправляет PUT с durationOverrideYears, метод и индекс сохраняются', async () => {
+    let putBody: Record<string, unknown> | null = null;
+    server.use(
+      http.get('*/api/funds/7', () =>
+        HttpResponse.json({
+          ...baseFundDetail,
+          settings: {
+            forecastMethod: 'auto',
+            benchmarkIndex: 'RGBI',
+            durationOverrideYears: null,
+            durationEstimate: { modifiedDurationYears: 4.2028, source: 'index:RGBI', asOf: null, warnings: ['IndexStale'] },
+          },
+        }),
+      ),
+      http.put('*/api/funds/7/settings', async ({ request }) => {
+        putBody = (await request.json()) as Record<string, unknown>;
+        return HttpResponse.json({ forecastMethod: 'auto', benchmarkIndex: 'RGBI', durationOverrideYears: 0.3 });
+      }),
+    );
+    renderDetail();
+
+    const input = await screen.findByTestId('fund-duration-input');
+    expect(input).toHaveAttribute('placeholder', '4.20 (оценка)');
+    expect(screen.getByTestId('fund-duration-source')).toHaveTextContent('оценка по индексу RGBI');
+    expect(screen.getByTestId('fund-duration')).toHaveTextContent('устарели');
+
+    await userEvent.type(input, '0.3');
+    await userEvent.click(screen.getByTestId('fund-duration-save'));
+
+    await waitFor(() => expect(putBody).toEqual({ forecastMethod: 'auto', benchmarkIndex: 'RGBI', durationOverrideYears: 0.3 }));
+  });
+
+  it('сброс ручной дюрации отправляет durationOverrideYears: null', async () => {
+    let putBody: Record<string, unknown> | null = null;
+    server.use(
+      http.get('*/api/funds/7', () =>
+        HttpResponse.json({
+          ...baseFundDetail,
+          settings: {
+            forecastMethod: 'auto',
+            benchmarkIndex: null,
+            durationOverrideYears: 0.3,
+            durationEstimate: { modifiedDurationYears: 0.3, source: 'manual', asOf: null, warnings: [] },
+          },
+        }),
+      ),
+      http.put('*/api/funds/7/settings', async ({ request }) => {
+        putBody = (await request.json()) as Record<string, unknown>;
+        return HttpResponse.json({ forecastMethod: 'auto', benchmarkIndex: null, durationOverrideYears: null });
+      }),
+    );
+    renderDetail();
+
+    expect(await screen.findByTestId('fund-duration-source')).toHaveTextContent('задано вручную');
+    await userEvent.click(screen.getByTestId('fund-duration-reset'));
+
+    await waitFor(() => expect(putBody).toEqual({ forecastMethod: 'auto', benchmarkIndex: null, durationOverrideYears: null }));
+  });
+
+  it('смена метода сохраняет ручную дюрацию (бэкенд перезаписывает настройки целиком)', async () => {
+    let putBody: Record<string, unknown> | null = null;
+    server.use(
+      http.get('*/api/funds/7', () =>
+        HttpResponse.json({
+          ...baseFundDetail,
+          settings: { forecastMethod: 'auto', benchmarkIndex: null, durationOverrideYears: 0.3, durationEstimate: { modifiedDurationYears: 0.3, source: 'manual', asOf: null, warnings: [] } },
+        }),
+      ),
+      http.put('*/api/funds/7/settings', async ({ request }) => {
+        putBody = (await request.json()) as Record<string, unknown>;
+        return HttpResponse.json({ forecastMethod: 'indexYield', benchmarkIndex: null, durationOverrideYears: 0.3 });
+      }),
+    );
+    renderDetail();
+
+    await userEvent.click(await screen.findByTestId('fund-method-select'));
+    await userEvent.click(await screen.findByText('По индексу', { selector: 'span' }));
+
+    await waitFor(() => expect(putBody).toEqual({ forecastMethod: 'indexYield', benchmarkIndex: null, durationOverrideYears: 0.3 }));
+  });
+
   it('оценка недоступна — причина вместо чисел', async () => {
     server.use(
       http.get('*/api/funds/7', () =>

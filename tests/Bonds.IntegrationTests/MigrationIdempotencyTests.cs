@@ -75,6 +75,7 @@ public class MigrationIdempotencyTests : IAsyncLifetime
             "023_funds.sql",
             "024_operations_accrued.sql",
             "025_currency_assets.sql",
+            "026_fund_duration_override.sql",
         });
 
         var expectedTables = new[]
@@ -112,7 +113,7 @@ public class MigrationIdempotencyTests : IAsyncLifetime
         await conn.OpenAsync();
 
         var migrationCount = await conn.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM _migrations");
-        migrationCount.Should().Be(25, "повторный запуск не должен заново применять уже применённые миграции");
+        migrationCount.Should().Be(26, "повторный запуск не должен заново применять уже применённые миграции");
 
         // users.base_currency существует ровно один раз (ALTER ... ADD COLUMN IF NOT EXISTS не падает повторно).
         var columnCount = await conn.ExecuteScalarAsync<long>(
@@ -383,5 +384,21 @@ public class MigrationIdempotencyTests : IAsyncLifetime
         (await Column("currencies", "face_value")).Type.Should().StartWith("decimal(20,6)");
         (await Column("currency_rate_history", "close_rub")).Nullable.Should().Be("NO");
         (await Column("currencies", "iso_code")).Type.Should().Be("varchar(8)");
+    }
+
+    [Fact]
+    public async Task RunAsync_Migration026_FundsHaveNullableDurationOverrideYears()
+    {
+        var connectionString = _container.GetConnectionString();
+        await new MigrationRunner(connectionString, NullLogger<MigrationRunner>.Instance).RunAsync();
+
+        await using var conn = new MySqlConnection(connectionString);
+        await conn.OpenAsync();
+
+        var row = await conn.QuerySingleAsync<(string ColumnType, string IsNullable)>(
+            @"SELECT COLUMN_TYPE AS ColumnType, IS_NULLABLE AS IsNullable FROM information_schema.columns
+              WHERE table_schema = DATABASE() AND table_name = 'funds' AND column_name = 'duration_override_years'");
+        row.ColumnType.Should().StartWith("decimal(9,4)", "годы, 4 знака");
+        row.IsNullable.Should().Be("YES", "NULL = ручная дюрация не задана (миграция 026)");
     }
 }

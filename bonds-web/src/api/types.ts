@@ -325,6 +325,12 @@ export interface CompositionResponse {
   bySector: CompositionSlice[];
   byCouponType: CompositionSlice[];
   byDurationBucket: CompositionSlice[];
+  /** Задача 57: разрез «Облигации / Фонды»; при includeFunds=false — пустой. Тот же sharePercent (ПРОЦЕНТЫ). */
+  byAssetClass?: CompositionSlice[];
+  /** Фонды вошли в расчёт (includeFunds=true, дефолт бэкенда). Для старых ответов — отсутствует. */
+  fundsIncluded?: boolean;
+  /** У пользователя есть открытые фонды с известной ценой — показывать переключатель «С фондами / Только облигации». */
+  hasFunds?: boolean;
   disclaimer: string;
 }
 
@@ -450,7 +456,27 @@ export interface RateScenarioResponse {
   /** H-1/M-1: процентно-чувствительная часть портфеля (бумаги с дюрацией) — база для Δ. */
   rateSensitiveValueRub: number;
   scenarios: RateScenarioPoint[];
+  /** Задача 57: фонды вошли в базу и в Δ. */
+  fundsIncluded?: boolean;
+  hasFunds?: boolean;
+  /** Фонды с вкладом (пусто при includeFunds=false). */
+  funds?: RateScenarioFund[];
   disclaimer: string;
+}
+
+/** Источник модифицированной дюрации фонда: "manual" | "index:RGBI" (код индекса) | "unknown". */
+export type FundDurationSource = string;
+
+/** Фонд в сценариях ставок (задача 57). Деньги — рубли, дюрация — модифицированная, ГОДЫ (оценка). */
+export interface RateScenarioFund {
+  fundId: number;
+  ticker: string | null;
+  name: string | null;
+  marketValueRub: number;
+  modifiedDurationYears: number | null;
+  durationSource: FundDurationSource;
+  /** Вклад в Δ при +100 б.п., рубли (отрицательный); null — дюрации нет. */
+  deltaAtPlus100bpRub: number | null;
 }
 
 // ---- GET /api/analytics/trajectory ----
@@ -1427,6 +1453,8 @@ export interface FundRow {
   outlook: FundOutlook;
   /** Доля в (облигации + фонды), ДОЛЯ. */
   shareOfPortfolioFraction: number | null;
+  /** Задача 57: оценка дюрации для композиции/сценариев ставок. */
+  durationEstimate?: FundDurationEstimate;
   hasUnknownLots: boolean;
   dataIncomplete: boolean;
 }
@@ -1472,6 +1500,17 @@ export interface FundOperation {
 export interface FundSettings {
   forecastMethod: FundForecastMethod;
   benchmarkIndex: string | null;
+  /** Задача 57: ручная модифицированная дюрация, ГОДЫ (0–30); null — не задана. */
+  durationOverrideYears?: number | null;
+  durationEstimate?: FundDurationEstimate | null;
+}
+
+/** Оценка модифицированной дюрации фонда (задача 57): ГОДЫ; source — "manual" | "index:RGBI" | null (неизвестна). */
+export interface FundDurationEstimate {
+  modifiedDurationYears: number | null;
+  source: FundDurationSource | null;
+  asOf: string | null;
+  warnings: string[];
 }
 
 /** Ответ GET /api/funds/{id}. */

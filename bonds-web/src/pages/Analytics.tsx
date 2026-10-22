@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
-import { Button, Loader, SegmentedControl } from '@mantine/core';
+import { useEffect, useRef, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
+import { Button, Group, Loader, SegmentedControl } from '@mantine/core';
 import { ErrorState, Page, Section } from '@mvv42/kit';
 import {
   ChartFrame,
@@ -34,17 +35,71 @@ import { useAnalyticsStore } from '../store/useAnalyticsStore';
 import { Disclaimer } from '../components/Disclaimer';
 import { CHART_EXPLANATIONS } from '../components/charts';
 import { formatPercent, formatRub, formatRubCompact, formatSharePercent, formatDate, formatMonthLabel } from '../utils/format';
-import type { CompositionSlice, RateScenarioPoint, RateScenarioResponse, ScatterPoint, TrajectoryResponse, XirrHistoryPoint } from '../api/types';
+import { fundDurationSourceLabel } from '../components/fundsCopy';
+import type { CompositionSlice, RateScenarioFund, RateScenarioPoint, RateScenarioResponse, ScatterPoint, TrajectoryResponse, XirrHistoryPoint } from '../api/types';
 import { buildScatterChartData, pointCategory, CATEGORY_COLOR } from '../utils/scatterChartData';
 
-type CompositionView = 'byIssuer' | 'bySector' | 'byCouponType' | 'byDurationBucket';
+type CompositionView = 'byIssuer' | 'bySector' | 'byCouponType' | 'byDurationBucket' | 'byAssetClass';
 
 const COMPOSITION_LABEL: Record<CompositionView, string> = {
   byIssuer: 'Эмитент',
   bySector: 'Сектор',
   byCouponType: 'Купон',
   byDurationBucket: 'Дюрация',
+  byAssetClass: 'Класс активов',
 };
+
+/**
+ * Переключатель «С фондами / Только облигации» (задача 57). Показывается только когда у пользователя есть фонды (`hasFunds`);
+ * состояние живёт в URL (`?funds=0` — только облигации), по умолчанию — с фондами.
+ */
+function FundsScopeToggle({
+  includeFunds,
+  onChange,
+  testId,
+}: {
+  includeFunds: boolean;
+  onChange: (includeFunds: boolean) => void;
+  testId: string;
+}) {
+  return (
+    <SegmentedControl
+      size="xs"
+      value={includeFunds ? 'with' : 'bonds'}
+      onChange={(v) => onChange(v === 'with')}
+      data={[
+        { value: 'with', label: 'С фондами' },
+        { value: 'bonds', label: 'Только облигации' },
+      ]}
+      data-testid={testId}
+    />
+  );
+}
+
+/** Статус дюрации фонда в списке сценариев ставок: источник (оценка по индексу / вручную / неизвестна) + ссылка в карточку для ручного ввода. */
+function RateScenarioFundRow({ fund }: { fund: RateScenarioFund }) {
+  const name = fund.ticker ?? fund.name ?? `Фонд #${fund.fundId}`;
+  const known = fund.modifiedDurationYears !== null;
+  return (
+    <li data-testid={`rate-fund-${fund.fundId}`}>
+      <strong>{name}</strong> · {formatRub(fund.marketValueRub)} ·{' '}
+      {known ? (
+        <>
+          дюрация {fund.modifiedDurationYears!.toFixed(2)} г. ({fundDurationSourceLabel(fund.durationSource)}) · при +100 б.п.{' '}
+          {formatRub(fund.deltaAtPlus100bpRub)}
+        </>
+      ) : (
+        <>
+          дюрация{' '}
+          <Link to={`/funds/${fund.fundId}`} data-testid={`rate-fund-link-${fund.fundId}`}>
+            {fundDurationSourceLabel(fund.durationSource)}
+          </Link>{' '}
+          — в базе, но не в Δ
+        </>
+      )}
+    </li>
+  );
+}
 
 /** Полый маркер (только контур) для watchlist-точек — визуально отличает "чужую" бумагу от своих позиций (сплошная заливка). */
 function HollowDot(props: { cx?: number; cy?: number; fill?: string }) {
@@ -154,29 +209,45 @@ function ScatterWidget({ scatter }: { scatter: { points: ScatterPoint[]; curve: 
 
 function CompositionWidget({
   composition,
+  includeFunds,
+  onIncludeFundsChange,
 }: {
-  composition: { totalMarketValueRub: number } & Record<CompositionView, CompositionSlice[]>;
+  composition: { totalMarketValueRub: number; hasFunds?: boolean } & Record<Exclude<CompositionView, 'byAssetClass'>, CompositionSlice[]> & {
+      byAssetClass?: CompositionSlice[];
+    };
+  includeFunds: boolean;
+  onIncludeFundsChange: (includeFunds: boolean) => void;
 }) {
-  const [view, setView] = useState<CompositionView>('byIssuer');
-  const slices = composition[view];
+  const [requestedView, setView] = useState<CompositionView>('byIssuer');
+  // «Класс активов» бывает только в режиме с фондами; при переключении на «Только облигации» откатываемся на «Эмитент».
+  const views = (Object.keys(COMPOSITION_LABEL) as CompositionView[]).filter(
+    (key) => key !== 'byAssetClass' || (composition.byAssetClass?.length ?? 0) > 0,
+  );
+  const view = views.includes(requestedView) ? requestedView : 'byIssuer';
+  const slices = composition[view] ?? [];
   const t = useChartTheme();
 
   return (
     <ChartFrame
       title="Композиция портфеля"
-      description={`Всего: ${formatRub(composition.totalMarketValueRub)}`}
+      description={`Всего: ${formatRub(composition.totalMarketValueRub)}${composition.hasFunds ? (includeFunds ? ' · облигации и фонды' : ' · только облигации') : ''}`}
       data-testid="composition-widget"
       explanation={CHART_EXPLANATIONS.composition}
       actions={
-        <SegmentedControl
-          size="xs"
-          value={view}
-          onChange={(v) => setView(v as CompositionView)}
-          data={(Object.keys(COMPOSITION_LABEL) as CompositionView[]).map((key) => ({
-            value: key,
-            label: COMPOSITION_LABEL[key],
-          }))}
-        />
+        <Group gap="xs" wrap="wrap" justify="flex-end">
+          {composition.hasFunds && (
+            <FundsScopeToggle includeFunds={includeFunds} onChange={onIncludeFundsChange} testId="composition-funds-toggle" />
+          )}
+          <SegmentedControl
+            size="xs"
+            value={view}
+            onChange={(v) => setView(v as CompositionView)}
+            data={views.map((key) => ({
+              value: key,
+              label: COMPOSITION_LABEL[key],
+            }))}
+          />
+        </Group>
       }
       empty={slices.length === 0}
       emptyTitle={<span data-testid="composition-empty">Нет данных</span>}
@@ -322,7 +393,16 @@ function XirrWidget({ xirr }: { xirr: { currentXirr: number | null; history: Xir
   );
 }
 
-function RateScenarioWidget({ rateScenario }: { rateScenario: RateScenarioResponse }) {
+function RateScenarioWidget({
+  rateScenario,
+  includeFunds,
+  onIncludeFundsChange,
+}: {
+  rateScenario: RateScenarioResponse;
+  includeFunds: boolean;
+  onIncludeFundsChange: (includeFunds: boolean) => void;
+}) {
+  const funds = rateScenario.funds ?? [];
   const plus100 = rateScenario.scenarios.find((s) => s.shiftBp === 100);
   const { currentValueRub, rateSensitiveValueRub } = rateScenario;
   // H-1/M-1: Δ относится ко всему портфелю как к базе, но чувствительна к сдвигу только часть с
@@ -333,9 +413,14 @@ function RateScenarioWidget({ rateScenario }: { rateScenario: RateScenarioRespon
   return (
     <ChartFrame
       title="Сценарии ставок"
-      description="Изменение стоимости портфеля, % — при параллельном сдвиге ключевой ставки"
+      description={`Изменение стоимости портфеля, % — при параллельном сдвиге ключевой ставки${rateScenario.hasFunds ? (includeFunds ? ' (облигации и фонды)' : ' (только облигации)') : ''}`}
       data-testid="rate-scenario-widget"
       explanation={CHART_EXPLANATIONS.rateScenario}
+      actions={
+        rateScenario.hasFunds ? (
+          <FundsScopeToggle includeFunds={includeFunds} onChange={onIncludeFundsChange} testId="rate-funds-toggle" />
+        ) : undefined
+      }
       height={CHART_HEIGHT - 20}
       empty={rateScenario.scenarios.length === 0}
       emptyDescription="Данные появятся после синхронизации с брокерским счётом."
@@ -352,6 +437,19 @@ function RateScenarioWidget({ rateScenario }: { rateScenario: RateScenarioRespon
                 </>
               )}
             </p>
+          )}
+          {funds.length > 0 && (
+            <div data-testid="rate-scenario-funds">
+              <p className="bonds-note">
+                Фонды (оценка): вклад считается по модифицированной дюрации фонда без учёта выпуклости. Фонд без дюрации входит в базу,
+                но не в Δ.
+              </p>
+              <ul className="bonds-footnotes">
+                {funds.map((f) => (
+                  <RateScenarioFundRow key={f.fundId} fund={f} />
+                ))}
+              </ul>
+            </div>
           )}
           <Disclaimer text={rateScenario.disclaimer} />
         </>
@@ -432,11 +530,28 @@ function TrajectoryWidget({ trajectory }: { trajectory: TrajectoryResponse }) {
  * сценарии ставок и траектория. Календарь поступлений — `/cashflow` (§B.2).
  */
 export function Analytics() {
-  const { scatter, composition, xirr, rateScenario, trajectory, isLoading, error, load } = useAnalyticsStore();
+  const { scatter, composition, xirr, rateScenario, trajectory, isLoading, error, load, loadFundScope } = useAnalyticsStore();
+  const [searchParams, setSearchParams] = useSearchParams();
+  // Состояние переключателя «С фондами / Только облигации» — в URL (?funds=0 — только облигации), по умолчанию с фондами.
+  const includeFunds = searchParams.get('funds') !== '0';
+  const firstRun = useRef(true);
 
   useEffect(() => {
-    load();
-  }, [load]);
+    // Первый запуск грузит все виджеты; смена переключателя перезагружает только композицию и сценарии ставок.
+    if (firstRun.current) {
+      firstRun.current = false;
+      load(includeFunds);
+    } else {
+      loadFundScope(includeFunds);
+    }
+  }, [includeFunds, load, loadFundScope]);
+
+  const handleIncludeFundsChange = (next: boolean) => {
+    const params = new URLSearchParams(searchParams);
+    if (next) params.delete('funds');
+    else params.set('funds', '0');
+    setSearchParams(params, { replace: true });
+  };
 
   return (
     <Page title="Аналитика" description="Риск-доходность, состав и чувствительность портфеля к ставкам" width="wide">
@@ -451,7 +566,7 @@ export function Analytics() {
           <ErrorState
             title="Не удалось загрузить аналитику"
             error={error}
-            onRetry={() => load()}
+            onRetry={() => load(includeFunds)}
             data-testid="analytics-error"
           />
         </Section>
@@ -459,11 +574,15 @@ export function Analytics() {
 
       {!isLoading && !error && scatter && <ScatterWidget scatter={scatter} />}
       <div className="bonds-grid-2">
-        {!isLoading && !error && composition && <CompositionWidget composition={composition} />}
+        {!isLoading && !error && composition && (
+          <CompositionWidget composition={composition} includeFunds={includeFunds} onIncludeFundsChange={handleIncludeFundsChange} />
+        )}
         {!isLoading && !error && xirr && <XirrWidget xirr={xirr} />}
       </div>
       <div className="bonds-grid-2">
-        {!isLoading && !error && rateScenario && <RateScenarioWidget rateScenario={rateScenario} />}
+        {!isLoading && !error && rateScenario && (
+          <RateScenarioWidget rateScenario={rateScenario} includeFunds={includeFunds} onIncludeFundsChange={handleIncludeFundsChange} />
+        )}
         {!isLoading && !error && trajectory && <TrajectoryWidget trajectory={trajectory} />}
       </div>
 

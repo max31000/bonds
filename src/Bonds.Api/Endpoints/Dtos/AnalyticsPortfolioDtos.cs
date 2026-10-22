@@ -23,6 +23,16 @@ public sealed record CompositionResponseDto
     public required IReadOnlyList<CompositionShareDto> BySector { get; init; }
     public required IReadOnlyList<CompositionShareDto> ByCouponType { get; init; }
     public required IReadOnlyList<CompositionShareDto> ByDurationBucket { get; init; }
+
+    /// <summary>Разрез «Облигации / Фонды» (задача 57); при <c>includeFunds=false</c> пуст. Тот же тип, что остальные разрезы (<c>SharePercent</c> — ПРОЦЕНТЫ).</summary>
+    public IReadOnlyList<CompositionShareDto> ByAssetClass { get; init; } = [];
+
+    /// <summary>Фонды вошли в расчёт (<c>includeFunds=true</c>, значение по умолчанию).</summary>
+    public bool FundsIncluded { get; init; }
+
+    /// <summary>У пользователя есть открытые позиции в фондах с известной ценой — UI показывает переключатель «С фондами / Только облигации».</summary>
+    public bool HasFunds { get; init; }
+
     public required string Disclaimer { get; init; }
 }
 
@@ -83,7 +93,35 @@ public sealed record RateScenarioResponseDto
     /// только от неё; флоатеры/бумаги без дюрации входят в CurrentValueRub, но не в Δ.</summary>
     public decimal RateSensitiveValueRub { get; init; }
     public required IReadOnlyList<RateScenarioPointDto> Scenarios { get; init; }
+
+    /// <summary>Фонды вошли в базу и в Δ (<c>includeFunds=true</c>, по умолчанию).</summary>
+    public bool FundsIncluded { get; init; }
+
+    /// <summary>У пользователя есть открытые позиции в фондах с известной ценой (для показа переключателя).</summary>
+    public bool HasFunds { get; init; }
+
+    /// <summary>Фонды с их вкладом (пусто при <c>includeFunds=false</c>).</summary>
+    public IReadOnlyList<RateScenarioFundDto> Funds { get; init; } = [];
+
     public required string Disclaimer { get; init; }
+}
+
+/// <summary>Фонд в сценариях ставок (задача 57). Деньги — РУБЛИ, дюрация — модифицированная, ГОДЫ (оценка).</summary>
+public sealed record RateScenarioFundDto
+{
+    public required ulong FundId { get; init; }
+    public string? Ticker { get; init; }
+    public string? Name { get; init; }
+    public required decimal MarketValueRub { get; init; }
+
+    /// <summary>Модифицированная дюрация, ГОДЫ; null — чувствительность неизвестна (фонд в базе, но не в Δ).</summary>
+    public decimal? ModifiedDurationYears { get; init; }
+
+    /// <summary>"manual" | "index:RGBI" | "unknown".</summary>
+    public required string DurationSource { get; init; }
+
+    /// <summary>Вклад фонда в Δ при +100 б.п., РУБЛИ (отрицательный); null — дюрации нет. Без выпуклости.</summary>
+    public decimal? DeltaAtPlus100bpRub { get; init; }
 }
 
 public sealed record RateScenarioPointDto

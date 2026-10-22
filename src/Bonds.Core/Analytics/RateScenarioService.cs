@@ -12,14 +12,26 @@ public static class RateScenarioService
     /// </summary>
     public static IReadOnlyList<RateScenarioPoint> Compute(
         IEnumerable<PortfolioHolding> holdings,
+        IReadOnlyList<int> shiftsBp) => Compute(holdings, [], shiftsBp);
+
+    /// <summary>
+    /// Сценарии «облигации + фонды» (задача 57). База (<c>currentValue</c>) = облигации + фонды; Δ фонда = <c>−ModDur × Δy × MV</c>
+    /// (модифицированная дюрация в ГОДАХ, Δy — ДОЛЯ). Выпуклость фонда НЕ учитываем (её нет в оценке) — для больших сдвигов Δ фонда
+    /// чуть занижает выгоду от падения ставок. Фонды без дюрации входят в базу, но не в Δ. Инвариант <c>NewValue == CurrentValue + Δ</c> сохраняется.
+    /// <c>DeltaPercent</c> — ПРОЦЕНТЫ (историческое исключение, как и у облигационной перегрузки).
+    /// </summary>
+    public static IReadOnlyList<RateScenarioPoint> Compute(
+        IEnumerable<PortfolioHolding> holdings,
+        IReadOnlyList<FundExposure> funds,
         IReadOnlyList<int> shiftsBp)
     {
         var holdingsList = holdings.ToList();
+        var sensitiveFunds = funds.Where(f => f.ModifiedDurationYears.HasValue && f.MarketValueRub > 0m).ToList();
 
         // H-1/M-1: база — ВЕСЬ портфель (как и CurrentValueRub в эндпоинте), чтобы выполнялся
         // инвариант NewValue == CurrentValue + Δ. Чувствительность к ставке — только у позиций
         // с дюрацией (у флоатеров/бумаг без дюрации вклад в Δ = 0, цена при сдвиге не меняется).
-        var currentValue = holdingsList.Sum(h => h.MarketValueRub);
+        var currentValue = holdingsList.Sum(h => h.MarketValueRub) + funds.Sum(f => f.MarketValueRub);
         var sensitive = holdingsList
             .Where(h => h.ModifiedDuration.HasValue && h.MarketValueRub > 0)
             .ToList();
@@ -34,7 +46,7 @@ public static class RateScenarioService
                     ? 0.5m * h.Convexity.Value * deltaY * deltaY
                     : 0m;
                 return (durationEffect + convexityEffect) * h.MarketValueRub;
-            });
+            }) + sensitiveFunds.Sum(f => -f.ModifiedDurationYears!.Value * deltaY * f.MarketValueRub);
             var newValue = currentValue + deltaRub;
             var deltaPercent = currentValue != 0 ? deltaRub / currentValue * 100m : 0m;
 
@@ -56,6 +68,15 @@ public static class RateScenarioService
     public static decimal RateSensitiveValue(IEnumerable<PortfolioHolding> holdings) =>
         holdings.Where(h => h.ModifiedDuration.HasValue && h.MarketValueRub > 0)
             .Sum(h => h.MarketValueRub);
+
+    /// <summary>То же с фондами (задача 57): к чувствительной части добавляются паи фондов, у которых известна дюрация.</summary>
+    public static decimal RateSensitiveValue(IEnumerable<PortfolioHolding> holdings, IReadOnlyList<FundExposure> funds) =>
+        RateSensitiveValue(holdings)
+        + funds.Where(f => f.ModifiedDurationYears.HasValue && f.MarketValueRub > 0m).Sum(f => f.MarketValueRub);
+
+    /// <summary>Вклад фонда в Δ при сдвиге на <paramref name="shiftBp"/> б.п., РУБЛИ: <c>−ModDur(годы) × (shiftBp/10000) × MV</c>; null — дюрации нет.</summary>
+    public static decimal? FundDelta(FundExposure fund, int shiftBp) =>
+        fund.ModifiedDurationYears is { } d ? -d * (shiftBp / 10_000m) * fund.MarketValueRub : null;
 }
 
 public sealed record RateScenarioPoint

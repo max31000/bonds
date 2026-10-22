@@ -126,3 +126,69 @@ public class RateScenarioServiceTests
         point.DeltaPercent.Should().Be(-5m, "поле в процентных ПУНКТАХ (-5m), а не в долях (-0.05m)");
     }
 }
+
+public class RateScenarioWithFundsTests
+{
+    private static PortfolioHolding Bond(decimal mv, decimal? dur) => new()
+    {
+        PositionId = 1, InstrumentId = 1, Quantity = 1, MarketValueRub = mv, CouponType = CouponType.Fixed,
+        MaturityDate = new DateOnly(2030, 1, 1), HorizonDate = new DateOnly(2030, 1, 1), IsCalculatedToOffer = false,
+        ModifiedDuration = dur, IsFloater = false, IsIndexed = false, IsEstimated = false, DataIncomplete = false,
+    };
+
+    private static FundExposure Fund(decimal mv, decimal? dur) => new(1, "TOFZ", "Облигации ОФЗ", mv, dur);
+
+    [Fact]
+    public void BondsPlusFund_Plus100bp_SumsContributions()
+    {
+        var p = RateScenarioService.Compute([Bond(100_000m, 2m)], [Fund(50_000m, 4m)], [100]).Single();
+
+        p.DeltaRub.Should().Be(-4_000m);          // -2000 (облигации) - 2000 (фонд)
+        p.NewValueRub.Should().Be(146_000m);
+        p.DeltaPercent.Should().BeApproximately(-2.6667m, 0.0001m); // ПРОЦЕНТЫ от базы 150 000
+    }
+
+    [Fact]
+    public void FundWithoutDuration_InBase_NotInDelta()
+    {
+        var p = RateScenarioService.Compute([Bond(100_000m, 2m)], [Fund(50_000m, null)], [100]).Single();
+
+        p.DeltaRub.Should().Be(-2_000m);
+        p.NewValueRub.Should().Be(148_000m);
+    }
+
+    [Theory]
+    [InlineData(-200)]
+    [InlineData(0)]
+    [InlineData(50)]
+    public void Invariant_NewValueEqualsCurrentPlusDelta(int shift)
+    {
+        var bonds = new[] { Bond(100_000m, 2m) };
+        var funds = new[] { Fund(50_000m, 4m), new FundExposure(2, "TPAY", "Пассивный", 30_000m, null) };
+
+        var p = RateScenarioService.Compute(bonds, funds, [shift]).Single();
+
+        p.NewValueRub.Should().Be(180_000m + p.DeltaRub);
+    }
+
+    [Fact]
+    public void NoFunds_Overload_EqualsLegacy()
+    {
+        var bonds = new[] { Bond(100_000m, 2m) };
+        RateScenarioService.Compute(bonds, [], [100]).Should().BeEquivalentTo(RateScenarioService.Compute(bonds, [100]));
+    }
+
+    [Fact]
+    public void RateSensitiveValue_AddsFundsWithDurationOnly()
+    {
+        var v = RateScenarioService.RateSensitiveValue([Bond(100_000m, 2m)], [Fund(50_000m, 4m), Fund(30_000m, null)]);
+        v.Should().Be(150_000m);
+    }
+
+    [Fact]
+    public void FundDelta_NullWithoutDuration()
+    {
+        RateScenarioService.FundDelta(Fund(50_000m, 4m), 100).Should().Be(-2_000m);
+        RateScenarioService.FundDelta(Fund(50_000m, null), 100).Should().BeNull();
+    }
+}

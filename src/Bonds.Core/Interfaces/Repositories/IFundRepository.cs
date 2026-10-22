@@ -17,7 +17,11 @@ public interface IFundRepository
     /// </summary>
     Task<ulong> UpsertAsync(Fund fund);
 
-    Task UpdateSettingsAsync(ulong fundId, FundForecastMethod forecastMethod, string? benchmarkIndex);
+    /// <summary>
+    /// Меняет настройки фонда целиком. <paramref name="durationOverrideYears"/> — ручная модифицированная дюрация в ГОДАХ
+    /// (задача 57); null = сброс (оценка пойдёт по индексу).
+    /// </summary>
+    Task UpdateSettingsAsync(ulong fundId, FundForecastMethod forecastMethod, string? benchmarkIndex, decimal? durationOverrideYears = null);
 }
 
 public interface IFundPositionRepository

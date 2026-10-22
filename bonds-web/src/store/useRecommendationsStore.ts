@@ -112,7 +112,8 @@ export const useRecommendationsStore = create<RecommendationsStore>()((set) => (
   load: async () => {
     set({ isLoading: true, error: null });
     try {
-      const [comparison, composition] = await Promise.all([fetchComparison(), fetchComposition()]);
+      // includeFunds=false: доля эмитента/лимит концентрации считаются среди облигаций (как SignalsEngine и вердикты), фонды долю не разбавляют.
+      const [comparison, composition] = await Promise.all([fetchComparison(), fetchComposition({ includeFunds: false })]);
 
       const issuerSharePercent = new Map(composition.byIssuer.map((s) => [s.key, s.sharePercent]));
       const { candidates, outOfComparison } = buildSellCandidates(comparison.rows, issuerSharePercent);

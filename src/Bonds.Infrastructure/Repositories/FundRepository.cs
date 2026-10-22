@@ -19,7 +19,7 @@ public class FundRepository : IFundRepository
         id AS Id, figi AS Figi, isin AS Isin, ticker AS Ticker, secid AS Secid, name AS Name,
         management_company AS ManagementCompany, focus_type AS FocusType,
         total_expense_fraction AS TotalExpenseFraction, forecast_method AS ForecastMethod,
-        benchmark_index AS BenchmarkIndex, created_at AS CreatedAt, updated_at AS UpdatedAt";
+        benchmark_index AS BenchmarkIndex, duration_override_years AS DurationOverrideYears, created_at AS CreatedAt, updated_at AS UpdatedAt";
 
     public async Task<Fund?> GetByIdAsync(ulong id)
     {
@@ -51,7 +51,7 @@ public class FundRepository : IFundRepository
     public async Task<ulong> UpsertAsync(Fund fund)
     {
         using var conn = CreateConnection();
-        // forecast_method / benchmark_index в ON DUPLICATE KEY UPDATE намеренно отсутствуют: это настройки
+        // forecast_method / benchmark_index / duration_override_years в ON DUPLICATE KEY UPDATE намеренно отсутствуют: это настройки
         // пользователя, суточный рефреш справочника не должен их сбрасывать. updated_at обновится сам
         // (ON UPDATE CURRENT_TIMESTAMP), если изменилось хоть одно поле — поэтому явно трогаем его.
         const string sql = @"
@@ -82,11 +82,13 @@ public class FundRepository : IFundRepository
         });
     }
 
-    public async Task UpdateSettingsAsync(ulong fundId, FundForecastMethod forecastMethod, string? benchmarkIndex)
+    public async Task UpdateSettingsAsync(
+        ulong fundId, FundForecastMethod forecastMethod, string? benchmarkIndex, decimal? durationOverrideYears = null)
     {
         using var conn = CreateConnection();
         await conn.ExecuteAsync(
-            "UPDATE funds SET forecast_method = @Method, benchmark_index = @Benchmark WHERE id = @Id",
-            new { Id = fundId, Method = forecastMethod.ToString(), Benchmark = benchmarkIndex });
+            @"UPDATE funds SET forecast_method = @Method, benchmark_index = @Benchmark,
+                  duration_override_years = @DurationOverride WHERE id = @Id",
+            new { Id = fundId, Method = forecastMethod.ToString(), Benchmark = benchmarkIndex, DurationOverride = durationOverrideYears });
     }
 }

@@ -1,6 +1,6 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { Badge, Button, Group, Loader, Select, Table, Text } from '@mantine/core';
+import { Badge, Button, Group, Loader, NumberInput, Select, Table, Text } from '@mantine/core';
 import { EmptyState, ErrorState, HelpHint, Metric, MetricGrid, Page, Section } from '@mvv42/kit';
 import { ChartFrame, ChartTooltip, chartColors, pickAxisTicks, useChartTheme } from '@mvv42/kit/charts';
 import { IconArrowLeft } from '@tabler/icons-react';
@@ -12,13 +12,16 @@ import {
   FUND_AFTER_TAX_NOTE,
   FUND_CONFIDENCE_LABEL,
   FUND_DATA_INCOMPLETE,
+  FUND_DURATION_NOTE,
+  FUND_DURATION_WARNING_LABEL,
   FUND_KEY_RATE_NOTE,
   FUND_METHOD_LABEL,
   FUND_METHOD_OPTIONS,
   FUND_OPERATION_LABEL,
   FUND_WARNING_LABEL,
+  fundDurationSourceLabel,
 } from '../components/fundsCopy';
-import type { FundForecastMethod } from '../api/types';
+import type { FundForecastMethod, FundSettings } from '../api/types';
 import { formatDate, formatMonthLabel, formatPercent, formatRub, formatRubCompact, formatRubPrecise } from '../utils/format';
 
 function MetricCard({ label, value, explanation, hint }: { label: string; value: string; explanation: string; hint?: string }) {
@@ -37,6 +40,78 @@ function MetricCard({ label, value, explanation, hint }: { label: string; value:
   );
 }
 
+/** Верхняя граница ручной модифицированной дюрации, ГОДЫ (зеркалит валидацию бэкенда 0–30). */
+const MAX_DURATION_YEARS = 30;
+
+/**
+ * Блок «Чувствительность к ставке (оценка)» (задача 57): ручная модифицированная дюрация фонда (ГОДЫ). Плейсхолдер — текущая
+ * авто-оценка по индексу, ниже источник. Сохранение/сброс идёт через PUT settings (null — сброс к оценке по индексу).
+ */
+function FundDurationSettings({
+  settings,
+  saving,
+  onSave,
+}: {
+  settings: FundSettings;
+  saving: boolean;
+  onSave: (years: number | null) => void;
+}) {
+  const override = settings.durationOverrideYears ?? null;
+  const [value, setValue] = useState<number | string>(override ?? '');
+
+  const estimate = settings.durationEstimate ?? null;
+  const placeholder =
+    estimate?.modifiedDurationYears != null && estimate.source !== 'manual' ? `${estimate.modifiedDurationYears.toFixed(2)} (оценка)` : 'не задана';
+  const numeric = typeof value === 'number' ? value : null;
+  const valid = numeric !== null && numeric >= 0 && numeric <= MAX_DURATION_YEARS;
+
+  return (
+    <Section
+      title="Чувствительность к ставке (оценка)"
+      description="Модифицированная дюрация фонда, лет — нужна для «Аналитики»: сценарии ставок и состав портфеля"
+      data-testid="fund-duration"
+    >
+      <Group align="flex-end" wrap="wrap" mb="xs">
+        <NumberInput
+          label="Дюрация (лет), оценка"
+          placeholder={placeholder}
+          min={0}
+          max={MAX_DURATION_YEARS}
+          step={0.1}
+          decimalScale={2}
+          value={value}
+          onChange={setValue}
+          disabled={saving}
+          data-testid="fund-duration-input"
+        />
+        <Button size="sm" disabled={!valid || saving} onClick={() => numeric !== null && onSave(numeric)} data-testid="fund-duration-save">
+          Сохранить
+        </Button>
+        {override !== null && (
+          <Button size="sm" variant="default" disabled={saving} onClick={() => onSave(null)} data-testid="fund-duration-reset">
+            Сбросить
+          </Button>
+        )}
+      </Group>
+      <p className="bonds-note" data-testid="fund-duration-source">
+        Сейчас:{' '}
+        {estimate?.modifiedDurationYears != null
+          ? `${estimate.modifiedDurationYears.toFixed(2)} г. — ${fundDurationSourceLabel(estimate.source)}`
+          : 'чувствительность неизвестна — задайте вручную (в сценариях ставок фонд войдёт в базу, но не в Δ)'}
+        .
+      </p>
+      {(estimate?.warnings ?? []).length > 0 && (
+        <ul className="bonds-footnotes">
+          {estimate!.warnings.map((w) => (
+            <li key={w}>{FUND_DURATION_WARNING_LABEL[w] ?? w}</li>
+          ))}
+        </ul>
+      )}
+      <p className="bonds-note">{FUND_DURATION_NOTE}</p>
+    </Section>
+  );
+}
+
 /**
  * Карточка фонда (БПИФ), задача 53: метрики (P&L — методика «Доходов»), график цены пая с линией средней цены входа и датами
  * выплат, выплаты по месяцам, блок «Прогноз (оценка)» с выбором метода, журнал операций пользователя. Работает и для
@@ -45,7 +120,7 @@ function MetricCard({ label, value, explanation, hint }: { label: string; value:
 export function FundDetail() {
   const { fundId } = useParams<{ fundId: string }>();
   const navigate = useNavigate();
-  const { detail, detailLoading, detailError, settingsSaving, settingsError, loadDetail, saveSettings } = useFundsStore();
+  const { detail, detailLoading, detailError, settingsSaving, settingsError, loadDetail, saveSettings, saveDuration } = useFundsStore();
   const t = useChartTheme();
 
   useEffect(() => {
@@ -334,6 +409,15 @@ export function FundDetail() {
               {FUND_KEY_RATE_NOTE}
             </p>
           </Section>
+
+          <FundDurationSettings
+            key={detail.settings.durationOverrideYears ?? 'none'} // сохранённое значение пересоздаёт поле ввода
+            settings={detail.settings}
+            saving={settingsSaving}
+            onSave={(years) => {
+              if (fundId) saveDuration(fundId, years);
+            }}
+          />
 
           <Section title="Мои операции" padding="none" data-testid="fund-operations">
             {detail.operations.length === 0 ? (
