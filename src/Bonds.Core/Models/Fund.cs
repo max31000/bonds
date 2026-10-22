@@ -37,6 +37,12 @@ public class Fund
     /// <summary>Код индекса MOEX для <see cref="FundForecastMethod.IndexYield"/> (напр. "RGBI"); null = автовыбор.</summary>
     public string? BenchmarkIndex { get; set; }
 
+    /// <summary>
+    /// Ручная оценка МОДИФИЦИРОВАННОЙ дюрации фонда в <b>ГОДАХ</b> (задача 57), вводится владельцем в карточке фонда; null — не задана
+    /// (тогда <c>FundDurationEstimator</c> пробует оценку по индексу). Суточный рефреш справочника это поле не трогает.
+    /// </summary>
+    public decimal? DurationOverrideYears { get; set; }
+
     public DateTime CreatedAt { get; set; }
 
     /// <summary>Момент последнего обновления строки справочника (UTC, ON UPDATE CURRENT_TIMESTAMP) — ворота «раз в сутки».</summary>

@@ -108,3 +108,65 @@ public class PortfolioCompositionServiceTests
         composition.ByIssuer.Should().BeEmpty();
     }
 }
+
+public class PortfolioCompositionWithFundsTests
+{
+    private static PortfolioHolding Bond(ulong id, decimal mv, string issuer, decimal? dur = 2m) => new()
+    {
+        PositionId = id, InstrumentId = id, Quantity = 1, MarketValueRub = mv, Issuer = issuer, Sector = "Финансы",
+        CouponType = CouponType.Fixed, MaturityDate = new DateOnly(2030, 1, 1), HorizonDate = new DateOnly(2030, 1, 1),
+        IsCalculatedToOffer = false, ModifiedDuration = dur, IsFloater = false, IsIndexed = false, IsEstimated = false, DataIncomplete = false,
+    };
+
+    private static readonly FundExposure[] Funds =
+    [
+        new(1, "TOFZ", "Облигации ОФЗ", 33_333m, 4.2m),
+        new(2, "TPAY", "Пассивный доход", 11_111m, null),
+    ];
+
+    [Fact]
+    public void SharesSumTo100_InEveryDimension_IncludingAssetClass()
+    {
+        var c = PortfolioCompositionService.CalculateWithFunds(
+            [Bond(1, 30_000m, "А"), Bond(2, 25_555m, "Б", dur: 0.5m)], Funds);
+
+        c.TotalMarketValueRub.Should().Be(99_999m);
+        foreach (var dim in new[] { c.ByIssuer, c.BySector, c.ByCouponType, c.ByDurationBucket, c.ByAssetClass })
+            dim.Sum(s => s.SharePercent).Should().Be(100m);
+    }
+
+    [Fact]
+    public void FundLabels_AndAssetClass()
+    {
+        var c = PortfolioCompositionService.CalculateWithFunds([Bond(1, 55_555m, "А")], Funds);
+
+        c.ByIssuer.Select(s => s.Key).Should().Contain(["Фонд: Облигации ОФЗ", "Фонд: Пассивный доход", "А"]);
+        c.BySector.Should().Contain(s => s.Key == "Фонды облигаций" && s.MarketValueRub == 44_444m);
+        c.ByCouponType.Should().Contain(s => s.Key == "Фонд");
+        c.ByDurationBucket.Should().Contain(s => s.Key == "3–5 лет" && s.MarketValueRub == 33_333m);
+        c.ByDurationBucket.Should().Contain(s => s.Key == "Не определено" && s.MarketValueRub == 11_111m);
+        c.ByAssetClass.Single(s => s.Key == "Облигации").MarketValueRub.Should().Be(55_555m);
+        c.ByAssetClass.Single(s => s.Key == "Фонды").MarketValueRub.Should().Be(44_444m);
+    }
+
+    [Fact]
+    public void Calculate_WithoutFunds_Unchanged_AssetClassEmpty()
+    {
+        var c = PortfolioCompositionService.Calculate([Bond(1, 100m, "А")]);
+
+        c.ByAssetClass.Should().BeEmpty();
+        c.ByIssuer.Should().ContainSingle(s => s.Key == "А");
+    }
+
+    [Fact]
+    public void NoFunds_EqualsCalculateOnBondDimensions()
+    {
+        var bonds = new[] { Bond(1, 30_000m, "А"), Bond(2, 70_000m, "Б") };
+        var with = PortfolioCompositionService.CalculateWithFunds(bonds, []);
+        var legacy = PortfolioCompositionService.Calculate(bonds);
+
+        with.ByIssuer.Should().BeEquivalentTo(legacy.ByIssuer, o => o.WithStrictOrdering());
+        with.ByDurationBucket.Should().BeEquivalentTo(legacy.ByDurationBucket, o => o.WithStrictOrdering());
+        with.TotalMarketValueRub.Should().Be(legacy.TotalMarketValueRub);
+    }
+}
