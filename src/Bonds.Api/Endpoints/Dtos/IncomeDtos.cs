@@ -153,6 +153,12 @@ public sealed record IncomePositionDto
     public required bool HasUnknownLots { get; init; }
     public required bool AccruedUnknown { get; init; }
 
+    /// <summary>Выручка от продажи единиц без известной покупки (РУБЛИ) — в результат не входит (см. PositionIncomeCalculator).</summary>
+    public decimal UnknownCostProceedsRub { get; init; }
+
+    /// <summary>Стоимость части остатка без известной покупки (РУБЛИ) — в бумажную прибыль и итог не входит.</summary>
+    public decimal UnknownCostHoldingsRub { get; init; }
+
     // Денежные события в выбранном периоде (без периода = all-time).
     public required decimal PeriodIncomeGrossRub { get; init; }
     public required decimal PeriodRealizedPnlRub { get; init; }

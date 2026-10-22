@@ -33,7 +33,15 @@ export const INCOME_HELP = {
 } as const;
 
 export const INCOME_UNKNOWN_LOTS =
-  'История операций по этой бумаге неполная (часть покупок или продаж не видна) — результат приблизительный и может быть занижен или завышен.';
+  'История операций неполная: часть бумаг или валюты появилась на счёте не покупкой (до начала истории, переводом, выручкой в этой валюте). Цена их приобретения неизвестна, поэтому они не дают ни прибыли, ни убытка — результат посчитан только по известным покупкам.';
+
+/** Подробность к предупреждению о неизвестной себестоимости: сколько выручки/стоимости исключено из результата. */
+export function incomeUnknownCostDetail(proceedsRub: number, holdingsRub: number, formatRub: (v: number) => string): string | null {
+  const parts: string[] = [];
+  if (proceedsRub > 0.005) parts.push(`выручка ${formatRub(proceedsRub)} от продажи без известной покупки`);
+  if (holdingsRub > 0.005) parts.push(`остаток без известной покупки на ${formatRub(holdingsRub)}`);
+  return parts.length > 0 ? `Не входит в результат: ${parts.join('; ')}.` : null;
+}
 export const INCOME_ACCRUED_UNKNOWN =
   'У части операций брокер не отдал НКД — разделение купонов и НКД приблизительное.';
 export const INCOME_DATA_INCOMPLETE =

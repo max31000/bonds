@@ -99,6 +99,58 @@ public class CurrencyIncomeTests
     }
 
     [Fact]
+    public void ProdRegression_CnySoldWithoutBuysInJournal_OnlyRealCycleCounts()
+    {
+        // Реальный журнал владельца (2026-10): в 2025 юани продавались без покупок в журнале (пришли на счёт не покупкой),
+        // в 2026 — нормальный цикл: купил 10 000 по 11.295, продал 1 499 + 8 000 + 501. Раньше калькулятор брал себестоимость 0
+        // и показывал +216 932 ₽ реализованного. Верно: 2025 — без результата; цикл 2026 —
+        // 1 499×(17 246/1 499 − 11.295) + 8 000×(101 552/8 000 − 11.295) + 501×(6 359.19/501 − 11.295) = 314.795 + 11 192 + 700.395 = 12 207.19.
+        var entries = new[]
+        {
+            Entry(616, LedgerEntryKind.Sell, 37182m, 3000m, 1),
+            Entry(616, LedgerEntryKind.Fee, -148.73m, null, 2),
+            Entry(566, LedgerEntryKind.Sell, 11634m, 1000m, 3),
+            Entry(435, LedgerEntryKind.Sell, 88480m, 8000m, 4),
+            Entry(104, LedgerEntryKind.Buy, -112950m, 10000m, 5),
+            Entry(104, LedgerEntryKind.Fee, -451.8m, null, 6),
+            Entry(99, LedgerEntryKind.Sell, 17246m, 1499m, 7),
+            Entry(56, LedgerEntryKind.Sell, 101552m, 8000m, 8),
+            Entry(56, LedgerEntryKind.Fee, -406.21m, null, 9),
+            Entry(56, LedgerEntryKind.Sell, 6359.19m, 501m, 10),
+        };
+
+        var r = PositionIncomeCalculator.CalculateDetailed(AssetKind.Currency, CnyId, entries, 0.37m, 0.37m * 12.168m, 0m, AsOf).Income;
+
+        r.RealizedPnlRub.Should().BeApproximately(12207.19m, 0.01m);
+        r.UnknownCostProceedsRub.Should().Be(37182m + 11634m + 88480m);
+        r.FeesRub.Should().Be(-148.73m - 451.8m - 406.21m);
+        r.HasUnknownLots.Should().BeTrue();
+        // Остаток 0.37 юаня пришёл не покупкой — в результат не идёт.
+        r.UnknownCostHoldingsRub.Should().BeApproximately(0.37m * 12.168m, 0.000001m);
+        r.UnrealizedPnlRub.Should().Be(0m);
+        r.TotalResultRub.Should().BeApproximately(12207.19m - 148.73m - 451.8m - 406.21m, 0.01m);
+        r.TotalResultRub.Should().BeApproximately(r.RealizedPnlRub + (r.UnrealizedPnlRub ?? 0m) + r.NetCouponIncomeRub + r.TaxesRub + r.FeesRub, 0.000001m);
+    }
+
+    [Fact]
+    public void ProdRegression_PortfolioXirr_IgnoresProceedsOfUnknownCostUnits()
+    {
+        // Только продажа без покупки (выручка 50 000) и маленький настоящий цикл: XIRR портфеля не должен «взлетать» от выручки.
+        var entries = new[]
+        {
+            Entry(400, LedgerEntryKind.Sell, 50000m, 4000m, 1),
+            Entry(200, LedgerEntryKind.Buy, -13000m, 1000m, 2),
+            Entry(20, LedgerEntryKind.Sell, 13100m, 1000m, 3),
+        };
+        var asset = PositionIncomeCalculator.CalculateDetailed(AssetKind.Currency, CnyId, entries, 0m, 0m, 0m, AsOf);
+
+        var stats = IncomeStatisticsService.Compute([asset], [], null, null, AsOf);
+
+        stats.PortfolioXirrFraction.Should().NotBeNull();
+        stats.PortfolioXirrFraction!.Value.Should().BeInRange(0m, 0.05m, "100 ₽ прибыли на 13 000 за ~180 дней ≈ 1.5% годовых");
+    }
+
+    [Fact]
     public void LedgerMapper_MapsAllCurrencyOperationTypes()
     {
         LedgerEntryMapper.ToKind(CurrencyOperationType.Buy).Should().Be(LedgerEntryKind.Buy);

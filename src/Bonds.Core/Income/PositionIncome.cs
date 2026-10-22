@@ -16,7 +16,7 @@ public enum PositionIncomeStatus
 /// <summary>
 /// Доход по одной позиции (облигация или фонд), включая закрытые. Деньги — РУБЛИ, доли — ДОЛИ (0.12 = 12%).
 /// Метод — average cost (см. <see cref="PositionIncomeCalculator"/>). Инвариант (закреплён тестами):
-/// <c>TotalResultRub = Σ AmountRub(операции актива) + MarketValueCleanRub + AccruedNowRub</c> и
+/// <c>TotalResultRub = Σ AmountRub(операции актива) − UnknownCostProceedsRub + MarketValueCleanRub + AccruedNowRub − UnknownCostHoldingsRub</c> и
 /// <c>TotalResultRub = RealizedPnlRub + (UnrealizedPnlRub ?? 0) + NetCouponIncomeRub + TaxesRub + FeesRub</c>.
 /// </summary>
 public sealed record PositionIncome
@@ -88,6 +88,15 @@ public sealed record PositionIncome
     /// <summary>У облигации хотя бы у одной покупки/продажи НКД неизвестен — цена входа включает НКД.</summary>
     public required bool AccruedUnknown { get; init; }
 
+    /// <summary>
+    /// Выручка от продажи единиц без известной себестоимости (куплены до начала истории / пришли не покупкой), РУБЛИ. Результата не
+    /// даёт и в итог не входит — считается внесённой «по рынку» в день продажи.
+    /// </summary>
+    public decimal UnknownCostProceedsRub { get; init; }
+
+    /// <summary>Стоимость (с НКД) той части остатка, у которой себестоимость неизвестна, РУБЛИ. В бумажную прибыль и итог не входит.</summary>
+    public decimal UnknownCostHoldingsRub { get; init; }
+
     /// <summary>Нулевая заглушка для актива, расчёт которого упал.</summary>
     public static PositionIncome Empty(AssetKind kind, ulong assetId, DateOnly asOf) => new()
     {
@@ -111,7 +120,11 @@ public sealed record LedgerRow(
     decimal QuantityAfter,
     decimal AvgCostAfterRub,
     decimal RealizedPnlRub,
-    decimal AccruedUsedRub);
+    decimal AccruedUsedRub)
+{
+    /// <summary>Выручка этой операции, пришедшаяся на единицы без известной себестоимости (не результат), РУБЛИ.</summary>
+    public decimal UnknownCostProceedsRub { get; init; }
+}
 
 /// <summary>Результат расчёта актива: сводка + пошаговые строки.</summary>
 public sealed record AssetIncome(PositionIncome Income, IReadOnlyList<LedgerRow> Rows);

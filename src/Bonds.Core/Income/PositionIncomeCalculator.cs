@@ -23,6 +23,14 @@ namespace Bonds.Core.Income;
 /// реализованный результат (бумаги ушли без поступления денег). Погашение в журнале перекрывает остаток позиции
 /// (стоимость 0, приток уже в журнале) — то же правило, что у снимков.
 /// </para>
+/// <para>
+/// <b>Единицы с неизвестной себестоимостью</b> (куплены до начала истории, пришли вводом бумаг или — у валюты — не покупкой,
+/// а, например, выручкой/купоном в этой валюте) результата НЕ дают: себестоимость 0 превратила бы всю выручку в «прибыль»
+/// (баг 2026-10: юани, проданные без покупки в журнале, давали +217 тыс. ₽). Пул журнала делится на известные (с себестоимостью)
+/// и неизвестные единицы; продажа списывает их пропорционально, продажа сверх пула — целиком неизвестная часть. Выручка
+/// неизвестной части — <c>UnknownCostProceedsRub</c>, стоимость неизвестной части остатка — <c>UnknownCostHoldingsRub</c>;
+/// обе считаются внесёнными «по рынку» и исключены из итога и XIRR (ставится <c>HasUnknownLots</c>).
+/// </para>
 /// </summary>
 public static class PositionIncomeCalculator
 {
@@ -47,8 +55,10 @@ public static class PositionIncomeCalculator
     {
         var ordered = entries.OrderBy(e => e.Date).ThenBy(e => e.SourceId).ToList();
 
-        decimal qty = 0m, cost = 0m, invested = 0m, accruedPaid = 0m, accruedReceived = 0m;
+        // known — единицы с известной себестоимостью (cost относится только к ним), unknown — без неё; пул журнала = known + unknown.
+        decimal known = 0m, unknown = 0m, cost = 0m, invested = 0m, accruedPaid = 0m, accruedReceived = 0m;
         decimal realized = 0m, incomeGross = 0m, taxes = 0m, fees = 0m, principalReturned = 0m, sumAmounts = 0m;
+        decimal unknownProceeds = 0m;
         bool hasUnknownLots = false, accruedUnknown = false, hasRedemption = false;
         var rows = new List<LedgerRow>(ordered.Count);
 
@@ -56,7 +66,8 @@ public static class PositionIncomeCalculator
         {
             var amount = e.AmountRub;
             sumAmounts += amount;
-            decimal rowRealized = 0m, accruedUsed = 0m;
+            decimal rowRealized = 0m, accruedUsed = 0m, rowUnknownProceeds = 0m;
+            var qty = known + unknown;
             var q = Math.Abs(e.Quantity ?? 0m);
 
             switch (e.Kind)
@@ -68,7 +79,7 @@ public static class PositionIncomeCalculator
                     if (acc is null && kind == AssetKind.Bond) accruedUnknown = true;
                     accruedUsed = acc ?? 0m;
                     if (q <= 0m) hasUnknownLots = true; // деньги ушли, а количество неизвестно
-                    qty += q;
+                    known += q;
                     cost += gross - accruedUsed;
                     invested += gross;
                     accruedPaid += accruedUsed;
@@ -79,21 +90,29 @@ public static class PositionIncomeCalculator
                     var acc = KnownAccrued(e.AccruedRub, Math.Abs(amount));
                     if (acc is null && kind == AssetKind.Bond) accruedUnknown = true;
                     accruedUsed = acc ?? 0m;
+                    var proceeds = amount - accruedUsed;
+                    accruedReceived += accruedUsed;
                     if (q <= 0m)
                     {
-                        hasUnknownLots = true; // количество продажи неизвестно — себестоимость не списываем
-                    }
-                    else if (q > qty + QuantityEpsilon)
-                    {
-                        // Продано больше известного остатка (куплено до начала истории) — клампим, остаток не уходит в минус.
+                        // Количество продажи неизвестно — какие единицы проданы, не понять: выручка без результата, пул не трогаем.
                         hasUnknownLots = true;
+                        rowUnknownProceeds = proceeds;
+                        break;
                     }
-                    q = Math.Min(q, qty);
-                    var avg = qty > 0m ? cost / qty : 0m;
-                    rowRealized = (amount - accruedUsed) - avg * q;
-                    cost -= avg * q;
-                    qty -= q;
-                    accruedReceived += accruedUsed;
+
+                    var excess = Math.Max(0m, q - qty); // продано сверх пула журнала (куплено до начала истории)
+                    if (excess > QuantityEpsilon) hasUnknownLots = true;
+                    var fromPool = q - excess;
+                    var knownSold = qty > 0m ? fromPool * known / qty : 0m;
+                    var unknownSold = q - knownSold;
+                    if (unknownSold > QuantityEpsilon) hasUnknownLots = true;
+                    var perUnit = proceeds / q;
+                    var avg = known > 0m ? cost / known : 0m;
+                    rowRealized = perUnit * knownSold - avg * knownSold;
+                    rowUnknownProceeds = perUnit * unknownSold;
+                    cost -= avg * knownSold;
+                    known -= knownSold;
+                    unknown = Math.Max(0m, unknown - (fromPool - knownSold));
                     break;
                 }
                 case LedgerEntryKind.Income:
@@ -106,53 +125,84 @@ public static class PositionIncomeCalculator
                     fees += amount;
                     break;
                 case LedgerEntryKind.PrincipalReturn:
+                {
                     principalReturned += amount;
-                    if (cost >= amount)
+                    // Тело по единицам без себестоимости — не доход (доля неизвестных в пуле; пула нет — всё неизвестно).
+                    var unknownPart = qty > 0m ? amount * unknown / qty : amount;
+                    var knownPart = amount - unknownPart;
+                    rowUnknownProceeds = unknownPart;
+                    if (cost >= knownPart)
                     {
-                        cost -= amount;
+                        cost -= knownPart;
                     }
                     else
                     {
-                        rowRealized = amount - cost; // возврат больше остатка себестоимости — избыток это прибыль
+                        rowRealized = knownPart - cost; // возврат больше остатка себестоимости — избыток это прибыль
                         cost = 0m;
                     }
                     break;
+                }
                 case LedgerEntryKind.Redemption:
-                    rowRealized = amount - cost;
+                {
+                    var unknownPart = qty > 0m ? amount * unknown / qty : amount;
+                    if (unknownPart > 0m) hasUnknownLots = true;
+                    rowUnknownProceeds = unknownPart;
+                    rowRealized = (amount - unknownPart) - cost;
                     cost = 0m;
-                    qty = 0m;
+                    known = 0m;
+                    unknown = 0m;
                     hasRedemption = true;
                     principalReturned += amount;
                     break;
+                }
                 case LedgerEntryKind.SecurityIn:
                     // Ввод бумаг: цена неизвестна — количество растёт, себестоимость нет; позиция помечается.
                     hasUnknownLots = true;
-                    qty += q;
+                    unknown += q;
                     rowRealized = amount; // обычно 0 (денег нет); ненулевая сумма не должна потеряться из итога
                     break;
                 case LedgerEntryKind.SecurityOut:
                 {
                     hasUnknownLots = true;
                     var outQty = Math.Min(q, qty);
-                    var avg = qty > 0m ? cost / qty : 0m;
-                    rowRealized = amount - avg * outQty; // выведенная себестоимость списывается (денег за бумаги не получено)
-                    cost -= avg * outQty;
-                    qty -= outQty;
+                    var knownOut = qty > 0m ? outQty * known / qty : 0m;
+                    var avg = known > 0m ? cost / known : 0m;
+                    rowRealized = amount - avg * knownOut; // выведенная себестоимость списывается (денег за бумаги не получено)
+                    cost -= avg * knownOut;
+                    known -= knownOut;
+                    unknown = Math.Max(0m, unknown - (outQty - knownOut));
                     break;
                 }
             }
 
             realized += rowRealized;
-            rows.Add(new LedgerRow(e, qty, qty > 0m ? cost / qty : 0m, rowRealized, accruedUsed));
+            unknownProceeds += rowUnknownProceeds;
+            rows.Add(new LedgerRow(e, known + unknown, known > 0m ? cost / known : 0m, rowRealized, accruedUsed)
+            {
+                UnknownCostProceedsRub = rowUnknownProceeds,
+            });
         }
 
+        var journalQty = known + unknown;
+
         // Погашение перекрывает остаток позиции: бумаги погашены, приток уже в журнале.
-        var redeemedOverride = hasRedemption && qty <= QuantityEpsilon;
+        var redeemedOverride = hasRedemption && journalQty <= QuantityEpsilon;
         var qtyNow = redeemedOverride ? 0m : currentQuantity;
         var mv = qtyNow > 0m ? marketValueCleanRub : 0m;
         var accNow = qtyNow > 0m ? accruedNowRub : 0m;
 
-        if (Math.Abs(qty - qtyNow) > QuantityEpsilon) hasUnknownLots = true;
+        if (Math.Abs(journalQty - qtyNow) > QuantityEpsilon) hasUnknownLots = true;
+
+        // Доля остатка без известной себестоимости: неизвестные единицы пула (пропорционально, если остаток меньше пула)
+        // плюс всё, что на счёте сверх журнала. Их стоимость и НКД в результат не идут (см. doc-comment).
+        decimal unknownHeldUnits = qtyNow <= 0m ? 0m
+            : qtyNow >= journalQty ? unknown + (qtyNow - journalQty)
+            : journalQty > 0m ? unknown * qtyNow / journalQty : 0m;
+        var knownShare = qtyNow > 0m ? Math.Clamp((qtyNow - unknownHeldUnits) / qtyNow, 0m, 1m) : 0m;
+        var mvKnown = mv * knownShare;
+        var accKnown = accNow * knownShare;
+        var unknownHoldings = (mv - mvKnown) + (accNow - accKnown);
+        if (unknownHoldings > 0m) hasUnknownLots = true;
 
         var status = qtyNow > 0m
             ? PositionIncomeStatus.Open
@@ -171,9 +221,9 @@ public static class PositionIncomeCalculator
             cost = 0m;
         }
 
-        decimal? unrealized = status == PositionIncomeStatus.Open ? mv - cost : null;
-        var netCoupon = incomeGross - accruedPaid + accruedReceived + accNow;
-        var total = sumAmounts + mv + accNow;
+        decimal? unrealized = status == PositionIncomeStatus.Open ? mvKnown - cost : null;
+        var netCoupon = incomeGross - accruedPaid + accruedReceived + accKnown;
+        var total = sumAmounts - unknownProceeds + mvKnown + accKnown;
 
         var firstEntry = ordered.FirstOrDefault(e => e.Kind is LedgerEntryKind.Buy or LedgerEntryKind.SecurityIn) ?? ordered.FirstOrDefault();
         var firstDate = firstEntry is null ? asOf : DateOnly.FromDateTime(firstEntry.Date);
@@ -184,11 +234,12 @@ public static class PositionIncomeCalculator
         decimal? xirr = null;
         if (holdingDays >= MinXirrHoldingDays)
         {
-            var flows = ordered
-                .Where(e => e.AmountRub != 0m)
-                .Select(e => new XirrCalculator.CashFlow(DateOnly.FromDateTime(e.Date), e.AmountRub))
+            // Выручка единиц без себестоимости гасится условным взносом той же датой — XIRR только по известным единицам.
+            var flows = rows
+                .Select(r => new XirrCalculator.CashFlow(DateOnly.FromDateTime(r.Entry.Date), r.Entry.AmountRub - r.UnknownCostProceedsRub))
+                .Where(f => f.Amount != 0m)
                 .ToList();
-            if (mv + accNow > 0m) flows.Add(new XirrCalculator.CashFlow(asOf, mv + accNow));
+            if (mvKnown + accKnown > 0m) flows.Add(new XirrCalculator.CashFlow(asOf, mvKnown + accKnown));
             xirr = XirrCalculator.Calculate(flows)?.Rate;
         }
 
@@ -219,6 +270,8 @@ public static class PositionIncomeCalculator
             XirrFraction = xirr,
             HasUnknownLots = hasUnknownLots,
             AccruedUnknown = accruedUnknown,
+            UnknownCostProceedsRub = unknownProceeds,
+            UnknownCostHoldingsRub = unknownHoldings,
         };
         return new AssetIncome(income, rows);
     }

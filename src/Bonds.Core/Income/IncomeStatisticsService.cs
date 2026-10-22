@@ -204,7 +204,9 @@ public static class IncomeStatisticsService
         {
             foreach (var r in a.Rows)
             {
-                if (r.Entry.AmountRub != 0m) flows.Add(new XirrCalculator.CashFlow(DateOnly.FromDateTime(r.Entry.Date), r.Entry.AmountRub));
+                // Выручка единиц без себестоимости — не доход: гасится условным взносом (см. PositionIncomeCalculator).
+                var amount = r.Entry.AmountRub - r.UnknownCostProceedsRub;
+                if (amount != 0m) flows.Add(new XirrCalculator.CashFlow(DateOnly.FromDateTime(r.Entry.Date), amount));
             }
         }
         foreach (var e in accountLevel)
@@ -213,7 +215,7 @@ public static class IncomeStatisticsService
         }
         if (flows.Count == 0) return null;
 
-        var terminal = assets.Sum(a => a.Income.MarketValueCleanRub + a.Income.AccruedNowRub);
+        var terminal = assets.Sum(a => a.Income.MarketValueCleanRub + a.Income.AccruedNowRub - a.Income.UnknownCostHoldingsRub);
         if (terminal > 0m) flows.Add(new XirrCalculator.CashFlow(asOf, terminal));
 
         var first = flows.Min(f => f.Date);

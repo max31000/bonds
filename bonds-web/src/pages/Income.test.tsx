@@ -182,7 +182,7 @@ describe('Income (задача 54)', () => {
     mockIncome();
     renderIncome();
     const closed = await screen.findByTestId('income-row-bond:2');
-    expect(within(closed).getByTestId('income-warn-lots')).toHaveAccessibleName(/История операций по этой бумаге неполная/);
+    expect(within(closed).getByTestId('income-warn-lots')).toHaveAccessibleName(/История операций неполная/);
     expect(within(screen.getByTestId('income-row-bond:1')).queryByTestId('income-warn-lots')).not.toBeInTheDocument();
   });
 

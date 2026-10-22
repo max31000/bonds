@@ -16,7 +16,7 @@ import {
   type IncomeSortState,
 } from '../../utils/incomeDisplay';
 import { formatDate, formatPercent, formatRub } from '../../utils/format';
-import { INCOME_ACCRUED_UNKNOWN, INCOME_DATA_INCOMPLETE, INCOME_UNKNOWN_LOTS } from '../incomeCopy';
+import { INCOME_ACCRUED_UNKNOWN, INCOME_DATA_INCOMPLETE, INCOME_UNKNOWN_LOTS, incomeUnknownCostDetail } from '../incomeCopy';
 import { IncomeLedger } from './IncomeLedger';
 
 function Money({ value, signed = false, fraction }: { value: number | null; signed?: boolean; fraction?: number | null }) {
@@ -34,7 +34,10 @@ function Money({ value, signed = false, fraction }: { value: number | null; sign
 function Warnings({ p }: { p: IncomePosition }) {
   const items: Array<[string, string]> = [];
   if (p.dataIncomplete) items.push(['data', INCOME_DATA_INCOMPLETE]);
-  if (p.hasUnknownLots) items.push(['lots', INCOME_UNKNOWN_LOTS]);
+  if (p.hasUnknownLots) {
+    const detail = incomeUnknownCostDetail(p.unknownCostProceedsRub ?? 0, p.unknownCostHoldingsRub ?? 0, formatRub);
+    items.push(['lots', detail ? `${INCOME_UNKNOWN_LOTS} ${detail}` : INCOME_UNKNOWN_LOTS]);
+  }
   if (p.accruedUnknown) items.push(['accrued', INCOME_ACCRUED_UNKNOWN]);
   if (items.length === 0) return null;
   return (

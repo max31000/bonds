@@ -188,6 +188,7 @@ AccruedNow = Realized + Unrealized + NetCouponIncome + Taxes + Fees`. **`operati
 `IncomeLedgerBuilder` (Infrastructure; стоимость облигаций из `PortfolioHoldingsBuilder`: чистая = MV − AccruedPerBond × Qty; публичный
 `BuildFundsAsync` — вход для `/api/funds`, задача 53). Эндпоинты: `GET /api/income` и `GET /api/income/{bond|fund}/{assetId}/ledger`
 (`IncomeEndpoints`, DTO `IncomeDtos.cs`; доли — ДОЛИ, суммы — рубли; enum — camelCase-строки).
+**Неизвестная себестоимость (хотфикс 2026-10-22).** Единицы без известной покупки (куплены до начала истории, введены переводом, валюта, пришедшая не покупкой) результата не дают: выручка их продажи — `UnknownCostProceedsRub`, стоимость такой части остатка — `UnknownCostHoldingsRub`; обе исключены из итога, бумажной прибыли и XIRR (позиции и портфеля). Пул журнала = известные + неизвестные единицы, продажа списывает пропорционально, сверх пула — неизвестная часть. Раньше себестоимость 0 превращала всю выручку в «прибыль» (юани владельца: +217 тыс. ₽ вместо ~10 тыс.).
 
 **Фонды в продукте (задача 53).** Чистые функции `Bonds.Core/Funds`: `FundPerformanceCalculator` (тотал-ретёрн `(P_end + Σ выплат на пай в (start,end]) / P_start − 1`, ДОЛИ;
 окна 1/3/6/12м и «с первой покупки»; цена старта — forward fill, нет цены — окно null; годовая `(1+TR)^(365/дни) − 1`) и `FundOutlookService` (оценка ожидаемой

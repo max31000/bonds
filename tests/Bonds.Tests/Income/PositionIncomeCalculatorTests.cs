@@ -31,8 +31,12 @@ public class PositionIncomeCalculatorTests
 
     private static void AssertInvariants(PositionIncome p, IReadOnlyList<LedgerEntry> entries, AssetIncome detailed)
     {
-        // (1) итог = Σ денежных потоков журнала + текущая стоимость остатка
-        p.TotalResultRub.Should().Be(entries.Sum(e => e.AmountRub) + p.MarketValueCleanRub + p.AccruedNowRub, "инвариант 1");
+        // (1) итог = Σ денежных потоков журнала + текущая стоимость остатка, без единиц с неизвестной себестоимостью
+        //     (их выручка и стоимость остатка считаются внесёнными «по рынку» — результата не дают)
+        p.TotalResultRub.Should().Be(
+            entries.Sum(e => e.AmountRub) - p.UnknownCostProceedsRub + p.MarketValueCleanRub + p.AccruedNowRub - p.UnknownCostHoldingsRub,
+            "инвариант 1");
+        detailed.Rows.Sum(r => r.UnknownCostProceedsRub).Should().Be(p.UnknownCostProceedsRub, "строки журнала = сводка (неизвестная себестоимость)");
         // (2) итог = разложение
         p.TotalResultRub.Should().Be(
             p.RealizedPnlRub + (p.UnrealizedPnlRub ?? 0m) + p.NetCouponIncomeRub + p.TaxesRub + p.FeesRub, "инвариант 2");
@@ -177,10 +181,12 @@ public class PositionIncomeCalculatorTests
     }
 
     [Fact]
-    public void Etalon6_SellMoreThanKnown_ClampsAndFlags()
+    public void Etalon6_SellMoreThanKnown_UnknownPartGivesNoResult()
     {
-        // Известно 5 шт. за 5 000 (средняя 1 000); продано 8 за 8 400 (НКД 0): клампим до 5.
-        // Реализованный = 8 400 − 5×1 000 = 3 400; остаток 0, не отрицательный. Total = 3 400 = −5 000 + 8 400.
+        // Известно 5 шт. за 5 000 (средняя 1 000); продано 8 за 8 400 (НКД 0) → 1 050 за шт.
+        // Известные 5: реализованный = 5×1 050 − 5×1 000 = 250. Неизвестные 3 (куплены до начала истории): выручка 3 150 —
+        // себестоимость не известна, результата нет (раньше она вся шла в «прибыль» как при себестоимости 0).
+        // Total = −5 000 + 8 400 − 3 150 = 250.
         var p = Calc(AssetKind.Bond, [
             B(100, LedgerEntryKind.Buy, -5_000m, 5, 0m),
             B(10, LedgerEntryKind.Sell, 8_400m, 8, 0m),
@@ -188,8 +194,60 @@ public class PositionIncomeCalculatorTests
         p.HasUnknownLots.Should().BeTrue();
         p.Status.Should().Be(PositionIncomeStatus.Closed);
         p.CostRemainingRub.Should().Be(0m);
-        p.RealizedPnlRub.Should().Be(3_400m);
-        p.TotalResultRub.Should().Be(3_400m);
+        p.RealizedPnlRub.Should().Be(250m);
+        p.UnknownCostProceedsRub.Should().Be(3_150m);
+        p.TotalResultRub.Should().Be(250m);
+    }
+
+    [Fact]
+    public void SellWithoutAnyKnownBuy_IsNotProfit()
+    {
+        // Продажа 3 шт. за 3 000 без покупок в журнале: вся выручка — неизвестная себестоимость, результат 0.
+        var p = Calc(AssetKind.Bond, [B(10, LedgerEntryKind.Sell, 3_000m, 3, 0m)], 0, 0m, 0m);
+        p.RealizedPnlRub.Should().Be(0m);
+        p.UnknownCostProceedsRub.Should().Be(3_000m);
+        p.TotalResultRub.Should().Be(0m);
+        p.HasUnknownLots.Should().BeTrue();
+    }
+
+    [Fact]
+    public void RedemptionOfBondBoughtBeforeHistory_IsNotProfit()
+    {
+        // Покупки в журнале нет (до начала истории), пришло погашение 10 000 — это возврат неизвестной себестоимости, не прибыль.
+        var p = Calc(AssetKind.Bond, [B(5, LedgerEntryKind.Redemption, 10_000m)], 0, 0m, 0m);
+        p.Status.Should().Be(PositionIncomeStatus.Redeemed);
+        p.RealizedPnlRub.Should().Be(0m);
+        p.UnknownCostProceedsRub.Should().Be(10_000m);
+        p.TotalResultRub.Should().Be(0m);
+        p.HasUnknownLots.Should().BeTrue();
+    }
+
+    [Fact]
+    public void MixedPool_AmortizationAndRedemption_SplitByKnownShare()
+    {
+        // 5 шт. куплены за 5 000 (известны) + 5 введены без цены. Амортизация 2 000 на весь пул: 1 000 гасит себестоимость
+        // известных (5 000 → 4 000), 1 000 — неизвестных. Погашение 8 000: известным 4 000 − 4 000 = 0, неизвестным 4 000.
+        var p = Calc(AssetKind.Bond, [
+            B(100, LedgerEntryKind.Buy, -5_000m, 5, 0m),
+            B(90, LedgerEntryKind.SecurityIn, 0m, 5),
+            B(50, LedgerEntryKind.PrincipalReturn, 2_000m),
+            B(5, LedgerEntryKind.Redemption, 8_000m),
+        ], 0, 0m, 0m);
+        p.RealizedPnlRub.Should().Be(0m);
+        p.UnknownCostProceedsRub.Should().Be(5_000m);
+        p.TotalResultRub.Should().Be(0m);
+    }
+
+    [Fact]
+    public void HeldBeyondJournal_UnknownPartExcludedFromUnrealized()
+    {
+        // Журнал: 5 шт. за 5 000; на счёте 10 шт. по 1 000 (MV 10 000) — 5 пришли не покупкой.
+        // Бумажная прибыль считается по известным 5: 5 000 − 5 000 = 0; стоимость неизвестных 5 000 — вне итога.
+        var p = Calc(AssetKind.Bond, [B(40, LedgerEntryKind.Buy, -5_000m, 5, 0m)], 10, 10_000m, 0m);
+        p.UnrealizedPnlRub.Should().Be(0m);
+        p.UnknownCostHoldingsRub.Should().Be(5_000m);
+        p.TotalResultRub.Should().Be(0m);
+        p.MarketValueCleanRub.Should().Be(10_000m, "стоимость позиции показывается целиком");
     }
 
     [Fact]
@@ -245,6 +303,8 @@ public class PositionIncomeCalculatorTests
         p.HasUnknownLots.Should().BeTrue();
         p.CostRemainingRub.Should().Be(0m);
         p.QuantityNow.Should().Be(10m);
+        p.UnrealizedPnlRub.Should().Be(0m, "введённые бумаги без цены не дают бумажной прибыли");
+        p.TotalResultRub.Should().Be(0m);
     }
 
     [Fact]
@@ -280,6 +340,8 @@ public class PositionIncomeCalculatorTests
     {
         var p = PositionIncomeCalculator.Calculate(AssetKind.Bond, 1, [], 5, 5_000m, 0m, Today);
         p.HasUnknownLots.Should().BeTrue();
-        p.TotalResultRub.Should().Be(5_000m + 0m);
+        // Себестоимость неизвестна целиком: стоимость позиции — не заработок (раньше ошибочно показывалось +5 000).
+        p.UnknownCostHoldingsRub.Should().Be(5_000m);
+        p.TotalResultRub.Should().Be(0m);
     }
 }

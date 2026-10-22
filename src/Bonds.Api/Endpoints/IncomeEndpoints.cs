@@ -176,6 +176,8 @@ public static class IncomeEndpoints
             XirrFraction = p.XirrFraction,
             HasUnknownLots = p.HasUnknownLots,
             AccruedUnknown = p.AccruedUnknown,
+            UnknownCostProceedsRub = p.UnknownCostProceedsRub,
+            UnknownCostHoldingsRub = p.UnknownCostHoldingsRub,
             PeriodIncomeGrossRub = period?.IncomeGrossRub ?? 0m,
             PeriodRealizedPnlRub = period?.RealizedPnlRub ?? 0m,
             PeriodTaxesRub = period?.TaxesRub ?? 0m,

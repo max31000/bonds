@@ -1619,6 +1619,10 @@ export interface IncomePosition {
   xirrFraction: number | null;
   hasUnknownLots: boolean;
   accruedUnknown: boolean;
+  /** Выручка от продажи единиц без известной покупки, ₽ — в результат не входит. Необязательно (старые ответы). */
+  unknownCostProceedsRub?: number;
+  /** Стоимость части остатка без известной покупки, ₽ — в бумажную прибыль и итог не входит. */
+  unknownCostHoldingsRub?: number;
   periodIncomeGrossRub: number;
   periodRealizedPnlRub: number;
   periodTaxesRub: number;
