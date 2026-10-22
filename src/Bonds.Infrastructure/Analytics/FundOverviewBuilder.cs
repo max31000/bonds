@@ -136,7 +136,7 @@ public sealed class FundOverviewBuilder
         {
             ct.ThrowIfCancellationRequested();
             var price = await _income.ResolveFundPriceAsync(position, position.FundId, ct);
-            if (price is null) continue;
+            if (price is not > 0m) continue; // нет цены (или 0) — фонд не вносит вклад и не включает переключатель
             var fund = await _funds.GetByIdAsync(position.FundId);
             if (fund is null) continue;
 

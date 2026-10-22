@@ -25,6 +25,10 @@ interface AnalyticsStore {
  * пять параллельных запросов, чтобы экран `/analytics` грузил все виджеты одним вызовом `load()`.
  * Без `persist`.
  */
+// Номер последнего запроса переключателя фондов: быстрый щелчок «С фондами/Только облигации» не должен дать
+// более медленному старому ответу перезаписать новый (тот же приём, что loadSeq в useFundsStore).
+let fundScopeSeq = 0;
+
 export const useAnalyticsStore = create<AnalyticsStore>()((set) => ({
   scatter: null,
   composition: null,
@@ -53,13 +57,16 @@ export const useAnalyticsStore = create<AnalyticsStore>()((set) => ({
     }
   },
   loadFundScope: async (includeFunds) => {
+    const seq = ++fundScopeSeq;
     try {
       const [composition, rateScenario] = await Promise.all([
         fetchComposition({ includeFunds }),
         fetchRateScenario({ includeFunds }),
       ]);
+      if (seq !== fundScopeSeq) return;
       set({ composition, rateScenario });
     } catch (err) {
+      if (seq !== fundScopeSeq) return;
       set({ error: err instanceof Error ? err.message : 'Не удалось загрузить аналитику' });
     }
   },
