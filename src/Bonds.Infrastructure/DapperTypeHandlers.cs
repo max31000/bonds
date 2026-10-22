@@ -140,6 +140,7 @@ public static class DapperTypeHandlers
             SqlMapper.AddTypeHandler(new EnumStringTypeHandler<Bonds.Core.Models.SignalType>());
             SqlMapper.AddTypeHandler(new EnumStringTypeHandler<Bonds.Core.Models.FundOperationType>());
             SqlMapper.AddTypeHandler(new EnumStringTypeHandler<Bonds.Core.Models.FundForecastMethod>());
+            SqlMapper.AddTypeHandler(new EnumStringTypeHandler<Bonds.Core.Models.CurrencyOperationType>());
             SqlMapper.AddTypeHandler(new EnumStringTypeHandler<Bonds.Core.Models.SignalSeverity>());
 
             SqlMapper.AddTypeHandler(new NullableEnumStringTypeHandler<Bonds.Core.Models.OfferType>());

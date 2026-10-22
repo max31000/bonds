@@ -39,6 +39,9 @@ public sealed class SyncCycleResult
 
     public int InstrumentsSynced { get; set; }
 
+    /// <summary>Информационно (T-56fix): операций в чужой валюте пропущено без курса. НЕ ошибка цикла.</summary>
+    public int SkippedForeignOperations { get; set; }
+
     /// <summary>Сколько уникальных watchlist ISIN обновлено (справочник + котировка) за цикл.</summary>
     public int WatchlistInstrumentsSynced { get; set; }
     public int OperationsUpserted { get; set; }

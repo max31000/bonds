@@ -107,6 +107,8 @@ public class Stage08EndpointsTests
     [InlineData("POST", "/api/analytics/xirr/backfill")]
     [InlineData("GET", "/api/income")]
     [InlineData("GET", "/api/income/bond/1/ledger")]
+    [InlineData("GET", "/api/income/currency/1/ledger")]
+    [InlineData("GET", "/api/currencies")]
     [InlineData("GET", "/api/funds")]
     [InlineData("GET", "/api/funds/1")]
     [InlineData("PUT", "/api/funds/1/settings")]

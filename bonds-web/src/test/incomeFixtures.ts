@@ -9,6 +9,7 @@ const pos = (over: Partial<IncomePosition>): IncomePosition => ({
   isin: 'RU000A1038V6',
   positionId: 11,
   fundId: null,
+  currencyId: null,
   dataIncomplete: false,
   status: 'open',
   firstDate: isoDaysAgo(400),
@@ -129,6 +130,7 @@ export const baseIncome: IncomeResponse = {
   period: {
     couponsGrossRub: 5000,
     distributionsGrossRub: 200,
+    currencyIncomeGrossRub: 0,
     accruedPaidRub: 0,
     accruedReceivedRub: 0,
     taxesRub: -676,
@@ -141,6 +143,7 @@ export const baseIncome: IncomeResponse = {
       month: thisMonth,
       couponsGrossRub: 5000,
       distributionsGrossRub: 200,
+      currencyIncomeGrossRub: 0,
       accruedNetRub: 0,
       taxesRub: -676,
       feesRub: -100,
@@ -180,5 +183,48 @@ export const fundLedger: IncomeLedgerResponse = {
   disclaimer: '',
   entries: [
     { date: `${isoDaysAgo(100)}T10:00:00`, kind: 'income', amountRub: 120, quantity: null, accruedRub: null, quantityAfter: 100, avgCostAfterRub: 100, realizedPnlRub: 0 },
+  ],
+};
+
+export const currencyPosition = pos({
+  assetKind: 'currency',
+  assetId: 3,
+  name: 'Китайский юань',
+  ticker: 'CNYRUB_TOM',
+  isin: null,
+  positionId: null,
+  currencyId: 3,
+  quantityNow: 1000,
+  investedTotalRub: 11000,
+  costRemainingRub: 11000,
+  marketValueCleanRub: 11500,
+  accruedNowRub: 0,
+  unrealizedPnlRub: 500,
+  realizedPnlRub: 120,
+  incomeGrossRub: 0,
+  accruedPaidRub: 0,
+  netCouponIncomeRub: 0,
+  taxesRub: 0,
+  feesRub: 0,
+  totalResultRub: 620,
+  totalReturnFraction: 0.0564,
+  xirrFraction: 0.09,
+  periodIncomeGrossRub: 0,
+  periodRealizedPnlRub: 120,
+  periodTaxesRub: 0,
+  periodFeesRub: 0,
+});
+
+export const currencyLedger: IncomeLedgerResponse = {
+  assetKind: 'currency',
+  assetId: 3,
+  name: 'Китайский юань',
+  ticker: 'CNYRUB_TOM',
+  isin: null,
+  status: 'open',
+  disclaimer: '',
+  entries: [
+    { date: `${isoDaysAgo(100)}T10:00:00`, kind: 'buy', amountRub: -11000, quantity: 1000, accruedRub: null, quantityAfter: 1000, avgCostAfterRub: 11.25, realizedPnlRub: 0 },
+    { date: `${isoDaysAgo(20)}T10:00:00`, kind: 'sell', amountRub: 1200, quantity: 100, accruedRub: null, quantityAfter: 900, avgCostAfterRub: 11.25, realizedPnlRub: 75 },
   ],
 };

@@ -90,15 +90,27 @@ function PortfolioValueKpi({ positions }: { positions: PositionsResponse | null 
  * Свободные деньги на счёте (T-Invest GetPortfolio, последний синк) и итог «облигации + деньги» —
  * сюда приходят погашения и купоны; без них итог сервиса не сходился с приложением брокера.
  */
-function CashKpi({ live, bondsTotal }: { live: LivePositionsResponse | null; bondsTotal: number | null }) {
+function CashKpi({ live, bondsTotal, summary }: { live: LivePositionsResponse | null; bondsTotal: number | null; summary: PortfolioSummary | null }) {
   const cash = live?.cashRub ?? null;
+  // Задача 56: валюта (юани) УЖЕ входит в cashRub брокера — показываем её отдельной строкой «в т.ч.», к сумме не прибавляем.
+  const currencyValue = summary?.currencyValueRub ?? 0;
   const accountTotal = cash !== null && bondsTotal !== null ? bondsTotal + cash : null;
   return (
     <Metric
       data-testid="kpi-cash"
       label="Деньги на счёте"
       value={cash === null ? '—' : formatRub(cash)}
-      hint={accountTotal !== null ? `итого со счётом: ${formatRub(accountTotal)}` : 'появится после синка'}
+      hint={
+        <>
+          {accountTotal !== null ? `итого со счётом: ${formatRub(accountTotal)}` : 'появится после синка'}
+          {cash !== null && currencyValue > 0 && (
+            <span data-testid="kpi-cash-currency" style={{ display: 'block' }}>
+              в т.ч. валюта {formatRub(currencyValue)}
+              {summary?.currencyDataIncomplete ? ' (курс неполный)' : ''}
+            </span>
+          )}
+        </>
+      }
     />
   );
 }
@@ -139,7 +151,14 @@ function TotalBalanceKpi({ summary, error }: { summary: PortfolioSummary | null;
   }
   const diff = summary.brokerDiffRub;
   const mismatch = diff !== null && summary.totalRub > 0 && Math.abs(diff) / summary.totalRub > 0.01;
-  const breakdown = `облигации ${formatRub(summary.bondsValueRub)} · фонды ${formatRub(summary.fundsValueRub)} · деньги ${formatRub(summary.cashRub)}`;
+  // Задача 56: валюта уже внутри cashRub (и totalRub) — в разбивке рубли = cashRubOnly, валюта отдельно; сумма частей = totalRub.
+  const hasCurrency = summary.currencyValueRub > 0 && summary.cashRubOnly !== null;
+  // Валюта больше «денег» брокера — баланс устарел (cashRub с прошлого синка): «рубли 0» было бы ложной точностью.
+  const cashStale = hasCurrency && summary.cashRub !== null && summary.currencyValueRub > summary.cashRub;
+  const staleNote = cashStale ? ' (баланс денег устарел, разбивка приблизительна)' : '';
+  const breakdown = hasCurrency
+    ? `облигации ${formatRub(summary.bondsValueRub)} · фонды ${formatRub(summary.fundsValueRub)} · валюта ${formatRub(summary.currencyValueRub)} · рубли ${formatRub(summary.cashRubOnly)}${staleNote}`
+    : `облигации ${formatRub(summary.bondsValueRub)} · фонды ${formatRub(summary.fundsValueRub)} · деньги ${formatRub(summary.cashRub)}`;
   return (
     <Metric
       data-testid="kpi-total-balance"
@@ -147,7 +166,7 @@ function TotalBalanceKpi({ summary, error }: { summary: PortfolioSummary | null;
         <Group gap={4} wrap="nowrap" component="span">
           Стоимость портфеля
           <HelpHint label="Пояснение: Стоимость портфеля" data-testid="kpi-total-balance-explain-icon">
-            Облигации + фонды + свободные деньги на счёте по последнему синку. Облигации — по грязным ценам (с НКД). {breakdown}.
+            Облигации + фонды + деньги на счёте (рубли и валюта) по последнему синку. Облигации — по грязным ценам (с НКД). {breakdown}.
           </HelpHint>
         </Group>
       }
@@ -412,7 +431,7 @@ export function Dashboard() {
         <TotalBalanceKpi summary={summary} error={summaryError} />
         <PortfolioValueKpi positions={positions} />
         <FundsKpi funds={funds} />
-        <CashKpi live={live} bondsTotal={bondsTotal} />
+        <CashKpi live={live} bondsTotal={bondsTotal} summary={summary} />
         <XirrKpi xirr={xirr} error={xirrError} summary={summary} />
         <NextPaymentKpi cashflow={cashflow} error={cashflowError} />
         <UnreadSignalsKpi />

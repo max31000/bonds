@@ -7,7 +7,7 @@ using Microsoft.Extensions.Logging;
 namespace Bonds.Infrastructure.Analytics;
 
 /// <summary>
-/// Актив единого журнала доходов с метаданными для UI. <see cref="Result"/> = null — расчёт актива упал
+/// Актив единого журнала доходов с метаданными для UI. <see cref="PriceRub"/> - цена фонда за пай / курс валюты за 1 ЕДИНИЦУ (рубли). <see cref="Result"/> = null — расчёт актива упал
 /// (<see cref="DataIncomplete"/> = true), остальные активы считаются независимо.
 /// </summary>
 public sealed record IncomeAssetInfo(
@@ -20,7 +20,8 @@ public sealed record IncomeAssetInfo(
     ulong? FundId,
     bool DataIncomplete,
     AssetIncome? Result,
-    decimal? PriceRub = null);
+    decimal? PriceRub = null,
+    ulong? CurrencyId = null);
 
 /// <summary>Результат сборки: активы (включая закрытые) + записи «по счёту» (налоги/комиссии без актива).</summary>
 public sealed record IncomeLedgerData(
@@ -46,6 +47,10 @@ public sealed class IncomeLedgerBuilder
     private readonly IFundPositionRepository _fundPositions;
     private readonly IFundOperationRepository _fundOperations;
     private readonly IFundMarketDataRepository _fundMarket;
+    private readonly ICurrencyRepository _currencies;
+    private readonly ICurrencyPositionRepository _currencyPositions;
+    private readonly ICurrencyOperationRepository _currencyOperations;
+    private readonly ICurrencyMarketDataRepository _currencyMarket;
     private readonly ILogger<IncomeLedgerBuilder> _logger;
 
     public IncomeLedgerBuilder(
@@ -56,8 +61,16 @@ public sealed class IncomeLedgerBuilder
         IFundPositionRepository fundPositions,
         IFundOperationRepository fundOperations,
         IFundMarketDataRepository fundMarket,
+        ICurrencyRepository currencies,
+        ICurrencyPositionRepository currencyPositions,
+        ICurrencyOperationRepository currencyOperations,
+        ICurrencyMarketDataRepository currencyMarket,
         ILogger<IncomeLedgerBuilder> logger)
     {
+        _currencies = currencies;
+        _currencyPositions = currencyPositions;
+        _currencyOperations = currencyOperations;
+        _currencyMarket = currencyMarket;
         _holdings = holdings;
         _operations = operations;
         _instruments = instruments;
@@ -88,7 +101,80 @@ public sealed class IncomeLedgerBuilder
             account.AddRange(funds.AccountEntries);
         }
 
+        if (kind is null or AssetKind.Currency)
+        {
+            var currencies = await BuildCurrenciesAsync(accountId, asOf, null, ct);
+            assets.AddRange(currencies.Assets);
+            account.AddRange(currencies.AccountEntries);
+        }
+
         return new IncomeLedgerData(assets, account);
+    }
+
+    /// <summary>
+    /// Доходы по валютам счёта (задача 55; <paramref name="currencyIds"/> = null - по всем, иначе только указанные). Тот же калькулятор
+    /// <see cref="PositionIncomeCalculator"/>, что у облигаций и фондов: average cost в РУБЛЯХ за ЕДИНИЦУ валюты, НКД нет; курсовая
+    /// разница = Unrealized (по текущему курсу) / Realized (продажи). Набор активов строится из журнала и позиций - проданная валюта
+    /// остаётся (qty 0, итог по реализованной разнице). Остаток по журналу не равен позиции (валюта потрачена на неучтённый актив или
+    /// выведена) - калькулятор ставит <c>HasUnknownLots</c>; пока позиция держится (qty &gt; 0), висящая себестоимость в убыток НЕ списывается
+    /// (списание только для закрытых позиций - правило калькулятора).
+    /// </summary>
+    public async Task<IncomeLedgerData> BuildCurrenciesAsync(
+        ulong accountId, DateOnly asOf, IReadOnlyCollection<ulong>? currencyIds = null, CancellationToken ct = default)
+    {
+        var ops = (await _currencyOperations.GetByAccountAsync(accountId)).ToList();
+        var positions = (await _currencyPositions.GetByAccountAsync(accountId)).ToDictionary(p => p.CurrencyId);
+        var directory = (await _currencies.GetAllAsync()).ToDictionary(c => c.Id);
+
+        var account = ops
+            .Where(o => o.CurrencyId is null && o.Type is CurrencyOperationType.Tax or CurrencyOperationType.Fee)
+            .Select(LedgerEntryMapper.FromCurrencyOperation)
+            .ToList();
+
+        var byCurrency = ops.Where(o => o.CurrencyId is not null).GroupBy(o => o.CurrencyId!.Value).ToDictionary(g => g.Key, g => g.ToList());
+        var ids = byCurrency.Keys.Union(positions.Keys).Where(id => currencyIds is null || currencyIds.Contains(id)).OrderBy(id => id).ToList();
+
+        var assets = new List<IncomeAssetInfo>(ids.Count);
+        foreach (var id in ids)
+        {
+            ct.ThrowIfCancellationRequested();
+            directory.TryGetValue(id, out var currency);
+            positions.TryGetValue(id, out var position);
+            try
+            {
+                var entries = byCurrency.TryGetValue(id, out var list)
+                    ? list.Select(LedgerEntryMapper.FromCurrencyOperation).ToList()
+                    : [];
+                var qty = position?.Quantity ?? 0m;
+                // Единый курс валюты: current_price_rub позиции, иначе последнее закрытие из currency_rate_history.
+                var price = qty > 0m ? await ResolveCurrencyPriceAsync(position, id, ct) : position?.CurrentPriceRub;
+                // Рубли за единицу × единицы; курса нет вообще - стоимость 0 и актив помечен неполным.
+                var marketValue = price is { } p ? p * qty : 0m;
+                var result = PositionIncomeCalculator.CalculateDetailed(AssetKind.Currency, id, entries, qty, marketValue, 0m, asOf);
+                assets.Add(new IncomeAssetInfo(
+                    AssetKind.Currency, id, currency?.Name, currency?.Ticker ?? currency?.IsoCode, null, null, null,
+                    DataIncomplete: qty > 0m && price is null, result, price, id));
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogWarning(ex, "Income: failed to calculate currency {CurrencyId} - marked dataIncomplete", id);
+                assets.Add(new IncomeAssetInfo(AssetKind.Currency, id, currency?.Name, currency?.Ticker, null, null, null, true, null, null, id));
+            }
+        }
+
+        return new IncomeLedgerData(assets, account);
+    }
+
+    /// <summary>
+    /// ЕДИНАЯ точка курса валюты (рубли за 1 ЕДИНИЦУ): <c>currency_positions.current_price_rub</c>, а если его нет - последнее закрытие из
+    /// <c>currency_rate_history</c> (там уже поделено на FACEVALUE); null - курса нет вообще (стоимость 0 + DataIncomplete). Как
+    /// <see cref="ResolveFundPriceAsync"/>: журнал доходов, <c>/api/currencies</c>, <c>/api/portfolio/summary</c> берут курс только отсюда.
+    /// </summary>
+    public async Task<decimal?> ResolveCurrencyPriceAsync(CurrencyPosition? position, ulong currencyId, CancellationToken ct = default)
+    {
+        if (position?.CurrentPriceRub is > 0m and var direct) return direct;
+        var last = await _currencyMarket.GetLatestRateAsync(currencyId, ct);
+        return last is { CloseRub: > 0m } ? last.CloseRub : null;
     }
 
     /// <summary>

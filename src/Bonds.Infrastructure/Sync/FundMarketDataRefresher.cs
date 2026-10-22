@@ -78,9 +78,8 @@ public sealed class FundMarketDataRefresher
             try
             {
                 var lastDate = await _marketData.GetLastPriceDateAsync(fund.Id, ct);
-                if (lastDate is { } last && last >= expected) continue;
+                if (SyncGuards.ShouldSkipMarketRefresh(lastDate, expected, EmptyAttemptedOn, fund.Id, today)) continue;
                 var pricesBefore = prices;
-                if (lastDate is null && EmptyAttemptedOn.TryGetValue(fund.Id, out var attempted) && attempted >= today) continue;
 
                 var secid = fund.Secid ?? fund.Ticker;
                 if (!string.IsNullOrEmpty(secid))
@@ -112,8 +111,7 @@ public sealed class FundMarketDataRefresher
                     }
                 }
 
-                if (lastDate is null && prices == pricesBefore) EmptyAttemptedOn[fund.Id] = today;
-                else EmptyAttemptedOn.TryRemove(fund.Id, out _);
+                SyncGuards.RecordMarketRefreshOutcome(lastDate, prices != pricesBefore, EmptyAttemptedOn, fund.Id, today);
 
                 refreshed++;
             }

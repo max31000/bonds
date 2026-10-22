@@ -308,6 +308,52 @@ public sealed class MoexIssClient : IMoexIssClient
         return points;
     }
 
+    public async Task<IReadOnlyList<MoexCurrencyClosePoint>> GetCurrencyHistoryAsync(
+        string secid, DateOnly from, DateOnly to, CancellationToken ct = default)
+    {
+        var points = new List<MoexCurrencyClosePoint>();
+        await foreach (var row in PageHistoryRowsAsync(
+            $"/iss/history/engines/currency/markets/selt/boards/CETS/securities/{Uri.EscapeDataString(secid)}.json",
+            from, to, secid, ct))
+        {
+            var date = row.GetDateOnly("TRADEDATE");
+            if (date is null) continue;
+
+            // CLOSE — рубли за FACEVALUE единиц валюты, конверсии здесь нет (см. MoexCurrencyClosePoint). 0 = в этот день сделок не было.
+            var close = row.GetDecimal("CLOSE");
+            points.Add(new MoexCurrencyClosePoint(date.Value, close is > 0m ? close : null));
+        }
+
+        return points;
+    }
+
+    public async Task<decimal?> GetCurrencyFaceValueAsync(string secid, CancellationToken ct = default)
+    {
+        var url = $"/iss/engines/currency/markets/selt/boards/CETS/securities/{Uri.EscapeDataString(secid)}.json" +
+                  "?iss.meta=off&iss.only=securities&securities.columns=SECID,FACEVALUE,LOTSIZE";
+        var json = await GetStringSafeAsync(url, ct);
+        if (json is null) return null;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var table = IssTable.Parse(doc.RootElement.Clone(), "securities");
+            if (table is null) return null;
+            foreach (var row in table.Rows())
+            {
+                var face = row.GetDecimal("FACEVALUE");
+                return face is > 0m ? face : null;
+            }
+
+            return null;
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogWarning(ex, "Failed to parse MOEX currency securities response for {Secid}", secid);
+            return null;
+        }
+    }
+
     private const decimal DaysPerYear = 365m;
 
     public async Task<IReadOnlyList<MoexIndexPoint>> GetIndexHistoryAsync(

@@ -2,11 +2,14 @@ using Bonds.Core.Models;
 
 namespace Bonds.Core.Income;
 
-/// <summary>Вид актива единого журнала доходов (задача 52): облигация или фонд (БПИФ).</summary>
+/// <summary>Вид актива единого журнала доходов: облигация, фонд (БПИФ, задача 52) или валюта (задача 55).</summary>
 public enum AssetKind
 {
     Bond,
     Fund,
+
+    /// <summary>Валюта (юани и т.п.): курсовая разница = Realized/Unrealized, проценты на остаток — <see cref="LedgerEntryKind.Income"/>.</summary>
+    Currency,
 }
 
 /// <summary>Нормализованный вид записи журнала — общий для облигаций и фондов.</summary>
@@ -80,6 +83,16 @@ public static class LedgerEntryMapper
         _ => throw new ArgumentOutOfRangeException(nameof(type), type, "Unknown fund operation type"),
     };
 
+    public static LedgerEntryKind ToKind(CurrencyOperationType type) => type switch
+    {
+        CurrencyOperationType.Buy => LedgerEntryKind.Buy,
+        CurrencyOperationType.Sell => LedgerEntryKind.Sell,
+        CurrencyOperationType.Tax => LedgerEntryKind.Tax,
+        CurrencyOperationType.Fee => LedgerEntryKind.Fee,
+        CurrencyOperationType.Income => LedgerEntryKind.Income,
+        _ => throw new ArgumentOutOfRangeException(nameof(type), type, "Unknown currency operation type"),
+    };
+
     /// <summary>Запись облигационного журнала. <c>AssetId</c> = <c>instrument_id</c> (0 — операция без бумаги).</summary>
     public static LedgerEntry FromOperation(Operation op)
     {
@@ -93,4 +106,11 @@ public static class LedgerEntryMapper
     /// <summary>Запись фондового журнала. <c>AssetId</c> = <c>fund_id</c> (0 — операция без фонда). НКД у паёв нет.</summary>
     public static LedgerEntry FromFundOperation(FundOperation op) =>
         new(AssetKind.Fund, op.FundId ?? 0UL, op.Date, ToKind(op.Type), op.AmountRub, op.Quantity, null, op.Id);
+
+    /// <summary>
+    /// Запись валютного журнала (задача 55). <c>AssetId</c> = <c>currency_id</c> (0 — операция без валюты). <c>Quantity</c> — ЕДИНИЦЫ
+    /// валюты, <c>AmountRub</c> — РУБЛИ со знаком брокера, НКД нет.
+    /// </summary>
+    public static LedgerEntry FromCurrencyOperation(CurrencyOperation op) =>
+        new(AssetKind.Currency, op.CurrencyId ?? 0UL, op.Date, ToKind(op.Type), op.AmountRub, op.Quantity, null, op.Id);
 }

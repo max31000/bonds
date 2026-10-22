@@ -1,0 +1,7 @@
+{
+"securities": {
+	"columns": ["SECID", "FACEVALUE", "LOTSIZE", "SHORTNAME"], 
+	"data": [
+		["CNYRUB_TOM", 1, 1000, "CNYRUB_TOM"]
+	]
+}}

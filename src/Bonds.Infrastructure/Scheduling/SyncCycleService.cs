@@ -50,6 +50,7 @@ public sealed class SyncCycleService : ISyncCycleRunner
     private DateTime? _lastFailureAtUtc;
     private List<string> _lastRunErrors = [];
     private bool _tokenMissingOrInvalid;
+    private int _skippedForeignOperations;
 
     public SyncCycleService(
         IServiceScopeFactory scopeFactory,
@@ -73,6 +74,7 @@ public sealed class SyncCycleService : ISyncCycleRunner
                 LastFailureAtUtc = _lastFailureAtUtc,
                 LastRunErrors = _lastRunErrors,
                 TokenMissingOrInvalid = _tokenMissingOrInvalid,
+                SkippedForeignOperations = _skippedForeignOperations,
             };
         }
     }
@@ -99,6 +101,7 @@ public sealed class SyncCycleService : ISyncCycleRunner
             {
                 _lastRunErrors = result.Errors;
                 _tokenMissingOrInvalid = result.TokenMissingOrInvalid;
+                _skippedForeignOperations = result.SkippedForeignOperations;
                 if (result.HasErrors)
                 {
                     _lastFailureAtUtc = DateTime.UtcNow;
@@ -161,6 +164,7 @@ public sealed class SyncCycleService : ISyncCycleRunner
             result.OperationsUpserted = syncResult.OperationsUpserted;
             result.YieldCurveUpdated = syncResult.YieldCurveUpdated;
             journalSynced = syncResult.JournalSynced;
+            result.SkippedForeignOperations = syncResult.SkippedForeignOperations;
             if (syncResult.HasErrors) result.Errors.AddRange(syncResult.Errors.Select(e => $"Sync: {e}"));
         }
         catch (InvalidOperationException ex)
@@ -205,6 +209,9 @@ public sealed class SyncCycleService : ISyncCycleRunner
         // по БД внутри). Необязательный шаг: сбой — только лог, цикл НЕ помечается неуспешным. MOEX-часть работает и без
         // токена T-Invest (выплаты в этом случае пропускаются).
         await RefreshFundMarketDataAsync(sp, tInvestAvailable: !result.TokenMissingOrInvalid, ct);
+
+        // --- 1a-ter. История курса валют (задача 55, MOEX CETS) - тот же суточный шаг и те же правила (необязательный, сбой - лог).
+        await RefreshCurrencyRatesAsync(sp, ct);
 
         // --- 1b. Бэкфилл истории стоимости, если она пуста/почти пуста (первый запуск, или миграция
         // пересчёта истории её очистила). Строго ПОСЛЕ успешного перечитывания журнала: история
@@ -290,6 +297,25 @@ public sealed class SyncCycleService : ISyncCycleRunner
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Fund market data refresh failed — fund prices/distributions keep the previous values");
+        }
+    }
+
+    private async Task RefreshCurrencyRatesAsync(IServiceProvider sp, CancellationToken ct)
+    {
+        try
+        {
+            var refresher = sp.GetService<CurrencyRateRefresher>();
+            if (refresher is null) return;
+
+            await refresher.RefreshIfDueAsync(BusinessClock.MoscowToday(), ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Currency rate refresh failed — currency rates keep the previous values");
         }
     }
 

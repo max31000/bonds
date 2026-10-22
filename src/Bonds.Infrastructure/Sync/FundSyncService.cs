@@ -162,21 +162,14 @@ public sealed class FundSyncService : IFundSyncService
 
         // --- Сверка (образец — облигационная): пустой ответ брокера при непустых локальных позициях удаляем
         // только со второго подряд синка.
-        if (reconciliationSafe && funds.Count == 0)
-        {
-            var localCount = (await _positions.GetByAccountAsync(accountId)).Count;
-            if (localCount > 0 && !EmptyFundsSeen.ContainsKey(accountId))
-            {
-                EmptyFundsSeen[accountId] = 0;
-                reconciliationSafe = false;
-                _logger.LogWarning(
+        if (await SyncGuards.ShouldDeferEmptyReconciliationAsync(
+                EmptyFundsSeen, accountId, reconciliationSafe, funds.Count,
+                async () => (await _positions.GetByAccountAsync(accountId)).Count,
+                localCount => _logger.LogWarning(
                     "Fund sync: broker returned no funds while {Count} local position(s) exist — deferring deletion to the next sync",
-                    localCount);
-            }
-        }
-        else
+                    localCount)))
         {
-            EmptyFundsSeen.TryRemove(accountId, out _);
+            reconciliationSafe = false;
         }
 
         if (reconciliationSafe)

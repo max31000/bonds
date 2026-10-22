@@ -206,8 +206,23 @@ public sealed record PortfolioSummaryDto
     public required decimal BondsValueRub { get; init; }
     public required decimal FundsValueRub { get; init; }
 
-    /// <summary>Свободные деньги на счёте по последнему синку; null — баланс ещё не синкался.</summary>
+    /// <summary>Свободные деньги на счёте по последнему синку (брокерский TotalAmountCurrencies - ВКЛЮЧАЯ валюту); null — баланс ещё не синкался.</summary>
     public decimal? CashRub { get; init; }
+
+    /// <summary>
+    /// Стоимость валютных позиций (юани и т.п.), РУБЛИ: Σ ЕДИНИЦЫ × курс за 1 единицу (задача 55). Эта сумма УЖЕ ВХОДИТ в <c>cashRub</c>
+    /// (брокерский <c>TotalAmountCurrencies</c> - все валюты в рублях) и в <c>totalRub</c> отдельно не прибавляется.
+    /// </summary>
+    public decimal CurrencyValueRub { get; init; }
+
+    /// <summary>
+    /// Рубли без валюты: <c>max(0, cashRub − currencyValueRub)</c>, РУБЛИ (задача 55); null - баланс ещё не синкался. Инвариант:
+    /// <c>cashRubOnly + currencyValueRub = cashRub</c> (пока валюта ≤ cashRub).
+    /// </summary>
+    public decimal? CashRubOnly { get; init; }
+
+    /// <summary>У открытой валюты нет курса вообще - <c>currencyValueRub</c> занижен (на <c>totalRub</c> не влияет).</summary>
+    public bool CurrencyDataIncomplete { get; init; }
 
     /// <summary>Облигации + фонды + деньги (null-деньги = 0).</summary>
     public required decimal TotalRub { get; init; }

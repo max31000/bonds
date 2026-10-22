@@ -74,6 +74,7 @@ public class MigrationIdempotencyTests : IAsyncLifetime
             "022_market_credit_events.sql",
             "023_funds.sql",
             "024_operations_accrued.sql",
+            "025_currency_assets.sql",
         });
 
         var expectedTables = new[]
@@ -85,6 +86,7 @@ public class MigrationIdempotencyTests : IAsyncLifetime
             "bond_universe", "bond_universe_history", "security_details", "issuer_financials", "issuer_financials_status",
             "instrument_risk_levels", "issuer_ratings",
             "funds", "fund_positions", "fund_operations", "fund_price_history", "fund_distributions", "market_index_history",
+            "currencies", "currency_positions", "currency_operations", "currency_rate_history",
         };
 
         foreach (var table in expectedTables)
@@ -110,7 +112,7 @@ public class MigrationIdempotencyTests : IAsyncLifetime
         await conn.OpenAsync();
 
         var migrationCount = await conn.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM _migrations");
-        migrationCount.Should().Be(24, "повторный запуск не должен заново применять уже применённые миграции");
+        migrationCount.Should().Be(25, "повторный запуск не должен заново применять уже применённые миграции");
 
         // users.base_currency существует ровно один раз (ALTER ... ADD COLUMN IF NOT EXISTS не падает повторно).
         var columnCount = await conn.ExecuteScalarAsync<long>(
@@ -354,5 +356,32 @@ public class MigrationIdempotencyTests : IAsyncLifetime
             @"SELECT is_nullable FROM information_schema.columns
               WHERE table_schema = DATABASE() AND table_name = 'operations' AND column_name = 'accrued_rub'");
         nullable.Should().Be("YES", "operations.accrued_rub nullable: NULL = брокер НКД не отдал (миграция 024)");
+    }
+
+    [Fact]
+    public async Task RunAsync_Migration025_CurrencyTablesHaveExpectedShape()
+    {
+        var connectionString = _container.GetConnectionString();
+        await new MigrationRunner(connectionString, NullLogger<MigrationRunner>.Instance).RunAsync();
+
+        await using var conn = new MySqlConnection(connectionString);
+        await conn.OpenAsync();
+
+        async Task<(string Type, string Nullable)> Column(string table, string column)
+        {
+            var row = await conn.QuerySingleAsync<(string ColumnType, string IsNullable)>(
+                @"SELECT COLUMN_TYPE AS ColumnType, IS_NULLABLE AS IsNullable FROM information_schema.columns
+                  WHERE table_schema = DATABASE() AND table_name = @Table AND column_name = @Column",
+                new { Table = table, Column = column });
+            return (row.ColumnType, row.IsNullable);
+        }
+
+        (await Column("currency_operations", "type")).Type.Should().Be("enum('Buy','Sell','Tax','Fee','Income')");
+        (await Column("currency_operations", "currency_id")).Nullable.Should().Be("YES", "валюту можно не резолвить - деньги не теряем");
+        (await Column("currency_positions", "avg_purchase_price_rub")).Nullable.Should().Be("YES", "брокер может не знать цену входа");
+        (await Column("currency_positions", "quantity")).Type.Should().StartWith("decimal(20,6)");
+        (await Column("currencies", "face_value")).Type.Should().StartWith("decimal(20,6)");
+        (await Column("currency_rate_history", "close_rub")).Nullable.Should().Be("NO");
+        (await Column("currencies", "iso_code")).Type.Should().Be("varchar(8)");
     }
 }

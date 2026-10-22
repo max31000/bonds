@@ -64,6 +64,12 @@ public interface ITInvestPortfolioClient
     /// пустой список + LogWarning (рыночные данные необязательны). Токен не настроен → <see cref="InvalidOperationException"/>.
     /// </summary>
     Task<IReadOnlyList<TInvestFundDistribution>> GetFundDistributionsAsync(string figi, DateOnly from, DateOnly to, CancellationToken ct = default);
+
+    /// <summary>
+    /// Задача 55: справочник валюты по FIGI — <c>CurrencyBy(FIGI)</c> (<c>IsoCurrencyName</c>, ticker, name, lot). Валюта не найдена /
+    /// сбой gRPC — null (+LogWarning); токен не настроен → <see cref="InvalidOperationException"/>.
+    /// </summary>
+    Task<TInvestCurrencyInfo?> GetCurrencyInfoAsync(string figi, CancellationToken ct = default);
 }
 
 /// <summary>Брокерская оценка риска одной облигации (ISIN → <see cref="BrokerRiskLevel"/>).</summary>

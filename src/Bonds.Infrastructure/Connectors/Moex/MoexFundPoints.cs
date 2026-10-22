@@ -14,3 +14,11 @@ public sealed record MoexSharePricePoint(DateOnly TradeDate, decimal? CloseRub);
 /// если ISS его не вернул (ценовые индексы без YIELD/DURATION).
 /// </summary>
 public sealed record MoexIndexPoint(DateOnly TradeDate, decimal? Close, decimal? YieldFraction, decimal? DurationYears);
+
+/// <summary>
+/// Дневное закрытие валютной пары MOEX (доска CETS рынка selt). <see cref="CloseRubPerFaceValue"/> — РУБЛИ ЗА <c>FACEVALUE</c> ЕДИНИЦ
+/// валюты (колонка <c>CLOSE</c>; у CNY FACEVALUE = 1, у JPY/KZT = 100) — НЕ за 1 единицу: деление на FACEVALUE —
+/// <see cref="Bonds.Core.Currencies.CurrencyRateUnits.RubPerUnit"/>, делает потребитель. Дни без сделок приходят с <c>CLOSE = 0</c>
+/// (не null) — клиент отдаёт такие дни как null.
+/// </summary>
+public sealed record MoexCurrencyClosePoint(DateOnly TradeDate, decimal? CloseRubPerFaceValue);

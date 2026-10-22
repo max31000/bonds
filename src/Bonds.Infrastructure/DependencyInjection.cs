@@ -93,6 +93,12 @@ public static class DependencyInjection
         services.AddScoped<IFundOperationRepository>(sp => new FundOperationRepository(GetConnStr(sp)));
         services.AddScoped<IFundMarketDataRepository>(sp => new FundMarketDataRepository(GetConnStr(sp)));
 
+        // Задача 55: валюта как актив (юани и т.п.) — отдельный домен по образцу фондов.
+        services.AddScoped<ICurrencyRepository>(sp => new CurrencyRepository(GetConnStr(sp)));
+        services.AddScoped<ICurrencyPositionRepository>(sp => new CurrencyPositionRepository(GetConnStr(sp)));
+        services.AddScoped<ICurrencyOperationRepository>(sp => new CurrencyOperationRepository(GetConnStr(sp)));
+        services.AddScoped<ICurrencyMarketDataRepository>(sp => new CurrencyMarketDataRepository(GetConnStr(sp)));
+
         // Migration runner
         services.AddSingleton(sp => new MigrationRunner(
             GetConnStr(sp),
@@ -154,6 +160,11 @@ public static class DependencyInjection
         services.AddScoped<IFundSyncService, FundSyncService>();
         services.AddScoped<FundMarketDataRefresher>();
 
+        // Задача 55: синк валюты (из BondSyncService), курс платежей не в рублях и суточная история курса (шаг SyncCycleService).
+        services.AddScoped<ICurrencySyncService, CurrencySyncService>();
+        services.AddScoped<ICurrencyRateLookup, CurrencyRateLookup>();
+        services.AddScoped<CurrencyRateRefresher>();
+
         // Единый путь "обогатить одну бумагу по ISIN" (резолв инструмента +
         // MOEX-котировка), вынесенный из WatchlistSyncService — переиспользуется watchlist
         // и материализацией из банка облигаций (POST /api/universe/{secid}/materialize).
@@ -183,6 +194,7 @@ public static class DependencyInjection
         // Единый журнал доходов (задача 52): входы для PositionIncomeCalculator; задача 53 берёт доходы по фондам отсюда.
         services.AddScoped<IncomeLedgerBuilder>();
         services.AddScoped<FundOverviewBuilder>();
+        services.AddScoped<CurrencyOverviewBuilder>();
 
         // Резолвер эффективной ставки комиссии (override → оценка из журнала →
         // дефолт) — потребляется replacement/allocation/ifSoldNow эндпоинтами.

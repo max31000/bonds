@@ -102,14 +102,17 @@ public sealed class TInvestPortfolioClient : ITInvestPortfolioClient
 
         var result = new List<TInvestPortfolioPosition>();
         var funds = new List<TInvestPortfolioPosition>();
+        var currencies = new List<TInvestPortfolioPosition>();
         foreach (var position in response.Positions)
         {
             // InstrumentType приходит как нижнерегистровая строка протокола ("bond", "share", ...) —
             // не enum (verified §12.2, см. README.md). Облигации — основной домен; фонды ("etf", задача 51) —
-            // отдельный домен; акции/валюта по-прежнему пропускаются.
+            // отдельный домен; валюта ("currency", задача 55, кроме рубля) — тоже отдельный домен; акции пропускаются.
             var isBond = string.Equals(position.InstrumentType, "bond", StringComparison.OrdinalIgnoreCase);
             var isFund = string.Equals(position.InstrumentType, "etf", StringComparison.OrdinalIgnoreCase);
-            if (!isBond && !isFund)
+            var isCurrency = string.Equals(position.InstrumentType, "currency", StringComparison.OrdinalIgnoreCase)
+                && !TInvestCurrencyInfo.IsRubleFigi(position.Figi);
+            if (!isBond && !isFund && !isCurrency)
             {
                 continue;
             }
@@ -123,13 +126,14 @@ public sealed class TInvestPortfolioClient : ITInvestPortfolioClient
                 CurrentPrice = position.CurrentPrice.ToNullableDecimal(),
                 CurrentNkd = position.CurrentNkd.ToNullableDecimal(),
             };
-            (isBond ? result : funds).Add(mapped);
+            (isBond ? result : isFund ? funds : currencies).Add(mapped);
         }
 
         return new TInvestPortfolio
         {
             Bonds = result,
             Funds = funds,
+            Currencies = currencies,
             CashRub = response.TotalAmountCurrencies.ToNullableDecimal(),
             TotalPortfolioRub = response.TotalAmountPortfolio.ToNullableDecimal(),
         };
@@ -176,7 +180,10 @@ public sealed class TInvestPortfolioClient : ITInvestPortfolioClient
                     Figi = string.IsNullOrEmpty(item.Figi) ? null : item.Figi,
                     InstrumentUid = string.IsNullOrEmpty(item.InstrumentUid) ? null : item.InstrumentUid,
                     Date = item.Date.ToDateTime(),
+                    // Payment — MoneyValue со СВОЕЙ валютой: число в этой валюте, не обязательно рубли (задача 55).
                     PaymentRub = item.Payment.ToDecimal(),
+                    PaymentCurrency = string.IsNullOrWhiteSpace(item.Payment?.Currency) ? null : item.Payment.Currency.Trim().ToLowerInvariant(),
+                    UnitPrice = item.Price.ToNullableDecimal(),
                     Quantity = item.Quantity == 0 ? null : item.Quantity,
                     AccruedInterest = item.AccruedInt.ToNullableDecimal(),
                 });
@@ -400,6 +407,31 @@ public sealed class TInvestPortfolioClient : ITInvestPortfolioClient
         {
             _logger.LogWarning(ex, "T-Invest: failed to fetch distributions for fund {Figi}", figi);
             return [];
+        }
+    }
+
+    public async Task<TInvestCurrencyInfo?> GetCurrencyInfoAsync(string figi, CancellationToken ct = default)
+    {
+        var client = await GetClientAsync(ct);
+        try
+        {
+            var response = await client.Instruments.CurrencyByAsync(
+                new InstrumentRequest { IdType = InstrumentIdType.Figi, Id = figi }, cancellationToken: ct);
+            var c = response.Instrument;
+            if (string.IsNullOrWhiteSpace(c.IsoCurrencyName)) return null;
+
+            return new TInvestCurrencyInfo
+            {
+                IsoCode = c.IsoCurrencyName.Trim().ToUpperInvariant(),
+                Ticker = string.IsNullOrWhiteSpace(c.Ticker) ? null : c.Ticker.Trim(),
+                Name = string.IsNullOrWhiteSpace(c.Name) ? null : c.Name,
+                Lot = c.Lot > 0 ? c.Lot : null,
+            };
+        }
+        catch (Grpc.Core.RpcException ex)
+        {
+            _logger.LogWarning(ex, "T-Invest: failed to resolve currency for FIGI {Figi}", figi);
+            return null;
         }
     }
 }

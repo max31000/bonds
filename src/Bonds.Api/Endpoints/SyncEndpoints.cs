@@ -54,6 +54,7 @@ public static class SyncEndpoints
             LastFailureAtUtc = status.LastFailureAtUtc,
             LastRunErrors = status.LastRunErrors,
             TokenMissingOrInvalid = status.TokenMissingOrInvalid,
+            SkippedForeignOperations = status.SkippedForeignOperations,
         };
 
         return Results.Ok(dto);
@@ -87,4 +88,7 @@ public sealed record SyncStatusDto
     public DateTime? LastFailureAtUtc { get; init; }
     public required IReadOnlyList<string> LastRunErrors { get; init; }
     public required bool TokenMissingOrInvalid { get; init; }
+
+    /// <summary>Информационно: операций в чужой валюте без курса пропущено в последнем цикле (не ошибка).</summary>
+    public int SkippedForeignOperations { get; init; }
 }

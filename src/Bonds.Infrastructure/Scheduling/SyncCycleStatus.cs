@@ -23,4 +23,7 @@ public sealed record SyncCycleStatus
     /// вместо того, чтобы пользователь узнавал о протухшем токене по пустым данным.
     /// </summary>
     public bool TokenMissingOrInvalid { get; init; }
+
+    /// <summary>Информационно: сколько операций в чужой валюте пропущено без курса в последнем цикле (не делает цикл неуспешным).</summary>
+    public int SkippedForeignOperations { get; init; }
 }

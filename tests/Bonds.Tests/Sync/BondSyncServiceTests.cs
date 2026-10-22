@@ -31,6 +31,8 @@ public class BondSyncServiceTests
     private readonly Mock<IOperationRepository> _operations = new();
     private readonly Mock<IAccountRepository> _accounts = new();
     private readonly Mock<IFundSyncService> _fundSync = new();
+    private readonly Mock<ICurrencySyncService> _currencySync = new();
+    private readonly Mock<ICurrencyRateLookup> _rateLookup = new();
 
     private const ulong AccountId = 42;
     private const string BrokerAccountId = "BA-1";
@@ -51,7 +53,9 @@ public class BondSyncServiceTests
         _operations.Object,
         _accounts.Object,
         NullLogger<BondSyncService>.Instance,
-        _fundSync.Object);
+        _fundSync.Object,
+        _currencySync.Object,
+        _rateLookup.Object);
 
     public BondSyncServiceTests()
     {
@@ -59,6 +63,10 @@ public class BondSyncServiceTests
                 It.IsAny<ulong>(), It.IsAny<IReadOnlyList<TInvestPortfolioPosition>>(),
                 It.IsAny<IReadOnlyList<TInvestOperation>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new FundSyncResult());
+        _currencySync.Setup(c => c.ApplyAsync(
+                It.IsAny<ulong>(), It.IsAny<IReadOnlyList<TInvestPortfolioPosition>>(),
+                It.IsAny<IReadOnlyList<TInvestOperation>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CurrencySyncResult());
     }
 
     private void SetupHappyPathAccountAndPositions(decimal? currentNkd = 12.3m, decimal? currentPrice = 985.5m)
@@ -443,6 +451,172 @@ public class BondSyncServiceTests
         _fundSync.Verify(f => f.ApplyAsync(AccountId,
             It.Is<IReadOnlyList<TInvestPortfolioPosition>>(l => l.Count == 1 && l[0].Figi == "TPAY-FIGI"),
             It.Is<IReadOnlyList<TInvestOperation>>(l => l.Select(o => o.Id).OrderBy(x => x).SequenceEqual(new[] { "fund-buy", "fund-div", "fund-tax" })),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task SyncAsync_CurrencyOperationsAndPositions_GoToCurrencySync_NotToBondJournal()
+    {
+        // Задача 55: покупка/продажа юаней и валютные позиции уходят в CurrencySyncService; облигационный журнал не меняется.
+        SetupHappyPathAccountAndPositions();
+        var cnyPosition = new TInvestPortfolioPosition { Figi = "CNY-FIGI", InstrumentUid = "u3", Quantity = 1000, AveragePositionPrice = 13m, CurrentPrice = 12.2m };
+        _tInvest.Setup(c => c.GetPortfolioAsync(BrokerAccountId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TInvestPortfolio
+            {
+                Bonds = [new TInvestPortfolioPosition { Figi = Figi, InstrumentUid = "uid-1", Quantity = 10, AveragePositionPrice = 980m, CurrentPrice = 985.5m, CurrentNkd = 12.3m }],
+                Currencies = [cnyPosition],
+            });
+        _tInvest.Setup(c => c.GetOperationsAsync(BrokerAccountId, It.IsAny<DateTime?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<TInvestOperation>
+            {
+                new() { Id = "bond-buy", OperationType = "Buy", Figi = Figi, InstrumentKind = "Bond", Date = new DateTime(2026, 1, 10), PaymentRub = -9800m, Quantity = 10 },
+                new() { Id = "cny-buy", OperationType = "Buy", Figi = "CNY-FIGI", InstrumentKind = "Currency", Date = new DateTime(2026, 6, 11), PaymentRub = -13000m, PaymentCurrency = "rub", Quantity = 1000 },
+                new() { Id = "cny-fee", OperationType = "BrokerFee", Figi = "CNY-FIGI", InstrumentKind = "Currency", Date = new DateTime(2026, 6, 11), PaymentRub = -5m },
+            });
+        _operations.Setup(o => o.UpsertManyByExternalIdAsync(It.IsAny<IEnumerable<Operation>>()))
+            .ReturnsAsync((IEnumerable<Operation> ops) => ops.Count());
+        _currencySync.Setup(c => c.ApplyAsync(AccountId, It.IsAny<IReadOnlyList<TInvestPortfolioPosition>>(),
+                It.IsAny<IReadOnlyList<TInvestOperation>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CurrencySyncResult { CurrenciesSynced = 1 });
+
+        var result = await CreateService().SyncAsync(AccountId);
+
+        result.HasErrors.Should().BeFalse();
+        result.CurrenciesSynced.Should().Be(1);
+        result.InstrumentsSynced.Should().Be(1, "облигационные позиции не меняются");
+        _operations.Verify(o => o.UpsertManyByExternalIdAsync(It.Is<IEnumerable<Operation>>(ops =>
+            ops.Select(x => x.ExternalId).SequenceEqual(new[] { "bond-buy" }))), Times.Once);
+        _currencySync.Verify(c => c.ApplyAsync(AccountId,
+            It.Is<IReadOnlyList<TInvestPortfolioPosition>>(l => l.Count == 1 && l[0].Figi == "CNY-FIGI"),
+            It.Is<IReadOnlyList<TInvestOperation>>(l => l.Select(o => o.Id).OrderBy(x => x).SequenceEqual(new[] { "cny-buy", "cny-fee" })),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task SyncAsync_CurrencySyncThrows_BondSyncUnaffected_ErrorReported()
+    {
+        SetupHappyPathAccountAndPositions();
+        _currencySync.Setup(c => c.ApplyAsync(It.IsAny<ulong>(), It.IsAny<IReadOnlyList<TInvestPortfolioPosition>>(),
+                It.IsAny<IReadOnlyList<TInvestOperation>>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("boom"));
+
+        var result = await CreateService().SyncAsync(AccountId);
+
+        result.InstrumentsSynced.Should().Be(1, "сбой валюты не роняет облигационный синк");
+        result.Errors.Should().ContainSingle(e => e.StartsWith("Валюта:"));
+        _positions.Verify(p => p.UpsertAsync(It.IsAny<Position>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task SyncAsync_PaymentInForeignCurrency_ConvertedByDayRate_NotWrittenAsRubles()
+    {
+        // Комиссия по облигации, списанная в юанях: 10 CNY по курсу дня 12.5 = 125 руб, а не 10 руб.
+        SetupHappyPathAccountAndPositions();
+        var feeDate = new DateTime(2026, 9, 1, 12, 0, 0);
+        _rateLookup.Setup(r => r.GetRubPerUnitAsync("cny", DateOnly.FromDateTime(feeDate), It.IsAny<CancellationToken>())).ReturnsAsync(12.5m);
+        _tInvest.Setup(c => c.GetOperationsAsync(BrokerAccountId, It.IsAny<DateTime?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<TInvestOperation>
+            {
+                new() { Id = "fee-cny", OperationType = "BrokerFee", Figi = Figi, InstrumentKind = "Bond", Date = feeDate, PaymentRub = -10m, PaymentCurrency = "cny" },
+                new() { Id = "fee-rub", OperationType = "BrokerFee", Figi = Figi, InstrumentKind = "Bond", Date = feeDate, PaymentRub = -7m, PaymentCurrency = "rub" },
+            });
+        _operations.Setup(o => o.UpsertManyByExternalIdAsync(It.IsAny<IEnumerable<Operation>>()))
+            .ReturnsAsync((IEnumerable<Operation> ops) => ops.Count());
+
+        var result = await CreateService().SyncAsync(AccountId);
+
+        result.HasErrors.Should().BeFalse();
+        _operations.Verify(o => o.UpsertManyByExternalIdAsync(It.Is<IEnumerable<Operation>>(ops =>
+            ops.Single(x => x.ExternalId == "fee-cny").AmountRub == -125m && ops.Single(x => x.ExternalId == "fee-rub").AmountRub == -7m)), Times.Once);
+    }
+
+    private void SetupForeignOps(params TInvestOperation[] ops)
+    {
+        SetupHappyPathAccountAndPositions();
+        _rateLookup.Setup(r => r.GetRubPerUnitAsync(It.IsAny<string>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>())).ReturnsAsync((decimal?)null);
+        _tInvest.Setup(c => c.GetOperationsAsync(BrokerAccountId, It.IsAny<DateTime?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(ops.ToList());
+        _operations.Setup(o => o.UpsertManyByExternalIdAsync(It.IsAny<IEnumerable<Operation>>()))
+            .ReturnsAsync((IEnumerable<Operation> o) => o.Count());
+    }
+
+    [Fact]
+    public async Task SyncAsync_PaymentInForeignCurrency_NoRate_SkippedNotAnError()
+    {
+        var date = new DateTime(2026, 9, 1);
+        SetupForeignOps(
+            new TInvestOperation { Id = "fee-cny-1", OperationType = "BrokerFee", Figi = Figi, InstrumentKind = "Bond", Date = date, PaymentRub = -10m, PaymentCurrency = "cny" },
+            new TInvestOperation { Id = "fee-cny-2", OperationType = "ServiceFee", InstrumentKind = null, Date = date, PaymentRub = -3m, PaymentCurrency = "cny" },
+            new TInvestOperation { Id = "fee-rub", OperationType = "BrokerFee", Figi = Figi, InstrumentKind = "Bond", Date = date, PaymentRub = -7m, PaymentCurrency = "rub" },
+            // не релевантные портфелю операции в чужой валюте (дивиденд по акции, пополнение в USD) шума не создают
+            new TInvestOperation { Id = "share-div", OperationType = "Dividend", Figi = "SH", InstrumentKind = "Share", Date = date, PaymentRub = 5m, PaymentCurrency = "usd" },
+            new TInvestOperation { Id = "deposit", OperationType = "Input", InstrumentKind = null, Date = date, PaymentRub = 100m, PaymentCurrency = "usd" });
+
+        var result = await CreateService().SyncAsync(AccountId);
+
+        _operations.Verify(o => o.UpsertManyByExternalIdAsync(It.Is<IEnumerable<Operation>>(ops =>
+            ops.Select(x => x.ExternalId).SequenceEqual(new[] { "fee-rub" }))), Times.Once, "операции в CNY без курса не записаны как рубли");
+        result.HasErrors.Should().BeFalse("пропуск без курса - не ошибка цикла (иначе постоянный алерт)");
+        result.SkippedForeignOperations.Should().Be(2);
+        result.InstrumentsSynced.Should().Be(1, "позиции и остальной синк не страдают");
+    }
+
+    [Fact]
+    public async Task SyncAsync_UsdOperation_CurrencyNotInDirectory_NoErrorAndCounted()
+    {
+        SetupForeignOps(new TInvestOperation { Id = "fee-usd", OperationType = "BrokerFee", Figi = Figi, InstrumentKind = "Bond", Date = new DateTime(2026, 9, 1), PaymentRub = -2m, PaymentCurrency = "usd" });
+        _rateLookup.Setup(r => r.ClassifyMissAsync("usd", It.IsAny<CancellationToken>())).ReturnsAsync(RateMissKind.NotInDirectory);
+
+        var result = await CreateService().SyncAsync(AccountId);
+
+        result.HasErrors.Should().BeFalse();
+        result.SkippedForeignOperations.Should().Be(1);
+        result.JournalSynced.Should().BeTrue("принципиально не конвертируемая операция журнал неполным не делает");
+    }
+
+    [Fact]
+    public async Task SyncAsync_ZeroPaymentInForeignCurrency_SavedAsZeroWithoutRate()
+    {
+        SetupForeignOps(new TInvestOperation { Id = "sec-in", OperationType = "BrokerFee", Figi = Figi, InstrumentKind = "Bond", Date = new DateTime(2026, 9, 1), PaymentRub = 0m, PaymentCurrency = "usd" });
+
+        var result = await CreateService().SyncAsync(AccountId);
+
+        _operations.Verify(o => o.UpsertManyByExternalIdAsync(It.Is<IEnumerable<Operation>>(ops =>
+            ops.Single().ExternalId == "sec-in" && ops.Single().AmountRub == 0m)), Times.Once);
+        result.HasErrors.Should().BeFalse();
+        result.SkippedForeignOperations.Should().Be(0);
+        _rateLookup.Verify(r => r.GetRubPerUnitAsync(It.IsAny<string>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task SyncAsync_SelfHealingSkip_RateHistoryNotLoadedYet_JournalNotMarkedSynced()
+    {
+        SetupForeignOps(new TInvestOperation { Id = "fee-cny", OperationType = "BrokerFee", Figi = Figi, InstrumentKind = "Bond", Date = new DateTime(2026, 9, 1), PaymentRub = -10m, PaymentCurrency = "cny" });
+        _rateLookup.Setup(r => r.ClassifyMissAsync("cny", It.IsAny<CancellationToken>())).ReturnsAsync(RateMissKind.NoHistoryYet);
+
+        var result = await CreateService().SyncAsync(AccountId);
+
+        result.HasErrors.Should().BeFalse();
+        result.SkippedForeignOperations.Should().Be(1);
+        result.JournalSynced.Should().BeFalse("бэкфилл истории не должен закрепиться из неполного журнала");
+    }
+
+    [Fact]
+    public async Task SyncAsync_CurrencyOperationInForeignCurrency_ConvertedBeforeCurrencySync()
+    {
+        SetupHappyPathAccountAndPositions();
+        var date = new DateTime(2026, 9, 1);
+        _rateLookup.Setup(r => r.GetRubPerUnitAsync("cny", DateOnly.FromDateTime(date), It.IsAny<CancellationToken>())).ReturnsAsync(12.5m);
+        _tInvest.Setup(c => c.GetOperationsAsync(BrokerAccountId, It.IsAny<DateTime?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<TInvestOperation>
+            {
+                new() { Id = "cny-fee", OperationType = "BrokerFee", Figi = "CNY-FIGI", InstrumentKind = "Currency", Date = date, PaymentRub = -4m, PaymentCurrency = "cny" },
+            });
+
+        await CreateService().SyncAsync(AccountId);
+
+        _currencySync.Verify(c => c.ApplyAsync(AccountId, It.IsAny<IReadOnlyList<TInvestPortfolioPosition>>(),
+            It.Is<IReadOnlyList<TInvestOperation>>(l => l.Single().PaymentRub == -50m && l.Single().PaymentCurrency == "rub"),
             It.IsAny<CancellationToken>()), Times.Once);
     }
 

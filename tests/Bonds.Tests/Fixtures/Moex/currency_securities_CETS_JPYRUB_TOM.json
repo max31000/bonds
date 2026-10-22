@@ -1,0 +1,7 @@
+{
+"securities": {
+	"columns": ["SECID", "FACEVALUE", "LOTSIZE", "SHORTNAME"], 
+	"data": [
+		["JPYRUB_TOM", 100, 100000, "JPYRUB_TOM"]
+	]
+}}
