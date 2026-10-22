@@ -1,6 +1,7 @@
 import type {
   IncomeAccountLevel,
   IncomeAssetFilter,
+  IncomeAssetKind,
   IncomeLedgerKind,
   IncomePosition,
   IncomePeriod,
@@ -59,19 +60,19 @@ export function periodNetCoupons(p: IncomePeriod): number {
   return p.couponsGrossRub + p.distributionsGrossRub - Math.abs(p.accruedPaidRub) + Math.abs(p.accruedReceivedRub);
 }
 
-export const ASSET_KIND_LABEL: Record<IncomeAssetFilter, string> = { all: 'Все', bond: 'Облигации', fund: 'Фонды' };
+export const ASSET_KIND_LABEL: Record<IncomeAssetFilter, string> = { all: 'Все', bond: 'Облигации', fund: 'Фонды', currency: 'Валюта' };
 
 export const STATUS_LABEL: Record<IncomeStatus, string> = { open: 'Открыта', closed: 'Закрыта', redeemed: 'Погашена' };
 
 /** Человеческие названия операций журнала; «income» у облигации — купон, у фонда — выплата фонда. */
-export function ledgerKindLabel(kind: IncomeLedgerKind, assetKind: 'bond' | 'fund'): string {
+export function ledgerKindLabel(kind: IncomeLedgerKind, assetKind: IncomeAssetKind): string {
   switch (kind) {
     case 'buy':
       return 'Покупка';
     case 'sell':
       return 'Продажа';
     case 'income':
-      return assetKind === 'fund' ? 'Выплата фонда' : 'Купон';
+      return assetKind === 'fund' ? 'Выплата фонда' : assetKind === 'currency' ? 'Проценты на остаток' : 'Купон';
     case 'tax':
       return 'Налог';
     case 'fee':

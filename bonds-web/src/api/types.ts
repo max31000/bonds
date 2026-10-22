@@ -1489,7 +1489,17 @@ export interface FundDetail {
 export interface PortfolioSummary {
   bondsValueRub: number;
   fundsValueRub: number;
+  /** Деньги на счёте по брокеру (TotalAmountCurrencies) — ВКЛЮЧАЯ валюту в рублях. */
   cashRub: number | null;
+  /**
+   * Задача 55: стоимость валютных позиций (юани и т.п.), РУБЛИ. Уже входит в cashRub и totalRub — отдельно не прибавлять.
+   * Для старых ответов без поля — 0.
+   */
+  currencyValueRub: number;
+  /** Рубли без валюты: max(0, cashRub − currencyValueRub); null — баланс не синкался. cashRubOnly + currencyValueRub = cashRub. */
+  cashRubOnly: number | null;
+  /** У открытой валюты нет курса вообще — currencyValueRub занижен (на totalRub не влияет). */
+  currencyDataIncomplete: boolean;
   totalRub: number;
   brokerTotalRub: number | null;
   /** brokerTotal − total; null — брокерского итога нет. */
@@ -1504,7 +1514,7 @@ export interface PortfolioSummary {
 
 // ── Доходы (задача 54; контракт — Endpoints/Dtos/IncomeDtos.cs). Деньги — РУБЛИ, доли — ДОЛИ (0.12 = 12%). ──
 
-export type IncomeAssetKind = 'bond' | 'fund';
+export type IncomeAssetKind = 'bond' | 'fund' | 'currency';
 export type IncomeAssetFilter = 'all' | IncomeAssetKind;
 /** open — позиция есть; closed — продана; redeemed — погашена. */
 export type IncomeStatus = 'open' | 'closed' | 'redeemed';
@@ -1548,6 +1558,8 @@ export interface IncomeAccountLevel {
 export interface IncomePeriod {
   couponsGrossRub: number;
   distributionsGrossRub: number;
+  /** Проценты на остаток валюты брутто (задача 55); 0, если брокер их не отдаёт. Курсовая разница — в realizedPnlRub. */
+  currencyIncomeGrossRub: number;
   accruedPaidRub: number;
   accruedReceivedRub: number;
   taxesRub: number;
@@ -1561,6 +1573,8 @@ export interface IncomeMonth {
   month: string;
   couponsGrossRub: number;
   distributionsGrossRub: number;
+  /** Проценты на остаток валюты брутто (задача 55). */
+  currencyIncomeGrossRub: number;
   /** −уплачен + получен. */
   accruedNetRub: number;
   taxesRub: number;
@@ -1578,6 +1592,8 @@ export interface IncomePosition {
   /** Только у открытых облигаций (ссылка на карточку). */
   positionId: number | null;
   fundId: number | null;
+  /** Задача 55: id валюты у assetKind 'currency'. */
+  currencyId: number | null;
   dataIncomplete: boolean;
   status: IncomeStatus;
   firstDate: string;
@@ -1656,4 +1672,70 @@ export interface IncomeQuery {
   to?: string;
   assetKind: IncomeAssetFilter;
   includeClosed: boolean;
+}
+
+// ── Валюта как актив (задача 55; контракт — Endpoints/Dtos/CurrencyDtos.cs). Деньги — РУБЛИ, quantity — ЕДИНИЦЫ валюты (не лоты),
+// курс/цены — РУБЛИ ЗА 1 ЕДИНИЦУ, все доли — ДОЛИ (0.12 = 12%). ──
+
+/** Изменение курса за 1/3/12 месяцев — ДОЛИ; null, если истории не хватает. */
+export interface CurrencyRateChange {
+  m1: number | null;
+  m3: number | null;
+  m12: number | null;
+}
+
+export interface CurrencyRatePoint {
+  date: string;
+  /** РУБЛИ за 1 единицу валюты. */
+  closeRub: number;
+}
+
+export interface CurrencyRow {
+  currencyId: number;
+  /** ISO-код верхним регистром ("CNY"). */
+  isoCode: string;
+  ticker: string | null;
+  name: string | null;
+  /** ЕДИНИЦЫ валюты (0 — проданная). */
+  quantity: number;
+  /** Курс, РУБЛИ за 1 единицу; null — курса нет. */
+  currentPriceRub: number | null;
+  priceAsOf: string | null;
+  marketValueRub: number;
+  /** Средняя цена остатка (average cost), РУБЛИ за 1 единицу. */
+  avgCostRub: number;
+  /** Себестоимость остатка, рубли. */
+  investedRub: number;
+  unrealizedPnlRub: number | null;
+  /** ДОЛЯ от себестоимости остатка. */
+  unrealizedPnlFraction: number | null;
+  realizedPnlRub: number;
+  totalResultRub: number;
+  /** ДОЛЯ. */
+  totalReturnFraction: number | null;
+  /** ДОЛЯ годовых; null при владении < 30 дней. */
+  xirrFraction: number | null;
+  rateChange: CurrencyRateChange;
+  /** История курса за последний год по возрастанию даты. */
+  rateHistory: CurrencyRatePoint[];
+  hasUnknownLots: boolean;
+  dataIncomplete: boolean;
+}
+
+export interface CurrenciesTotals {
+  marketValueRub: number;
+  investedRub: number;
+  unrealizedPnlRub: number;
+  realizedPnlRub: number;
+  totalResultRub: number;
+  /** У какой-либо открытой валюты нет курса вообще — итоги занижены. */
+  dataIncomplete: boolean;
+}
+
+/** Ответ GET /api/currencies. */
+export interface CurrenciesResponse {
+  asOf: string;
+  currencies: CurrencyRow[];
+  totals: CurrenciesTotals;
+  disclaimer: string;
 }

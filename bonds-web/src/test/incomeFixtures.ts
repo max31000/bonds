@@ -9,6 +9,7 @@ const pos = (over: Partial<IncomePosition>): IncomePosition => ({
   isin: 'RU000A1038V6',
   positionId: 11,
   fundId: null,
+  currencyId: null,
   dataIncomplete: false,
   status: 'open',
   firstDate: isoDaysAgo(400),
@@ -129,6 +130,7 @@ export const baseIncome: IncomeResponse = {
   period: {
     couponsGrossRub: 5000,
     distributionsGrossRub: 200,
+    currencyIncomeGrossRub: 0,
     accruedPaidRub: 0,
     accruedReceivedRub: 0,
     taxesRub: -676,
@@ -141,6 +143,7 @@ export const baseIncome: IncomeResponse = {
       month: thisMonth,
       couponsGrossRub: 5000,
       distributionsGrossRub: 200,
+      currencyIncomeGrossRub: 0,
       accruedNetRub: 0,
       taxesRub: -676,
       feesRub: -100,

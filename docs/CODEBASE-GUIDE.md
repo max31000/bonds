@@ -36,6 +36,10 @@ MySQL для интеграционных), vitest + Testing Library + MSW.
 | Фонды (БПИФ): цена пая — MOEX `CLOSE` (TQBR/shares), T-Invest `GetPortfolio` `CurrentPrice`/`AveragePositionPrice`, `Dividend.DividendNet` | вход | **рубли за пай**, конверсии нет (НЕ путать с облигациями: там MOEX `CLOSE` — % номинала) → `fund_positions.*_rub`, `fund_price_history.close_rub`, `fund_distributions.amount_per_share_rub` |
 | Фонды: TER (`AssetEtf.TotalExpense`) | вход | единицы не подтверждены → `TInvestNumeric.ExpenseRatioToFraction` → **ДОЛЯ** (0.009 = 0.9%), `funds.total_expense_fraction` |
 | Фонды: индекс MOEX (`YIELD`, `DURATION`), напр. RGBI | вход | `YIELD` **проценты** → доля (÷100), `DURATION` **дни** → годы (÷365) → `market_index_history.yield_fraction/duration_years` |
+| Валюта: T-Invest `GetPortfolio` (`Quantity`, `CurrentPrice`, `AveragePositionPrice` позиции с `InstrumentType == "currency"`) | вход | `Quantity` — **ЕДИНИЦЫ валюты** (юани, НЕ лоты); цены — **рубли за 1 единицу**, конверсии нет → `currency_positions.quantity/*_price_rub` |
+| Валюта: MOEX ISS CETS (`history/.../currency/.../CETS/securities/{secid}`) `CLOSE` | вход | **рубли за `FACEVALUE` единиц** (CNY — 1, JPY/KZT — 100; FACEVALUE лежит в `securities`, в истории его нет; `CLOSE = 0` = сделок не было) → рубли за 1 единицу = `CLOSE ÷ FACEVALUE` (`CurrencyRateUnits.RubPerUnit`, ровно один раз в `CurrencyRateRefresher`) → `currency_rate_history.close_rub` |
+| `OperationItem.Payment` (`MoneyValue.Currency`) | вход | сумма в **СВОЕЙ валюте** (ISO, нижний регистр), не обязательно рубли: не-рублёвый платёж → по курсу дня (`PaymentCurrencyConverter`) либо операция пропускается с ошибкой синка. Поле `TInvestOperation.PaymentRub` — историческое имя, «рубли» оно только после `TInvestOperationCurrency.ToRubles` |
+| `accounts.cash_rub` (`TotalAmountCurrencies`) | БД | все валюты брокера **в рублях — ВКЛЮЧАЯ валютные позиции**: валюту нельзя прибавлять к нему (двойной счёт), только выделять: `cashRubOnly = max(0, cashRub − currencyValueRub)` |
 | `MarketQuote.CleanPrice/DirtyPrice/Accrued`, `intraday_quotes.dirty_price_rub` | БД | всегда рубли за бумагу (контракт в doc-comment модели) |
 | `Position.Accrued` | БД | НКД на ОДНУ бумагу (не на позицию) |
 | Знак `Operation.AmountRub` | БД | как отдал брокер — НЕ переписывать (см. `PortfolioXirrService.SignedAmount`) |
@@ -203,6 +207,23 @@ AccruedNow = Realized + Unrealized + NetCouponIncome + Taxes + Fees`. **`operati
 бумажная прибыль, «Вложено», «Итого» и XIRR — всегда all-time (`unrealizedIsAllTime`). `netCouponIncomeRub` = брутто − НКД уплаченный + НКД полученный + набежавший НКД, БЕЗ налогов
 (налоги — отдельный KPI). «Водопад» итога — CSS-бары (`IncomeBreakdown`, `buildBreakdown` даёт инвариант итог = Σ компонентов); журнал операций актива грузится лениво и кэшируется
 в сторе по `assetKind:assetId`. Строка таблицы — `Table.Tr` с `aria-expanded` (без вложенных кнопок), на мобильной ширине — карточки `div[role=button]`.
+
+**Валюта — отдельный домен (задача 55).** Юани и т.п. живут в своих таблицах (`currencies`, `currency_positions`, `currency_operations`,
+`currency_rate_history`, миграция 025) по образцу фондов и НЕ попадают в `instruments`/`positions`/`operations`/облигационный движок. Облигации/фонды
+в иностранной валюте вне скоупа. `BondSyncService` отдаёт позиции `Currencies` (кроме рубля `RUB000UTSTOM`) и операции `IsCurrency` в
+`ICurrencySyncService` (`CurrencySyncService`: резолв по FIGI через `CurrencyBy`, справочник раз в сутки + FACEVALUE с MOEX, upsert позиций/операций,
+сверка с защитой «пустой ответ — удалять со 2-го раза» — общий хелпер `SyncGuards`, словари на домен отдельные); сбой → `Валюта: …` в ошибках, облигации
+не страдают. **Валюта платежа:** перед разбором журнала `BondSyncService.NormalizePaymentCurrenciesAsync` пересчитывает не-рублёвые платежи
+(`ICurrencyRateLookup`: последнее закрытие истории не старше 10 дней) или пропускает операцию (ОДНА ошибка со счётчиком; журнал читается целиком, подхватится позже);
+действует для облигаций, фондов и валюты. История курса — `CurrencyRateRefresher` (шаг `SyncCycleService` рядом с фондами, MOEX CETS, 2 года, ворота по БД,
+`LastCompletedSessionDate` общий с фондами). Тип операции «проценты на остаток» (`CurrencyOperationType.Income`) в журнале и отчёте поддержан, но из T-Invest
+не мапится (нет уверенности, какой `OperationType` относится к валютной позиции). Доходы: `AssetKind.Currency` → тот же `PositionIncomeCalculator`
+(average cost в рублях за единицу, НКД нет; курсовая разница = Unrealized/Realized; остаток журнала ≠ позиции → `HasUnknownLots`, висящая себестоимость НЕ списывается
+в убыток, пока позиция держится); `IncomeLedgerBuilder.BuildCurrenciesAsync` + **единая точка курса `ResolveCurrencyPriceAsync`** (`current_price_rub` позиции →
+последнее закрытие истории → нет курса = стоимость 0 + `dataIncomplete`); `/api/income?assetKind=currency|all`, `/api/income/currency/{id}/ledger`, процент на остаток
+— `currencyIncomeGrossRub` (период/месяц), реализованная курсовая разница — в существующем `realizedPnlRub`. `GET /api/currencies` (`CurrenciesEndpoints`,
+`CurrencyOverviewBuilder`: изменение курса 1/3/12 мес. — ДОЛИ, история ≤ года, проданная валюта остаётся). `/api/portfolio/summary`: `currencyValueRub`, `cashRubOnly`,
+`currencyDataIncomplete`; `totalRub` не меняется (валюта уже в `cashRub`). XIRR портфеля включает валютные потоки и терминальную стоимость.
 
 ## Тесты
 
