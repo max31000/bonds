@@ -1,0 +1,15 @@
+{
+"history": {
+	"columns": ["BOARDID", "TRADEDATE", "SHORTNAME", "SECID", "OPEN", "LOW", "HIGH", "CLOSE", "NUMTRADES", "WAPRICE"], 
+	"data": [
+		["CETS", "2026-10-19", "JPYRUB_TOM", "JPYRUB_TOM", 0, 0, 0, 0, 0, null],
+		["CETS", "2026-10-20", "JPYRUB_TOM", "JPYRUB_TOM", 0, 0, 0, 0, 0, null],
+		["CETS", "2026-10-21", "JPYRUB_TOM", "JPYRUB_TOM", 0, 0, 0, 0, 0, null]
+	]
+},
+"history.cursor": {
+	"columns": ["INDEX", "TOTAL", "PAGESIZE"], 
+	"data": [
+		[0, 3, 100]
+	]
+}}

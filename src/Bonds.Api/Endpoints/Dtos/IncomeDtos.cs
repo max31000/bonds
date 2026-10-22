@@ -4,7 +4,7 @@ namespace Bonds.Api.Endpoints;
 
 /// <summary>
 /// Ответ <c>GET /api/income</c> (задача 52). Деньги — РУБЛИ, доли — ДОЛИ (0.12 = 12%). Enum-значения сериализуются
-/// camelCase-строками (assetKind: "bond"/"fund"; status: "open"/"closed"/"redeemed").
+/// camelCase-строками (assetKind: "bond"/"fund"/"currency"; status: "open"/"closed"/"redeemed").
 /// </summary>
 public sealed record IncomeResponseDto
 {
@@ -14,7 +14,7 @@ public sealed record IncomeResponseDto
     public DateOnly? From { get; init; }
     public DateOnly? To { get; init; }
 
-    /// <summary>Применённый фильтр: "all" | "bond" | "fund".</summary>
+    /// <summary>Применённый фильтр: "all" | "bond" | "fund" | "currency" (валюта, задача 55).</summary>
     public required string AssetKind { get; init; }
 
     /// <summary>Итоги all-time по показанным позициям (+ налоги/комиссии «по счёту» в итоге).</summary>
@@ -74,6 +74,12 @@ public sealed record IncomePeriodDto
 {
     public required decimal CouponsGrossRub { get; init; }
     public required decimal DistributionsGrossRub { get; init; }
+
+    /// <summary>
+    /// Проценты на остаток валюты БРУТТО (задача 55); 0, если брокер их не отдаёт. Реализованная курсовая разница отдельного поля не
+    /// имеет - она в <c>realizedPnlRub</c>, налоги/комиссии - в общих полях.
+    /// </summary>
+    public decimal CurrencyIncomeGrossRub { get; init; }
     public required decimal AccruedPaidRub { get; init; }
     public required decimal AccruedReceivedRub { get; init; }
     public required decimal TaxesRub { get; init; }
@@ -88,6 +94,9 @@ public sealed record IncomeMonthDto
     public required string Month { get; init; }
     public required decimal CouponsGrossRub { get; init; }
     public required decimal DistributionsGrossRub { get; init; }
+
+    /// <summary>Проценты на остаток валюты брутто (задача 55); 0, если их нет.</summary>
+    public decimal CurrencyIncomeGrossRub { get; init; }
 
     /// <summary>−уплачен + получен.</summary>
     public required decimal AccruedNetRub { get; init; }
@@ -109,6 +118,9 @@ public sealed record IncomePositionDto
     /// <summary>Id позиции облигации (для ссылки на карточку); null у закрытых и фондов.</summary>
     public ulong? PositionId { get; init; }
     public ulong? FundId { get; init; }
+
+    /// <summary>Id валюты (<c>currencies.id</c>) у валютной позиции (<c>assetKind: "currency"</c>), иначе null (задача 55).</summary>
+    public ulong? CurrencyId { get; init; }
 
     /// <summary>Расчёт актива упал или нет котировки/цены — числа приблизительные (у упавшего — нули).</summary>
     public required bool DataIncomplete { get; init; }

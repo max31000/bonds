@@ -36,7 +36,7 @@ public static class IncomeEndpoints
         if (from is not null && to is not null && from > to)
             return ValidationError("Параметр from не может быть позже to.");
         if (!TryParseFilter(assetKind, out var filter, out var filterName))
-            return ValidationError("Неизвестный assetKind: допустимо all, bond, fund.");
+            return ValidationError("Неизвестный assetKind: допустимо all, bond, fund, currency.");
 
         var asOf = BusinessClock.MoscowToday();
         var accountId = await PositionsEndpoints.ResolveAccountIdAsync(currentUser, accountRepo);
@@ -91,7 +91,7 @@ public static class IncomeEndpoints
         CancellationToken ct)
     {
         if (!TryParseFilter(assetKind, out var kind, out _) || kind is null)
-            return ValidationError("Неизвестный assetKind: допустимо bond, fund.");
+            return ValidationError("Неизвестный assetKind: допустимо bond, fund, currency.");
 
         var accountId = await PositionsEndpoints.ResolveAccountIdAsync(currentUser, accountRepo);
         if (accountId is null) return Results.NotFound();
@@ -133,6 +133,7 @@ public static class IncomeEndpoints
             case "all": return true;
             case "bond": filter = AssetKind.Bond; name = "bond"; return true;
             case "fund": filter = AssetKind.Fund; name = "fund"; return true;
+            case "currency": filter = AssetKind.Currency; name = "currency"; return true;
             default: return false;
         }
     }
@@ -150,6 +151,7 @@ public static class IncomeEndpoints
             Isin = a.Isin,
             PositionId = a.PositionId,
             FundId = a.FundId,
+            CurrencyId = a.CurrencyId,
             DataIncomplete = a.DataIncomplete,
             Status = p.Status,
             FirstDate = p.FirstDate,
@@ -205,6 +207,7 @@ public static class IncomeEndpoints
     {
         CouponsGrossRub = p.CouponsGrossRub,
         DistributionsGrossRub = p.DistributionsGrossRub,
+        CurrencyIncomeGrossRub = p.CurrencyIncomeGrossRub,
         AccruedPaidRub = p.AccruedPaidRub,
         AccruedReceivedRub = p.AccruedReceivedRub,
         TaxesRub = p.TaxesRub,
@@ -218,6 +221,7 @@ public static class IncomeEndpoints
         Month = m.Month,
         CouponsGrossRub = m.CouponsGrossRub,
         DistributionsGrossRub = m.DistributionsGrossRub,
+        CurrencyIncomeGrossRub = m.CurrencyIncomeGrossRub,
         AccruedNetRub = m.AccruedNetRub,
         TaxesRub = m.TaxesRub,
         FeesRub = m.FeesRub,

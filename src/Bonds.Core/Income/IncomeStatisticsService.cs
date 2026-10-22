@@ -39,7 +39,8 @@ public sealed record IncomePeriodTotals(
     decimal TaxesRub,
     decimal FeesRub,
     decimal RealizedPnlRub,
-    decimal NetRub);
+    decimal NetRub,
+    decimal CurrencyIncomeGrossRub = 0m);
 
 /// <summary>Месяц ряда (<see cref="Month"/> = "yyyy-MM"). <c>AccruedNetRub</c> = −уплачен + получен; <c>NetRub</c> = сумма всех полей.</summary>
 public sealed record IncomeMonthStats(
@@ -50,7 +51,8 @@ public sealed record IncomeMonthStats(
     decimal TaxesRub,
     decimal FeesRub,
     decimal RealizedPnlRub,
-    decimal NetRub);
+    decimal NetRub,
+    decimal CurrencyIncomeGrossRub = 0m);
 
 /// <summary>Периодные денежные события одной позиции.</summary>
 public sealed record PositionPeriodIncome(
@@ -99,11 +101,13 @@ public static class IncomeStatisticsService
             {
                 var date = DateOnly.FromDateTime(row.Entry.Date);
                 var kind = row.Entry.Kind;
-                var isBond = row.Entry.AssetKind == AssetKind.Bond;
+                var assetKind = row.Entry.AssetKind;
                 events.Add(new PeriodEvent(
                     date,
-                    CouponsGross: kind == LedgerEntryKind.Income && isBond ? row.Entry.AmountRub : 0m,
-                    DistributionsGross: kind == LedgerEntryKind.Income && !isBond ? row.Entry.AmountRub : 0m,
+                    CouponsGross: kind == LedgerEntryKind.Income && assetKind == AssetKind.Bond ? row.Entry.AmountRub : 0m,
+                    DistributionsGross: kind == LedgerEntryKind.Income && assetKind == AssetKind.Fund ? row.Entry.AmountRub : 0m,
+                    // Проценты на остаток валюты — отдельное поле; реализованная курсовая разница остаётся в Realized.
+                    CurrencyIncomeGross: kind == LedgerEntryKind.Income && assetKind == AssetKind.Currency ? row.Entry.AmountRub : 0m,
                     AccruedPaid: kind == LedgerEntryKind.Buy ? row.AccruedUsedRub : 0m,
                     AccruedReceived: kind == LedgerEntryKind.Sell ? row.AccruedUsedRub : 0m,
                     Taxes: kind == LedgerEntryKind.Tax ? row.Entry.AmountRub : 0m,
@@ -115,7 +119,7 @@ public static class IncomeStatisticsService
         foreach (var e in accountLevel)
         {
             events.Add(new PeriodEvent(
-                DateOnly.FromDateTime(e.Date), 0m, 0m, 0m, 0m,
+                DateOnly.FromDateTime(e.Date), 0m, 0m, 0m, 0m, 0m,
                 e.Kind == LedgerEntryKind.Tax ? e.AmountRub : 0m,
                 e.Kind == LedgerEntryKind.Fee ? e.AmountRub : 0m,
                 0m, null));
@@ -129,7 +133,7 @@ public static class IncomeStatisticsService
             inPeriod.Sum(e => e.CouponsGross), inPeriod.Sum(e => e.DistributionsGross),
             inPeriod.Sum(e => e.AccruedPaid), inPeriod.Sum(e => e.AccruedReceived),
             inPeriod.Sum(e => e.Taxes), inPeriod.Sum(e => e.Fees), inPeriod.Sum(e => e.Realized),
-            inPeriod.Sum(e => e.Net));
+            inPeriod.Sum(e => e.Net), inPeriod.Sum(e => e.CurrencyIncomeGross));
 
         var positionPeriods = assets.ToDictionary(
             a => (a.Income.AssetKind, a.Income.AssetId),
@@ -137,7 +141,7 @@ public static class IncomeStatisticsService
             {
                 var mine = inPeriod.Where(e => e.Key == (a.Income.AssetKind, a.Income.AssetId)).ToList();
                 return new PositionPeriodIncome(
-                    mine.Sum(e => e.CouponsGross + e.DistributionsGross), mine.Sum(e => e.Realized),
+                    mine.Sum(e => e.CouponsGross + e.DistributionsGross + e.CurrencyIncomeGross), mine.Sum(e => e.Realized),
                     mine.Sum(e => e.Taxes), mine.Sum(e => e.Fees));
             });
 
@@ -157,6 +161,7 @@ public static class IncomeStatisticsService
                 list ??= [];
                 var coupons = list.Sum(e => e.CouponsGross);
                 var dist = list.Sum(e => e.DistributionsGross);
+                var currencyIncome = list.Sum(e => e.CurrencyIncomeGross);
                 var accruedNet = list.Sum(e => e.AccruedReceived - e.AccruedPaid);
                 var taxes = list.Sum(e => e.Taxes);
                 var fees = list.Sum(e => e.Fees);
@@ -164,7 +169,7 @@ public static class IncomeStatisticsService
                 months.Add(new IncomeMonthStats(
                     cursor.ToString("yyyy-MM", CultureInfo.InvariantCulture),
                     coupons, dist, accruedNet, taxes, fees, realized,
-                    coupons + dist + accruedNet + taxes + fees + realized));
+                    coupons + dist + currencyIncome + accruedNet + taxes + fees + realized, currencyIncome));
             }
         }
 
@@ -217,9 +222,9 @@ public static class IncomeStatisticsService
     }
 
     private sealed record PeriodEvent(
-        DateOnly Date, decimal CouponsGross, decimal DistributionsGross, decimal AccruedPaid, decimal AccruedReceived,
+        DateOnly Date, decimal CouponsGross, decimal DistributionsGross, decimal CurrencyIncomeGross, decimal AccruedPaid, decimal AccruedReceived,
         decimal Taxes, decimal Fees, decimal Realized, (AssetKind, ulong)? Key)
     {
-        public decimal Net => CouponsGross + DistributionsGross + AccruedReceived - AccruedPaid + Taxes + Fees + Realized;
+        public decimal Net => CouponsGross + DistributionsGross + CurrencyIncomeGross + AccruedReceived - AccruedPaid + Taxes + Fees + Realized;
     }
 }

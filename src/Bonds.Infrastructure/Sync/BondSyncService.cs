@@ -1,4 +1,5 @@
 using Bonds.Core.Calculation;
+using Bonds.Core.Currencies;
 using Bonds.Core.Interfaces.Repositories;
 using Bonds.Core.Models;
 using Bonds.Core.Time;
@@ -38,6 +39,8 @@ public sealed class BondSyncService
     private readonly IAccountRepository _accounts;
     private readonly ILogger<BondSyncService> _logger;
     private readonly IFundSyncService? _fundSync;
+    private readonly ICurrencySyncService? _currencySync;
+    private readonly ICurrencyRateLookup? _rateLookup;
 
     public BondSyncService(
         ITInvestPortfolioClient tInvest,
@@ -52,9 +55,13 @@ public sealed class BondSyncService
         IOperationRepository operations,
         IAccountRepository accounts,
         ILogger<BondSyncService> logger,
-        IFundSyncService? fundSync = null)
+        IFundSyncService? fundSync = null,
+        ICurrencySyncService? currencySync = null,
+        ICurrencyRateLookup? rateLookup = null)
     {
         _fundSync = fundSync;
+        _currencySync = currencySync;
+        _rateLookup = rateLookup;
         _tInvest = tInvest;
         _moex = moex;
         _instruments = instruments;
@@ -124,9 +131,14 @@ public sealed class BondSyncService
         // Задача 51: операции по фондам (БПИФ/ETF) собираем отдельно и отдаём FundSyncService — в облигационный
         // журнал они не попадают (ни Buy/Sell, ни выплаты/налог).
         var fundOperations = new List<TInvestOperation>();
+        // Задача 55: операции по валюте - отдельный валютный журнал (CurrencySyncService).
+        var currencyOperations = new List<TInvestOperation>();
         try
         {
             var tInvestOperations = await _tInvest.GetOperationsAsync(brokerAccountId, operationsFrom, ct);
+            // Задача 55: платёж операции - в СВОЕЙ валюте (Payment.Currency). Не-рублёвый пересчитывается по курсу дня или операция
+            // пропускается (с ошибкой в результате) - раньше число молча записывалось как рубли.
+            tInvestOperations = await NormalizePaymentCurrenciesAsync(tInvestOperations, result, ct);
             var domainOperations = new List<Operation>();
             // Резолв FIGI → инструмент кэшируется в пределах синка: историческая бумага с десятком
             // операций не должна давать десять походов в справочник/T-Invest/MOEX.
@@ -136,6 +148,12 @@ public sealed class BondSyncService
                 if (op.IsFund)
                 {
                     fundOperations.Add(op);
+                    continue;
+                }
+
+                if (op.IsCurrency)
+                {
+                    currencyOperations.Add(op);
                     continue;
                 }
 
@@ -203,6 +221,26 @@ public sealed class BondSyncService
             {
                 _logger.LogError(ex, "Fund sync failed");
                 result.Errors.Add($"Фонды: ошибка синка ({ex.GetType().Name})");
+            }
+        }
+
+        // --- Валюта (задача 55): отдельный домен, на уже полученных данных брокера. Сбой не затрагивает облигационный синк.
+        if (_currencySync is not null)
+        {
+            try
+            {
+                var currencyResult = await _currencySync.ApplyAsync(accountId, portfolio.Currencies, currencyOperations, ct);
+                result.CurrenciesSynced = currencyResult.CurrenciesSynced;
+                foreach (var error in currencyResult.Errors) result.Errors.Add($"Валюта: {error}");
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Currency sync failed");
+                result.Errors.Add($"Валюта: ошибка синка ({ex.GetType().Name})");
             }
         }
 
@@ -399,6 +437,71 @@ public sealed class BondSyncService
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Приводит платежи операций к рублям (задача 55). Рублёвые (и без валюты) - без изменений, не-рублёвые, релевантные портфелю
+    /// (тип операции мапится в облигационный/фондовый/валютный журнал), пересчитываются по курсу дня из <c>currency_rate_history</c>
+    /// (<see cref="TInvestOperationCurrency.ToRubles"/>). Курса нет - операция пропускается, в <see cref="SyncResult.Errors"/> - ОДНА строка
+    /// со счётчиком и валютами, LogWarning на каждую. Журнал читается целиком каждый синк, поэтому пропущенная операция подхватится,
+    /// как только появится курс.
+    /// </summary>
+    private async Task<IReadOnlyList<TInvestOperation>> NormalizePaymentCurrenciesAsync(
+        IReadOnlyList<TInvestOperation> operations, SyncResult result, CancellationToken ct)
+    {
+        if (operations.All(o => PaymentCurrencyConverter.IsRub(o.PaymentCurrency))) return operations;
+
+        var normalized = new List<TInvestOperation>(operations.Count);
+        var skipped = 0;
+        var skippedCurrencies = new SortedSet<string>(StringComparer.Ordinal);
+        foreach (var op in operations)
+        {
+            if (PaymentCurrencyConverter.IsRub(op.PaymentCurrency) || !IsRelevantForPortfolio(op))
+            {
+                // Нерелевантные операции (дивиденд по акции в USD, ввод валюты и т.п.) всё равно отбросят дальше по типу - не шумим.
+                normalized.Add(op);
+                continue;
+            }
+
+            decimal? rate = null;
+            if (_rateLookup is not null)
+            {
+                rate = await _rateLookup.GetRubPerUnitAsync(op.PaymentCurrency!, DateOnly.FromDateTime(op.Date), ct);
+            }
+
+            var converted = TInvestOperationCurrency.ToRubles(op, rate);
+            if (converted is null)
+            {
+                skipped++;
+                skippedCurrencies.Add(op.PaymentCurrency!.ToUpperInvariant());
+                _logger.LogWarning(
+                    "Operation {OperationId} has payment in {Currency} without an exchange rate for {Date:yyyy-MM-dd} - skipped",
+                    op.Id, op.PaymentCurrency, op.Date);
+                continue;
+            }
+
+            normalized.Add(converted);
+        }
+
+        if (skipped > 0)
+        {
+            result.Errors.Add(
+                $"Операции в валюте {string.Join(", ", skippedCurrencies)} без курса — пропущены: {skipped} (курс подтянется суточным шагом, операции учтутся со следующего синка)");
+        }
+
+        return normalized;
+    }
+
+    /// <summary>
+    /// Операция потенциально попадёт в один из журналов портфеля: облигация/фонд/валюта (или без инструмента - «по счёту») и тип
+    /// операции мапится соответствующим маппером. Остальное (акции, фьючерсы, пополнения) отбрасывается дальше - пересчёт ей не нужен.
+    /// </summary>
+    private static bool IsRelevantForPortfolio(TInvestOperation op)
+    {
+        if (op.IsFund) return TInvestFundOperationMapper.Map(op.OperationType) is not null;
+        if (op.IsCurrency) return TInvestCurrencyOperationMapper.Map(op.OperationType) is not null;
+        if (op.InstrumentKind is not null && !op.IsBond) return false;
+        return TInvestOperationMapper.Map(op.OperationType) is not null;
     }
 
     /// <summary>
@@ -650,6 +753,9 @@ public sealed class SyncResult
 
     /// <summary>Задача 51: сколько позиций в фондах (БПИФ) обновлено — отдельный домен, в <see cref="InstrumentsSynced"/> не входит.</summary>
     public int FundsSynced { get; set; }
+
+    /// <summary>Задача 55: сколько валютных позиций (юани и т.п.) обновлено - отдельный домен, в <see cref="InstrumentsSynced"/> не входит.</summary>
+    public int CurrenciesSynced { get; set; }
 
     /// <summary>Журнал операций полностью перечитан у брокера и сохранён (база для бэкфилла истории).</summary>
     public bool JournalSynced { get; set; }

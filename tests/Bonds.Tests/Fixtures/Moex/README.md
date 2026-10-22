@@ -42,3 +42,14 @@ ISS (это документированный в spec §4.4 риск, но он
 |---|---|---|---|
 | `index_history_RGBI_2026-10.json` | `/iss/history/engines/stock/markets/index/securities/RGBI.json?from=2026-10-01&till=2026-10-20` (снято 2026-10-21) | да | `YIELD` (проценты → доля), `DURATION` (дни → годы), `CLOSE` индекса |
 | `shares_history_TQBR_TPAY_2026-10.json` | `/iss/history/engines/stock/markets/shares/boards/TQBR/securities/TPAY.json?from=2026-10-01&till=2026-10-20` (снято 2026-10-21) | да | `CLOSE` пая — рубли за пай (не % номинала) |
+
+## Валюта (задача 55)
+
+| Файл | Эндпоинт | Реальный ответ | Что проверяет |
+|---|---|---|---|
+| `currency_history_CETS_CNYRUB_TOM_2026-10.json` | `/iss/history/engines/currency/markets/selt/boards/CETS/securities/CNYRUB_TOM.json?from=2026-10-01&till=2026-10-21` (снято 2026-10-22) | да | `CLOSE` — рубли за 1 юань (≈ 12.2–12.7); в истории НЕТ колонки FACEVALUE |
+| `currency_history_CETS_JPYRUB_TOM_2026-10_nodeals.json` | то же для `JPYRUB_TOM`, 19–21.10.2026 | да | дни без сделок: `CLOSE = 0` (не `null`!) — такие точки отбрасываются |
+| `currency_securities_CETS_CNYRUB_TOM.json` | `/iss/engines/currency/markets/selt/boards/CETS/securities/CNYRUB_TOM.json?iss.only=securities&securities.columns=SECID,FACEVALUE,LOTSIZE,SHORTNAME` | да | `FACEVALUE = 1` |
+| `currency_securities_CETS_JPYRUB_TOM.json` | то же для `JPYRUB_TOM` | да | `FACEVALUE = 100` (котировка за 100 иен), `LOTSIZE = 100000` |
+
+Правило номинала: `CLOSE` — рубли за `FACEVALUE` единиц валюты, значит рубли за 1 единицу = `CLOSE / FACEVALUE`.

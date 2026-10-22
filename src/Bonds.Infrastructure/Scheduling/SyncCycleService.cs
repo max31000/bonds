@@ -206,6 +206,9 @@ public sealed class SyncCycleService : ISyncCycleRunner
         // токена T-Invest (выплаты в этом случае пропускаются).
         await RefreshFundMarketDataAsync(sp, tInvestAvailable: !result.TokenMissingOrInvalid, ct);
 
+        // --- 1a-ter. История курса валют (задача 55, MOEX CETS) - тот же суточный шаг и те же правила (необязательный, сбой - лог).
+        await RefreshCurrencyRatesAsync(sp, ct);
+
         // --- 1b. Бэкфилл истории стоимости, если она пуста/почти пуста (первый запуск, или миграция
         // пересчёта истории её очистила). Строго ПОСЛЕ успешного перечитывания журнала: история
         // строится из журнала, и бэкфилл из неполного журнала закрепился бы навсегда (бэкфилл
@@ -290,6 +293,25 @@ public sealed class SyncCycleService : ISyncCycleRunner
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Fund market data refresh failed — fund prices/distributions keep the previous values");
+        }
+    }
+
+    private async Task RefreshCurrencyRatesAsync(IServiceProvider sp, CancellationToken ct)
+    {
+        try
+        {
+            var refresher = sp.GetService<CurrencyRateRefresher>();
+            if (refresher is null) return;
+
+            await refresher.RefreshIfDueAsync(BusinessClock.MoscowToday(), ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Currency rate refresh failed — currency rates keep the previous values");
         }
     }
 

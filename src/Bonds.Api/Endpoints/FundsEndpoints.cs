@@ -1,5 +1,6 @@
 using System.Text.RegularExpressions;
 using Bonds.Api.Auth;
+using Bonds.Core.Currencies;
 using Bonds.Core.Funds;
 using Bonds.Core.Income;
 using Bonds.Core.Interfaces.Repositories;
@@ -132,6 +133,7 @@ public static partial class FundsEndpoints
         IAccountRepository accountRepo,
         FundOverviewBuilder overview,
         IncomeLedgerBuilder incomeBuilder,
+        CurrencyOverviewBuilder currencyOverview,
         ILogger<Program> logger,
         CancellationToken ct)
     {
@@ -143,6 +145,9 @@ public static partial class FundsEndpoints
         var account = await accountRepo.GetByIdAsync(accountId.Value);
         var bonds = await overview.GetBondsValueRubAsync(accountId.Value, asOf, ct);
         var (funds, fundsIncomplete) = await overview.GetFundsValueAsync(accountId.Value, ct);
+        // Валюта (задача 55): брокерский cashRub (TotalAmountCurrencies) УЖЕ включает её, пересчитанную в рубли. В итог она НЕ
+        // добавляется (иначе двойной счёт) - только выделяется из денег: cashRubOnly = cashRub - currencyValueRub.
+        var (currencyValue, currencyIncomplete) = await currencyOverview.GetCurrenciesValueAsync(accountId.Value, ct);
         var total = bonds + funds + (account?.CashRub ?? 0m);
 
         // XIRR портфеля — тот же сервис и тот же набор активов, что у GET /api/income (без периода).
@@ -164,6 +169,9 @@ public static partial class FundsEndpoints
             BondsValueRub = bonds,
             FundsValueRub = funds,
             CashRub = account?.CashRub,
+            CurrencyValueRub = currencyValue,
+            CashRubOnly = account?.CashRub is { } cash ? CashBreakdown.CashRubOnly(cash, currencyValue) : null,
+            CurrencyDataIncomplete = currencyIncomplete,
             TotalRub = total,
             BrokerTotalRub = account?.BrokerTotalRub,
             BrokerDiffRub = account?.BrokerTotalRub is { } broker ? broker - total : null,

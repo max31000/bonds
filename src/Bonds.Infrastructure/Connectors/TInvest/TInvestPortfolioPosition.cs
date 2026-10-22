@@ -17,8 +17,16 @@ public sealed class TInvestPortfolio
     public IReadOnlyList<TInvestPortfolioPosition> Funds { get; init; } = [];
 
     /// <summary>
+    /// Задача 55: валютные позиции (<c>InstrumentType == "currency"</c>), КРОМЕ рубля (<see cref="TInvestCurrencyInfo.IsRubleFigi"/>) — отдельный
+    /// домен. <see cref="TInvestPortfolioPosition.Quantity"/> — ЕДИНИЦЫ валюты («в штуках», не лоты);
+    /// <see cref="TInvestPortfolioPosition.CurrentPrice"/> / <see cref="TInvestPortfolioPosition.AveragePositionPrice"/> — РУБЛИ ЗА 1 ЕДИНИЦУ
+    /// (запрос идёт с валютой портфеля RUB, конверсии нет); <c>AveragePositionPrice</c> может быть 0, если брокер не знает цену входа.
+    /// </summary>
+    public IReadOnlyList<TInvestPortfolioPosition> Currencies { get; init; } = [];
+
+    /// <summary>
     /// Свободные деньги на счёте (<c>TotalAmountCurrencies</c> — все валюты, пересчитанные брокером
-    /// в рубли). Сюда, в частности, падают выплаты погашений/купонов/амортизаций. Null — брокер не отдал.
+    /// в рубли — ВКЛЮЧАЯ валютные позиции из <see cref="Currencies"/>, их нельзя прибавлять к этой сумме повторно). Сюда, в частности, падают выплаты погашений/купонов/амортизаций. Null — брокер не отдал.
     /// </summary>
     public decimal? CashRub { get; init; }
 
@@ -64,7 +72,19 @@ public sealed class TInvestOperation
     public string? Figi { get; init; }
     public string? InstrumentUid { get; init; }
     public DateTime Date { get; init; }
+    /// <summary>
+    /// Сумма операции В ВАЛЮТЕ ПЛАТЕЖА (<see cref="PaymentCurrency"/>). Имя историческое: до задачи 55 число писалось как рубли без
+    /// проверки валюты. Потребители получают рубли только после <see cref="TInvestOperationCurrency.ToRubles"/> (BondSyncService).
+    /// </summary>
     public decimal PaymentRub { get; init; }
+
+    /// <summary>ISO-валюта платежа как у брокера (<c>Payment.Currency</c>, нижний регистр: "rub", "cny"); null — не указана (трактуется как рубль).</summary>
+    public string? PaymentCurrency { get; init; }
+
+    /// <summary>Цена операции за 1 инструмент (<c>OperationItem.Price</c>) в валюте платежа; null — не отдана.</summary>
+    public decimal? UnitPrice { get; init; }
+
+    /// <summary>Количество. Для сделок с валютой — ЕДИНИЦЫ валюты (см. <see cref="Bonds.Core.Currencies.CurrencyOperationUnits"/>).</summary>
     public decimal? Quantity { get; init; }
 
     /// <summary>
@@ -79,8 +99,58 @@ public sealed class TInvestOperation
     /// <summary>Задача 51: операция по фонду (БПИФ/ETF) — идёт в фондовый журнал, не в облигационный.</summary>
     public bool IsFund => string.Equals(InstrumentKind, "Etf", StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>Задача 55: операция по валюте (Buy/Sell CNYRUB_TOM и т.п.) — идёт в валютный журнал, не в облигационный.</summary>
+    public bool IsCurrency => string.Equals(InstrumentKind, "Currency", StringComparison.OrdinalIgnoreCase);
+
     /// <summary>НКД, относящийся к данной операции (если применимо, напр. покупка/продажа купонной бумаги).</summary>
     public decimal? AccruedInterest { get; init; }
+}
+
+/// <summary>
+/// Справочные данные валюты из T-Invest (<c>CurrencyBy</c>): <see cref="IsoCode"/> — верхним регистром ("CNY"), <see cref="Lot"/> — лот
+/// T-Invest (справочно). Количества везде — в ЕДИНИЦАХ валюты.
+/// </summary>
+public sealed record TInvestCurrencyInfo
+{
+    public required string IsoCode { get; init; }
+    public string? Ticker { get; init; }
+    public string? Name { get; init; }
+    public decimal? Lot { get; init; }
+
+    /// <summary>FIGI рубля в портфеле T-Invest — не валютный актив, из <see cref="TInvestPortfolio.Currencies"/> исключается.</summary>
+    public const string RubleFigi = "RUB000UTSTOM";
+
+    public static bool IsRubleFigi(string? figi) => string.Equals(figi, RubleFigi, StringComparison.OrdinalIgnoreCase);
+}
+
+/// <summary>Пересчёт платежа операции в рубли (задача 55).</summary>
+public static class TInvestOperationCurrency
+{
+    /// <summary>
+    /// Копия операции с платежом в рублях: рубль — та же операция; иная валюта — <c>PaymentRub × rubPerUnit</c> (курс дня операции,
+    /// рубли за 1 единицу валюты платежа, <see cref="Bonds.Core.Currencies.PaymentCurrencyConverter"/>); курса нет — null (пропустить).
+    /// Цена за единицу при пересчёте теряется (null): она в чужой валюте.
+    /// </summary>
+    public static TInvestOperation? ToRubles(TInvestOperation op, decimal? rubPerUnit)
+    {
+        var conv = Bonds.Core.Currencies.PaymentCurrencyConverter.ToRub(op.PaymentRub, op.PaymentCurrency, rubPerUnit);
+        if (conv.Skipped) return null;
+        if (!conv.WasConverted) return op;
+        return new TInvestOperation
+        {
+            Id = op.Id,
+            OperationType = op.OperationType,
+            Figi = op.Figi,
+            InstrumentUid = op.InstrumentUid,
+            Date = op.Date,
+            PaymentRub = conv.AmountRub!.Value,
+            PaymentCurrency = "rub",
+            UnitPrice = null,
+            Quantity = op.Quantity,
+            InstrumentKind = op.InstrumentKind,
+            AccruedInterest = op.AccruedInterest,
+        };
+    }
 }
 
 /// <summary>Текущая котировка по открытой позиции (T-Invest MarketData, plan/00 §4 "T-Invest = сейчас").</summary>

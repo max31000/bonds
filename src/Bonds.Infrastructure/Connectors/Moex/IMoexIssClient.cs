@@ -84,4 +84,18 @@ public interface IMoexIssClient
     /// ошибки (сеть, 5xx) ПРОБРАСЫВАЮТСЯ — это «источник недоступен», вызывающий прерывает тик.
     /// </summary>
     Task<MoexSecurityDescription?> GetSecurityDescriptionAsync(string secid, CancellationToken ct = default);
+
+    /// <summary>
+    /// Задача 55: дневные закрытия валютной пары с доски CETS рынка selt
+    /// (<c>/iss/history/engines/currency/markets/selt/boards/CETS/securities/{secid}.json</c>, напр. CNYRUB_TOM) за [from; to] включительно.
+    /// <c>CLOSE</c> — рубли за FACEVALUE единиц валюты (см. <see cref="MoexCurrencyClosePoint"/>); дни с CLOSE = 0 (нет сделок) — null.
+    /// Пагинация как у <see cref="GetSharesHistoryAsync"/>. Пустой список при сбое источника/неизвестном SECID (не бросает исключение).
+    /// </summary>
+    Task<IReadOnlyList<MoexCurrencyClosePoint>> GetCurrencyHistoryAsync(string secid, DateOnly from, DateOnly to, CancellationToken ct = default);
+
+    /// <summary>
+    /// Задача 55: FACEVALUE валютной пары (<c>/iss/engines/currency/markets/selt/boards/CETS/securities/{secid}.json</c>, блок securities):
+    /// за сколько единиц валюты MOEX котирует цену (CNY = 1, JPY = 100). Null — не найдено/сбой (вызывающий берёт 1 и пишет предупреждение).
+    /// </summary>
+    Task<decimal?> GetCurrencyFaceValueAsync(string secid, CancellationToken ct = default);
 }

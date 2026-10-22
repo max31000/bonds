@@ -65,3 +65,31 @@ public static class TInvestFundOperationMapper
         _ => null,
     };
 }
+
+/// <summary>
+/// Задача 55: маппинг <see cref="TInvestOperation.OperationType"/> (имя значения protobuf-enum <c>Tinkoff.InvestApi.V1.OperationType</c>,
+/// имена сверены по SDK 0.6.22.1 — XML-документация) в <see cref="CurrencyOperationType"/> для операций по валюте
+/// (<see cref="TInvestOperation.IsCurrency"/>). Чистая функция. Покупка/продажа валюты (<c>Buy*</c>/<c>Sell*</c>; <c>DeliveryBuy</c>/<c>DeliverySell</c> —
+/// поставочные фьючерсы, не берутся) → Buy/Sell; налоговые → Tax; комиссионные → Fee.
+/// <para>
+/// <b>Income (проценты на остаток) намеренно НЕ мапится</b>: подходящие по смыслу <c>OverIncome</c> («доход от овернайта») и
+/// <c>Overnight</c> («доход по РЕПО овернайт») в SDK описаны как доходы по денежным операциям счёта, а не по валютному инструменту,
+/// и приходят без привязки к валюте — уверенности, что они относятся к валютной позиции, нет. <c>AccruingVarmargin</c>/
+/// <c>WritingOffVarmargin</c> — вариационная маржа по фьючерсам — не берутся. Поддержка <see cref="CurrencyOperationType.Income"/>
+/// в журнале и отчёте есть и включится добавлением типа сюда.
+/// </para>
+/// </summary>
+public static class TInvestCurrencyOperationMapper
+{
+    public static CurrencyOperationType? Map(string tInvestOperationType) => tInvestOperationType switch
+    {
+        "Buy" or "BuyCard" or "BuyMargin" => CurrencyOperationType.Buy,
+        "Sell" or "SellCard" or "SellMargin" => CurrencyOperationType.Sell,
+        "BondTax" or "BondTaxProgressive" or "Tax" or "TaxProgressive"
+            or "TaxCorrection" or "TaxCorrectionProgressive" or "TaxCorrectionCoupon"
+            or "DividendTax" or "DividendTaxProgressive" or "BenefitTax" or "BenefitTaxProgressive" => CurrencyOperationType.Tax,
+        "BrokerFee" or "ServiceFee" or "MarginFee" or "CashFee" or "OutFee" or "OtherFee"
+            or "AdviceFee" or "SuccessFee" or "TrackMfee" or "TrackPfee" or "OutStampDuty" => CurrencyOperationType.Fee,
+        _ => null,
+    };
+}
