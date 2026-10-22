@@ -545,12 +545,12 @@ public class BondSyncServiceTests
     {
         var date = new DateTime(2026, 9, 1);
         SetupForeignOps(
-            new() { Id = "fee-cny-1", OperationType = "BrokerFee", Figi = Figi, InstrumentKind = "Bond", Date = date, PaymentRub = -10m, PaymentCurrency = "cny" },
-            new() { Id = "fee-cny-2", OperationType = "ServiceFee", InstrumentKind = null, Date = date, PaymentRub = -3m, PaymentCurrency = "cny" },
-            new() { Id = "fee-rub", OperationType = "BrokerFee", Figi = Figi, InstrumentKind = "Bond", Date = date, PaymentRub = -7m, PaymentCurrency = "rub" },
+            new TInvestOperation { Id = "fee-cny-1", OperationType = "BrokerFee", Figi = Figi, InstrumentKind = "Bond", Date = date, PaymentRub = -10m, PaymentCurrency = "cny" },
+            new TInvestOperation { Id = "fee-cny-2", OperationType = "ServiceFee", InstrumentKind = null, Date = date, PaymentRub = -3m, PaymentCurrency = "cny" },
+            new TInvestOperation { Id = "fee-rub", OperationType = "BrokerFee", Figi = Figi, InstrumentKind = "Bond", Date = date, PaymentRub = -7m, PaymentCurrency = "rub" },
             // не релевантные портфелю операции в чужой валюте (дивиденд по акции, пополнение в USD) шума не создают
-            new() { Id = "share-div", OperationType = "Dividend", Figi = "SH", InstrumentKind = "Share", Date = date, PaymentRub = 5m, PaymentCurrency = "usd" },
-            new() { Id = "deposit", OperationType = "Input", InstrumentKind = null, Date = date, PaymentRub = 100m, PaymentCurrency = "usd" });
+            new TInvestOperation { Id = "share-div", OperationType = "Dividend", Figi = "SH", InstrumentKind = "Share", Date = date, PaymentRub = 5m, PaymentCurrency = "usd" },
+            new TInvestOperation { Id = "deposit", OperationType = "Input", InstrumentKind = null, Date = date, PaymentRub = 100m, PaymentCurrency = "usd" });
 
         var result = await CreateService().SyncAsync(AccountId);
 
@@ -564,7 +564,7 @@ public class BondSyncServiceTests
     [Fact]
     public async Task SyncAsync_UsdOperation_CurrencyNotInDirectory_NoErrorAndCounted()
     {
-        SetupForeignOps(new() { Id = "fee-usd", OperationType = "BrokerFee", Figi = Figi, InstrumentKind = "Bond", Date = new DateTime(2026, 9, 1), PaymentRub = -2m, PaymentCurrency = "usd" });
+        SetupForeignOps(new TInvestOperation { Id = "fee-usd", OperationType = "BrokerFee", Figi = Figi, InstrumentKind = "Bond", Date = new DateTime(2026, 9, 1), PaymentRub = -2m, PaymentCurrency = "usd" });
         _rateLookup.Setup(r => r.ClassifyMissAsync("usd", It.IsAny<CancellationToken>())).ReturnsAsync(RateMissKind.NotInDirectory);
 
         var result = await CreateService().SyncAsync(AccountId);
@@ -577,7 +577,7 @@ public class BondSyncServiceTests
     [Fact]
     public async Task SyncAsync_ZeroPaymentInForeignCurrency_SavedAsZeroWithoutRate()
     {
-        SetupForeignOps(new() { Id = "sec-in", OperationType = "BrokerFee", Figi = Figi, InstrumentKind = "Bond", Date = new DateTime(2026, 9, 1), PaymentRub = 0m, PaymentCurrency = "usd" });
+        SetupForeignOps(new TInvestOperation { Id = "sec-in", OperationType = "BrokerFee", Figi = Figi, InstrumentKind = "Bond", Date = new DateTime(2026, 9, 1), PaymentRub = 0m, PaymentCurrency = "usd" });
 
         var result = await CreateService().SyncAsync(AccountId);
 
@@ -591,7 +591,7 @@ public class BondSyncServiceTests
     [Fact]
     public async Task SyncAsync_SelfHealingSkip_RateHistoryNotLoadedYet_JournalNotMarkedSynced()
     {
-        SetupForeignOps(new() { Id = "fee-cny", OperationType = "BrokerFee", Figi = Figi, InstrumentKind = "Bond", Date = new DateTime(2026, 9, 1), PaymentRub = -10m, PaymentCurrency = "cny" });
+        SetupForeignOps(new TInvestOperation { Id = "fee-cny", OperationType = "BrokerFee", Figi = Figi, InstrumentKind = "Bond", Date = new DateTime(2026, 9, 1), PaymentRub = -10m, PaymentCurrency = "cny" });
         _rateLookup.Setup(r => r.ClassifyMissAsync("cny", It.IsAny<CancellationToken>())).ReturnsAsync(RateMissKind.NoHistoryYet);
 
         var result = await CreateService().SyncAsync(AccountId);
