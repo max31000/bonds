@@ -179,6 +179,25 @@ describe('Dashboard', () => {
     expect(screen.getAllByText('ОФЗ 26238').length).toBeGreaterThan(0);
   });
 
+  it('мини-композиция запрашивает картину ВСЕГО портфеля — без includeFunds=false (фонды включены дефолтом эндпоинта)', async () => {
+    const urls: URL[] = [];
+    server.use(
+      http.get('*/api/positions', () => HttpResponse.json(basePositions)),
+      http.get('*/api/analytics/xirr', () => HttpResponse.json(baseXirr)),
+      http.get('*/api/cashflow', () => HttpResponse.json(baseCashflow)),
+      http.get('*/api/analytics/composition', ({ request }) => {
+        urls.push(new URL(request.url));
+        return HttpResponse.json(baseComposition);
+      }),
+    );
+
+    renderDashboard();
+
+    await waitFor(() => expect(screen.getByTestId('widget-composition')).toBeInTheDocument());
+    expect(urls.length).toBeGreaterThan(0);
+    expect(urls.every((u) => !u.searchParams.has('includeFunds'))).toBe(true);
+  });
+
   it('keeps other widgets alive when one endpoint returns 500 (independent loading)', async () => {
     server.use(
       http.get('*/api/positions', () => HttpResponse.json(basePositions)),

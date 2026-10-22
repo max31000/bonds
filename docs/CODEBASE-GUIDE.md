@@ -225,6 +225,14 @@ AccruedNow = Realized + Unrealized + NetCouponIncome + Taxes + Fees`. **`operati
 `CurrencyOverviewBuilder`: изменение курса 1/3/12 мес. — ДОЛИ, история ≤ года, проданная валюта остаётся). `/api/portfolio/summary`: `currencyValueRub`, `cashRubOnly`,
 `currencyDataIncomplete`; `totalRub` не меняется (валюта уже в `cashRub`). XIRR портфеля включает валютные потоки и терминальную стоимость.
 
+**Фонды на «Аналитике» (задача 57).** `funds.duration_override_years` (миграция 026, ГОДЫ, модифицированная) + `FundDurationEstimator` (Core): ручная → иначе индекс фонда
+(явный `benchmark_index` ИЛИ ОФЗ-направленность; код — общий `FundOutlookService.ResolveIndexCode`) `D_mod = D_mac/(1+y/2)` (Маколей индекса в ГОДАХ, y — ДОЛЯ той же точки;
+старше 10 дней — с `IndexStale`) → иначе null («неизвестна»). Фонды для аналитики собирает `FundOverviewBuilder.BuildExposuresAsync` (цена — только `ResolveFundPriceAsync`, qty > 0).
+`PortfolioCompositionService.CalculateWithFunds` (+ разрез `ByAssetClass`) и `RateScenarioService.Compute(holdings, funds, shifts)` — отдельные перегрузки; `Calculate` и
+`Compute(holdings, shifts)` не менялись (SignalsEngine/вердикты фондов не видят; фронт `useRecommendationsStore` просит composition с `includeFunds=false`). `GET /api/analytics/composition|rate-scenario?includeFunds=`
+по умолчанию true; ответ: `fundsIncluded`, `hasFunds` (показывать переключатель), у сценариев `funds[]` с `durationSource`/`deltaAtPlus100bpRub`. Δ фонда = −ModDur·Δy·MV без выпуклости.
+`PUT /api/funds/{id}/settings` перезаписывает настройки целиком: `durationOverrideYears` (0–30, иначе 422) отсутствует/null = сброс — клиент обязан слать текущее значение.
+
 ## Тесты
 
 **Юнит** (`tests/Bonds.Tests`, папки по доменам): без сети и без БД. HTTP-клиенты — вложенный

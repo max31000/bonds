@@ -6,9 +6,20 @@ export function fetchScatter(): Promise<ScatterResponse> {
   return apiClient.get<ScatterResponse>('/analytics/scatter');
 }
 
-/** GET /api/analytics/composition — композиция портфеля по 4 разрезам. */
-export function fetchComposition(): Promise<CompositionResponse> {
-  return apiClient.get<CompositionResponse>('/analytics/composition');
+/**
+ * Query-параметр `includeFunds` (задача 57): бэкенд по умолчанию считает «облигации + фонды»; `false` — прежняя облигационная картина.
+ * Дефолт не шлём (одно место правды — бэкенд), в запрос уходит только явное `includeFunds=false`.
+ */
+function fundsQuery(includeFunds: boolean | undefined): string {
+  return includeFunds === false ? '?includeFunds=false' : '';
+}
+
+/**
+ * GET /api/analytics/composition — композиция портфеля по 5 разрезам (эмитент/сектор/купон/дюрация/класс актива).
+ * `includeFunds: false` — только облигации (нужно там, где важна доля эмитента среди облигаций, напр. лимит концентрации).
+ */
+export function fetchComposition(params?: { includeFunds?: boolean }): Promise<CompositionResponse> {
+  return apiClient.get<CompositionResponse>(`/analytics/composition${fundsQuery(params?.includeFunds)}`);
 }
 
 /** GET /api/analytics/xirr — текущий XIRR и история во времени. */
@@ -25,9 +36,9 @@ export function postXirrBackfill(): Promise<XirrBackfillResponse> {
   return apiClient.post<XirrBackfillResponse>('/analytics/xirr/backfill');
 }
 
-/** GET /api/analytics/rate-scenario — портфель при параллельном сдвиге ставок. */
-export function fetchRateScenario(): Promise<RateScenarioResponse> {
-  return apiClient.get<RateScenarioResponse>('/analytics/rate-scenario');
+/** GET /api/analytics/rate-scenario — портфель при параллельном сдвиге ставок (по умолчанию с фондами, `includeFunds: false` — только облигации). */
+export function fetchRateScenario(params?: { includeFunds?: boolean }): Promise<RateScenarioResponse> {
+  return apiClient.get<RateScenarioResponse>(`/analytics/rate-scenario${fundsQuery(params?.includeFunds)}`);
 }
 
 /** GET /api/analytics/trajectory — траектория стоимости портфеля во времени. */

@@ -56,3 +56,22 @@ export function outlookTooltip(o: FundOutlook, afterTaxFormatted: string): strin
 /** Предупреждение, когда у фонда нет цены пая (ни в позиции, ни в истории): стоимость учтена как 0, итоги занижены. */
 export const FUND_DATA_INCOMPLETE =
   'Нет цены пая (ни от брокера, ни в истории торгов) — стоимость учтена как 0, P&L и итоги приблизительные.';
+
+/**
+ * Подпись источника модифицированной дюрации фонда (задача 57): "manual" | "index:RGBI" | "unknown"/null.
+ * Дюрация фонда — всегда ОЦЕНКА (фонд активно управляется, портфель фонда не равен индексу).
+ */
+export function fundDurationSourceLabel(source: string | null | undefined): string {
+  if (source === 'manual') return 'задано вручную';
+  if (source?.startsWith('index:')) return `оценка по индексу ${source.slice('index:'.length)}`;
+  return 'неизвестна — задайте в карточке фонда';
+}
+
+export const FUND_DURATION_WARNING_LABEL: Record<string, string> = {
+  IndexStale: 'Данные по индексу устарели (более 10 дней).',
+  IndexYieldUnknown: 'У точки индекса нет доходности — дюрация Маколея принята без поправки.',
+};
+
+export const FUND_DURATION_NOTE =
+  'Модифицированная дюрация фонда в годах — оценка чувствительности пая к ставке. По индексу она считается как дюрация Маколея ' +
+  'индекса / (1 + доходность/2), но портфель фонда может отличаться от индекса — при сомнениях задайте значение вручную.';

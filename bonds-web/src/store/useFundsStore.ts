@@ -18,6 +18,11 @@ interface FundsStore {
   loadDetail: (fundId: number | string) => Promise<void>;
   /** Сохраняет метод прогноза и рефетчит карточку (оценка пересчитывается на бэкенде). */
   saveSettings: (fundId: number | string, method: FundForecastMethod, benchmarkIndex?: string | null) => Promise<void>;
+  /**
+   * Задача 57: сохраняет ручную модифицированную дюрацию (ГОДЫ, 0–30; null — сброс к оценке по индексу), сохраняя метод и индекс.
+   * Бэкенд перезаписывает настройки целиком, поэтому метод/индекс берём из загруженной карточки.
+   */
+  saveDuration: (fundId: number | string, years: number | null) => Promise<void>;
 }
 
 let loadSeq = 0;
@@ -62,11 +67,32 @@ export const useFundsStore = create<FundsStore>()((set, get) => ({
   saveSettings: async (fundId, method, benchmarkIndex) => {
     set({ settingsSaving: true, settingsError: null });
     try {
-      await updateFundSettings(fundId, { forecastMethod: method, benchmarkIndex: benchmarkIndex ?? get().detail?.settings.benchmarkIndex ?? null });
+      const current = get().detail?.settings;
+      await updateFundSettings(fundId, {
+        forecastMethod: method,
+        benchmarkIndex: benchmarkIndex ?? current?.benchmarkIndex ?? null,
+        // Смена метода не должна сбрасывать ручную дюрацию (бэкенд перезаписывает настройки целиком).
+        ...(current?.durationOverrideYears != null ? { durationOverrideYears: current.durationOverrideYears } : {}),
+      });
       const detail = await fetchFundDetail(fundId);
       set({ detail, settingsSaving: false });
     } catch (err) {
       set({ settingsError: err instanceof Error ? err.message : 'Не удалось сохранить настройки', settingsSaving: false });
+    }
+  },
+  saveDuration: async (fundId, years) => {
+    set({ settingsSaving: true, settingsError: null });
+    try {
+      const current = get().detail?.settings;
+      await updateFundSettings(fundId, {
+        forecastMethod: current?.forecastMethod ?? 'auto',
+        benchmarkIndex: current?.benchmarkIndex ?? null,
+        durationOverrideYears: years,
+      });
+      const detail = await fetchFundDetail(fundId);
+      set({ detail, settingsSaving: false });
+    } catch (err) {
+      set({ settingsError: err instanceof Error ? err.message : 'Не удалось сохранить дюрацию', settingsSaving: false });
     }
   },
 }));

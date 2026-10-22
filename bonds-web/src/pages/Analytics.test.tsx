@@ -1,4 +1,5 @@
 import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { describe, it, expect, beforeEach } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
 import { MantineProvider } from '@mantine/core';
@@ -9,10 +10,10 @@ import { buildScatterChartData } from '../utils/scatterChartData';
 import { useAnalyticsStore } from '../store/useAnalyticsStore';
 import type { CompositionResponse, RateScenarioResponse, ScatterResponse, TrajectoryResponse, XirrResponse } from '../api/types';
 
-function renderAnalytics() {
+function renderAnalytics(initialEntry = '/analytics') {
   return render(
     <MantineProvider>
-      <MemoryRouter>
+      <MemoryRouter initialEntries={[initialEntry]}>
         <Analytics />
       </MemoryRouter>
     </MantineProvider>,
@@ -391,6 +392,133 @@ describe('Analytics', () => {
     renderAnalytics();
 
     await waitFor(() => expect(screen.getByTestId('trajectory-widget')).toBeInTheDocument());
+  });
+});
+
+describe('Analytics — фонды (задача 57)', () => {
+  const withFundsComposition: CompositionResponse = {
+    ...baseComposition,
+    byIssuer: [
+      { key: 'Минфин РФ', marketValueRub: 105000, sharePercent: 52.5 },
+      { key: 'Фонд: Облигации ОФЗ', marketValueRub: 95000, sharePercent: 47.5 },
+    ],
+    byAssetClass: [
+      { key: 'Облигации', marketValueRub: 105000, sharePercent: 52.5 },
+      { key: 'Фонды', marketValueRub: 95000, sharePercent: 47.5 },
+    ],
+    fundsIncluded: true,
+    hasFunds: true,
+  };
+
+  const withFundsScenario: RateScenarioResponse = {
+    ...baseRateScenario,
+    fundsIncluded: true,
+    hasFunds: true,
+    funds: [
+      { fundId: 5, ticker: 'TOFZ', name: 'Облигации ОФЗ', marketValueRub: 95000, modifiedDurationYears: 4.2, durationSource: 'index:RGBI', deltaAtPlus100bpRub: -3990 },
+      { fundId: 7, ticker: 'TPAY', name: 'Пассивный доход', marketValueRub: 10000, modifiedDurationYears: null, durationSource: 'unknown', deltaAtPlus100bpRub: null },
+    ],
+  };
+
+  let urls: URL[];
+
+  beforeEach(() => {
+    urls = [];
+    useAnalyticsStore.setState({ scatter: null, composition: null, xirr: null, rateScenario: null, trajectory: null, isLoading: false, error: null, isBackfilling: false });
+    server.use(
+      http.get('*/api/analytics/scatter', () => HttpResponse.json(baseScatter)),
+      http.get('*/api/analytics/xirr', () => HttpResponse.json(baseXirr)),
+      http.get('*/api/analytics/composition', ({ request }) => {
+        const url = new URL(request.url);
+        urls.push(url);
+        return HttpResponse.json(
+          url.searchParams.get('includeFunds') === 'false'
+            ? { ...baseComposition, byAssetClass: [], fundsIncluded: false, hasFunds: true }
+            : withFundsComposition,
+        );
+      }),
+      http.get('*/api/analytics/rate-scenario', ({ request }) => {
+        const url = new URL(request.url);
+        urls.push(url);
+        return HttpResponse.json(
+          url.searchParams.get('includeFunds') === 'false'
+            ? { ...baseRateScenario, fundsIncluded: false, hasFunds: true, funds: [] }
+            : withFundsScenario,
+        );
+      }),
+    );
+  });
+
+  it('по умолчанию запрашивает фонды (includeFunds не отправляется) и показывает переключатели', async () => {
+    renderAnalytics();
+
+    expect(await screen.findByTestId('composition-funds-toggle')).toBeInTheDocument();
+    expect(screen.getByTestId('rate-funds-toggle')).toBeInTheDocument();
+    expect(urls.length).toBeGreaterThan(0);
+    expect(urls.every((u) => !u.searchParams.has('includeFunds'))).toBe(true);
+  });
+
+  it('без фондов переключатель не показывается', async () => {
+    server.use(
+      http.get('*/api/analytics/composition', () => HttpResponse.json(baseComposition)),
+      http.get('*/api/analytics/rate-scenario', () => HttpResponse.json(baseRateScenario)),
+    );
+    renderAnalytics();
+
+    await waitFor(() => expect(screen.getByTestId('composition-widget')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTestId('rate-scenario-widget')).toBeInTheDocument());
+    expect(screen.queryByTestId('composition-funds-toggle')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('rate-funds-toggle')).not.toBeInTheDocument();
+  });
+
+  it('«Только облигации» уходит в запрос includeFunds=false и скрывает фонды в сценариях', async () => {
+    renderAnalytics();
+    const toggle = await screen.findByTestId('rate-funds-toggle');
+    expect(await screen.findByTestId('rate-scenario-funds')).toBeInTheDocument();
+
+    await userEvent.click(within(toggle).getByText('Только облигации'));
+
+    await waitFor(() => expect(urls.filter((u) => u.searchParams.get('includeFunds') === 'false')).toHaveLength(2)); // композиция + сценарии
+    await waitFor(() => expect(screen.queryByTestId('rate-scenario-funds')).not.toBeInTheDocument());
+    // Переключатель остаётся (hasFunds приходит и в облигационном режиме), чтобы вернуться к фондам.
+    expect(screen.getByTestId('rate-funds-toggle')).toBeInTheDocument();
+  });
+
+  it('?funds=0 в URL сразу запрашивает облигационную картину', async () => {
+    renderAnalytics('/analytics?funds=0');
+
+    await waitFor(() => expect(urls.length).toBeGreaterThanOrEqual(2));
+    expect(urls.every((u) => u.searchParams.get('includeFunds') === 'false')).toBe(true);
+  });
+
+  it('разрез «Класс активов» доступен при фондах и выбирается без пустого состояния', async () => {
+    renderAnalytics();
+    const widget = await screen.findByTestId('composition-widget');
+
+    await userEvent.click(within(widget).getByText('Класс активов'));
+
+    await waitFor(() => expect(within(widget).getByRole('radio', { name: 'Класс активов' })).toBeChecked());
+    expect(screen.queryByTestId('composition-empty')).not.toBeInTheDocument();
+  });
+
+  it('разреза «Класс активов» нет, когда фонды не учтены', async () => {
+    renderAnalytics('/analytics?funds=0');
+    const widget = await screen.findByTestId('composition-widget');
+    expect(within(widget).queryByText('Класс активов')).not.toBeInTheDocument();
+  });
+
+  it('список фондов в сценариях: источник дюрации подписан как оценка, неизвестная — со ссылкой в карточку фонда', async () => {
+    renderAnalytics();
+
+    const tofz = await screen.findByTestId('rate-fund-5');
+    expect(tofz).toHaveTextContent('TOFZ');
+    expect(tofz).toHaveTextContent('4.20 г.');
+    expect(tofz).toHaveTextContent('оценка по индексу RGBI');
+    expect(tofz).toHaveTextContent(/-3\s990/); // вклад при +100 б.п.
+
+    const tpay = screen.getByTestId('rate-fund-7');
+    expect(tpay).toHaveTextContent('неизвестна');
+    expect(screen.getByTestId('rate-fund-link-7')).toHaveAttribute('href', '/funds/7');
   });
 });
 
