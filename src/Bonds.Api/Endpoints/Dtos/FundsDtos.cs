@@ -136,6 +136,9 @@ public sealed record FundRowDto
     public required FundPerformanceDto Performance { get; init; }
     public required FundOutlookDto Outlook { get; init; }
 
+    /// <summary>Оценка модифицированной дюрации фонда (годы) — ручная или по индексу; всегда подписывается как оценка.</summary>
+    public required FundDurationEstimateDto DurationEstimate { get; init; }
+
     /// <summary>Доля фонда в (облигации + фонды), ДОЛЯ; деньги не входят; null — стоимость портфеля 0.</summary>
     public decimal? ShareOfPortfolioFraction { get; init; }
 
@@ -173,10 +176,35 @@ public sealed record FundOperationDto
     public decimal? Quantity { get; init; }
 }
 
+/// <summary>
+/// Оценка модифицированной дюрации фонда (задача 57). <c>ModifiedDurationYears</c> — ГОДЫ; <c>Source</c> — "manual" | "index:RGBI" | null
+/// (оценки нет — «чувствительность неизвестна»); <c>AsOf</c> — дата точки индекса; <c>Warnings</c> — напр. "IndexStale".
+/// </summary>
+public sealed record FundDurationEstimateDto
+{
+    public decimal? ModifiedDurationYears { get; init; }
+    public string? Source { get; init; }
+    public DateOnly? AsOf { get; init; }
+    public required IReadOnlyList<string> Warnings { get; init; }
+
+    public static FundDurationEstimateDto From(FundDurationEstimate e) => new()
+    {
+        ModifiedDurationYears = e.ModifiedDurationYears,
+        Source = e.Source,
+        AsOf = e.AsOf,
+        Warnings = e.Warnings,
+    };
+}
+
 public sealed record FundSettingsDto
 {
     public required FundForecastMethod ForecastMethod { get; init; }
     public string? BenchmarkIndex { get; init; }
+
+    /// <summary>Ручная модифицированная дюрация, ГОДЫ (0–30); null — не задана.</summary>
+    public decimal? DurationOverrideYears { get; init; }
+
+    public FundDurationEstimateDto? DurationEstimate { get; init; }
 }
 
 public sealed record FundDetailDto
@@ -198,6 +226,9 @@ public sealed record UpdateFundSettingsRequest
 {
     public string? ForecastMethod { get; init; }
     public string? BenchmarkIndex { get; init; }
+
+    /// <summary>Ручная модифицированная дюрация, ГОДЫ, 0–30 (иначе 422); null = сброс (оценка пойдёт по индексу). Поле перезаписывается всегда: клиент шлёт настройки целиком.</summary>
+    public decimal? DurationOverrideYears { get; init; }
 }
 
 /// <summary>Ответ <c>GET /api/portfolio/summary</c>. Деньги — РУБЛИ; XIRR — ДОЛЯ годовых.</summary>
