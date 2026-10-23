@@ -42,8 +42,11 @@ public class CredentialProvidersTests
 
     [Theory]
     [InlineData("abcdef1234", "1234")]
-    [InlineData("ab", "ab")]
-    public void ComputeLast4_UsesMaskSourceField(string token, string expected)
+    [InlineData("abcd1234", "1234")]
+    [InlineData("abc1234", null)] // короче 8 символов: маска раскрыла бы почти весь секрет
+    [InlineData("ab", null)]
+    [InlineData("", null)]
+    public void ComputeLast4_UsesMaskSourceField(string token, string? expected)
     {
         var p = CredentialProviders.Find("tinvest_read")!;
         p.ComputeLast4(new Dictionary<string, string> { ["token"] = token }).Should().Be(expected);

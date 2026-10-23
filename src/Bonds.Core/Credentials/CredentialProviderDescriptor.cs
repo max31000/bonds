@@ -32,10 +32,16 @@ public sealed record CredentialProviderDescriptor(
     /// <summary>Поле, из которого строится маска (последние 4 символа).</summary>
     public CredentialField MaskSourceField => Fields.Single(f => f.IsMaskSource);
 
-    /// <summary>Последние 4 символа главного поля — открытая маска для UI (не секрет сама по себе).</summary>
+    /// <summary>Минимальная длина значения, при которой последние 4 символа не раскрывают секрет целиком.</summary>
+    public const int MinLengthForMask = 8;
+
+    /// <summary>
+    /// Последние 4 символа главного поля — открытая маска для UI (не секрет сама по себе).
+    /// Для значений короче <see cref="MinLengthForMask"/> маски нет: иначе маска = весь секрет.
+    /// </summary>
     public string? ComputeLast4(IReadOnlyDictionary<string, string> fields)
     {
-        if (!fields.TryGetValue(MaskSourceField.Name, out var value) || string.IsNullOrEmpty(value)) return null;
-        return value.Length >= 4 ? value[^4..] : value;
+        if (!fields.TryGetValue(MaskSourceField.Name, out var value) || value.Length < MinLengthForMask) return null;
+        return value[^4..];
     }
 }
