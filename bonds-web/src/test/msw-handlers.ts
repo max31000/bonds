@@ -227,6 +227,8 @@ export const handlers = [
   ),
   // Задача 61: деньги на счетах — по умолчанию «счетов нет»; сценарии переопределяются через server.use.
   http.get('*/api/cash', () => HttpResponse.json({ brokers: [], disclaimer: '' })),
+  // Задача 62: корзины капитала — по умолчанию пусто; сценарии переопределяются в Capital.test.tsx.
+  http.get('*/api/baskets', () => HttpResponse.json({ portfolios: [], disclaimer: '' })),
   // Задача 56: валюта — по умолчанию «валюты нет» (вкладка скрыта); сценарии переопределяются через server.use.
   http.get('*/api/currencies', () =>
     HttpResponse.json({

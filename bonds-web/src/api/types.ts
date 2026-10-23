@@ -1943,3 +1943,105 @@ export interface CashOverviewResponse {
   brokers: BrokerCashSummary[];
   disclaimer: string;
 }
+
+// ─── Корзины капитала (задача 62, GET/PUT/POST /api/baskets) ───
+// ЕДИНИЦЫ: targetWeight/band/hardBand/weight/target/drift/shareOfTotal/subWeight/actualSubShare/targetsSum — ДОЛИ (0.15 = 15%), проценты
+// рисует только фронт (`utils/baskets.ts`); value/deficitToTarget/freeCash/minTrade/totalValue/baseValue — в ВАЛЮТЕ ПОРТФЕЛЯ.
+
+export type CapitalPortfolioId = 'rub' | 'usd';
+
+export type BasketState = 'ok' | 'below' | 'above' | 'hardBelow' | 'hardAbove' | 'noTarget';
+
+export type BasketFillRule = 'fixed' | 'engine' | 'hold';
+
+export type BasketMatchRule = 'instrument' | 'asset_class';
+
+export interface BasketMember {
+  id: number;
+  broker: string;
+  /** ISIN или тикер; для `asset_class` — класс актива. */
+  instrumentKey: string;
+  /** ДОЛЯ внутри корзины (fixed) — цель. */
+  subWeight: number | null;
+  matchRule: BasketMatchRule;
+  /** Стоимость бумаги в портфеле (валюта портфеля); null — не удерживается либо правило класса. */
+  value?: number | null;
+  /** Фактическая ДОЛЯ бумаги внутри корзины; null — не удерживается/правило класса/корзина пуста. */
+  actualSubShare?: number | null;
+}
+
+export interface BasketPosition {
+  broker: string;
+  key: string;
+  assetClass: string;
+  name: string;
+  /** В валюте портфеля. */
+  value: number;
+}
+
+/** Корзина или системная строка (`isSystem`: `cash` — в базе доли, `unassigned`/`fx` — вне целей; у них нет id и настроек). */
+export interface CapitalBasket {
+  id: number | null;
+  code: string;
+  title: string;
+  isSystem: boolean;
+  targetWeight: number | null;
+  band: number | null;
+  hardBand: number | null;
+  liquidityTier: number | null;
+  fillRule: BasketFillRule | null;
+  autoBuy: boolean | null;
+  autoSell: boolean | null;
+  /** В валюте портфеля. */
+  minTrade: number | null;
+  value: number;
+  /** Value ÷ база доли (портфель минус корзины без цели; деньги в базе), ДОЛЯ. */
+  weight: number;
+  /** Value ÷ весь портфель, ДОЛЯ. */
+  shareOfTotal: number;
+  target: number | null;
+  /** weight − target, ДОЛЯ (отрицательное — недобор); null без цели. */
+  drift: number | null;
+  state: BasketState;
+  /** target × база − value, в валюте портфеля: положительное — не хватает до цели, отрицательное — избыток; null без цели. */
+  deficitToTarget: number | null;
+  members: BasketMember[];
+  positions: BasketPosition[];
+}
+
+export interface CapitalPortfolio {
+  portfolio: CapitalPortfolioId;
+  /** RUB или USD. */
+  currency: string;
+  hasAccount: boolean;
+  totalValue: number;
+  baseValue: number;
+  freeCash: number;
+  /** Σ целей, ДОЛЯ; ≠ 1 — цели не сходятся. */
+  targetsSum: number;
+  dataIncomplete: boolean;
+  syncedAt: string | null;
+  baskets: CapitalBasket[];
+}
+
+export interface BasketsResponse {
+  portfolios: CapitalPortfolio[];
+  disclaimer: string;
+}
+
+/** Редактируемые поля корзины (замена целиком); все веса — ДОЛИ. */
+export interface BasketUpdateBody {
+  title: string;
+  targetWeight: number | null;
+  band: number;
+  hardBand: number;
+  liquidityTier: number;
+  fillRule: BasketFillRule;
+  autoBuy: boolean;
+  autoSell: boolean;
+  minTrade: number;
+}
+
+export interface BasketBatchItem extends BasketUpdateBody {
+  id: number;
+}

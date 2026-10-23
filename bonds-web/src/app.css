@@ -333,3 +333,57 @@
     grid-row: 2;
   }
 }
+
+/* Страница «Капитал» (задача 62): карточка корзины и полоса цель/факт/допуск. Токены kit, без сырых hex. */
+.bonds-basket-card {
+  border-top: 1px solid var(--mvv-border);
+}
+.bonds-basket-bar {
+  position: relative;
+  height: 14px;
+  border-radius: var(--mvv-r-sm);
+  background: var(--mvv-surface-2);
+  overflow: hidden;
+}
+.bonds-basket-bar__hard,
+.bonds-basket-bar__band {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+}
+.bonds-basket-bar__hard {
+  background: var(--mvv-border);
+}
+.bonds-basket-bar__band {
+  background: var(--mvv-border-strong);
+}
+.bonds-basket-bar__fill {
+  position: absolute;
+  left: 0;
+  top: 4px;
+  bottom: 4px;
+  border-radius: var(--mvv-r-sm);
+  background: var(--mvv-accent);
+}
+.bonds-basket-bar__fill--ok {
+  background: var(--mvv-success);
+}
+.bonds-basket-bar__fill--below,
+.bonds-basket-bar__fill--above {
+  background: var(--mvv-warning);
+}
+.bonds-basket-bar__fill--hardBelow,
+.bonds-basket-bar__fill--hardAbove {
+  background: var(--mvv-danger);
+}
+.bonds-basket-bar__fill--noTarget {
+  background: var(--mvv-text-3);
+}
+.bonds-basket-bar__target {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--mvv-text);
+}
