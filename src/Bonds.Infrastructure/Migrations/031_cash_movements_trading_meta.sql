@@ -5,8 +5,9 @@
 -- instrument_trading_meta - как и чем торгуется бумага. Единицы:
 --   lot                 - штук в лоте
 --   min_price_increment - шаг цены в ВАЛЮТЕ ЦЕНЫ за 1 бумагу (рубли для рублёвых бумаг). Облигации T-Invest отдают шаг в ПУНКТАХ
---                         (процент номинала), сюда он пишется УЖЕ в рублях (пункты / 100 x номинал), сырой шаг в пунктах - в
---                         min_price_increment_points (NULL у всего, что не облигация)
+--                         (процент номинала), сюда он пишется УЖЕ в рублях (пункты / 100 x номинал) и ТОЛЬКО при номинале в рублях
+--                         (иначе NULL), сырой шаг в пунктах - в min_price_increment_points (NULL у всего, что не облигация).
+--                         Сетка цен облигации - в пунктах, заявки по облигациям нужно округлять в пунктах
 --   pays_distributions  - фонды: были ли выплаты за последние 12 месяцев (NULL - неизвестно или не фонд)
 --   its_twin            - Freedom: существует котировочный двойник base.ITS (торговать нужно не им, он только котировочный), NULL - не проверялось
 -- instrument_key - ISIN, иначе тикер. Метаданные общие для всех пользователей (свойства бумаги, не счёта).
@@ -39,7 +40,7 @@ CREATE TABLE IF NOT EXISTS instrument_trading_meta (
     ticker                      VARCHAR(32)     NOT NULL,
     class_code                  VARCHAR(16)     NULL,
     lot                         DECIMAL(20,6)   NOT NULL,
-    min_price_increment         DECIMAL(20,9)   NOT NULL,
+    min_price_increment         DECIMAL(20,9)   NULL,
     min_price_increment_points  DECIMAL(20,9)   NULL,
     currency                    CHAR(3)         NOT NULL,
     api_trade_available         TINYINT(1)      NOT NULL DEFAULT 0,

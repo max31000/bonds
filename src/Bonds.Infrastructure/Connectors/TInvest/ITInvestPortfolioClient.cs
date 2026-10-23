@@ -89,8 +89,8 @@ public interface ITInvestPortfolioClient
 
 /// <summary>
 /// Листинг облигации/фонда на одном режиме торгов (задача 61). <see cref="MinPriceIncrementRaw"/> — шаг цены КАК ОТДАЁТ БРОКЕР: у облигации в
-/// ПУНКТАХ (процент номинала, как цены <c>GetLastPrices</c>), у фонда — в рублях за пай; <see cref="NominalRub"/> — текущий номинал облигации в
-/// валюте номинала (null у фонда).
+/// ПУНКТАХ (процент номинала, как цены <c>GetLastPrices</c>), у фонда — в рублях за пай; <see cref="Nominal"/> + <see cref="NominalCurrency"/> — текущий номинал
+/// облигации и его валюта (null у фонда). Сетка цен облигации T-Invest — в пунктах: рублёвый шаг считается только при номинале в RUB.
 /// </summary>
 public sealed record TInvestInstrumentListing
 {
@@ -105,7 +105,10 @@ public sealed record TInvestInstrumentListing
 
     public decimal Lot { get; init; }
     public decimal MinPriceIncrementRaw { get; init; }
-    public decimal? NominalRub { get; init; }
+    public decimal? Nominal { get; init; }
+
+    /// <summary>ISO-код валюты номинала ВЕРХНИМ регистром (null у фонда); может отличаться от <see cref="Currency"/> (валюта торгов).</summary>
+    public string? NominalCurrency { get; init; }
 
     /// <summary>ISO-код ВЕРХНИМ регистром.</summary>
     public required string Currency { get; init; }

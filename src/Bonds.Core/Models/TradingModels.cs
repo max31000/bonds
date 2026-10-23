@@ -32,7 +32,7 @@ public class AccountCashMovement
 /// <para>
 /// <b>Единицы.</b> <see cref="MinPriceIncrement"/> — шаг цены в ВАЛЮТЕ ЦЕНЫ за 1 бумагу (для облигаций T-Invest — УЖЕ в рублях:
 /// <c>пункты / 100 × номинал</c>, см. <see cref="Bonds.Core.Trading.BondPriceStep"/>); <see cref="MinPriceIncrementPoints"/> — сырой шаг
-/// в ПУНКТАХ (процент номинала), только у облигаций. <see cref="Lot"/> — штук в лоте.
+/// в ПУНКТАХ (процент номинала), только у облигаций (сетка цен облигации — в пунктах, заявки по облигациям округлять в них). <see cref="Lot"/> — штук в лоте.
 /// </para>
 /// </summary>
 public class InstrumentTradingMeta
@@ -50,7 +50,8 @@ public class InstrumentTradingMeta
     public string Ticker { get; set; } = string.Empty;
     public string? ClassCode { get; set; }
     public decimal Lot { get; set; }
-    public decimal MinPriceIncrement { get; set; }
+    /// <summary>Шаг цены в валюте цены за бумагу; у облигации T-Invest с нерублёвым номиналом — null (см. <see cref="MinPriceIncrementPoints"/>).</summary>
+    public decimal? MinPriceIncrement { get; set; }
     public decimal? MinPriceIncrementPoints { get; set; }
     public string Currency { get; set; } = string.Empty;
     public bool ApiTradeAvailable { get; set; }

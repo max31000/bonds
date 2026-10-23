@@ -67,7 +67,7 @@ public sealed record CashOverviewDto
 
 /// <summary>
 /// Торговые метаданные бумаги. <see cref="MinPriceIncrement"/> — шаг цены в ВАЛЮТЕ ЦЕНЫ за 1 бумагу (у облигаций T-Invest уже в РУБЛЯХ:
-/// пункты / 100 × номинал); <see cref="MinPriceIncrementPoints"/> — сырой шаг в ПУНКТАХ (только облигации T-Invest).
+/// пункты / 100 × номинал; null при нерублёвом номинале); <see cref="MinPriceIncrementPoints"/> — сырой шаг в ПУНКТАХ (только облигации T-Invest).
 /// </summary>
 public sealed record TradingMetaDto
 {
@@ -81,7 +81,7 @@ public sealed record TradingMetaDto
     public string? Figi { get; init; }
     public string? ClassCode { get; init; }
     public required decimal Lot { get; init; }
-    public required decimal MinPriceIncrement { get; init; }
+    public decimal? MinPriceIncrement { get; init; }
     public decimal? MinPriceIncrementPoints { get; init; }
     public required string Currency { get; init; }
     public required bool ApiTradeAvailable { get; init; }

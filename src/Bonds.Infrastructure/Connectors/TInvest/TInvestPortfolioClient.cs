@@ -472,7 +472,8 @@ public sealed class TInvestPortfolioClient : ITInvestPortfolioClient
                     {
                         Uid = b.Uid, Figi = b.Figi, Ticker = b.Ticker, ClassCode = b.ClassCode,
                         Isin = string.IsNullOrWhiteSpace(b.Isin) ? null : b.Isin.Trim(), IsBond = true,
-                        Lot = b.Lot, MinPriceIncrementRaw = b.MinPriceIncrement.ToDecimal(), NominalRub = b.Nominal.ToDecimal(),
+                        Lot = b.Lot, MinPriceIncrementRaw = b.MinPriceIncrement.ToDecimal(), Nominal = b.Nominal.ToDecimal(),
+                        NominalCurrency = string.IsNullOrWhiteSpace(b.Nominal.Currency) ? null : b.Nominal.Currency.Trim().ToUpperInvariant(),
                         Currency = b.Currency.Trim().ToUpperInvariant(),
                         ApiTradeAvailable = b.ApiTradeAvailableFlag, BuyAvailable = b.BuyAvailableFlag, SellAvailable = b.SellAvailableFlag,
                     });
@@ -484,7 +485,7 @@ public sealed class TInvestPortfolioClient : ITInvestPortfolioClient
                     {
                         Uid = e.Uid, Figi = e.Figi, Ticker = e.Ticker, ClassCode = e.ClassCode,
                         Isin = string.IsNullOrWhiteSpace(e.Isin) ? null : e.Isin.Trim(), IsBond = false,
-                        Lot = e.Lot, MinPriceIncrementRaw = e.MinPriceIncrement.ToDecimal(), NominalRub = null,
+                        Lot = e.Lot, MinPriceIncrementRaw = e.MinPriceIncrement.ToDecimal(), Nominal = null,
                         Currency = e.Currency.Trim().ToUpperInvariant(),
                         ApiTradeAvailable = e.ApiTradeAvailableFlag, BuyAvailable = e.BuyAvailableFlag, SellAvailable = e.SellAvailableFlag,
                     });

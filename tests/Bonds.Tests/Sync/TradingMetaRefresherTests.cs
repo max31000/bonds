@@ -32,7 +32,7 @@ public class TradingMetaRefresherTests
     private readonly Mock<IFundRepository> _funds = new();
     private readonly Mock<IBrokerPositionRepository> _brokerPositions = new();
     private readonly InMemoryMetaRepository _meta = new();
-    private readonly TradingMetaOptions _options = new() { FundUniverse = [], FreedomExtraTickers = [] };
+    private readonly TradingMetaOptions _options = new() { FundUniverse = [], FreedomExtraTickers = [], QueryDelay = TimeSpan.Zero };
 
     public TradingMetaRefresherTests()
     {
@@ -52,13 +52,13 @@ public class TradingMetaRefresherTests
     private static TInvestInstrumentListing Fund(string ticker, string classCode, bool api, string? isin = null, decimal step = 0.01m, decimal lot = 1m) => new()
     {
         Uid = $"uid-{ticker}-{classCode}", Figi = $"figi-{ticker}", Ticker = ticker, ClassCode = classCode, Isin = isin ?? $"RU-{ticker}", IsBond = false,
-        Lot = lot, MinPriceIncrementRaw = step, NominalRub = null, Currency = "RUB", ApiTradeAvailable = api, BuyAvailable = true, SellAvailable = true,
+        Lot = lot, MinPriceIncrementRaw = step, Nominal = null, Currency = "RUB", ApiTradeAvailable = api, BuyAvailable = true, SellAvailable = true,
     };
 
-    private static TInvestInstrumentListing Bond(string isin, decimal stepPoints, decimal nominal, bool api = true) => new()
+    private static TInvestInstrumentListing Bond(string isin, decimal stepPoints, decimal nominal, bool api = true, string nominalCurrency = "RUB") => new()
     {
         Uid = "uid-" + isin, Figi = "figi-" + isin, Ticker = "SU" + isin[^4..], ClassCode = "TQOB", Isin = isin, IsBond = true,
-        Lot = 1m, MinPriceIncrementRaw = stepPoints, NominalRub = nominal, Currency = "RUB", ApiTradeAvailable = api, BuyAvailable = true, SellAvailable = true,
+        Lot = 1m, MinPriceIncrementRaw = stepPoints, Nominal = nominal, NominalCurrency = nominalCurrency, Currency = "RUB", ApiTradeAvailable = api, BuyAvailable = true, SellAvailable = true,
     };
 
     private void SetListings(string query, params TInvestInstrumentListing[] listings) =>
@@ -147,6 +147,56 @@ public class TradingMetaRefresherTests
         row.Lot.Should().Be(1m);
         row.PaysDistributions.Should().BeNull("у облигации признак не применим");
         _tInvest.Verify(c => c.CountDistributionsAsync(It.IsAny<string>(), It.IsAny<DateOnly>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public void MapTInvest_BondWithNonRubNominal_RubStepNull_PointsKept()
+    {
+        // Живой эталон: номинал 100 USD, шаг 0.0001 пункта - рублёвого шага нет, торговать по сетке пунктов.
+        var meta = TradingMetaRefresher.MapTInvest(Bond("XS0000000001", 0.0001m, 100m, nominalCurrency: "USD"), Now);
+
+        meta.Should().NotBeNull();
+        meta!.MinPriceIncrement.Should().BeNull("номинал не в рублях - рублёвый шаг не считаем");
+        meta.MinPriceIncrementPoints.Should().Be(0.0001m);
+    }
+
+    [Fact]
+    public void MapTInvest_BondRubNominal_RubStepComputed()
+    {
+        var meta = TradingMetaRefresher.MapTInvest(Bond("RU000A1038V6", 0.01m, 1000m), Now);
+
+        meta!.MinPriceIncrement.Should().Be(0.1m);
+        meta.MinPriceIncrementPoints.Should().Be(0.01m);
+    }
+
+    [Fact]
+    public async Task FailedTicker_NotRetriedWithinBackoff_RetriedAfter()
+    {
+        _options.FundUniverse = ["FAILBACKOFF1"];
+        _tInvest.Setup(c => c.GetInstrumentListingsAsync("FAILBACKOFF1", It.IsAny<CancellationToken>())).ThrowsAsync(new InvalidOperationException("boom"));
+
+        var first = await Create().RefreshIfDueAsync(Now, tInvestAvailable: true);
+        var second = await Create().RefreshIfDueAsync(Now.AddMinutes(30), tInvestAvailable: true);
+        await Create().RefreshIfDueAsync(Now.AddMinutes(61), tInvestAvailable: true);
+
+        first.Errors.Should().ContainSingle();
+        second.Errors.Should().BeEmpty("тикер в бэкоффе 1 час");
+        _tInvest.Verify(c => c.GetInstrumentListingsAsync("FAILBACKOFF1", It.IsAny<CancellationToken>()), Times.Exactly(2));
+    }
+
+    [Fact]
+    public async Task QueryCap_LimitsListingQueriesPerCycle_RestOnNextCycle()
+    {
+        _options.FundUniverse = ["CAPA", "CAPB", "CAPC"];
+        _options.MaxQueriesPerCycle = 2;
+        foreach (var t in _options.FundUniverse) SetListings(t, Fund(t, "TQBR", api: true));
+
+        var first = await Create().RefreshIfDueAsync(Now, tInvestAvailable: true);
+        var second = await Create().RefreshIfDueAsync(Now.AddMinutes(1), tInvestAvailable: true);
+
+        first.TInvestUpserted.Should().Be(2);
+        second.TInvestUpserted.Should().Be(1, "оставшийся тикер добирается следующим циклом, свежие не перезапрашиваются");
+        _meta.Rows.Should().HaveCount(3);
     }
 
     [Fact]

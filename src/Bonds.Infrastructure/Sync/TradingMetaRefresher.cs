@@ -30,6 +30,15 @@ public sealed class TradingMetaOptions
 
     /// <summary>Окно для признака «фонд платит распределения» — дни назад от сегодня.</summary>
     public int DistributionsWindowDays { get; set; } = 365;
+
+    /// <summary>Пауза после неудачи по тикеру (исключение): повтор не раньше чем через этот срок, чтобы стабильно падающий тикер не долбился каждым циклом.</summary>
+    public TimeSpan FailureBackoff { get; set; } = TimeSpan.FromHours(1);
+
+    /// <summary>Пауза между запросами листингов T-Invest (щадим лимиты брокера). В тестах — <see cref="TimeSpan.Zero"/>.</summary>
+    public TimeSpan QueryDelay { get; set; } = TimeSpan.FromMilliseconds(100);
+
+    /// <summary>Максимум запросов листингов T-Invest за один цикл: холодный старт растягивается на несколько циклов (остаток добирается следующим).</summary>
+    public int MaxQueriesPerCycle { get; set; } = 60;
 }
 
 /// <summary>Итог <see cref="TradingMetaRefresher"/> (для лога и тестов).</summary>
@@ -51,7 +60,7 @@ public sealed class TradingMetaRefreshResult
 /// <para>
 /// <b>T-Invest.</b> Набор: облигации (ISIN) и фонды (ISIN, иначе тикер) основного счёта + <see cref="TradingMetaOptions.FundUniverse"/>. По каждому —
 /// все листинги (<see cref="ITInvestPortfolioClient.GetInstrumentListingsAsync"/>), режим торгов выбирает <see cref="TradingListingSelector"/>.
-/// Шаг цены облигации — пункты → рубли (<see cref="BondPriceStep"/>), сырой шаг в пунктах сохраняется отдельно. Выплаты фонда —
+/// Шаг цены облигации — пункты → рубли (<see cref="BondPriceStep"/>, только при номинале в RUB, иначе NULL), сырой шаг в пунктах сохраняется отдельно (сетка цен облигации — в пунктах, заявки фазы 2 округлять в них). Между запросами — пауза <see cref="TradingMetaOptions.QueryDelay"/>, за цикл не более <see cref="TradingMetaOptions.MaxQueriesPerCycle"/> запросов, упавший тикер откладывается на <see cref="TradingMetaOptions.FailureBackoff"/>. Выплаты фонда —
 /// <c>GetDividends</c> за 365 дней, сбой запроса оставляет прежнее значение признака.
 /// </para>
 /// <para>
@@ -169,12 +178,22 @@ public sealed class TradingMetaRefresher
         queries.AddRange(_options.FundUniverse.Where(t => !string.IsNullOrWhiteSpace(t)).Select(t => t.Trim()));
 
         var upserted = 0;
+        var sent = 0;
         var to = DateOnly.FromDateTime(utcNow);
         var from = to.AddDays(-_options.DistributionsWindowDays);
         foreach (var query in queries.Distinct(StringComparer.OrdinalIgnoreCase))
         {
             ct.ThrowIfCancellationRequested();
             if (fresh.Contains(query) || IsMissed(Brokers.TInvest, query, utcNow)) continue;
+
+            if (sent >= _options.MaxQueriesPerCycle)
+            {
+                _logger.LogInformation("Trading meta: T-Invest query cap {Cap} reached, the rest is left for the next cycle", _options.MaxQueriesPerCycle);
+                break;
+            }
+
+            if (sent > 0 && _options.QueryDelay > TimeSpan.Zero) await Task.Delay(_options.QueryDelay, ct);
+            sent++;
 
             try
             {
@@ -211,6 +230,7 @@ public sealed class TradingMetaRefresher
             {
                 _logger.LogWarning(ex, "Trading meta: failed to refresh {Query}", query);
                 result.Errors.Add($"T-Invest {query}: не удалось обновить");
+                MarkMissed(Brokers.TInvest, query, utcNow, _options.FailureBackoff);
             }
         }
 
@@ -219,20 +239,23 @@ public sealed class TradingMetaRefresher
 
     /// <summary>
     /// Листинг T-Invest → запись метаданных. Облигация: шаг брокера в ПУНКТАХ → рубли за бумагу (<see cref="BondPriceStep.PointsToRub"/>,
-    /// номинал текущий), сырой шаг — в <see cref="InstrumentTradingMeta.MinPriceIncrementPoints"/>. Фонд: шаг уже в рублях за пай. Нет номинала у
-    /// облигации / шаг ≤ 0 / лот ≤ 0 — null (запись с неверным шагом хуже её отсутствия). Ключ — ISIN, иначе тикер.
+    /// номинал текущий), сырой шаг — в <see cref="InstrumentTradingMeta.MinPriceIncrementPoints"/>. Фонд: шаг уже в рублях за пай. Номинал не в RUB —
+    /// рублёвый шаг null (остаётся шаг в пунктах). Нет номинала у облигации / шаг ≤ 0 / лот ≤ 0 — null (запись с неверным шагом хуже её отсутствия). Ключ — ISIN, иначе тикер.
     /// </summary>
     internal static InstrumentTradingMeta? MapTInvest(TInvestInstrumentListing listing, DateTime utcNow)
     {
         if (listing.Lot <= 0m || listing.MinPriceIncrementRaw <= 0m) return null;
 
-        decimal step;
+        decimal? step;
         decimal? stepPoints = null;
         if (listing.IsBond)
         {
-            if (listing.NominalRub is not > 0m) return null;
+            if (listing.Nominal is not > 0m) return null;
             stepPoints = listing.MinPriceIncrementRaw;
-            step = BondPriceStep.PointsToRub(listing.MinPriceIncrementRaw, listing.NominalRub.Value);
+            // Рублёвый шаг - только при номинале в RUB: иначе пункты/100 x номинал были бы в чужой валюте (100 USD != 100 руб).
+            step = string.Equals(listing.NominalCurrency, "RUB", StringComparison.OrdinalIgnoreCase)
+                ? BondPriceStep.PointsToRub(listing.MinPriceIncrementRaw, listing.Nominal.Value)
+                : null;
         }
         else
         {
@@ -391,8 +414,8 @@ public sealed class TradingMetaRefresher
     private bool IsMissed(string broker, string query, DateTime utcNow) =>
         MissedUntil.TryGetValue(broker + ":" + query.ToUpperInvariant(), out var until) && utcNow < until;
 
-    private void MarkMissed(string broker, string query, DateTime utcNow) =>
-        MissedUntil[broker + ":" + query.ToUpperInvariant()] = utcNow + _options.RefreshInterval;
+    private void MarkMissed(string broker, string query, DateTime utcNow, TimeSpan? backoff = null) =>
+        MissedUntil[broker + ":" + query.ToUpperInvariant()] = utcNow + (backoff ?? _options.RefreshInterval);
 
     /// <summary>Ключи и тикеры (верхний регистр) записей моложе интервала обновления — их перезапрашивать не нужно.</summary>
     private HashSet<string> FreshKeys(IReadOnlyList<InstrumentTradingMeta> existing, DateTime utcNow)
