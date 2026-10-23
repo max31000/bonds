@@ -41,12 +41,20 @@ public sealed class TelegramBotClient : ITelegramBotClient
 
     public bool IsConfigured => Token is not null;
 
+    /// <summary>Страховка: Telegram отвергает текст длиннее 4096 символов (400) — длинное обрезается (теги закрываются), факт логируется.</summary>
+    private string Limit(string method, string html)
+    {
+        if (html.Length <= PlanMessageFormatter.TelegramLimit) return html;
+        _logger.LogWarning("Telegram {Method}: text of {Length} chars exceeds {Limit}, truncated", method, html.Length, PlanMessageFormatter.TelegramLimit);
+        return BotFormat.TruncateHtml(html, PlanMessageFormatter.TelegramLimit);
+    }
+
     public async Task<long?> SendMessageAsync(long chatId, string html, InlineKeyboard? keyboard = null, CancellationToken ct = default)
     {
         var body = new Dictionary<string, object?>
         {
             ["chat_id"] = chatId,
-            ["text"] = html,
+            ["text"] = Limit("sendMessage", html),
             ["parse_mode"] = "HTML",
             ["disable_web_page_preview"] = true,
         };
@@ -62,7 +70,7 @@ public sealed class TelegramBotClient : ITelegramBotClient
         {
             ["chat_id"] = chatId,
             ["message_id"] = messageId,
-            ["text"] = html,
+            ["text"] = Limit("editMessageText", html),
             ["parse_mode"] = "HTML",
             ["disable_web_page_preview"] = true,
             // Пустая клавиатура убирает кнопки (без reply_markup Telegram оставляет прежние).

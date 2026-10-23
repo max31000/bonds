@@ -18,6 +18,86 @@ public static class BotFormat
         string.IsNullOrEmpty(text) ? string.Empty : text.Replace("&", "&amp;", StringComparison.Ordinal).Replace("<", "&lt;", StringComparison.Ordinal).Replace(">", "&gt;", StringComparison.Ordinal);
 
     /// <summary>
+    /// Экранирует <paramref name="text"/> и ограничивает ЭКРАНИРОВАННУЮ длину значением <paramref name="maxChars"/> (UTF-16): при превышении — обрезка по целым символам
+    /// (суррогатная пара и сущность <c>&amp;amp;</c> не разрываются) и «…» в конце. Результат никогда не длиннее <paramref name="maxChars"/>.
+    /// </summary>
+    public static string HtmlTruncated(string? text, int maxChars)
+    {
+        if (string.IsNullOrEmpty(text)) return string.Empty;
+        var escaped = Html(text);
+        if (escaped.Length <= maxChars) return escaped;
+
+        var sb = new StringBuilder();
+        for (var i = 0; i < text.Length;)
+        {
+            var width = char.IsHighSurrogate(text[i]) && i + 1 < text.Length ? 2 : 1;
+            var piece = Html(text.Substring(i, width));
+            if (sb.Length + piece.Length + 1 > maxChars) break;
+            sb.Append(piece);
+            i += width;
+        }
+
+        return sb.Append('…').ToString();
+    }
+
+    /// <summary>Фрагмент пользовательского ввода для эха в ответе об ошибке: не более <paramref name="maxChars"/> символов + «…» (ответ не должен раздуваться вводом). Без экранирования.</summary>
+    public static string Echo(string? token, int maxChars = 32)
+    {
+        if (string.IsNullOrEmpty(token) || token.Length <= maxChars) return token ?? string.Empty;
+        var cut = char.IsHighSurrogate(token[maxChars - 1]) ? maxChars - 1 : maxChars;
+        return token[..cut] + "…";
+    }
+
+    /// <summary>
+    /// Страховочная обрезка готового HTML до <paramref name="maxChars"/> (UTF-16): режет только между «токенами» (тег целиком, сущность целиком, символ), добавляет «…»
+    /// и закрывает открытые теги — Telegram не отвергнет сообщение из-за разорванной разметки.
+    /// </summary>
+    public static string TruncateHtml(string html, int maxChars)
+    {
+        if (html.Length <= maxChars) return html;
+
+        var open = new List<string>();
+        var sb = new StringBuilder();
+        var i = 0;
+        while (i < html.Length)
+        {
+            var end = i + 1;
+            string? opened = null, closed = null;
+            if (html[i] == '<' && html.IndexOf('>', i) is var gt && gt > i)
+            {
+                end = gt + 1;
+                var inner = html[(i + 1)..gt];
+                var closing = inner.StartsWith('/');
+                var name = new string(inner.TrimStart('/').TakeWhile(char.IsLetter).ToArray());
+                if (closing) closed = name;
+                else if (name.Length > 0 && !inner.EndsWith('/')) opened = name;
+            }
+            else if (html[i] == '&' && html.IndexOf(';', i) is var semi && semi > i && semi - i <= 10)
+            {
+                end = semi + 1;
+            }
+            else if (char.IsHighSurrogate(html[i]) && i + 1 < html.Length)
+            {
+                end = i + 2;
+            }
+
+            var after = open.Count > 0 && closed is not null ? open.Take(open.Count - 1).ToList() : open.ToList();
+            if (opened is not null) after.Add(opened);
+            var tailLength = 1 + after.Sum(n => n.Length + 3);
+            if (sb.Length + (end - i) + tailLength > maxChars) break;
+
+            sb.Append(html, i, end - i);
+            if (opened is not null) open.Add(opened);
+            if (closed is not null && open.Count > 0) open.RemoveAt(open.Count - 1);
+            i = end;
+        }
+
+        sb.Append('…');
+        for (var k = open.Count - 1; k >= 0; k--) sb.Append("</").Append(open[k]).Append('>');
+        return sb.ToString();
+    }
+
+    /// <summary>
     /// Число в русской локали: <paramref name="decimals"/> знаков (математическое округление от нуля), группы по три цифры разделены неразрывным пробелом,
     /// запятая — десятичный разделитель, минус — «−» (U+2212).
     /// </summary>

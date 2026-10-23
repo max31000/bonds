@@ -107,20 +107,20 @@ public sealed class PolicyRunner
                 var input = inputs[CapitalPortfolios.Rub];
                 if (input.Baskets.Any(b => b.FillRule == BasketFillRules.Engine)) input = await _builder.WithBondDataAsync(userId, input, ct);
                 var outcome = InflowRule.Evaluate(input, deposit.Amount, trigger);
-                inputs[CapitalPortfolios.Rub] = await ApplyAsync(userId, outcome, nowUtc, inputs[CapitalPortfolios.Rub], result, paused, dedupe: false);
+                inputs[CapitalPortfolios.Rub] = await ApplyAsync(userId, outcome, nowUtc, inputs[CapitalPortfolios.Rub], result, paused, dedupe: false, ct);
             }
         }
 
         if (inputs.TryGetValue(CapitalPortfolios.Rub, out var rubP1))
         {
             var outcome = SweepRule.Evaluate(rubP1);
-            inputs[CapitalPortfolios.Rub] = await ApplyAsync(userId, outcome, nowUtc, rubP1, result, paused, dedupe: true);
+            inputs[CapitalPortfolios.Rub] = await ApplyAsync(userId, outcome, nowUtc, rubP1, result, paused, dedupe: true, ct);
         }
 
         if (inputs.TryGetValue(CapitalPortfolios.Usd, out var usd))
         {
             var outcome = FreedomTopUpRule.Evaluate(usd);
-            inputs[CapitalPortfolios.Usd] = await ApplyAsync(userId, outcome, nowUtc, usd, result, paused, dedupe: true);
+            inputs[CapitalPortfolios.Usd] = await ApplyAsync(userId, outcome, nowUtc, usd, result, paused, dedupe: true, ct);
         }
 
         if (inputs.TryGetValue(CapitalPortfolios.Rub, out var rubWeekly))
@@ -137,7 +137,7 @@ public sealed class PolicyRunner
                 {
                     var withBonds = await _builder.WithBondDataAsync(userId, rubWeekly, ct);
                     var outcome = LiquidityToBondsRule.Evaluate(withBonds);
-                    inputs[CapitalPortfolios.Rub] = await ApplyAsync(userId, outcome, nowUtc, rubWeekly, result, paused, dedupe: true);
+                    inputs[CapitalPortfolios.Rub] = await ApplyAsync(userId, outcome, nowUtc, rubWeekly, result, paused, dedupe: true, ct);
                 }
             }
 
@@ -153,7 +153,7 @@ public sealed class PolicyRunner
                 {
                     var withBonds = await _builder.WithBondDataAsync(userId, inputs[CapitalPortfolios.Rub], ct);
                     var outcome = RebalanceRule.Evaluate(withBonds);
-                    inputs[CapitalPortfolios.Rub] = await ApplyAsync(userId, outcome, nowUtc, inputs[CapitalPortfolios.Rub], result, paused, dedupe: true);
+                    inputs[CapitalPortfolios.Rub] = await ApplyAsync(userId, outcome, nowUtc, inputs[CapitalPortfolios.Rub], result, paused, dedupe: true, ct);
                 }
             }
         }
@@ -161,7 +161,7 @@ public sealed class PolicyRunner
         if (inputs.TryGetValue(CapitalPortfolios.Usd, out var usdRebalance) && HasHardDeviation(usdRebalance))
         {
             var outcome = RebalanceRule.Evaluate(usdRebalance);
-            inputs[CapitalPortfolios.Usd] = await ApplyAsync(userId, outcome, nowUtc, usdRebalance, result, paused, dedupe: true);
+            inputs[CapitalPortfolios.Usd] = await ApplyAsync(userId, outcome, nowUtc, usdRebalance, result, paused, dedupe: true, ct);
         }
     }
 
@@ -192,7 +192,7 @@ public sealed class PolicyRunner
 
     /// <summary>Сохраняет план (если он есть и не дублирует открытый) и возвращает вход с учётом зарезервированных планом денег и авто-лимита дня.</summary>
     private async Task<PolicyInput> ApplyAsync(
-        ulong userId, PolicyOutcome outcome, DateTime nowUtc, PolicyInput input, PolicyRunResult result, bool paused, bool dedupe)
+        ulong userId, PolicyOutcome outcome, DateTime nowUtc, PolicyInput input, PolicyRunResult result, bool paused, bool dedupe, CancellationToken ct = default)
     {
         foreach (var note in outcome.Notes) _logger.LogInformation("Policy: {Note}", note);
         result.Notes.AddRange(outcome.Notes);
@@ -207,7 +207,7 @@ public sealed class PolicyRunner
 
         var plan = await _service.SaveAsync(userId, draft, nowUtc, forcePending: paused);
         result.CreatedPlanIds.Add(plan.Id);
-        await _notifier.NotifyPlanCreatedAsync(plan);
+        await _notifier.NotifyPlanCreatedAsync(plan, ct);
         return CarryForward(input, draft, plan.Status);
     }
 

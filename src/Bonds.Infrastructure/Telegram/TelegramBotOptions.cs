@@ -27,4 +27,10 @@ public sealed class TelegramBotOptions
     /// Публичный адрес веба (например <c>https://example.org</c>): кнопка «Детали» ведёт на <c>{WebBaseUrl}/bonds/plans/{id}</c>. Пусто — кнопки «Детали» нет.
     /// </summary>
     public string? WebBaseUrl { get; set; }
+
+    /// <summary>Сколько самых новых открытых планов показывает <c>/plans</c> (остальные — строкой «… и ещё N — см. веб»; у клавиатуры Telegram лимит 100 кнопок).</summary>
+    public int MaxListedPlans { get; set; } = 10;
+
+    /// <summary>Предел ожидания отправки уведомления о новом плане: сбой/зависание Telegram не должны тормозить прогон правил.</summary>
+    public TimeSpan NotifyTimeout { get; set; } = TimeSpan.FromSeconds(5);
 }

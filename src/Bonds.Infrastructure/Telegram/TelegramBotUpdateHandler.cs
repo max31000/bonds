@@ -191,7 +191,7 @@ public sealed class TelegramBotUpdateHandler : ITelegramUpdateHandler
 
     private async Task ReplyPlansAsync(long chatId, ulong userId, DateTime now, CancellationToken ct)
     {
-        var message = BotTexts.Plans(await OpenPlansAsync(userId, now), _options.WebBaseUrl);
+        var message = BotTexts.Plans(await OpenPlansAsync(userId, now), _options.WebBaseUrl, _options.MaxListedPlans);
         await ReplyAsync(chatId, message.Html, message.Keyboard, ct);
     }
 
@@ -271,7 +271,7 @@ public sealed class TelegramBotUpdateHandler : ITelegramUpdateHandler
         if (callback.ChatId is not { } chatId || callback.MessageId is not { } messageId) return;
         try
         {
-            await _bot.EditMessageTextAsync(chatId, messageId, PlanMessageFormatter.FormatHtml(plan, now, BotFormat.Html(footer)), null, ct);
+            await _bot.EditMessageTextAsync(chatId, messageId, PlanMessageFormatter.FormatHtml(plan, now, footer), null, ct);
         }
         catch (Exception ex) when (ex is TelegramApiException or HttpRequestException)
         {

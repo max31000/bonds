@@ -73,14 +73,15 @@ public static class BotTexts
         return $"• {name}: {BotFormat.Percent(row.Weight)} при цели {BotFormat.Percent(row.Target.Value)} ({BotFormat.PercentPoints(row.Drift.Value)}) {mark}, {value}{deficit}\n";
     }
 
-    /// <summary>Список открытых планов: строка на план; для ждущих решения — кнопки (подтвердить/отклонить) в клавиатуре.</summary>
-    public static BotMessage Plans(IReadOnlyList<TradePlan> plans, string? webBaseUrl)
+    /// <summary>Список открытых планов (<paramref name="plans"/> — от новых к старым; показываются первые <paramref name="maxPlans"/>, остальные — строкой «… и ещё N — см. веб», кнопок ≤ 3 на план): строка на план; для ждущих решения — кнопки (подтвердить/отклонить) в клавиатуре.</summary>
+    public static BotMessage Plans(IReadOnlyList<TradePlan> plans, string? webBaseUrl, int maxPlans = 10)
     {
         if (plans.Count == 0) return new BotMessage("Открытых планов нет.");
+        var hidden = Math.Max(0, plans.Count - maxPlans);
 
         var sb = new StringBuilder("<b>Открытые планы</b>\n");
         var rows = new List<IReadOnlyList<InlineButton>>();
-        foreach (var plan in plans)
+        foreach (var plan in plans.Take(maxPlans))
         {
             var status = plan.Status switch
             {
@@ -105,6 +106,7 @@ public static class BotTexts
             }
         }
 
-        return new BotMessage(sb.ToString().TrimEnd(), rows.Count == 0 ? null : new InlineKeyboard(rows));
+        if (hidden > 0) sb.Append($"… и ещё {hidden} — см. веб\n");
+        return new BotMessage(BotFormat.TruncateHtml(sb.ToString().TrimEnd(), PlanMessageFormatter.TelegramLimit), rows.Count == 0 ? null : new InlineKeyboard(rows));
     }
 }

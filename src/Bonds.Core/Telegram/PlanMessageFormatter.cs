@@ -15,12 +15,21 @@ public sealed record BotMessage(string Html, InlineKeyboard? Keyboard = null);
 
 /// <summary>
 /// Формат сообщения о плане (задача 64). Нейтральные формулировки («план», «оценка»), пометка «режим наблюдения: сделка не отправляется» пока план dry-run.
-/// Сообщение — ОЦЕНКА по стакану на момент построения, не рекомендация. Лимит Telegram — 4096 символов: длинный план обрезается с пометкой «ещё N строк».
+/// Сообщение — ОЦЕНКА по стакану на момент построения, не рекомендация. Лимит Telegram — 4096 символов: длинный план обрезается с пометкой «… и ещё N стр.».
 /// </summary>
 public static class PlanMessageFormatter
 {
     public const string ObservationNote = "режим наблюдения: сделка не отправляется";
-    private const int MaxLength = 3800;
+
+    /// <summary>Лимит Telegram на текст сообщения (символы UTF-16).</summary>
+    public const int TelegramLimit = 4096;
+
+    private const int MaxTrigger = 300;
+    private const int MaxRuleTitle = 100;
+    private const int MaxWarning = 200;
+    private const int MaxWarnings = 5;
+    private const int MaxFooter = 300;
+    private const int MoreLinesReserve = 40;
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
     public static string RuleTitle(string rule) => rule switch
@@ -43,52 +52,62 @@ public static class PlanMessageFormatter
         return $"{verb} {line.Ticker} ×{BotFormat.Number(line.QuantityPieces, line.QuantityPieces % 1m == 0m ? 0 : 4)} @ {BotFormat.Price(line.LimitPrice)} ≈ {BotFormat.Money(line.EstAmount, line.Currency)}, комиссия {fee}";
     }
 
-    /// <summary>Полный текст плана. <paramref name="footer"/> — итог решения («✅ Подтверждено 14:05 МСК»), если уже принято.</summary>
+    /// <summary>
+    /// Полный текст плана; итоговая длина ГАРАНТИРОВАННО ≤ <see cref="TelegramLimit"/> (UTF-16, после HTML-экранирования). <paramref name="footer"/> — итог решения
+    /// («✅ Подтверждено 14:05 МСК») СЫРЫМ текстом: экранируется здесь. Причина, предупреждения и итог ограничены по длине, строки плана — по оставшемуся бюджету
+    /// с пометкой «… и ещё N стр.»; резка идёт по целым символам до экранирования/по целым строкам, сущности и теги не разрываются.
+    /// </summary>
     public static string FormatHtml(TradePlan plan, DateTime nowUtc, string? footer = null)
     {
         var summary = ParseSummary(plan.SummaryJson);
-        var sb = new StringBuilder();
-        sb.Append($"<b>План №{plan.Id}</b> · {BotFormat.Html(RuleTitle(plan.Rule))}\n");
-        if (!string.IsNullOrWhiteSpace(plan.Trigger)) sb.Append($"Причина: {BotFormat.Html(plan.Trigger)}\n");
-        sb.Append('\n');
 
-        var lines = plan.Lines.OrderBy(l => l.LineNo).ToList();
-        var shown = 0;
-        var length = sb.Length;
-        foreach (var line in lines)
-        {
-            var text = $"<code>{BotFormat.Html(FormatLine(line))}</code>\n";
-            if (length + text.Length > MaxLength) break;
-            sb.Append(text);
-            length += text.Length;
-            shown++;
-        }
+        var head = new StringBuilder();
+        head.Append($"<b>План №{plan.Id}</b> · {BotFormat.HtmlTruncated(RuleTitle(plan.Rule), MaxRuleTitle)}\n");
+        if (!string.IsNullOrWhiteSpace(plan.Trigger)) head.Append($"Причина: {BotFormat.HtmlTruncated(plan.Trigger, MaxTrigger)}\n");
+        head.Append('\n');
 
-        if (shown < lines.Count) sb.Append($"… и ещё {lines.Count - shown} стр.\n");
-        if (lines.Count == 0) sb.Append("Строк нет.\n");
-
+        var tail = new StringBuilder();
         if (summary is not null)
         {
-            sb.Append('\n');
+            tail.Append('\n');
             var parts = new List<string>();
             if (summary.BuyTotal > 0m) parts.Add($"покупки ≈ {BotFormat.Money(summary.BuyTotal, summary.Currency)}");
             if (summary.SellTotal > 0m) parts.Add($"продажи ≈ {BotFormat.Money(summary.SellTotal, summary.Currency)}");
             parts.Add($"комиссия ≈ {BotFormat.Money(summary.FeeTotal, summary.Currency)}");
             if (summary.TaxTotal > 0m) parts.Add($"налог ≈ {BotFormat.Money(summary.TaxTotal, summary.Currency)}");
-            sb.Append($"Итого (оценка): {BotFormat.Html(string.Join(", ", parts))}\n");
-            sb.Append($"Свободные деньги: {BotFormat.Html(BotFormat.Money(summary.CashBefore, summary.Currency))} → {BotFormat.Html(BotFormat.Money(summary.CashAfter, summary.Currency))}\n");
-            if (summary.NetToWithdraw is { } net) sb.Append($"Доступно к выводу после налога и комиссии: {BotFormat.Html(BotFormat.Money(net, summary.Currency))}\n");
-            if (summary.Shortfall is { } gap && gap > 0m) sb.Append($"Не хватает: {BotFormat.Html(BotFormat.Money(gap, summary.Currency))}\n");
-            foreach (var warning in summary.Warnings.Take(5)) sb.Append($"⚠ {BotFormat.Html(warning)}\n");
-            if (summary.PricesPossiblyStale) sb.Append("⚠ цены могут быть устаревшими (вне часов торгов)\n");
+            tail.Append($"Итого (оценка): {BotFormat.Html(string.Join(", ", parts))}\n");
+            tail.Append($"Свободные деньги: {BotFormat.Html(BotFormat.Money(summary.CashBefore, summary.Currency))} → {BotFormat.Html(BotFormat.Money(summary.CashAfter, summary.Currency))}\n");
+            if (summary.NetToWithdraw is { } net) tail.Append($"Доступно к выводу после налога и комиссии: {BotFormat.Html(BotFormat.Money(net, summary.Currency))}\n");
+            if (summary.Shortfall is { } gap && gap > 0m) tail.Append($"Не хватает: {BotFormat.Html(BotFormat.Money(gap, summary.Currency))}\n");
+            foreach (var warning in summary.Warnings.Take(MaxWarnings)) tail.Append($"⚠ {BotFormat.HtmlTruncated(warning, MaxWarning)}\n");
+            if (summary.Warnings.Count > MaxWarnings) tail.Append($"… и ещё {summary.Warnings.Count - MaxWarnings} предупр.\n");
+            if (summary.PricesPossiblyStale) tail.Append("⚠ цены могут быть устаревшими (вне часов торгов)\n");
         }
 
-        sb.Append($"\nДействует до {BotFormat.MoscowTime(plan.ExpiresAt)}");
-        if (plan.Status == PlanStatuses.PendingApproval && plan.ExpiresAt <= nowUtc) sb.Append(" (срок истёк)");
-        sb.Append('\n');
-        if (plan.DryRun) sb.Append($"<i>{ObservationNote}</i>\n");
-        if (!string.IsNullOrWhiteSpace(footer)) sb.Append($"\n{footer}\n");
-        return sb.ToString().TrimEnd();
+        tail.Append($"\nДействует до {BotFormat.MoscowTime(plan.ExpiresAt)}");
+        if (plan.Status == PlanStatuses.PendingApproval && plan.ExpiresAt <= nowUtc) tail.Append(" (срок истёк)");
+        tail.Append('\n');
+        if (plan.DryRun) tail.Append($"<i>{ObservationNote}</i>\n");
+        if (!string.IsNullOrWhiteSpace(footer)) tail.Append($"\n{BotFormat.HtmlTruncated(footer, MaxFooter)}\n");
+
+        // Бюджет строк плана: всё, что осталось от лимита после шапки, хвоста и пометки «… и ещё N стр.» (в ней максимум 5-значное N).
+        var budget = TelegramLimit - head.Length - tail.Length - MoreLinesReserve;
+        var lines = plan.Lines.OrderBy(l => l.LineNo).ToList();
+        var body = new StringBuilder();
+        var shown = 0;
+        foreach (var line in lines)
+        {
+            var text = $"<code>{BotFormat.Html(FormatLine(line))}</code>\n";
+            if (body.Length + text.Length > budget) break;
+            body.Append(text);
+            shown++;
+        }
+
+        if (shown < lines.Count) body.Append($"… и ещё {lines.Count - shown} стр.\n");
+        if (lines.Count == 0) body.Append("Строк нет.\n");
+
+        // Страховка: по построению не срабатывает (шапка/хвост ограничены), но сообщение никогда не должно превысить лимит Telegram.
+        return BotFormat.TruncateHtml((head.ToString() + body + tail).TrimEnd(), TelegramLimit);
     }
 
     /// <summary>Сообщение о новом плане: PendingApproval — с кнопками «Подтвердить / Отклонить / Детали», остальные статусы — информационное без кнопок (ссылку на план шлёт веб).</summary>

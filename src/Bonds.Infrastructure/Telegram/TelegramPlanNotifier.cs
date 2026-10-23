@@ -37,11 +37,13 @@ public sealed class TelegramPlanNotifier : IPlanNotifier
 
         try
         {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(_options.NotifyTimeout);
             var user = await _users.GetByIdAsync(plan.UserId);
             if (user is null) return;
 
             var message = PlanMessageFormatter.ForNewPlan(plan, _time.GetUtcNow().UtcDateTime, _options.WebBaseUrl);
-            await _bot.SendMessageAsync(user.TelegramId, message.Html, message.Keyboard, ct);
+            await _bot.SendMessageAsync(user.TelegramId, message.Html, message.Keyboard, timeout.Token);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {

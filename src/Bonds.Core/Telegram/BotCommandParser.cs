@@ -73,7 +73,7 @@ public static partial class BotCommandParser
             "inflow" => ParseMoney(args, allowFraction: false, InflowUsage, BotCommandKind.Inflow),
             "withdraw" => ParseMoney(args, allowFraction: true, WithdrawUsage, BotCommandKind.Withdraw),
             "exit" => ParseExit(args),
-            _ => Invalid($"Не знаю команду «{head}». Список команд — /help."),
+            _ => Invalid($"Не знаю команду «{BotFormat.Echo(head)}». Список команд — /help."),
         };
     }
 
@@ -90,7 +90,7 @@ public static partial class BotCommandParser
         if (args.Length is 0 or > 2) return Invalid($"Нужна сумма. Примеры: {usage}");
 
         var m = ValueRegex().Match(args[0]);
-        if (!m.Success) return Invalid($"Не понял сумму «{args[0]}». Примеры: {usage}");
+        if (!m.Success) return Invalid($"Не понял сумму «{BotFormat.Echo(args[0])}». Примеры: {usage}");
 
         if (!decimal.TryParse(m.Groups["num"].Value.Replace(',', '.'), NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var value)
             || value <= 0m || value > 1_000_000_000_000m)
@@ -110,7 +110,7 @@ public static partial class BotCommandParser
         if (currencyToken.Length > 0)
         {
             portfolio = PortfolioOf(currencyToken);
-            if (portfolio is null) return Invalid($"Не знаю валюту «{currencyToken}»: поддерживаются rub и usd. Примеры: {usage}");
+            if (portfolio is null) return Invalid($"Не знаю валюту «{BotFormat.Echo(currencyToken)}»: поддерживаются rub и usd. Примеры: {usage}");
         }
 
         if (isPercent)
@@ -121,6 +121,8 @@ public static partial class BotCommandParser
             return new BotCommand(kind, Fraction: value / 100m, Portfolio: portfolio ?? CapitalPortfolios.Rub);
         }
 
+        // Пол суммы — 1 единица валюты: «/inflow 0.01» не должен порождать план-пустышку.
+        if (value < 1m) return Invalid($"Сумма должна быть не меньше 1. Примеры: {usage}");
         return new BotCommand(kind, Amount: value, Portfolio: portfolio ?? CapitalPortfolios.Rub);
     }
 
