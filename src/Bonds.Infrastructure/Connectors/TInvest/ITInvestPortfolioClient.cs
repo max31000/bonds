@@ -70,6 +70,49 @@ public interface ITInvestPortfolioClient
     /// сбой gRPC — null (+LogWarning); токен не настроен → <see cref="InvalidOperationException"/>.
     /// </summary>
     Task<TInvestCurrencyInfo?> GetCurrencyInfoAsync(string figi, CancellationToken ct = default);
+
+    /// <summary>
+    /// Задача 61: ВСЕ листинги облигации/фонда по тикеру или ISIN (<paramref name="query"/>, совпадение точное, регистр не важен) — по одному на
+    /// <c>classCode</c>. <c>FindInstrument</c> → для каждого совпавшего <c>BondBy</c>/<c>EtfBy</c> по uid (лот, шаг цены, флаги, валюта). Листинг,
+    /// чьи детали получить не удалось, пропускается (+LogWarning). Выбор режима торгов — <see cref="Bonds.Core.Trading.TradingListingSelector"/>.
+    /// Токен не настроен → <see cref="InvalidOperationException"/>, сбой самого поиска → исключение наружу.
+    /// </summary>
+    Task<IReadOnlyList<TInvestInstrumentListing>> GetInstrumentListingsAsync(string query, CancellationToken ct = default);
+
+    /// <summary>
+    /// Задача 61: число выплат (<c>GetDividends</c>, <c>DividendNet &gt; 0</c>) по инструменту (FIGI или uid) за период; <b>null — не удалось
+    /// узнать</b> (сбой gRPC), в отличие от <see cref="GetFundDistributionsAsync"/>, который при сбое отдаёт пустой список: «нет выплат» и «не знаем» здесь
+    /// различаются, иначе сбой превратился бы в <c>pays_distributions = 0</c>.
+    /// </summary>
+    Task<int?> CountDistributionsAsync(string instrumentId, DateOnly from, DateOnly to, CancellationToken ct = default);
+}
+
+/// <summary>
+/// Листинг облигации/фонда на одном режиме торгов (задача 61). <see cref="MinPriceIncrementRaw"/> — шаг цены КАК ОТДАЁТ БРОКЕР: у облигации в
+/// ПУНКТАХ (процент номинала, как цены <c>GetLastPrices</c>), у фонда — в рублях за пай; <see cref="NominalRub"/> — текущий номинал облигации в
+/// валюте номинала (null у фонда).
+/// </summary>
+public sealed record TInvestInstrumentListing
+{
+    public required string Uid { get; init; }
+    public required string Figi { get; init; }
+    public required string Ticker { get; init; }
+    public required string ClassCode { get; init; }
+    public string? Isin { get; init; }
+
+    /// <summary>true — облигация, false — фонд (<c>Etf</c>).</summary>
+    public required bool IsBond { get; init; }
+
+    public decimal Lot { get; init; }
+    public decimal MinPriceIncrementRaw { get; init; }
+    public decimal? NominalRub { get; init; }
+
+    /// <summary>ISO-код ВЕРХНИМ регистром.</summary>
+    public required string Currency { get; init; }
+
+    public bool ApiTradeAvailable { get; init; }
+    public bool BuyAvailable { get; init; }
+    public bool SellAvailable { get; init; }
 }
 
 /// <summary>Брокерская оценка риска одной облигации (ISIN → <see cref="BrokerRiskLevel"/>).</summary>

@@ -111,6 +111,8 @@ public class Stage08EndpointsTests
     [InlineData("GET", "/api/currencies")]
     [InlineData("GET", "/api/brokers/freedom/holdings")]
     [InlineData("GET", "/api/brokers/freedom/operations")]
+    [InlineData("GET", "/api/cash")]
+    [InlineData("GET", "/api/trading-meta?broker=tinvest")]
     [InlineData("GET", "/api/funds")]
     [InlineData("GET", "/api/funds/1")]
     [InlineData("PUT", "/api/funds/1/settings")]

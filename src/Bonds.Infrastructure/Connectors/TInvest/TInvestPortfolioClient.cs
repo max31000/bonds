@@ -446,4 +446,76 @@ public sealed class TInvestPortfolioClient : ITInvestPortfolioClient
             return null;
         }
     }
+    public async Task<IReadOnlyList<TInvestInstrumentListing>> GetInstrumentListingsAsync(string query, CancellationToken ct = default)
+    {
+        var client = await GetClientAsync(ct);
+        var found = await client.Instruments.FindInstrumentAsync(new FindInstrumentRequest { Query = query }, cancellationToken: ct);
+
+        var result = new List<TInvestInstrumentListing>();
+        foreach (var hit in found.Instruments)
+        {
+            var isBond = hit.InstrumentKind == Tinkoff.InvestApi.V1.InstrumentType.Bond;
+            var isEtf = hit.InstrumentKind == Tinkoff.InvestApi.V1.InstrumentType.Etf;
+            if (!isBond && !isEtf) continue;
+            // Поиск нечёткий: оставляем только точное совпадение по тикеру или ISIN.
+            if (!string.Equals(hit.Ticker, query, StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(hit.Isin, query, StringComparison.OrdinalIgnoreCase)) continue;
+            if (string.IsNullOrEmpty(hit.Uid)) continue;
+
+            try
+            {
+                var request = new InstrumentRequest { IdType = InstrumentIdType.Uid, Id = hit.Uid };
+                if (isBond)
+                {
+                    var b = (await client.Instruments.BondByAsync(request, cancellationToken: ct)).Instrument;
+                    result.Add(new TInvestInstrumentListing
+                    {
+                        Uid = b.Uid, Figi = b.Figi, Ticker = b.Ticker, ClassCode = b.ClassCode,
+                        Isin = string.IsNullOrWhiteSpace(b.Isin) ? null : b.Isin.Trim(), IsBond = true,
+                        Lot = b.Lot, MinPriceIncrementRaw = b.MinPriceIncrement.ToDecimal(), NominalRub = b.Nominal.ToDecimal(),
+                        Currency = b.Currency.Trim().ToUpperInvariant(),
+                        ApiTradeAvailable = b.ApiTradeAvailableFlag, BuyAvailable = b.BuyAvailableFlag, SellAvailable = b.SellAvailableFlag,
+                    });
+                }
+                else
+                {
+                    var e = (await client.Instruments.EtfByAsync(request, cancellationToken: ct)).Instrument;
+                    result.Add(new TInvestInstrumentListing
+                    {
+                        Uid = e.Uid, Figi = e.Figi, Ticker = e.Ticker, ClassCode = e.ClassCode,
+                        Isin = string.IsNullOrWhiteSpace(e.Isin) ? null : e.Isin.Trim(), IsBond = false,
+                        Lot = e.Lot, MinPriceIncrementRaw = e.MinPriceIncrement.ToDecimal(), NominalRub = null,
+                        Currency = e.Currency.Trim().ToUpperInvariant(),
+                        ApiTradeAvailable = e.ApiTradeAvailableFlag, BuyAvailable = e.BuyAvailableFlag, SellAvailable = e.SellAvailableFlag,
+                    });
+                }
+            }
+            catch (Grpc.Core.RpcException ex)
+            {
+                _logger.LogWarning(ex, "T-Invest: failed to load listing {ClassCode} of {Query}", hit.ClassCode, query);
+            }
+        }
+
+        return result;
+    }
+
+    public async Task<int?> CountDistributionsAsync(string instrumentId, DateOnly from, DateOnly to, CancellationToken ct = default)
+    {
+        var client = await GetClientAsync(ct);
+        try
+        {
+            var response = await client.Instruments.GetDividendsAsync(new GetDividendsRequest
+            {
+                InstrumentId = instrumentId,
+                From = Timestamp.FromDateTime(DateTime.SpecifyKind(from.ToDateTime(TimeOnly.MinValue), DateTimeKind.Utc)),
+                To = Timestamp.FromDateTime(DateTime.SpecifyKind(to.ToDateTime(TimeOnly.MinValue), DateTimeKind.Utc)),
+            }, cancellationToken: ct);
+            return response.Dividends.Count(d => d.DividendNet.ToDecimal() > 0m);
+        }
+        catch (Grpc.Core.RpcException ex)
+        {
+            _logger.LogWarning(ex, "T-Invest: failed to count distributions for {InstrumentId}", instrumentId);
+            return null;
+        }
+    }
 }

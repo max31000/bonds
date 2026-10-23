@@ -106,6 +106,10 @@ public static class DependencyInjection
         services.AddScoped<IBrokerCashRepository>(sp => new BrokerCashRepository(GetConnStr(sp)));
         services.AddScoped<IBrokerOperationRepository>(sp => new BrokerOperationRepository(GetConnStr(sp)));
 
+        // Задача 61: пополнения/выводы T-Invest и торговые метаданные инструментов.
+        services.AddScoped<IAccountCashMovementRepository>(sp => new AccountCashMovementRepository(GetConnStr(sp)));
+        services.AddScoped<IInstrumentTradingMetaRepository>(sp => new InstrumentTradingMetaRepository(GetConnStr(sp)));
+
         // Migration runner
         services.AddSingleton(sp => new MigrationRunner(
             GetConnStr(sp),
@@ -184,6 +188,10 @@ public static class DependencyInjection
         // Задача 46: суточное обновление risk_level облигаций T-Invest (один bulk-вызов Bonds(), шаг цикла синка).
         services.AddScoped<InstrumentRiskLevelRefresher>();
 
+        // Задача 61: суточные торговые метаданные инструментов (лот, шаг цены, флаги, режим торгов, признак выплат) - шаг SyncCycleService.
+        services.Configure<TradingMetaOptions>(configuration.GetSection(TradingMetaOptions.SectionName));
+        services.AddScoped<TradingMetaRefresher>();
+
         // Задача 51: синк фондов (вызывается из BondSyncService на уже полученных данных) и суточные
         // рыночные данные фондов (шаг SyncCycleService).
         services.AddScoped<IFundSyncService, FundSyncService>();
@@ -229,6 +237,7 @@ public static class DependencyInjection
         services.AddScoped<IncomeLedgerBuilder>();
         services.AddScoped<FundOverviewBuilder>();
         services.AddScoped<CurrencyOverviewBuilder>();
+        services.AddScoped<CashOverviewBuilder>();
 
         // Резолвер эффективной ставки комиссии (override → оценка из журнала →
         // дефолт) — потребляется replacement/allocation/ifSoldNow эндпоинтами.
