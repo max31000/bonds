@@ -1,3 +1,4 @@
+using Bonds.Core.Credentials;
 using Bonds.Core.Interfaces.Repositories;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.Logging;
@@ -19,17 +20,20 @@ public sealed class TInvestTokenProvider : ITInvestTokenProvider
     /// существующие зашифрованные токены нерасшифровываемыми (намеренно версионирована .v1).</summary>
     public const string ProtectorPurpose = "Bonds.TInvestToken.v1";
 
+    private readonly IUserCredentialStore _credentialStore;
     private readonly IUserSettingsRepository _settingsRepo;
     private readonly IUserRepository _userRepo;
     private readonly IDataProtectionProvider _dataProtection;
     private readonly ILogger<TInvestTokenProvider> _logger;
 
     public TInvestTokenProvider(
+        IUserCredentialStore credentialStore,
         IUserSettingsRepository settingsRepo,
         IUserRepository userRepo,
         IDataProtectionProvider dataProtection,
         ILogger<TInvestTokenProvider> logger)
     {
+        _credentialStore = credentialStore;
         _settingsRepo = settingsRepo;
         _userRepo = userRepo;
         _dataProtection = dataProtection;
@@ -61,6 +65,18 @@ public sealed class TInvestTokenProvider : ITInvestTokenProvider
             return (TInvestTokenStatus.NotConfigured, null);
         }
 
+        // Задача 58: основной источник — user_credentials (tinvest_read). Миграция 029 скопировала сюда
+        // шифротекст из user_settings с тем же purpose, поэтому токен действующего пользователя читается как раньше.
+        var stored = await _credentialStore.GetSecretResultAsync(userId.Value, CredentialProviders.TInvestRead);
+        switch (stored.Outcome)
+        {
+            case CredentialReadOutcome.Ok:
+                return (TInvestTokenStatus.Valid, stored.Fields!["token"]);
+            case CredentialReadOutcome.DecryptionFailed:
+                return (TInvestTokenStatus.DecryptionFailed, null);
+        }
+
+        // TODO удалить после 029+1: страховка на время выката — записи в user_credentials ещё нет, токен в user_settings.
         var settings = await _settingsRepo.GetByUserIdAsync(userId.Value);
         if (string.IsNullOrEmpty(settings?.TInvestTokenEncrypted))
         {

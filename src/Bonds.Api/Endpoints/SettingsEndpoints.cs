@@ -1,12 +1,12 @@
 using Bonds.Api.Auth;
 using Bonds.Api.Middleware;
 using Bonds.Core.Analytics;
+using Bonds.Core.Credentials;
 using Bonds.Core.Interfaces;
 using Bonds.Core.Interfaces.Repositories;
 using Bonds.Core.Models;
 using Bonds.Core.Signals;
 using Bonds.Infrastructure.Connectors.TInvest;
-using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.Options;
 
 namespace Bonds.Api.Endpoints;
@@ -15,14 +15,11 @@ namespace Bonds.Api.Endpoints;
 /// GET/PUT /api/settings — пороги триггеров (Signals Engine) и базовая валюта.
 /// PUT /api/settings/tinvest-token — ввод/замена read-only токена T-Invest.
 /// <para>
-/// <b>Безопасность токена (spec §11, plan/08 "Токен T-Invest через UI").</b> Токен шифруется
-/// через <see cref="IDataProtectionProvider"/> (встроенный механизм ASP.NET Core — не требует
-/// нового секрета в конфиге, в отличие от ручного AES с собственным ключом) и сохраняется в
-/// <c>user_settings.tinvest_token_encrypted</c>. GET никогда не возвращает токен — только
-/// булевый статус "задан" и маску из последних 4 символов (<c>TInvestTokenLast4</c>,
-/// сохраняется отдельно в открытом виде ИСКЛЮЧИТЕЛЬНО для маски, это не секрет сам по себе).
-/// Токен не логируется ни на одном пути (ни в этом файле, ни в <c>ErrorHandlingMiddleware</c>,
-/// который логирует только <c>ex.Message</c>/тип исключения, не тела запросов).
+/// <b>Безопасность токена (spec §11, plan/08; задача 58).</b> Токен шифруется внутри <see cref="IUserCredentialStore"/>
+/// (DataProtection, провайдер <c>tinvest_read</c> в <c>user_credentials</c>; легаси-колонки
+/// <c>user_settings.tinvest_token_*</c> остаются только как страховка на время выката). GET никогда не возвращает токен —
+/// только булевый статус "задан" и маску из последних 4 символов (открытая маска, не секрет сама по себе).
+/// Токен не логируется ни на одном пути.
 /// </para>
 /// <para>
 /// <b>Валидация перед сохранением.</b> PUT делает пробный вызов T-Invest
@@ -75,6 +72,7 @@ public static class SettingsEndpoints
         ICurrentUser currentUser,
         IUserRepository userRepo,
         IUserSettingsRepository settingsRepo,
+        IUserCredentialStore credentialStore,
         IAccountRepository accountRepo,
         IOperationRepository operationRepo,
         ICommissionRateProvider commissionRateProvider,
@@ -90,7 +88,8 @@ public static class SettingsEndpoints
         var context = await BuildCommissionContextAsync(
             currentUser, accountRepo, operationRepo, commissionRateProvider, tInvestClient, ct);
 
-        return Results.Ok(BuildSettingsDto(user, settings, defaultSignalOptions.Value, context));
+        var token = await ResolveTokenStateAsync(credentialStore, userId, settings);
+        return Results.Ok(BuildSettingsDto(user, settings, defaultSignalOptions.Value, context, token));
     }
 
     private static async Task<IResult> PutSettings(
@@ -98,6 +97,7 @@ public static class SettingsEndpoints
         ICurrentUser currentUser,
         IUserRepository userRepo,
         IUserSettingsRepository settingsRepo,
+        IUserCredentialStore credentialStore,
         IAccountRepository accountRepo,
         IOperationRepository operationRepo,
         ICommissionRateProvider commissionRateProvider,
@@ -173,7 +173,8 @@ public static class SettingsEndpoints
         var context = await BuildCommissionContextAsync(
             currentUser, accountRepo, operationRepo, commissionRateProvider, tInvestClient, ct);
 
-        return Results.Ok(BuildSettingsDto(user, existing, defaultSignalOptions.Value, context));
+        var token = await ResolveTokenStateAsync(credentialStore, userId, existing);
+        return Results.Ok(BuildSettingsDto(user, existing, defaultSignalOptions.Value, context, token));
     }
 
     /// <summary>Контекст комиссии для GET/PUT ответа — авто-оценка из журнала, тариф T-Invest, эффективная ставка+источник.</summary>
@@ -230,12 +231,27 @@ public static class SettingsEndpoints
         return new CommissionContext(autoEstimateDto, tariff, resolved.Rate, resolved.Source.ToString());
     }
 
+    /// <summary>Состояние токена T-Invest для DTO настроек: «задан» + последние 4 символа (маска).</summary>
+    private sealed record TokenState(bool Configured, string? Last4);
+
+    /// <summary>
+    /// Источник — <c>user_credentials</c> (tinvest_read, задача 58). TODO удалить после 029+1: пока записи там нет,
+    /// смотрим на легаси-колонки user_settings (страховка на время выката).
+    /// </summary>
+    private static async Task<TokenState> ResolveTokenStateAsync(IUserCredentialStore store, ulong userId, UserSettings? settings)
+    {
+        var stored = (await store.ListStatusesAsync(userId)).FirstOrDefault(s => s.Provider == CredentialProviders.TInvestRead);
+        return stored is not null
+            ? new TokenState(true, stored.Last4)
+            : new TokenState(!string.IsNullOrEmpty(settings?.TInvestTokenEncrypted), settings?.TInvestTokenLast4);
+    }
+
     private static SettingsResponseDto BuildSettingsDto(
-        User user, UserSettings? settings, SignalEngineOptions defaults, CommissionContext commission) => new()
+        User user, UserSettings? settings, SignalEngineOptions defaults, CommissionContext commission, TokenState token) => new()
     {
         BaseCurrency = user.BaseCurrency,
-        TInvestTokenConfigured = !string.IsNullOrEmpty(settings?.TInvestTokenEncrypted),
-        TInvestTokenMasked = MaskToken(settings?.TInvestTokenLast4),
+        TInvestTokenConfigured = token.Configured,
+        TInvestTokenMasked = MaskToken(token.Last4),
         UpcomingEventDaysThreshold = settings?.UpcomingEventDaysThreshold ?? defaults.UpcomingEventDaysThreshold,
         UninvestedCashThresholdRub = settings?.UninvestedCashThresholdRub ?? defaults.UninvestedCashThresholdRub,
         DefaultMaxConcentrationPercent = settings?.DefaultMaxConcentrationPercent ?? defaults.DefaultMaxConcentrationPercent,
@@ -252,9 +268,8 @@ public static class SettingsEndpoints
     private static async Task<IResult> PutTInvestToken(
         TInvestTokenRequestDto request,
         ICurrentUser currentUser,
-        IUserSettingsRepository settingsRepo,
+        IUserCredentialStore credentialStore,
         IAccountRepository accountRepo,
-        IDataProtectionProvider dataProtection,
         ITInvestTokenValidator tokenValidator,
         CancellationToken ct)
     {
@@ -276,27 +291,22 @@ public static class SettingsEndpoints
                 statusCode: StatusCodes.Status422UnprocessableEntity);
         }
 
-        var protector = dataProtection.CreateProtector(Bonds.Infrastructure.Services.TInvestTokenProvider.ProtectorPurpose);
-        var encrypted = protector.Protect(token);
+        // Задача 58: контракт эндпоинта прежний, но токен теперь живёт в user_credentials (tinvest_read) —
+        // шифрование/legacy-формат целиком внутри IUserCredentialStore.
+        var previous = await credentialStore.GetSecretAsync(userId, CredentialProviders.TInvestRead);
+        var tokenChanged = previous is null || previous.GetValueOrDefault("token") != token;
         var last4 = token.Length >= 4 ? token[^4..] : token;
+        var accountIdForMeta = validation.AccountId ?? string.Empty;
+        var meta = accountIdForMeta.Length == 0
+            ? null
+            : System.Text.Json.JsonSerializer.Serialize(new
+            {
+                accountIdLast4 = accountIdForMeta.Length >= 4 ? accountIdForMeta[^4..] : accountIdForMeta,
+            });
+        await credentialStore.SaveAsync(userId, CredentialProviders.TInvestRead,
+            new Dictionary<string, string> { ["token"] = token }, last4, meta);
 
-        var existing = await settingsRepo.GetByUserIdAsync(userId) ?? new UserSettings { UserId = userId };
-        var tokenChanged = !IsSameToken(protector, existing.TInvestTokenEncrypted, token);
-        existing.TInvestTokenEncrypted = encrypted;
-        existing.TInvestTokenLast4 = last4;
-
-        await settingsRepo.UpsertAsync(existing);
-
-        // Новый токен может смотреть на другой счёт — перепривязываем локальный счёт к тому, что
-        // подтвердила валидация (синк берёт брокерский счёт отсюда, см. BondSyncService). Тот же
-        // токен — привязку не трогаем: валидация берёт «первый открытый счёт», а владелец мог быть
-        // привязан ко второму, и сверка позиций стёрла бы его портфель.
-        var localAccountId = await PositionsEndpoints.ResolveAccountIdAsync(currentUser, accountRepo);
-        if (tokenChanged && localAccountId is > 0 && await accountRepo.GetByIdAsync(localAccountId.Value) is { } account)
-        {
-            account.BrokerAccountId = string.IsNullOrEmpty(validation.AccountId) ? null : validation.AccountId;
-            await accountRepo.UpdateAsync(account);
-        }
+        await TInvestAccountBinding.RebindIfTokenChangedAsync(currentUser, accountRepo, validation.AccountId, tokenChanged);
 
         // Намеренно НЕ возвращаем сам токен — только статус, маску и подтверждение счёта (spec §11,
         // "маскированный идентификатор счёта (последние 4 символа) как подтверждение").
@@ -307,19 +317,6 @@ public static class SettingsEndpoints
             TInvestTokenMasked = MaskToken(last4),
             ValidatedAccountIdMasked = MaskToken(accountId.Length >= 4 ? accountId[^4..] : accountId),
         });
-    }
-
-    private static bool IsSameToken(IDataProtector protector, string? previousEncrypted, string token)
-    {
-        if (string.IsNullOrEmpty(previousEncrypted)) return false;
-        try
-        {
-            return protector.Unprotect(previousEncrypted) == token;
-        }
-        catch (System.Security.Cryptography.CryptographicException)
-        {
-            return false; // ключи DataProtection сменились — считаем токен новым
-        }
     }
 
     private static string? MaskToken(string? last4) =>

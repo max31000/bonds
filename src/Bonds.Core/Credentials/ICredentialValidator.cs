@@ -1,0 +1,32 @@
+namespace Bonds.Core.Credentials;
+
+/// <summary>
+/// Проверка секрета провайдера ПЕРЕД сохранением (невалидный не сохраняется). Реализация на каждого
+/// провайдера реестра; регистрируется в DI как <see cref="ICredentialValidator"/>, выбирается по <see cref="ProviderId"/>.
+/// Не бросает на «плохой секрет» — возвращает <see cref="CredentialValidationResult"/> с человекочитаемым
+/// сообщением БЕЗ значения секрета.
+/// </summary>
+public interface ICredentialValidator
+{
+    string ProviderId { get; }
+
+    Task<CredentialValidationResult> ValidateAsync(IReadOnlyDictionary<string, string> fields, CancellationToken ct = default);
+}
+
+/// <summary>
+/// Результат валидации. <see cref="MetaJson"/> — НЕсекретные данные для UI (тариф, scope), сохраняются в
+/// <c>meta_json</c>. <see cref="Last4"/> — переопределение маски (иначе берётся из mask-source-поля).
+/// <see cref="BrokerAccountId"/> — только для вызывающего кода (привязка счёта), не сохраняется и не отдаётся в API.
+/// </summary>
+public sealed record CredentialValidationResult(
+    bool Ok,
+    string? Message = null,
+    string? MetaJson = null,
+    string? Last4 = null,
+    string? BrokerAccountId = null)
+{
+    public static CredentialValidationResult Valid(string? metaJson = null, string? last4 = null, string? brokerAccountId = null) =>
+        new(true, null, metaJson, last4, brokerAccountId);
+
+    public static CredentialValidationResult Invalid(string message) => new(false, message);
+}
