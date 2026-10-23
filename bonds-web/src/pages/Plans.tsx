@@ -26,7 +26,7 @@ export function Plans() {
   const history = items.filter((p) => !isDecidable(p.status));
 
   return (
-    <Page title="Планы" description="Планы сделок от правил: что и по какой цене предлагается купить или продать" width="wide" data-testid="plans-page">
+    <Page title="Планы" description="Какие сделки сервис рассчитал как кандидаты по правилам: оценка по ценам стакана, не рекомендация" width="wide" data-testid="plans-page">
       <DryRunBanner />
       {isLoading && !data && (
         <Section>

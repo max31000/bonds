@@ -33,6 +33,15 @@ describe('Plans — страница «Планы» (задача 63, режим
     expect(screen.getByTestId('disclaimer')).toHaveTextContent('не рекомендация');
   });
 
+  it('описание страницы нейтральное: кандидаты и оценка', async () => {
+    server.use(http.get('*/api/plans', () => HttpResponse.json(plansResponse([]))));
+    renderPlans();
+
+    const description = await screen.findByText(/Какие сделки сервис рассчитал как кандидаты/);
+    expect(description).toHaveTextContent('оценка по ценам стакана, не рекомендация');
+    expect(screen.queryByText(/предлагается купить/)).not.toBeInTheDocument();
+  });
+
   it('рисует карточку плана: правило, причина, статус, итоги и строки заявки (лоты, лимитная цена, сумма, комиссия)', async () => {
     server.use(http.get('*/api/plans', () => HttpResponse.json(plansResponse([sweepPlan]))));
     renderPlans();
