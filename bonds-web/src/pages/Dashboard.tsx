@@ -17,6 +17,7 @@ import { useLiveQuotes } from '../hooks/useLiveQuotes';
 import { useWidgetData } from '../hooks/useWidgetData';
 import { Disclaimer } from '../components/Disclaimer';
 import { PortfolioIntradayChart } from '../components/PortfolioIntradayChart';
+import { CashOverviewSection } from '../components/CashOverviewSection';
 import { CHART_EXPLANATIONS } from '../components/charts';
 import { FUND_DATA_INCOMPLETE } from '../components/fundsCopy';
 import { FREEDOM_DATA_INCOMPLETE } from '../components/freedomCopy';
@@ -502,6 +503,8 @@ export function Dashboard() {
         <MiniCompositionWidget />
         <UpcomingCashflowWidget />
       </div>
+
+      <CashOverviewSection />
 
       <Disclaimer />
     </Page>

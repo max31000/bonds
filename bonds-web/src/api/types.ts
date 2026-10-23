@@ -1903,3 +1903,43 @@ export interface CurrenciesResponse {
   totals: CurrenciesTotals;
   disclaimer: string;
 }
+
+// ── GET /api/cash (задача 61; контракт — Endpoints/Dtos/CashDtos.cs). `amount` — в СВОЕЙ валюте `currency` (у движений — СО ЗНАКОМ брокера:
+// плюс — пополнение, минус — вывод), `amountRub` — рубли, null = нет курса валюты (тогда `dataIncomplete`). ──
+
+/** Остаток денег в одной валюте. */
+export interface CashBalanceRow {
+  currency: string;
+  amount: number;
+  amountRub: number | null;
+}
+
+export type CashMovementType = 'deposit' | 'withdrawal';
+
+/** Пополнение или вывод. */
+export interface CashMovementRow {
+  date: string;
+  type: CashMovementType;
+  amount: number;
+  currency: string;
+  amountRub: number | null;
+}
+
+/** Деньги одного брокера (`tinvest` | `freedom`). */
+export interface BrokerCashSummary {
+  broker: string;
+  balances: CashBalanceRow[];
+  /** Свободные РУБЛИ без валюты (T-Invest: cashRub − валюта в рублях); null — рублёвого остатка/баланса нет. */
+  cashRubOnly: number | null;
+  /** Все деньги в рублях, включая валюту; null — баланс не синкался. */
+  totalRub: number | null;
+  syncedAt: string | null;
+  dataIncomplete: boolean;
+  /** Последние 10 пополнений и выводов, новые сверху. */
+  recentMovements: CashMovementRow[];
+}
+
+export interface CashOverviewResponse {
+  brokers: BrokerCashSummary[];
+  disclaimer: string;
+}
