@@ -49,13 +49,14 @@ public class CurrencyRepository : ICurrencyRepository
     public async Task<ulong> UpsertAsync(Currency currency)
     {
         using var conn = CreateConnection();
-        // figi обновляется тоже: заглушка FX:USD (всегда отслеживаемая валюта, задача 60) заменяется настоящим FIGI при первом синке T-Invest.
+        // figi обновляется ТОЛЬКО поверх заглушки FX:* (всегда отслеживаемая валюта, задача 60): её заменяет настоящий FIGI при первом
+        // синке T-Invest. Настоящий FIGI не перетирается — иначе два инструмента одной валюты (TOM/TOD) перекидывали бы его каждый синк.
         // updated_at трогаем явно: ворота «справочник раз в сутки» должны сдвигаться, даже если ни одно поле не изменилось.
         const string sql = @"
             INSERT INTO currencies (figi, iso_code, ticker, name, moex_secid, lot, face_value)
             VALUES (@Figi, @IsoCode, @Ticker, @Name, @MoexSecid, @Lot, @FaceValue)
             ON DUPLICATE KEY UPDATE
-                figi = @Figi, iso_code = @IsoCode, ticker = @Ticker, name = @Name, moex_secid = @MoexSecid,
+                figi = IF(figi LIKE 'FX:%', @Figi, figi), iso_code = @IsoCode, ticker = @Ticker, name = @Name, moex_secid = @MoexSecid,
                 lot = @Lot, face_value = @FaceValue,
                 updated_at = CURRENT_TIMESTAMP,
                 id = LAST_INSERT_ID(id);
