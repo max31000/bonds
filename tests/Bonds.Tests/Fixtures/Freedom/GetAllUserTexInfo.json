@@ -1,0 +1,16 @@
+{
+ "data": {
+  "id": 100001,
+  "client_id": 200002,
+  "trader_systems_id": "100001",
+  "f_demo": 0,
+  "tariff": 1431,
+  "tariffDetails": {
+   "id": 1431,
+   "name": "Standard",
+   "curr": "USD",
+   "subscription_fee": 0,
+   "bank_out_minimum": 20
+  }
+ }
+}

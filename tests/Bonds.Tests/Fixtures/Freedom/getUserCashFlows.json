@@ -1,0 +1,79 @@
+{
+ "cashflow": [
+  {
+   "id": 3835988836,
+   "type_code": "commission_for_trades",
+   "date": "2026-10-23",
+   "datetime": "2026-10-23 17:23:20",
+   "currency": "USD",
+   "comment": "(Trade 710639658 buy SPYM.US ) Рынок: kazakhstan_its, тип бумаги: funds, валюта комиссии: USD, тариф Standard, валюта сделки: USD.  Установлена минимальная комиссия в процентах от суммы сделки: 0.5. ",
+   "account": "-",
+   "sum": "-0.27",
+   "min_step": "0.01000000",
+   "balance": "2.62000000",
+   "icon": "commission",
+   "type_code_name": " Trading fee ",
+   "sumRaw": "-0.27"
+  },
+  {
+   "id": 126704083,
+   "type_code": "bank",
+   "date": "2026-10-23",
+   "datetime": "2026-10-23 16:51:52",
+   "currency": "USD",
+   "comment": "NBRFACC:Перевод от Тест Тестов для пополнения брокерского счета №100001, на основании Договора №100001 от 14.11.25 г.-",
+   "account": "-",
+   "sum": "73.27",
+   "min_step": "0.01000000",
+   "balance": "356.23000000",
+   "icon": "bankTransaction",
+   "type_code_name": "Bank transfer",
+   "sumRaw": "73.27"
+  },
+  {
+   "id": 124943737,
+   "type_code": "dividend",
+   "date": "2026-10-01",
+   "datetime": "2026-10-01 14:15:00",
+   "currency": "USD",
+   "comment": "Дивиденды по бумаге (Procure Space ETF (UFO.US)), дата среза 2026-09-29. На одну бумагу 0.0040789 USD. Остаток на дату среза 2 ",
+   "account": "-",
+   "sum": "0.01",
+   "min_step": "0.01000000",
+   "balance": "4.01000000",
+   "icon": "compensation",
+   "type_code_name": "Dividends",
+   "sumRaw": "0.01"
+  },
+  {
+   "id": 124249920,
+   "type_code": "tax",
+   "date": "2026-09-25",
+   "datetime": "2026-09-25 15:16:18",
+   "currency": "USD",
+   "comment": "Налог за корпоративное действие по бумаге (LUV.US), дата среза 2026-09-03. Ставка налога 30. Остаток на дату среза 9",
+   "account": "-",
+   "sum": "-0.52",
+   "min_step": "0.01000000",
+   "balance": "4.00000000",
+   "icon": "tax",
+   "type_code_name": "Taxes",
+   "sumRaw": "-0.52"
+  },
+  {
+   "id": 108241051,
+   "type_code": "card",
+   "date": "2026-03-12",
+   "datetime": "2026-03-12 18:25:18",
+   "currency": "USD",
+   "comment": "Пополнение счета картой.",
+   "account": "-",
+   "sum": "49.86",
+   "min_step": "0.01000000",
+   "balance": "41.05000000",
+   "icon": "cardInflow",
+   "type_code_name": "Card payment",
+   "sumRaw": "49.86"
+  }
+ ]
+}
