@@ -89,3 +89,44 @@ public sealed class ClaudeCodeCredentialValidator : ICredentialValidator
         return Task.FromResult(CredentialValidationResult.Valid());
     }
 }
+
+/// <summary>
+/// <c>freedom</c>: пробный вызов <c>GetAllUserTexInfo</c> с введёнными ключами. Ok → meta
+/// <c>{ accountNumber, tariffId, tariffName }</c> (несекретно), номер счёта также в
+/// <see cref="CredentialValidationResult.BrokerAccountId"/>. Сообщение об ошибке не содержит ключей.
+/// </summary>
+public sealed class FreedomCredentialValidator : ICredentialValidator
+{
+    private readonly Bonds.Infrastructure.Connectors.Freedom.IFreedomApiClient _client;
+
+    public FreedomCredentialValidator(Bonds.Infrastructure.Connectors.Freedom.IFreedomApiClient client) => _client = client;
+
+    public string ProviderId => CredentialProviders.Freedom;
+
+    public async Task<CredentialValidationResult> ValidateAsync(IReadOnlyDictionary<string, string> fields, CancellationToken ct = default)
+    {
+        var pub = CredentialFieldReader.SingleToken(fields, "publicKey");
+        var priv = CredentialFieldReader.SingleToken(fields, "privateKey");
+        if (pub is null || priv is null)
+        {
+            return CredentialValidationResult.Invalid("Оба ключа должны быть заданы, без пробелов.");
+        }
+
+        try
+        {
+            var info = await _client.GetUserInfoAsync(new Bonds.Infrastructure.Connectors.Freedom.FreedomCredentials(pub, priv), ct);
+            var meta = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                accountNumber = info.AccountNumber,
+                tariffId = info.TariffId,
+                tariffName = info.TariffName,
+            });
+            return CredentialValidationResult.Valid(meta, brokerAccountId: info.AccountNumber);
+        }
+        catch (Bonds.Infrastructure.Connectors.Freedom.FreedomApiException)
+        {
+            // Текст брокера не пробрасываем: безопасное фиксированное сообщение.
+            return CredentialValidationResult.Invalid("Freedom не принял ключи. Проверьте публичный и секретный ключ.");
+        }
+    }
+}

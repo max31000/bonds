@@ -53,7 +53,7 @@
      InvariantCulture. Пустая история приходит не массивом — обработать.
    - `GetCashFlowsAsync(take)` → `getUserCashFlows`, params `{"take":N}`: `cashflow[]`: `type_code`
      (`bank`, `card` — пополнения; `commission_for_trades`, `dividend`, `tax` и др.), `date`, `currency`,
-     `sumRaw` (строка, знак: + приход / − расход), `comment` (у комиссии содержит `(Trade 710633788 buy VUAA.EU )` и
+     `sumRaw` (строка, знак: + приход / − расход), `comment` (у комиссии содержит `(Trade 900000123 buy VUAA.EU )` и
      строку «Рынок: europe|kazakhstan_its|usa…, тип бумаги: stocks|funds»).
    - `FindAsync(text)` → `tickerFinder` `{"text":...}`: `found[]`: `t`, `nm`, `mkt`, `codesub`, `x_curr`.
    - Тикеры `*.ITS` для этого типа счёта **только котировочные**: торговля по ним отклоняется («instrument

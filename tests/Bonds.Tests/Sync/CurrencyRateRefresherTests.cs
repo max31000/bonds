@@ -10,6 +10,7 @@ using Xunit;
 namespace Bonds.Tests.Sync;
 
 /// <summary>Задача 55: суточный шаг истории курса валют - ворота «раз в сутки», деление на FACEVALUE, изоляция сбоев.</summary>
+[Collection(CurrencyRateStaticCollection.Name)]
 public class CurrencyRateRefresherTests
 {
     private readonly Mock<ICurrencyRepository> _currencies = new();

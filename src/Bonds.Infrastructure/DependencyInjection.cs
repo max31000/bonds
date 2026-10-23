@@ -1,3 +1,4 @@
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Bonds.Core.Interfaces;
 using Bonds.Core.Interfaces.Repositories;
 using Bonds.Core.Signals;
@@ -128,6 +129,19 @@ public static class DependencyInjection
         });
         services.AddScoped<IGirBoClient, GirBoClient>();
 
+        // Freedom (Tradernet API v3, только чтение): ключи пользователя приходят параметром в каждый вызов
+        // клиента (реестр секретов, задача 58), в конфиге только адрес хоста.
+        services.Configure<Bonds.Infrastructure.Connectors.Freedom.FreedomOptions>(
+            configuration.GetSection(Bonds.Infrastructure.Connectors.Freedom.FreedomOptions.SectionName));
+        services.AddHttpClient(Bonds.Infrastructure.Connectors.Freedom.FreedomApiClient.HttpClientName, (sp, client) =>
+        {
+            var o = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<Bonds.Infrastructure.Connectors.Freedom.FreedomOptions>>().Value;
+            client.BaseAddress = new Uri(o.BaseUrl);
+            client.Timeout = TimeSpan.FromSeconds(o.TimeoutSeconds);
+        });
+        services.TryAddSingleton(TimeProvider.System);
+        services.AddScoped<Bonds.Infrastructure.Connectors.Freedom.IFreedomApiClient, Bonds.Infrastructure.Connectors.Freedom.FreedomApiClient>();
+
         // Telegram Bot API — алерт владельцу при падении автосинка. Тот же бот,
         // что и CI-алерты (Telegram:BotToken), base address без секрета в URL самого
         // клиента (токен подставляется в путь запроса на каждый вызов, см. TelegramAlertSender).
@@ -232,6 +246,7 @@ public static class DependencyInjection
         services.AddScoped<ICredentialValidator, Bonds.Infrastructure.Credentials.TInvestReadCredentialValidator>();
         services.AddScoped<ICredentialValidator, Bonds.Infrastructure.Credentials.TInvestTradeCredentialValidator>();
         services.AddScoped<ICredentialValidator, Bonds.Infrastructure.Credentials.ClaudeCodeCredentialValidator>();
+        services.AddScoped<ICredentialValidator, Bonds.Infrastructure.Credentials.FreedomCredentialValidator>();
 
         // Signals Engine + Scheduler — options читаются из конфига с дефолтами
         // самого класса опций, если секция не задана (см. doc-comment SignalEngineOptions/SchedulerOptions).

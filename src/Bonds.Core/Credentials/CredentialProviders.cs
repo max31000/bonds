@@ -1,8 +1,7 @@
 namespace Bonds.Core.Credentials;
 
 /// <summary>
-/// Реестр провайдеров секретов — ТОЛЬКО известные сейчас. Freedom (<c>freedom</c>: publicKey/privateKey)
-/// добавит задача 59 записью сюда плюс валидатор. Каждый секрет включает свою часть функционала
+/// Реестр провайдеров секретов — ТОЛЬКО известные сейчас (Freedom — задача 59). Каждый секрет включает свою часть функционала
 /// (см. <c>GET /api/capabilities</c>).
 /// </summary>
 public static class CredentialProviders
@@ -10,6 +9,7 @@ public static class CredentialProviders
     public const string TInvestRead = "tinvest_read";
     public const string TInvestTrade = "tinvest_trade";
     public const string ClaudeCode = "claude_code";
+    public const string Freedom = "freedom";
 
     public static IReadOnlyList<CredentialProviderDescriptor> All { get; } = new[]
     {
@@ -22,6 +22,14 @@ public static class CredentialProviders
             new[] { new CredentialField("token", "Торговый токен", IsSecret: true, IsMaskSource: true) },
             Unlocks: "исполнение сделок, фаза 3",
             Experimental: true),
+        new CredentialProviderDescriptor(
+            Freedom, "Freedom (Tradernet)", CredentialCategory.Broker,
+            new[]
+            {
+                new CredentialField("publicKey", "Публичный ключ (API key)", IsSecret: true, IsMaskSource: true),
+                new CredentialField("privateKey", "Секретный ключ (Secret key)", IsSecret: true, IsMaskSource: false),
+            },
+            Unlocks: "синхронизация портфеля Freedom (только чтение)"),
         new CredentialProviderDescriptor(
             ClaudeCode, "Claude Code", CredentialCategory.Ai,
             new[] { new CredentialField("oauthToken", "OAuth-токен", IsSecret: true, IsMaskSource: true) },

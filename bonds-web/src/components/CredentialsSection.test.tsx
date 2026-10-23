@@ -166,4 +166,31 @@ describe('CredentialsSection', () => {
     await waitFor(() => expect(deleteCalls).toBe(1));
     await waitFor(() => expect(screen.getByTestId('credential-claude_code')).toHaveTextContent('Не задано'));
   });
+  it('renders the Freedom card from the registry response with its hint and both key fields', async () => {
+    server.use(
+      http.get('*/api/credentials', () =>
+        HttpResponse.json([
+          missing({
+            provider: 'freedom',
+            title: 'Freedom (Tradernet)',
+            fields: [
+              { name: 'publicKey', title: 'Публичный ключ (API key)', isSecret: true },
+              { name: 'privateKey', title: 'Секретный ключ (Secret key)', isSecret: true },
+            ],
+            unlocks: 'синхронизация портфеля Freedom (только чтение)',
+          }),
+        ]),
+      ),
+    );
+
+    renderSection();
+
+    await waitFor(() => expect(screen.getByTestId('credential-freedom')).toBeInTheDocument());
+    expect(screen.getByTestId('credentials-group-broker')).toContainElement(screen.getByTestId('credential-freedom'));
+    expect(screen.getByTestId('credential-freedom')).toHaveTextContent('Freedom (Tradernet)');
+    expect(screen.getByTestId('credential-freedom')).toHaveTextContent('веб-терминале Freedom: профиль → API-ключи');
+    await userEvent.click(screen.getByTestId('credential-freedom-edit'));
+    expect(screen.getByTestId('credential-freedom-input-publicKey')).toBeInTheDocument();
+    expect(screen.getByTestId('credential-freedom-input-privateKey')).toBeInTheDocument();
+  });
 });

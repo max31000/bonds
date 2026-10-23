@@ -117,7 +117,7 @@ public static class CredentialsEndpoints
             .ToHashSet();
 
         // Ключ = провайдер реестра (snake_case -> camelCase), плюс aiAgents = любой провайдер категории Ai со статусом ok.
-        // Известные ключи присутствуют всегда (freedom — false, пока задача 59 не добавила провайдера).
+        // Известные ключи присутствуют всегда (freedom — false, пока ключи не заданы и не проверены).
         var caps = new Dictionary<string, bool>
         {
             ["tinvestRead"] = false,
