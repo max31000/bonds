@@ -22,6 +22,8 @@ public sealed class PolicyRunResult
 /// дефициту корзин, и только оставшиеся свободные деньги паркует P1 (иначе P1 увёл бы всё в «ликвидность»). Дубликат не создаётся, если открыт план того же
 /// правила и причины; деньги уже созданных планов резервируются для следующих правил. Сбой одного пользователя/правила пишется в лог и не прерывает остальных.
 /// ПЛАНЫ — ТОЛЬКО ДАННЫЕ (<c>dry_run</c> = 1): заявки брокерам не отправляются.
+/// Пауза пользователя (<c>user_settings.execution_paused</c>, команда <c>/stop</c>) — AutoApproved не создаётся, только PendingApproval. Каждый сохранённый план уходит в
+/// <see cref="IPlanNotifier"/> (Telegram: PendingApproval — с кнопками, AutoApproved — информационно).
 /// </summary>
 public sealed class PolicyRunner
 {
@@ -31,6 +33,8 @@ public sealed class PolicyRunner
     private readonly IAccountCashMovementRepository _movements;
     private readonly IUserRepository _users;
     private readonly IUserCredentialStore _credentials;
+    private readonly IUserSettingsRepository _settings;
+    private readonly IPlanNotifier _notifier;
     private readonly PolicyOptions _options;
     private readonly ILogger<PolicyRunner> _logger;
 
@@ -41,6 +45,8 @@ public sealed class PolicyRunner
         IAccountCashMovementRepository movements,
         IUserRepository users,
         IUserCredentialStore credentials,
+        IUserSettingsRepository settings,
+        IPlanNotifier notifier,
         IOptions<PolicyOptions> options,
         ILogger<PolicyRunner> logger)
     {
@@ -50,6 +56,8 @@ public sealed class PolicyRunner
         _movements = movements;
         _users = users;
         _credentials = credentials;
+        _settings = settings;
+        _notifier = notifier;
         _options = options.Value;
         _logger = logger;
     }
@@ -84,6 +92,9 @@ public sealed class PolicyRunner
     {
         var inputs = new Dictionary<string, PolicyInput>(await _builder.BuildAsync(userId, nowUtc, ignoreHours: false, ct), StringComparer.Ordinal);
 
+        // Пауза (/stop в Telegram): авто-подтверждение выключено, все планы остаются PendingApproval и ждут решения человека.
+        var paused = await _settings.IsExecutionPausedAsync(userId);
+
         // P2: каждое новое пополнение T-Invest планируется один раз (в любом статусе плана). План не создан (рынок закрыт, нет цен) — пополнение
         // не «съедено», следующий цикл попробует снова, пока оно в окне DepositLookback.
         if (inputs.TryGetValue(CapitalPortfolios.Rub, out var rub))
@@ -96,20 +107,20 @@ public sealed class PolicyRunner
                 var input = inputs[CapitalPortfolios.Rub];
                 if (input.Baskets.Any(b => b.FillRule == BasketFillRules.Engine)) input = await _builder.WithBondDataAsync(userId, input, ct);
                 var outcome = InflowRule.Evaluate(input, deposit.Amount, trigger);
-                inputs[CapitalPortfolios.Rub] = await ApplyAsync(userId, outcome, nowUtc, inputs[CapitalPortfolios.Rub], result, dedupe: false);
+                inputs[CapitalPortfolios.Rub] = await ApplyAsync(userId, outcome, nowUtc, inputs[CapitalPortfolios.Rub], result, paused, dedupe: false);
             }
         }
 
         if (inputs.TryGetValue(CapitalPortfolios.Rub, out var rubP1))
         {
             var outcome = SweepRule.Evaluate(rubP1);
-            inputs[CapitalPortfolios.Rub] = await ApplyAsync(userId, outcome, nowUtc, rubP1, result, dedupe: true);
+            inputs[CapitalPortfolios.Rub] = await ApplyAsync(userId, outcome, nowUtc, rubP1, result, paused, dedupe: true);
         }
 
         if (inputs.TryGetValue(CapitalPortfolios.Usd, out var usd))
         {
             var outcome = FreedomTopUpRule.Evaluate(usd);
-            inputs[CapitalPortfolios.Usd] = await ApplyAsync(userId, outcome, nowUtc, usd, result, dedupe: true);
+            inputs[CapitalPortfolios.Usd] = await ApplyAsync(userId, outcome, nowUtc, usd, result, paused, dedupe: true);
         }
 
         if (inputs.TryGetValue(CapitalPortfolios.Rub, out var rubWeekly))
@@ -126,7 +137,7 @@ public sealed class PolicyRunner
                 {
                     var withBonds = await _builder.WithBondDataAsync(userId, rubWeekly, ct);
                     var outcome = LiquidityToBondsRule.Evaluate(withBonds);
-                    inputs[CapitalPortfolios.Rub] = await ApplyAsync(userId, outcome, nowUtc, rubWeekly, result, dedupe: true);
+                    inputs[CapitalPortfolios.Rub] = await ApplyAsync(userId, outcome, nowUtc, rubWeekly, result, paused, dedupe: true);
                 }
             }
 
@@ -142,7 +153,7 @@ public sealed class PolicyRunner
                 {
                     var withBonds = await _builder.WithBondDataAsync(userId, inputs[CapitalPortfolios.Rub], ct);
                     var outcome = RebalanceRule.Evaluate(withBonds);
-                    inputs[CapitalPortfolios.Rub] = await ApplyAsync(userId, outcome, nowUtc, inputs[CapitalPortfolios.Rub], result, dedupe: true);
+                    inputs[CapitalPortfolios.Rub] = await ApplyAsync(userId, outcome, nowUtc, inputs[CapitalPortfolios.Rub], result, paused, dedupe: true);
                 }
             }
         }
@@ -150,7 +161,7 @@ public sealed class PolicyRunner
         if (inputs.TryGetValue(CapitalPortfolios.Usd, out var usdRebalance) && HasHardDeviation(usdRebalance))
         {
             var outcome = RebalanceRule.Evaluate(usdRebalance);
-            inputs[CapitalPortfolios.Usd] = await ApplyAsync(userId, outcome, nowUtc, usdRebalance, result, dedupe: true);
+            inputs[CapitalPortfolios.Usd] = await ApplyAsync(userId, outcome, nowUtc, usdRebalance, result, paused, dedupe: true);
         }
     }
 
@@ -181,7 +192,7 @@ public sealed class PolicyRunner
 
     /// <summary>Сохраняет план (если он есть и не дублирует открытый) и возвращает вход с учётом зарезервированных планом денег и авто-лимита дня.</summary>
     private async Task<PolicyInput> ApplyAsync(
-        ulong userId, PolicyOutcome outcome, DateTime nowUtc, PolicyInput input, PolicyRunResult result, bool dedupe)
+        ulong userId, PolicyOutcome outcome, DateTime nowUtc, PolicyInput input, PolicyRunResult result, bool paused, bool dedupe)
     {
         foreach (var note in outcome.Notes) _logger.LogInformation("Policy: {Note}", note);
         result.Notes.AddRange(outcome.Notes);
@@ -194,8 +205,9 @@ public sealed class PolicyRunner
             return input;
         }
 
-        var plan = await _service.SaveAsync(userId, draft, nowUtc, forcePending: false);
+        var plan = await _service.SaveAsync(userId, draft, nowUtc, forcePending: paused);
         result.CreatedPlanIds.Add(plan.Id);
+        await _notifier.NotifyPlanCreatedAsync(plan);
         return CarryForward(input, draft, plan.Status);
     }
 

@@ -24,6 +24,7 @@ public class UserSettingsRepository : IUserSettingsRepository
         replacement_horizon_years AS ReplacementHorizonYears,
         spread_widening_threshold_fraction AS SpreadWideningThresholdFraction,
         price_drawdown_threshold_fraction AS PriceDrawdownThresholdFraction,
+        execution_paused AS ExecutionPaused,
         created_at AS CreatedAt, updated_at AS UpdatedAt";
 
     public async Task<UserSettings?> GetByUserIdAsync(ulong userId)
@@ -59,5 +60,21 @@ public class UserSettingsRepository : IUserSettingsRepository
                 price_drawdown_threshold_fraction = @PriceDrawdownThresholdFraction";
 
         await conn.ExecuteAsync(sql, settings);
+    }
+
+    public async Task<bool> IsExecutionPausedAsync(ulong userId)
+    {
+        using var conn = CreateConnection();
+        return await conn.ExecuteScalarAsync<bool?>(
+            "SELECT execution_paused FROM user_settings WHERE user_id = @UserId", new { UserId = userId }) ?? false;
+    }
+
+    public async Task SetExecutionPausedAsync(ulong userId, bool paused)
+    {
+        using var conn = CreateConnection();
+        await conn.ExecuteAsync(
+            @"INSERT INTO user_settings (user_id, execution_paused) VALUES (@UserId, @Paused)
+              ON DUPLICATE KEY UPDATE execution_paused = @Paused",
+            new { UserId = userId, Paused = paused ? 1 : 0 });
     }
 }

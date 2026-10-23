@@ -153,6 +153,12 @@ public class UserCredentialStoreTests
             Settings = settings;
             return Task.CompletedTask;
         }
+        public Task<bool> IsExecutionPausedAsync(ulong userId) => Task.FromResult(Settings?.ExecutionPaused ?? false);
+        public Task SetExecutionPausedAsync(ulong userId, bool paused)
+        {
+            (Settings ??= new UserSettings { UserId = userId }).ExecutionPaused = paused;
+            return Task.CompletedTask;
+        }
     }
 
     private readonly InMemoryRepo _repo = new();

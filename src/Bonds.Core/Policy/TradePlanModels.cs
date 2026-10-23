@@ -111,6 +111,9 @@ public sealed class TradePlan
     public DateTime? DecidedAt { get; set; }
     public string? DecidedVia { get; set; }
 
+    /// <summary>Случайные 8 байт base64url (11 символов): зашиты в callback_data кнопок Telegram, сверяются при нажатии (задача 64). Не отдаётся в API.</summary>
+    public string? BotNonce { get; set; }
+
     /// <summary>JSON <see cref="TradePlanSummary"/> (camelCase).</summary>
     public string? SummaryJson { get; set; }
 
