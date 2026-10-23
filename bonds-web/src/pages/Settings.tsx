@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
-import { Badge, Button, Group, Loader, NumberInput, PasswordInput, SimpleGrid, Stack, Text } from '@mantine/core';
+import { Button, Group, Loader, NumberInput, SimpleGrid, Stack, Text } from '@mantine/core';
 import { ErrorState, Page, Section } from '@mvv42/kit';
 import { useForm } from '@mantine/form';
 import { notifications } from '@mantine/notifications';
+import { CredentialsSection } from '../components/CredentialsSection';
 import { IssuerDataBlock } from '../components/IssuerDataBlock';
 import { useSettingsStore } from '../store/useSettingsStore';
 import { commissionSourceLabel, formatPercent, formatRub } from '../utils/format';
@@ -18,14 +19,12 @@ type ThresholdsForm = Omit<
 >;
 
 /**
- * Экран настроек: пороги правил событий + токен T-Invest (write-only) (план 09c §B.8).
- * Токен никогда не приходит обратно от API — после сохранения поле очищается, показываем
- * только tInvestTokenMasked/статус «задан».
+ * Экран настроек: «Подключения» (токены брокеров и ИИ, write-only — задача 58) + пороги правил событий (план 09c §B.8).
+ * Секреты никогда не приходят обратно от API — после сохранения поле очищается, показываем
+ * только маску и статус.
  */
 export function Settings() {
-  const { settings, isLoading, error, load, save, saveToken } = useSettingsStore();
-  const [tokenInput, setTokenInput] = useState('');
-  const [savingToken, setSavingToken] = useState(false);
+  const { settings, isLoading, error, load, save } = useSettingsStore();
   const [savingThresholds, setSavingThresholds] = useState(false);
   const [savingCommission, setSavingCommission] = useState(false);
   const [savingHorizon, setSavingHorizon] = useState(false);
@@ -167,26 +166,6 @@ export function Settings() {
     });
   });
 
-  const handleSaveToken = async () => {
-    if (!tokenInput.trim()) return;
-    setSavingToken(true);
-    const result = await saveToken(tokenInput.trim());
-    setSavingToken(false);
-    setTokenInput(''); // токен — write-only, очищаем форму независимо от результата
-
-    // невалидный токен отвечает 422 с человекочитаемым сообщением ("токен не прошёл
-    // проверку T-Invest") — показываем его вместо общей заглушки; валидный — подтверждаем счётом.
-    notifications.show({
-      color: result.ok ? 'green' : 'red',
-      title: result.ok ? 'Токен сохранён' : 'Токен не прошёл проверку',
-      message: result.ok
-        ? result.validatedAccountIdMasked
-          ? `Токен T-Invest обновлён, счёт подтверждён: ${result.validatedAccountIdMasked}.`
-          : 'Токен T-Invest обновлён.'
-        : result.error,
-    });
-  };
-
   const handleSaveCommission = async () => {
     if (!settings) return;
     setSavingCommission(true);
@@ -227,44 +206,10 @@ export function Settings() {
         </Section>
       )}
 
+      <CredentialsSection />
+
       {!isLoading && settings && (
         <>
-          <Section
-            title="Токен T-Invest"
-            description="Только на чтение. Хранится зашифрованным и используется для синхронизации портфеля."
-            actions={
-              settings.tInvestTokenConfigured ? (
-                <Badge color="teal">
-                  задан{settings.tInvestTokenMasked ? `: ${settings.tInvestTokenMasked}` : ''}
-                </Badge>
-              ) : (
-                <Badge color="gray">не задан</Badge>
-              )
-            }
-            data-testid="tinvest-token-section"
-          >
-            <Group align="flex-end" wrap="wrap">
-              <PasswordInput
-                placeholder="Новый read-only токен T-Invest"
-                value={tokenInput}
-                onChange={(e) => setTokenInput(e.currentTarget.value)}
-                style={{ flex: 1, minWidth: 240 }}
-                data-testid="tinvest-token-input"
-              />
-              <Button
-                onClick={handleSaveToken}
-                loading={savingToken}
-                disabled={!tokenInput.trim()}
-                data-testid="tinvest-token-save"
-              >
-                Сохранить токен
-              </Button>
-            </Group>
-            <p className="bonds-note bonds-mt">
-              Токен никогда не отображается повторно после сохранения — только статус «задан».
-            </p>
-          </Section>
-
           <Section
             title="Комиссия брокера"
             description="Используется в оценках «если продать сейчас», замен и корзины"

@@ -236,6 +236,16 @@ AccruedNow = Realized + Unrealized + NetCouponIncome + Taxes + Fees`. **`operati
 по умолчанию true; ответ: `fundsIncluded`, `hasFunds` (показывать переключатель), у сценариев `funds[]` с `durationSource`/`deltaAtPlus100bpRub`. Δ фонда = −ModDur·Δy·MV без выпуклости.
 `PUT /api/funds/{id}/settings` перезаписывает настройки целиком: `durationOverrideYears` (0–30, иначе 422) отсутствует/null = сброс — клиент обязан слать текущее значение.
 
+### Секреты пользователя («Подключения», задача 58)
+
+Токены брокеров/ИИ живут в `user_credentials` (миграция 029), доступ ТОЛЬКО через `IUserCredentialStore`
+(шифрует DataProtection, по `userId` из `ICurrentUser`). Новый провайдер = запись в
+`Bonds.Core/Credentials/CredentialProviders.cs` + `ICredentialValidator` (регистрация в DI) — без миграций и
+эндпоинтов; `GET /api/credentials` и `GET /api/capabilities` строятся по реестру. Секреты в ответы API не попадают
+никогда (только маска `last4`). Легаси-исключение: `tinvest_read` хранит ГОЛУЮ строку токена с purpose
+`Bonds.TInvestToken.v1` (ciphertext скопирован из `user_settings` миграцией). Фронт: `useCredentialsStore`
+(+ `capabilities`, грузятся в `ServiceLayout`), секция `CredentialsSection` на странице настроек.
+
 ## Тесты
 
 **Юнит** (`tests/Bonds.Tests`, папки по доменам): без сети и без БД. HTTP-клиенты — вложенный

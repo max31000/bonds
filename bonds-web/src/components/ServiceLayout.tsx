@@ -11,6 +11,7 @@ import relativeTime from 'dayjs/plugin/relativeTime';
 import 'dayjs/locale/ru';
 import { resetAuthState, SERVICE_ID } from '../api/client';
 import { useAccessStore } from '../store/useAccessStore';
+import { useCredentialsStore } from '../store/useCredentialsStore';
 import { countAttention, useSignalsStore } from '../store/useSignalsStore';
 import { useSyncStore } from '../store/useSyncStore';
 
@@ -157,9 +158,12 @@ function SessionBootstrap() {
   const loadSignals = useSignalsStore((s) => s.load);
   const refreshStatus = useSyncStore((s) => s.refreshStatus);
   const triggerSync = useSyncStore((s) => s.triggerSync);
+  const loadCapabilities = useCredentialsStore((s) => s.loadCapabilities);
 
   useEffect(() => {
     loadSignals();
+    // Capabilities (какие секреты подключены) — один раз за сессию; страницы прячут/показывают разделы по ним.
+    void loadCapabilities();
 
     void (async () => {
       await refreshStatus();

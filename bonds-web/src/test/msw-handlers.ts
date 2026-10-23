@@ -191,6 +191,11 @@ export const handlers = [
   http.put('*/api/settings/tinvest-token', () =>
     HttpResponse.json({ tInvestTokenConfigured: true, tInvestTokenMasked: '...1234' }),
   ),
+  // Задача 58: «Подключения» — по умолчанию ничего не подключено; сценарии переопределяются через server.use.
+  http.get('*/api/credentials', () => HttpResponse.json([])),
+  http.get('*/api/capabilities', () =>
+    HttpResponse.json({ tinvestRead: false, tinvestTrade: false, freedom: false, aiAgents: false }),
+  ),
   // Задача 53: фонды и общий баланс — по умолчанию «фондов нет» / нулевой баланс; сценарии переопределяются через server.use.
   http.get('*/api/funds', () =>
     HttpResponse.json({
