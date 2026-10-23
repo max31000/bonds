@@ -113,6 +113,7 @@ app.MapIncomeEndpoints();
 app.MapFundsEndpoints();
 app.MapCurrenciesEndpoints();
 app.MapBrokerHoldingsEndpoints();
+app.MapCashEndpoints();
 app.MapPortfolioAnalyticsEndpoints();
 app.MapReplacementEndpoints();
 app.MapPositionVerdictEndpoints();

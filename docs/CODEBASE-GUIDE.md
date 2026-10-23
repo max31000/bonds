@@ -46,6 +46,8 @@ MySQL для интеграционных), vitest + Testing Library + MSW.
 | Freedom `getUserCashFlows` `sumRaw`, `getTradesHistory` `p`/`q`/`summ`/`commission` | вход | числа приходят **строками** (InvariantCulture); `sumRaw` — в своей `currency` СО ЗНАКОМ (+ приход / − расход); комиссия сделки — в `commission_currency`, может отличаться от валюты сделки |
 | `FreedomFeeModel` (`Bonds.Core/Fees`): ставки | константы | **ДОЛИ** (0.005 = 0.5%); суммы — USD; Python-эталон `tn/fees.py` хранит ПРОЦЕНТЫ — конверсия ÷100 уже сделана в таблице |
 | `broker_positions` / `broker_cash` / `broker_operations` (счёт Freedom, миграция 030) | БД | ВСЕ цены и суммы — в **ВАЛЮТЕ СТРОКИ** (колонка `currency`), НЕ в рублях; `broker_operations.amount` — со знаком (+ приход / − расход). Рубли — только на чтении через `ICurrencyRateLookup` (`BrokerHoldingsBuilder`), нет курса → `*Rub = null` + `dataIncomplete`. Freedom `RUR` нормализуется в `RUB` при записи. DTO `/api/brokers/freedom/*`: поля без суффикса `Rub`/`Usd` — в валюте строки, `unrealizedPnlFraction` — ДОЛЯ |
+| T-Invest `OperationItem.Payment` операций `Input`/`Output` (пополнение/вывод) → `account_cash_movements` (миграция 031) | вход → БД | `amount` — в СВОЕЙ валюте СО ЗНАКОМ брокера (+ пополнение / − вывод), без пересчёта; `amount_rub` — рубль как есть, иначе по курсу дня (`ICurrencyRateLookup`), нет курса — `NULL`. Валюта ISO ВЕРХНИМ регистром (RUR → RUB). DTO `/api/cash`: `amount` в валюте, `amountRub` — рубли |
+| T-Invest `Bond.MinPriceIncrement` (шаг цены облигации) → `instrument_trading_meta` | вход → БД | брокер отдаёт в **ПУНКТАХ** (% номинала, как цены `GetLastPrices`) → `min_price_increment` = `пункты ÷ 100 × текущий номинал` в **РУБЛЯХ за бумагу** (`BondPriceStep.PointsToRub`: 0.01 пункта при номинале 1000 = 0.1 ₽) — ТОЛЬКО при номинале в RUB; при нерублёвом номинале (напр. 100 USD, шаг 0.0001) — **NULL**. Сырой шаг — в `min_price_increment_points` (все облигации). Сетка цен облигации T-Invest — в пунктах: заявки по облигациям (фаза 2) округлять в пунктах. `Etf.MinPriceIncrement` — рубли за пай, как есть. Freedom — `min_step` котировки в валюте котировки |
 | ЦБ РФ `XML_dynamic.asp` (`VunitRate`/`Value`/`Nominal`) | вход | десятичная ЗАПЯТАЯ; `VunitRate` — рубли за 1 единицу (нет — `Value ÷ Nominal`) → `currency_rate_history.close_rub` как есть, второй конверсии нет (`CbrRatesParser`) |
 | `MarketQuote.CleanPrice/DirtyPrice/Accrued`, `intraday_quotes.dirty_price_rub` | БД | всегда рубли за бумагу (контракт в doc-comment модели) |
 | `Position.Accrued` | БД | НКД на ОДНУ бумагу (не на позицию) |
@@ -288,6 +290,23 @@ FIGI первым синком T-Invest — `CurrencyRepository.UpsertAsync` о�
 (Σ не-T-Invest счетов, 0 без них), `otherBrokersDataIncomplete`, `capitalTotalRub = totalRub + otherBrokersValueRub`; **`totalRub` не менялся** (сверка и XIRR).
 Фронт: вкладка «Freedom» на «Позициях» (`?tab=freedom`, `FreedomTable`, `useFreedomStore`) и KPI «Freedom» (₽ и $) / «Капитал всего» на «Обзоре» — ТОЛЬКО при
 `capabilities.freedom` (без неё запросов к `/api/brokers/*` нет; подсказка — в карточке Freedom в «Подключениях»); суммы в валюте бумаги — `formatMoney` с КОДОМ валюты.
+
+### Деньги и торговые метаданные (задача 61)
+
+Данные и чтение для правил фазы 2 (ни правил, ни заявок). **Движения денег:** `BondSyncService` больше не выбрасывает `Input`/`Output` журнала T-Invest —
+`TInvestCashMovementMapper` (`Input|InputAcquiring|InputSwift` → Deposit, `Output|OutputAcquiring|OutputSwift` → Withdrawal; переводы бумаг, `InpMulti`/`OutMulti`
+и штрафы НЕ деньги капитала) складывает их в `account_cash_movements` (UNIQUE `account_id+external_id` — повторный синк не дублирует; сбой записи — ошибка в
+результате, облигационный журнал не страдает). **Торговые метаданные** `instrument_trading_meta` (UNIQUE `broker+instrument_key`, ключ — ISIN, иначе тикер;
+общие для пользователей): `TradingMetaRefresher` — необязательный суточный шаг `SyncCycleService` (ворота по `updated_at` самих записей, 20 ч; сбой одной бумаги —
+LogWarning, цикл не краснеет). T-Invest: позиции основного счёта (ISIN облигаций и фондов) + `TradingMetaOptions.FundUniverse` (Т-Капитал `TMON@ TSAV TBRU@ TOFZ@
+TPAY`, сторонние `LQDT SBFR SBRB OBLG SBGB AKMB`); `ITInvestPortfolioClient.GetInstrumentListingsAsync` отдаёт ВСЕ листинги тикера (`FindInstrument` + `BondBy`/`EtfBy`
+по uid), режим торгов — `TradingListingSelector` (api=true → TQBR → по алфавиту; LQDT: TQBR api=false, SPBRU api=true → SPBRU). `pays_distributions` фонда —
+`CountDistributionsAsync` (`GetDividends` за 365 дней; сбой запроса = «не знаем», прежнее значение остаётся, а не 0). Freedom: тикеры позиций пользователей с
+валидными ключами + `SPYM.US`, `VUAA.EU`; лот 1, шаг — `min_step`, `its_twin` — есть ли «живая» котировка `<base>.ITS` (хоть одно положительное поле; пустая запись
+брокера = двойника нет), `*.ITS` — `api_trade_available=false` (только котировки). Единицы шага цены — в таблице выше. **API:** `GET /api/cash` (`CashOverviewBuilder`:
+по брокерам пользователя — остатки по валютам, `cashRubOnly` = свободные рубли БЕЗ валюты (T-Invest: `cashRub − валюта`, Freedom: остаток RUB), последние 10 пополнений/
+выводов) и `GET /api/trading-meta?broker&keys` (общая справка, ≤ 200 ключей, без `keys` — все записи брокера). Фронт: блок «Деньги на счетах» на «Обзоре»
+(`CashOverviewSection`, независимая загрузка `fetchCash`).
 
 ## Тесты
 

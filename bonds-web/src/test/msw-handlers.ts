@@ -225,6 +225,8 @@ export const handlers = [
       disclaimer: '',
     }),
   ),
+  // Задача 61: деньги на счетах — по умолчанию «счетов нет»; сценарии переопределяются через server.use.
+  http.get('*/api/cash', () => HttpResponse.json({ brokers: [], disclaimer: '' })),
   // Задача 56: валюта — по умолчанию «валюты нет» (вкладка скрыта); сценарии переопределяются через server.use.
   http.get('*/api/currencies', () =>
     HttpResponse.json({

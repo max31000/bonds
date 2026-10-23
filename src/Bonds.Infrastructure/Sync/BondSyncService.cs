@@ -41,6 +41,7 @@ public sealed class BondSyncService
     private readonly IFundSyncService? _fundSync;
     private readonly ICurrencySyncService? _currencySync;
     private readonly ICurrencyRateLookup? _rateLookup;
+    private readonly IAccountCashMovementRepository? _cashMovements;
 
     public BondSyncService(
         ITInvestPortfolioClient tInvest,
@@ -57,8 +58,10 @@ public sealed class BondSyncService
         ILogger<BondSyncService> logger,
         IFundSyncService? fundSync = null,
         ICurrencySyncService? currencySync = null,
-        ICurrencyRateLookup? rateLookup = null)
+        ICurrencyRateLookup? rateLookup = null,
+        IAccountCashMovementRepository? cashMovements = null)
     {
+        _cashMovements = cashMovements;
         _fundSync = fundSync;
         _currencySync = currencySync;
         _rateLookup = rateLookup;
@@ -140,11 +143,19 @@ public sealed class BondSyncService
             // пропускается (с ошибкой в результате) - раньше число молча записывалось как рубли.
             tInvestOperations = await NormalizePaymentCurrenciesAsync(tInvestOperations, result, ct);
             var domainOperations = new List<Operation>();
+            // Задача 61: пополнения и выводы денег (Input/Output) - отдельная таблица account_cash_movements, не облигационный журнал.
+            var cashMovements = new List<AccountCashMovement>();
             // Резолв FIGI → инструмент кэшируется в пределах синка: историческая бумага с десятком
             // операций не должна давать десять походов в справочник/T-Invest/MOEX.
             var figiCache = new Dictionary<string, ulong?>();
             foreach (var op in tInvestOperations)
             {
+                if (TInvestCashMovementMapper.Map(op.OperationType) is { } cashType && !string.IsNullOrEmpty(op.Id))
+                {
+                    cashMovements.Add(await BuildCashMovementAsync(accountId, op, cashType, ct));
+                    continue;
+                }
+
                 if (op.IsFund)
                 {
                     fundOperations.Add(op);
@@ -196,6 +207,8 @@ public sealed class BondSyncService
             }
 
             result.JournalSynced = !result.JournalIncompleteByRates;
+
+            await SaveCashMovementsAsync(cashMovements, result);
         }
         catch (Exception ex)
         {
@@ -437,6 +450,52 @@ public sealed class BondSyncService
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Пополнение/вывод (задача 61). <see cref="TInvestOperation.PaymentRub"/> - сумма в СВОЕЙ валюте платежа (историческое имя поля) СО ЗНАКОМ
+    /// брокера, пишется как <c>amount</c> без изменений. <c>amount_rub</c> - рубли: рублёвый платёж как есть, иная валюта - по курсу дня
+    /// (<see cref="ICurrencyRateLookup"/>, рубли за 1 единицу), курса нет - null. Валюта ISO ВЕРХНИМ регистром (RUR - в RUB), нет - RUB.
+    /// </summary>
+    private async Task<AccountCashMovement> BuildCashMovementAsync(ulong accountId, TInvestOperation op, CashMovementType type, CancellationToken ct)
+    {
+        var currency = Bonds.Core.Brokers.BrokerAssetClassifier.NormalizeCurrency(op.PaymentCurrency) ?? "RUB";
+        decimal? amountRub = null;
+        if (currency == "RUB")
+        {
+            amountRub = op.PaymentRub;
+        }
+        else if (_rateLookup is not null)
+        {
+            var rate = await _rateLookup.GetRubPerUnitAsync(currency, DateOnly.FromDateTime(op.Date), ct);
+            if (rate is not null) amountRub = op.PaymentRub * rate.Value;
+        }
+
+        return new AccountCashMovement
+        {
+            AccountId = accountId,
+            ExternalId = op.Id,
+            Date = op.Date,
+            Type = type,
+            Amount = op.PaymentRub,
+            Currency = currency,
+            AmountRub = amountRub,
+        };
+    }
+
+    /// <summary>Идемпотентный upsert пополнений/выводов. Сбой не должен ронять облигационный журнал: ошибка в результат, синк продолжается.</summary>
+    private async Task SaveCashMovementsAsync(IReadOnlyCollection<AccountCashMovement> movements, SyncResult result)
+    {
+        if (_cashMovements is null || movements.Count == 0) return;
+        try
+        {
+            await _cashMovements.UpsertManyAsync(movements);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Failed to store account cash movements");
+            result.Errors.Add("Не удалось сохранить пополнения и выводы счёта");
+        }
     }
 
     /// <summary>

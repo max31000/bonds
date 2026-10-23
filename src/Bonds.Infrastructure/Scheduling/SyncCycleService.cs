@@ -210,6 +210,11 @@ public sealed class SyncCycleService : ISyncCycleRunner
         // токена T-Invest (выплаты в этом случае пропускаются).
         await RefreshFundMarketDataAsync(sp, tInvestAvailable: !result.TokenMissingOrInvalid, ct);
 
+        // --- 1a-bis. Торговые метаданные инструментов (задача 61): лот, шаг цены, флаги, режим торгов, признак выплат фондов - раз в сутки
+        // (ворота по записям внутри). Необязательный шаг: сбой - только лог, цикл НЕ помечается неуспешным. Freedom-часть работает по ключам
+        // пользователей и от токена T-Invest не зависит.
+        await RefreshTradingMetaAsync(sp, tInvestAvailable: !result.TokenMissingOrInvalid, ct);
+
         // --- 1a-ter. История курса валют (задача 55, MOEX CETS) - тот же суточный шаг и те же правила (необязательный, сбой - лог).
         await RefreshCurrencyRatesAsync(sp, ct);
 
@@ -325,6 +330,30 @@ public sealed class SyncCycleService : ISyncCycleRunner
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Freedom sync step failed — Freedom data keeps the previous values");
+        }
+    }
+
+    private async Task RefreshTradingMetaAsync(IServiceProvider sp, bool tInvestAvailable, CancellationToken ct)
+    {
+        try
+        {
+            // GetService (не Required): цикл не должен падать, если шаг не зарегистрирован (юнит-тесты цикла).
+            var refresher = sp.GetService<TradingMetaRefresher>();
+            if (refresher is null) return;
+
+            var refreshed = await refresher.RefreshIfDueAsync(DateTime.UtcNow, tInvestAvailable, ct);
+            if (refreshed.Errors.Count > 0)
+            {
+                _logger.LogWarning("Trading meta refresh finished with {Count} problem(s): {Errors}", refreshed.Errors.Count, string.Join("; ", refreshed.Errors));
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Trading meta refresh failed — trading metadata keeps the previous values");
         }
     }
 

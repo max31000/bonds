@@ -80,6 +80,7 @@ public class MigrationIdempotencyTests : IAsyncLifetime
             "028_history_rebuild_accrued_settlement_currency.sql",
             "029_user_credentials.sql",
             "030_broker_accounts.sql",
+            "031_cash_movements_trading_meta.sql",
         });
 
         var expectedTables = new[]
@@ -94,6 +95,7 @@ public class MigrationIdempotencyTests : IAsyncLifetime
             "currencies", "currency_positions", "currency_operations", "currency_rate_history",
             "user_credentials",
             "broker_positions", "broker_cash", "broker_operations",
+            "account_cash_movements", "instrument_trading_meta",
         };
 
         foreach (var table in expectedTables)
@@ -119,7 +121,7 @@ public class MigrationIdempotencyTests : IAsyncLifetime
         await conn.OpenAsync();
 
         var migrationCount = await conn.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM _migrations");
-        migrationCount.Should().Be(30, "повторный запуск не должен заново применять уже применённые миграции");
+        migrationCount.Should().Be(31, "повторный запуск не должен заново применять уже применённые миграции");
 
         // users.base_currency существует ровно один раз (ALTER ... ADD COLUMN IF NOT EXISTS не падает повторно).
         var columnCount = await conn.ExecuteScalarAsync<long>(

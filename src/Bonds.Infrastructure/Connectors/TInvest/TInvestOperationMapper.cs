@@ -93,3 +93,23 @@ public static class TInvestCurrencyOperationMapper
         _ => null,
     };
 }
+
+/// <summary>
+/// Задача 61: маппинг <see cref="TInvestOperation.OperationType"/> (имя значения protobuf-enum <c>Tinkoff.InvestApi.V1.OperationType</c>, имена сверены
+/// по SDK 0.6.22.1) в <see cref="CashMovementType"/> — пополнения и выводы денег по счёту. Чистая функция.
+/// <list type="bullet">
+/// <item><c>Input</c> («Пополнение брокерского счёта»), <c>InputAcquiring</c> (пополнение картой), <c>InputSwift</c> (SWIFT-перевод) → Deposit.</item>
+/// <item><c>Output</c> («Вывод денежных средств»), <c>OutputAcquiring</c>, <c>OutputSwift</c> → Withdrawal.</item>
+/// </list>
+/// Намеренно НЕ мапятся: <c>InputSecurities</c>/<c>OutputSecurities</c> (перевод БУМАГ, не денег), <c>InpMulti</c>/<c>OutMulti</c> (внутренний перевод
+/// между своими счетами/секциями), <c>OutputPenalty</c> (штраф) — не внешние пополнения и выводы капитала.
+/// </summary>
+public static class TInvestCashMovementMapper
+{
+    public static CashMovementType? Map(string tInvestOperationType) => tInvestOperationType switch
+    {
+        "Input" or "InputAcquiring" or "InputSwift" => CashMovementType.Deposit,
+        "Output" or "OutputAcquiring" or "OutputSwift" => CashMovementType.Withdrawal,
+        _ => null,
+    };
+}
