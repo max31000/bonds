@@ -61,7 +61,6 @@ public class SignalsEngineTests
         IReadOnlyList<SignalPositionContext>? positions = null,
         IReadOnlyList<PortfolioHolding>? holdings = null,
         decimal? cashRub = null,
-        IReadOnlyList<TargetAllocation>? targetAllocations = null,
         SignalEngineOptions? options = null) => new()
     {
         AccountId = 1,
@@ -69,7 +68,6 @@ public class SignalsEngineTests
         Positions = positions ?? Array.Empty<SignalPositionContext>(),
         Holdings = holdings ?? Array.Empty<PortfolioHolding>(),
         CashRub = cashRub,
-        TargetAllocations = targetAllocations ?? Array.Empty<TargetAllocation>(),
         Options = options ?? new SignalEngineOptions(),
     };
 

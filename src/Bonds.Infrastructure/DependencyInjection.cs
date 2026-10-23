@@ -61,7 +61,6 @@ public static class DependencyInjection
         services.AddScoped<IProjectedCashFlowRepository>(sp => new ProjectedCashFlowRepository(GetConnStr(sp)));
         services.AddScoped<IPortfolioValueSnapshotRepository>(sp => new PortfolioValueSnapshotRepository(GetConnStr(sp)));
         services.AddScoped<ISignalRepository>(sp => new SignalRepository(GetConnStr(sp)));
-        services.AddScoped<ITargetAllocationRepository>(sp => new TargetAllocationRepository(GetConnStr(sp)));
 
         // Тики лёгкого контура котировок (intraday_quotes).
         services.AddScoped<IIntradayQuoteRepository>(sp => new IntradayQuoteRepository(GetConnStr(sp)));
@@ -109,6 +108,7 @@ public static class DependencyInjection
         // Задача 61: пополнения/выводы T-Invest и торговые метаданные инструментов.
         services.AddScoped<IAccountCashMovementRepository>(sp => new AccountCashMovementRepository(GetConnStr(sp)));
         services.AddScoped<IInstrumentTradingMetaRepository>(sp => new InstrumentTradingMetaRepository(GetConnStr(sp)));
+        services.AddScoped<ICapitalBasketRepository>(sp => new CapitalBasketRepository(GetConnStr(sp)));
 
         // Migration runner
         services.AddSingleton(sp => new MigrationRunner(
@@ -238,6 +238,7 @@ public static class DependencyInjection
         services.AddScoped<FundOverviewBuilder>();
         services.AddScoped<CurrencyOverviewBuilder>();
         services.AddScoped<CashOverviewBuilder>();
+        services.AddScoped<CapitalOverviewBuilder>();
 
         // Резолвер эффективной ставки комиссии (override → оценка из журнала →
         // дефолт) — потребляется replacement/allocation/ifSoldNow эндпоинтами.

@@ -22,8 +22,8 @@ public sealed class SignalEngineOptions
     /// <summary>
     /// Дефолтный лимит концентрации по эмитенту в ПРОЦЕНТАХ (единственное «процентное» поле опций —
     /// сравнивается с <see cref="Bonds.Core.Analytics.PortfolioCompositionService"/> SharePercent, тоже
-    /// в процентах). Применяется, если для эмитента нет записи
-    /// <see cref="Bonds.Core.Models.TargetAllocation.MaxConcentrationPercent"/>.
+    /// в процентах). Единый лимит для всех эмитентов (индивидуальные <c>target_allocations</c> удалены задачей 62);
+    /// пользователь переопределяет его в <c>user_settings.default_max_concentration_percent</c>.
     /// </summary>
     public decimal DefaultMaxConcentrationPercent { get; set; } = 25m;
 

@@ -413,7 +413,6 @@ public sealed class SyncCycleService : ISyncCycleRunner
         var couponRepo = sp.GetRequiredService<ICouponScheduleRepository>();
         var amortizationRepo = sp.GetRequiredService<IAmortizationScheduleRepository>();
         var offerRepo = sp.GetRequiredService<IOfferScheduleRepository>();
-        var targetAllocationRepo = sp.GetRequiredService<ITargetAllocationRepository>();
         var signalRepo = sp.GetRequiredService<ISignalRepository>();
         var accountRepo = sp.GetRequiredService<IAccountRepository>();
         var settingsRepo = sp.GetRequiredService<IUserSettingsRepository>();
@@ -426,8 +425,6 @@ public sealed class SyncCycleService : ISyncCycleRunner
             userSettings?.DefaultMaxConcentrationPercent,
             userSettings?.SpreadWideningThresholdFraction,
             userSettings?.PriceDrawdownThresholdFraction);
-
-        var targetAllocations = (await targetAllocationRepo.GetByAccountIdAsync(accountId)).ToList();
 
         // Позиции уже сверены с брокером (закрытые удалены) — Quantity > 0 страхует от остатков.
         var holdings = (await holdingsBuilder.BuildForAccountAsync(accountId, asOf, ct))
@@ -474,7 +471,6 @@ public sealed class SyncCycleService : ISyncCycleRunner
             MarketContexts = marketInputs.Market,
             IssuerDefaults = marketInputs.IssuerDefaults,
             CashRub = account?.CashRub,
-            TargetAllocations = targetAllocations,
             Options = options,
         });
 

@@ -223,17 +223,14 @@ public class PositionVerdictEndpointTests
     }
 
     [Fact]
-    public async Task CheapGreenPosition_IssuerSpecificLimitFromTargets_IsRespected()
+    public async Task CheapGreenPosition_LimitFromUserSettings_IsRespected()
     {
         await SeedYieldCurveAsync();
         var (client, accountId) = await CreateAuthorizedClientAsync();
-        var (instrumentId, positionId, _, _) = await SeedCheapGreenPositionAsync(accountId, Marker());
-        var instrument = await new InstrumentRepository(Conn).GetByIdAsync(instrumentId);
-        // индивидуальный лимит по эмитенту (ПРОЦЕНТЫ) 100% — единственная позиция помещается
-        await new TargetAllocationRepository(Conn).CreateAsync(new TargetAllocation
-        {
-            AccountId = accountId, Issuer = instrument!.Issuer, MaxConcentrationPercent = 100m,
-        });
+        var (_, positionId, _, _) = await SeedCheapGreenPositionAsync(accountId, Marker());
+        var userId = (await new AccountRepository(Conn).GetByIdAsync(accountId))!.UserId;
+        // лимит концентрации из настроек (ПРОЦЕНТЫ) 100% — единственная позиция помещается (задача 62: target_allocations удалены)
+        await new UserSettingsRepository(Conn).UpsertAsync(new UserSettings { UserId = userId, DefaultMaxConcentrationPercent = 100m });
 
         var verdict = VerdictOf(await GetVerdictsAsync(client), positionId);
 

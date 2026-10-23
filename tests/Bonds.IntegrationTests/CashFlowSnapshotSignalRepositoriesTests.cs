@@ -8,7 +8,7 @@ namespace Bonds.IntegrationTests;
 
 /// <summary>
 /// Round-trip тесты для IProjectedCashFlowRepository, IPortfolioValueSnapshotRepository,
-/// ISignalRepository и ITargetAllocationRepository (plan/03 §D).
+/// ISignalRepository (plan/03 §D).
 /// </summary>
 [Collection("Integration")]
 public class CashFlowSnapshotSignalRepositoriesTests
@@ -143,33 +143,5 @@ public class CashFlowSnapshotSignalRepositoriesTests
         (await repo.PurgeResolvedBeforeAsync(accountId, now.AddDays(-1))).Should().Be(0);
         (await repo.PurgeResolvedBeforeAsync(accountId, now.AddDays(1))).Should().BeGreaterThanOrEqualTo(1);
         (await repo.GetByAccountIdAsync(accountId, includeResolved: true)).Should().NotContain(s => s.Id == id);
-    }
-
-    [Fact]
-    public async Task TargetAllocation_Create_Update_Delete_RoundTrips()
-    {
-        var (accountId, _, _) = await SeedPositionAsync();
-        var repo = new TargetAllocationRepository(_factory.Database.ConnectionString);
-
-        var id = await repo.CreateAsync(new TargetAllocation
-        {
-            AccountId = accountId,
-            Issuer = "Минфин РФ",
-            MaxConcentrationPercent = 30m,
-        });
-
-        var all = await repo.GetByAccountIdAsync(accountId);
-        all.Should().ContainSingle(a => a.Id == id && a.Issuer == "Минфин РФ");
-
-        var toUpdate = all.Single(a => a.Id == id);
-        toUpdate.MaxConcentrationPercent = 25m;
-        await repo.UpdateAsync(toUpdate);
-
-        var afterUpdate = (await repo.GetByAccountIdAsync(accountId)).Single(a => a.Id == id);
-        afterUpdate.MaxConcentrationPercent.Should().Be(25m);
-
-        await repo.DeleteAsync(id, accountId);
-        var afterDelete = await repo.GetByAccountIdAsync(accountId);
-        afterDelete.Should().BeEmpty();
     }
 }

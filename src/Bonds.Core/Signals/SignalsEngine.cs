@@ -155,12 +155,9 @@ public static class SignalsEngine
 
         foreach (var share in composition.ByIssuer)
         {
-            var specificLimit = input.TargetAllocations
-                .FirstOrDefault(ta => ta.Issuer is not null && string.Equals(ta.Issuer, share.Key, StringComparison.OrdinalIgnoreCase))
-                ?.MaxConcentrationPercent;
-
             // Проценты (0..100) с обеих сторон: SharePercent — исключение из «долей», см. CODEBASE-GUIDE.
-            var limit = specificLimit ?? input.Options.DefaultMaxConcentrationPercent;
+            // Лимит один на всех эмитентов — user_settings.default_max_concentration_percent (задача 62 убрала индивидуальные).
+            var limit = input.Options.DefaultMaxConcentrationPercent;
             if (share.SharePercent <= limit) continue;
 
             yield return new Signal

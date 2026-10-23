@@ -46,7 +46,6 @@ public class SyncCycleServiceTests
     private readonly Mock<IProjectedCashFlowRepository> _projectedCashFlows = new();
     private readonly Mock<IPortfolioValueSnapshotRepository> _snapshots = new();
     private readonly Mock<ISignalRepository> _signals = new();
-    private readonly Mock<ITargetAllocationRepository> _targetAllocations = new();
     private readonly Mock<IUserSettingsRepository> _userSettings = new();
     private readonly Mock<ITelegramAlertSender> _alertSender = new();
     private readonly Mock<ITInvestTokenProvider> _tokenProvider = new();
@@ -73,7 +72,6 @@ public class SyncCycleServiceTests
 
         _positions.Setup(p => p.GetByAccountIdAsync(AccountId)).ReturnsAsync(new List<Position>());
         _operations.Setup(o => o.GetByAccountIdAsync(AccountId, null, null)).ReturnsAsync(new List<Operation>());
-        _targetAllocations.Setup(t => t.GetByAccountIdAsync(AccountId)).ReturnsAsync(new List<TargetAllocation>());
         _signals.Setup(s => s.GetByAccountIdAsync(AccountId, true)).ReturnsAsync(new List<Signal>());
         _signals.Setup(s => s.InsertAsync(It.IsAny<Signal>())).ReturnsAsync(1ul);
         _yieldCurve.Setup(y => y.GetLatestAsync()).ReturnsAsync((YieldCurveSnapshot?)null);
@@ -110,7 +108,6 @@ public class SyncCycleServiceTests
         services.AddSingleton(_projectedCashFlows.Object);
         services.AddSingleton(_snapshots.Object);
         services.AddSingleton(_signals.Object);
-        services.AddSingleton(_targetAllocations.Object);
         services.AddSingleton(_userSettings.Object);
         services.AddSingleton(_alertSender.Object);
         services.AddSingleton(_watchlistItems.Object);
