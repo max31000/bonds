@@ -226,7 +226,7 @@ public class FreedomApiTests
         var fee = flows.First(f => f.TypeCode == "commission_for_trades");
         fee.Amount.Should().Be(-0.27m);
         fee.Currency.Should().Be("USD");
-        fee.Comment.Should().Contain("Trade 710639658 buy SPYM.US").And.Contain("kazakhstan_its").And.Contain("funds");
+        fee.Comment.Should().Contain("Trade 900000101 buy SPYM.US").And.Contain("kazakhstan_its").And.Contain("funds");
         flows.First(f => f.TypeCode == "bank").Amount.Should().Be(73.27m);
         flows.Select(f => f.TypeCode).Should().Contain(["dividend", "tax", "card"]);
     }
