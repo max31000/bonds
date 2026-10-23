@@ -5,6 +5,7 @@ using Bonds.Infrastructure.Analytics;
 using Bonds.Infrastructure.CashFlow;
 using Bonds.Infrastructure.Connectors.GirBo;
 using Bonds.Infrastructure.Connectors.Moex;
+using Bonds.Core.Credentials;
 using Bonds.Infrastructure.Connectors.TInvest;
 using Bonds.Infrastructure.Quotes;
 using Bonds.Infrastructure.Repositories;
@@ -223,6 +224,14 @@ public static class DependencyInjection
                 options.XmlRepository = new FileSystemXmlRepository(new DirectoryInfo(keysPath), sp.GetRequiredService<ILoggerFactory>());
             }));
         services.AddScoped<ITInvestTokenProvider, TInvestTokenProvider>();
+
+        // Задача 58: «Подключения» — секреты пользователя (токены брокеров/ИИ) в user_credentials.
+        // Новый провайдер = запись в CredentialProviders + ICredentialValidator ниже, без миграций и эндпоинтов.
+        services.AddScoped<IUserCredentialRepository>(sp => new UserCredentialRepository(GetConnStr(sp)));
+        services.AddScoped<IUserCredentialStore, Bonds.Infrastructure.Credentials.UserCredentialStore>();
+        services.AddScoped<ICredentialValidator, Bonds.Infrastructure.Credentials.TInvestReadCredentialValidator>();
+        services.AddScoped<ICredentialValidator, Bonds.Infrastructure.Credentials.TInvestTradeCredentialValidator>();
+        services.AddScoped<ICredentialValidator, Bonds.Infrastructure.Credentials.ClaudeCodeCredentialValidator>();
 
         // Signals Engine + Scheduler — options читаются из конфига с дефолтами
         // самого класса опций, если секция не задана (см. doc-comment SignalEngineOptions/SchedulerOptions).

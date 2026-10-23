@@ -1,0 +1,87 @@
+{
+ "trades": {
+  "trade": [
+   {
+    "id": "853041955",
+    "order_id": "685126461",
+    "p": "57.28000000",
+    "q": "1.00000000",
+    "v": 57.28,
+    "date": "2026-10-23T18:47:27.000",
+    "instr_nm": "COPX.EU",
+    "curr_c": "USD",
+    "type": "2",
+    "summ": 57.28,
+    "mkt_id": "30000000005",
+    "instr_id": "40024834286",
+    "commission": "1.27",
+    "commission_currency": "USD",
+    "otc": "0",
+    "pay_d": "2026-10-27T02:00:00.000",
+    "trade_nb": "das_tf_TEST"
+   },
+   {
+    "id": "550455977",
+    "order_id": "336696312",
+    "p": "57.28000000",
+    "q": "1.00000000",
+    "v": 57.28,
+    "date": "2026-10-23T18:48:10.000",
+    "instr_nm": "COPX.EU",
+    "curr_c": "USD",
+    "type": "2",
+    "summ": 57.28,
+    "mkt_id": "30000000005",
+    "instr_id": "40024834286",
+    "commission": "0.07",
+    "commission_currency": "USD",
+    "otc": "0",
+    "pay_d": "2026-10-27T02:00:00.000",
+    "trade_nb": "das_tf_TEST"
+   },
+   {
+    "id": "582334538",
+    "order_id": "732719211",
+    "p": "4.32900000",
+    "q": "11.00000000",
+    "v": 47.62,
+    "date": "2026-10-23T18:49:04.000",
+    "instr_nm": "IPRE.EU",
+    "curr_c": "EUR",
+    "type": "2",
+    "summ": 47.62,
+    "mkt_id": "30000000005",
+    "instr_id": "40021376813",
+    "commission": "1.26",
+    "commission_currency": "USD",
+    "otc": "0",
+    "pay_d": "2026-10-27T02:00:00.000",
+    "trade_nb": "das_tf_TEST"
+   },
+   {
+    "id": "398704996",
+    "order_id": "969119330",
+    "p": "8.20400000",
+    "q": "6.00000000",
+    "v": 49.22,
+    "date": "2026-10-23T18:52:24.000",
+    "instr_nm": "NDIA.EU",
+    "curr_c": "USD",
+    "type": "2",
+    "summ": 49.22,
+    "mkt_id": "30000000005",
+    "instr_id": "40006181184",
+    "commission": "1.26",
+    "commission_currency": "USD",
+    "otc": "0",
+    "pay_d": "2026-10-27T02:00:00.000",
+    "trade_nb": "das_tf_TEST"
+   }
+  ],
+  "max_trade_id": [
+   {
+    "@text": "0"
+   }
+  ]
+ }
+}

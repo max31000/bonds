@@ -119,6 +119,7 @@ app.MapAllocationEndpoints();
 app.MapSignalsEndpoints();
 app.MapSyncEndpoints();
 app.MapSettingsEndpoints();
+app.MapCredentialsEndpoints();
 app.MapLiveEndpoints();
 app.MapWatchlistEndpoints();
 app.MapUniverseEndpoints();

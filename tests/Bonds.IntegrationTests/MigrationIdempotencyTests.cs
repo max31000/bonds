@@ -78,6 +78,7 @@ public class MigrationIdempotencyTests : IAsyncLifetime
             "026_fund_duration_override.sql",
             "027_history_rebuild_after_quantity_fix.sql",
             "028_history_rebuild_accrued_settlement_currency.sql",
+            "029_user_credentials.sql",
         });
 
         var expectedTables = new[]
@@ -90,6 +91,7 @@ public class MigrationIdempotencyTests : IAsyncLifetime
             "instrument_risk_levels", "issuer_ratings",
             "funds", "fund_positions", "fund_operations", "fund_price_history", "fund_distributions", "market_index_history",
             "currencies", "currency_positions", "currency_operations", "currency_rate_history",
+            "user_credentials",
         };
 
         foreach (var table in expectedTables)
@@ -115,7 +117,7 @@ public class MigrationIdempotencyTests : IAsyncLifetime
         await conn.OpenAsync();
 
         var migrationCount = await conn.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM _migrations");
-        migrationCount.Should().Be(28, "повторный запуск не должен заново применять уже применённые миграции");
+        migrationCount.Should().Be(29, "повторный запуск не должен заново применять уже применённые миграции");
 
         // users.base_currency существует ровно один раз (ALTER ... ADD COLUMN IF NOT EXISTS не падает повторно).
         var columnCount = await conn.ExecuteScalarAsync<long>(
@@ -402,5 +404,51 @@ public class MigrationIdempotencyTests : IAsyncLifetime
               WHERE table_schema = DATABASE() AND table_name = 'funds' AND column_name = 'duration_override_years'");
         row.ColumnType.Should().StartWith("decimal(9,4)", "годы, 4 знака");
         row.IsNullable.Should().Be("YES", "NULL = ручная дюрация не задана (миграция 026)");
+    }
+
+    [Fact]
+    public async Task RunAsync_Migration029_CopiesExistingTInvestToken_AsIs_AndIsSafeToReapply()
+    {
+        var connectionString = _container.GetConnectionString();
+        var runner = new MigrationRunner(connectionString, NullLogger<MigrationRunner>.Instance);
+        await runner.RunAsync();
+
+        await using var conn = new MySqlConnection(connectionString);
+        await conn.OpenAsync();
+
+        // Прод-состояние до выката 029: у двух пользователей токен в user_settings, у третьего токена нет.
+        var withToken = await conn.ExecuteScalarAsync<ulong>("INSERT INTO users (telegram_id) VALUES (9001001) ON DUPLICATE KEY UPDATE telegram_id = telegram_id; SELECT id FROM users WHERE telegram_id = 9001001");
+        var withToken2 = await conn.ExecuteScalarAsync<ulong>("INSERT INTO users (telegram_id) VALUES (9001002) ON DUPLICATE KEY UPDATE telegram_id = telegram_id; SELECT id FROM users WHERE telegram_id = 9001002");
+        var noToken = await conn.ExecuteScalarAsync<ulong>("INSERT INTO users (telegram_id) VALUES (9001003) ON DUPLICATE KEY UPDATE telegram_id = telegram_id; SELECT id FROM users WHERE telegram_id = 9001003");
+        await conn.ExecuteAsync(
+            @"INSERT INTO user_settings (user_id, tinvest_token_encrypted, tinvest_token_last4) VALUES (@A, 'CIPHERTEXT-A', 'AAAA'), (@B, 'CIPHERTEXT-B', 'BBBB');
+              INSERT INTO user_settings (user_id) VALUES (@C)",
+            new { A = withToken, B = withToken2, C = noToken });
+
+        async Task ReapplyMigration029()
+        {
+            await conn.ExecuteAsync("DELETE FROM _migrations WHERE FileName = '029_user_credentials.sql'");
+            await runner.RunAsync();
+        }
+
+        await ReapplyMigration029();
+
+        var rows = (await conn.QueryAsync<(ulong UserId, string Provider, string Secret, string Last4, string Status)>(
+            "SELECT user_id, provider, secret_encrypted, secret_last4, status FROM user_credentials ORDER BY user_id")).ToList();
+        rows.Should().HaveCount(2, "пользователь без токена не получает запись");
+        rows.Should().Contain((withToken, "tinvest_read", "CIPHERTEXT-A", "AAAA", "ok"), "шифротекст переносится КАК ЕСТЬ");
+        rows.Should().Contain((withToken2, "tinvest_read", "CIPHERTEXT-B", "BBBB", "ok"));
+
+        // Пользователь уже заменил токен через новый UI — повторное применение миграции его не откатывает и не дублирует.
+        await conn.ExecuteAsync("UPDATE user_credentials SET secret_encrypted = 'CIPHERTEXT-A2' WHERE user_id = @A", new { A = withToken });
+        await ReapplyMigration029();
+
+        (await conn.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM user_credentials")).Should().Be(2);
+        (await conn.ExecuteScalarAsync<string>("SELECT secret_encrypted FROM user_credentials WHERE user_id = @A", new { A = withToken }))
+            .Should().Be("CIPHERTEXT-A2");
+
+        // Легаси-колонки не тронуты (страховочный fallback до отдельной миграции удаления).
+        (await conn.ExecuteScalarAsync<string>("SELECT tinvest_token_encrypted FROM user_settings WHERE user_id = @A", new { A = withToken }))
+            .Should().Be("CIPHERTEXT-A");
     }
 }

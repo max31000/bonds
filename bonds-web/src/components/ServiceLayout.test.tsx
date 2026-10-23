@@ -9,6 +9,7 @@ import { server } from '../test/msw-handlers';
 import { ServiceLayout } from './ServiceLayout';
 import { apiClient } from '../api/client';
 import { useAccessStore } from '../store/useAccessStore';
+import { useCredentialsStore } from '../store/useCredentialsStore';
 import { useSignalsStore } from '../store/useSignalsStore';
 import { useSyncStore } from '../store/useSyncStore';
 
@@ -73,6 +74,23 @@ describe('ServiceLayout', () => {
 
     await waitFor(() => expect(screen.getByText('1')).toBeInTheDocument());
     expect(screen.getByRole('link', { name: /События/ })).toBeInTheDocument();
+  });
+
+  it('loads capabilities once on bootstrap and exposes them in the credentials store', async () => {
+    let calls = 0;
+    useCredentialsStore.setState({ capabilities: null });
+    server.use(
+      http.get('*/api/capabilities', () => {
+        calls += 1;
+        return HttpResponse.json({ tinvestRead: true, tinvestTrade: false, freedom: false, aiAgents: true });
+      }),
+    );
+
+    renderLayout();
+
+    await waitFor(() => expect(useCredentialsStore.getState().capabilities?.aiAgents).toBe(true));
+    expect(useCredentialsStore.getState().capabilities?.freedom).toBe(false);
+    expect(calls).toBe(1);
   });
 
   it('triggers a sync and shows a success notification with a summary', async () => {

@@ -1,0 +1,78 @@
+{
+ "result": {
+  "q": [
+   {
+    "c": "COPX.EU",
+    "ltr": "EU",
+    "x_curr": "USD",
+    "bbp": 57.42,
+    "bap": 57.89,
+    "bbs": 400,
+    "bas": 96,
+    "ltp": 57.72,
+    "pp": 64.82,
+    "chg": 0.19,
+    "pcp": 0.34,
+    "vol": 27886,
+    "min_step": 0.001,
+    "mkt_name": null,
+    "kind": 7,
+    "type": 1
+   },
+   {
+    "c": "LUV.US",
+    "ltr": "FIX",
+    "x_curr": "USD",
+    "bbp": 41.11,
+    "bap": 41.14,
+    "bbs": 40,
+    "bas": 1475,
+    "ltp": 41.12,
+    "pp": 39.88,
+    "chg": -0.91,
+    "pcp": -2.16,
+    "vol": 3441943,
+    "min_step": 0.01,
+    "mkt_name": null,
+    "kind": 1,
+    "type": 1
+   },
+   {
+    "c": "SPYM.US",
+    "ltr": "FIX",
+    "x_curr": "USD",
+    "bbp": 89.66,
+    "bap": 89.67,
+    "bbs": 7359,
+    "bas": 13531,
+    "ltp": 89.66,
+    "pp": 90.99,
+    "chg": -0.27,
+    "pcp": -0.3,
+    "vol": 4865586,
+    "min_step": 0.01,
+    "mkt_name": null,
+    "kind": 7,
+    "type": 1
+   },
+   {
+    "c": "VUAA.EU",
+    "ltr": "EU",
+    "x_curr": "USD",
+    "bbp": 148.12,
+    "bap": 148.18,
+    "bbs": 4601,
+    "bas": 9741,
+    "ltp": 148.18,
+    "pp": 142.88,
+    "chg": -0.08,
+    "pcp": -0.05,
+    "vol": 48786,
+    "min_step": 0.02,
+    "mkt_name": null,
+    "kind": 7,
+    "type": 1
+   }
+  ]
+ }
+}

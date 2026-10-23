@@ -1152,12 +1152,51 @@ export type SettingsUpdateRequest = Omit<
   // Пороги рыночных событий (задача 49) в запросе необязательны: отсутствие поля = «не менять» (частичный PUT).
   Partial<Pick<SettingsResponse, 'spreadWideningThresholdFraction' | 'priceDrawdownThresholdFraction'>>;
 
-/** Ответ PUT /api/settings/tinvest-token. */
-export interface TInvestTokenResponse {
-  tInvestTokenConfigured: boolean;
-  tInvestTokenMasked: string | null;
-  /** маска (последние 4 символа) Id счёта, к которому привязан провалидированный токен. */
-  validatedAccountIdMasked: string | null;
+// ---- GET/PUT/DELETE /api/credentials, GET /api/capabilities (задача 58, «Подключения») ----
+
+/** Категория провайдера секретов (группировка в UI: «Брокеры» / «ИИ»). */
+export type CredentialCategory = 'broker' | 'ai';
+
+/** Статус секрета; `missing` — записи нет (приходит для каждого провайдера реестра, которого пользователь не задал). */
+export type CredentialStatus = 'ok' | 'invalid' | 'unverified' | 'missing';
+
+/** Поле секрета провайдера; `isSecret` — рисовать как password-input. */
+export interface CredentialFieldInfo {
+  name: string;
+  title: string;
+  isSecret: boolean;
+}
+
+/** Строка GET /api/credentials. Секретного значения в ответе нет НИКОГДА — только маска `last4`. */
+export interface CredentialRow {
+  provider: string;
+  title: string;
+  category: CredentialCategory;
+  fields: CredentialFieldInfo[];
+  /** Какой функционал включает этот секрет. */
+  unlocks: string;
+  experimental: boolean;
+  status: CredentialStatus;
+  statusMessage: string | null;
+  /** Последние 4 символа главного поля — для маски `••••last4`. */
+  last4: string | null;
+  /** ISO-момент последней успешной проверки (UTC). */
+  verifiedAt: string | null;
+  /** Несекретные данные валидатора (например, `accountIdLast4`). */
+  meta: Record<string, unknown> | null;
+}
+
+/** Тело PUT /api/credentials/{provider}: значения полей по `fields[].name`. */
+export interface CredentialPutRequest {
+  fields: Record<string, string>;
+}
+
+/** GET /api/capabilities — какие части функционала включены (true только при status ok). */
+export interface Capabilities {
+  tinvestRead: boolean;
+  tinvestTrade: boolean;
+  freedom: boolean;
+  aiAgents: boolean;
 }
 
 // ---- GET /api/live/positions, GET /api/live/portfolio-intraday ----
