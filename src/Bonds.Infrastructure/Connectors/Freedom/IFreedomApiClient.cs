@@ -3,7 +3,7 @@ using Bonds.Infrastructure.Connectors.Freedom.Models;
 namespace Bonds.Infrastructure.Connectors.Freedom;
 
 /// <summary>
-/// Клиент Freedom (Tradernet API v3), ТОЛЬКО ЧТЕНИЕ (<c>putTradeOrder</c>/<c>delTradeOrder</c> — фаза 3, отдельная задача).
+/// Клиент Freedom (Tradernet API v3), ТОЛЬКО ЧТЕНИЕ (размещение и отмена заявок — фаза 3, отдельная задача; в коде их нет, это закреплено архитектурным тестом).
 /// Без состояния: ключи приходят параметром. Любая ошибка брокера — <see cref="FreedomApiException"/>.
 /// </summary>
 public interface IFreedomApiClient

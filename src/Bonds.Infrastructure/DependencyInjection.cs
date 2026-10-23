@@ -109,6 +109,7 @@ public static class DependencyInjection
         services.AddScoped<IAccountCashMovementRepository>(sp => new AccountCashMovementRepository(GetConnStr(sp)));
         services.AddScoped<IInstrumentTradingMetaRepository>(sp => new InstrumentTradingMetaRepository(GetConnStr(sp)));
         services.AddScoped<ICapitalBasketRepository>(sp => new CapitalBasketRepository(GetConnStr(sp)));
+        services.AddScoped<ITradePlanRepository>(sp => new TradePlanRepository(GetConnStr(sp)));
 
         // Migration runner
         services.AddSingleton(sp => new MigrationRunner(
@@ -239,6 +240,17 @@ public static class DependencyInjection
         services.AddScoped<CurrencyOverviewBuilder>();
         services.AddScoped<CashOverviewBuilder>();
         services.AddScoped<CapitalOverviewBuilder>();
+
+        // Задача 63: движок правил и планы сделок. ПЛАНЫ — ТОЛЬКО ДАННЫЕ (dry-run): клиенты брокеров используются на чтение (стаканы), заявок нет.
+        // Лимиты авто-подтверждения и режим — из конфигурации (appsettings/env: ExecutionLimits__AutoPerOrderRub и т.д.), не из БД.
+        services.Configure<Bonds.Core.Policy.PolicyOptions>(configuration.GetSection(Bonds.Core.Policy.PolicyOptions.SectionName));
+        services.Configure<Bonds.Core.Policy.ExecutionLimitsOptions>(configuration.GetSection(Bonds.Core.Policy.ExecutionLimitsOptions.SectionName));
+        services.Configure<Bonds.Core.Policy.ExecutionOptions>(configuration.GetSection(Bonds.Core.Policy.ExecutionOptions.SectionName));
+        services.AddScoped<Bonds.Infrastructure.Policy.IPlanQuoteSource, Bonds.Infrastructure.Policy.PlanQuoteSource>();
+        services.AddScoped<Bonds.Infrastructure.Policy.PolicyBondCandidateProvider>();
+        services.AddScoped<Bonds.Infrastructure.Policy.PolicyInputBuilder>();
+        services.AddScoped<Bonds.Infrastructure.Policy.PolicyService>();
+        services.AddScoped<Bonds.Infrastructure.Policy.PolicyRunner>();
 
         // Резолвер эффективной ставки комиссии (override → оценка из журнала →
         // дефолт) — потребляется replacement/allocation/ifSoldNow эндпоинтами.

@@ -1,0 +1,188 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="aa93c830-a145-49f0-9e0b-c4a02752a419" name="maxvo@MVV-PC 2026-10-24 01:46:16" runUser="MVV-PC\maxvo" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-10-24T01:46:16.8760913+05:00" queuing="2026-10-24T01:46:16.8760915+05:00" start="2026-10-24T01:45:51.9141973+05:00" finish="2026-10-24T01:46:25.1610694+05:00" />
+  <TestSettings name="default" id="1b93cc48-48c1-44ea-a394-377ba9829111">
+    <Deployment runDeploymentRoot="maxvo_MVV-PC_2026-10-24_01_46_16" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="a746925b-c5cc-46bf-ada6-867ca31d7aef" testId="739d330e-a31b-0643-7011-c2c2a3e97073" testName="Bonds.IntegrationTests.PlansEndpointTests.Preview_P7_FreedomTopUp_PicksCheaperRouteTicker_AndPricesInUsd" computerName="MVV-PC" duration="00:00:00.2438126" startTime="2026-10-24T01:46:17.0688079+05:00" endTime="2026-10-24T01:46:17.0688081+05:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="a746925b-c5cc-46bf-ada6-867ca31d7aef" />
+    <UnitTestResult executionId="5799b3f3-c862-4e8e-ad98-9259edb203f3" testId="1c196daa-834b-faf5-0900-a21bc7b4c21e" testName="Bonds.IntegrationTests.PlansEndpointTests.Plans_AreIsolatedBetweenUsers" computerName="MVV-PC" duration="00:00:00.3239380" startTime="2026-10-24T01:46:19.9560414+05:00" endTime="2026-10-24T01:46:19.9560417+05:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="5799b3f3-c862-4e8e-ad98-9259edb203f3" />
+    <UnitTestResult executionId="4b61ccfd-c696-4054-8cea-7ef21c5a6168" testId="7617d422-ce95-7794-9ca7-4fd9a415ba45" testName="Bonds.IntegrationTests.PlansEndpointTests.Validation_Returns422_ForBadInflowWithdrawAndExit" computerName="MVV-PC" duration="00:00:00.3792864" startTime="2026-10-24T01:46:19.3343202+05:00" endTime="2026-10-24T01:46:19.3343203+05:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="4b61ccfd-c696-4054-8cea-7ef21c5a6168" />
+    <UnitTestResult executionId="45469c39-6735-4a94-b866-4d60ea07b642" testId="fb4e93e0-6f62-9776-7118-9bb9bd056dbb" testName="Bonds.IntegrationTests.PlansEndpointTests.Runner_P2_NewDeposit_PlansOnce_BeforeP1ParksTheRest" computerName="MVV-PC" duration="00:00:00.2699477" startTime="2026-10-24T01:46:18.1444289+05:00" endTime="2026-10-24T01:46:18.1444293+05:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="45469c39-6735-4a94-b866-4d60ea07b642" />
+    <UnitTestResult executionId="e21cd3cd-a0ac-4770-8130-b6e4b20da5e9" testId="1f52111c-abca-c51e-4c2a-1bcecdb34bde" testName="Bonds.IntegrationTests.PlansEndpointTests.Approve_ExpiredPlan_Returns409AndMarksExpired" computerName="MVV-PC" duration="00:00:00.7333759" startTime="2026-10-24T01:46:16.0955972+05:00" endTime="2026-10-24T01:46:16.0956080+05:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="e21cd3cd-a0ac-4770-8130-b6e4b20da5e9" />
+    <UnitTestResult executionId="63dce88b-4a02-42a3-8083-eca326994516" testId="64a24881-0cc0-d3d5-50c2-22bc33c4e11c" testName="Bonds.IntegrationTests.PlansEndpointTests.Reject_MarksRejected_AndFiltersByStatus" computerName="MVV-PC" duration="00:00:00.3493456" startTime="2026-10-24T01:46:17.8741739+05:00" endTime="2026-10-24T01:46:17.8741742+05:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="63dce88b-4a02-42a3-8083-eca326994516" />
+    <UnitTestResult executionId="e9552d7f-6d9b-4e02-94a0-42b12a0ed949" testId="bbbe2b45-e786-5e84-1bae-346fc418e600" testName="Bonds.IntegrationTests.PlansEndpointTests.Approve_InDryRun_MarksApprovedWithNote_AndSecondDecisionConflicts" computerName="MVV-PC" duration="00:00:00.3099589" startTime="2026-10-24T01:46:18.4547038+05:00" endTime="2026-10-24T01:46:18.4547039+05:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="e9552d7f-6d9b-4e02-94a0-42b12a0ed949" />
+    <UnitTestResult executionId="79100985-f482-4dc9-85c2-ac3b659ec2dd" testId="e9542d71-ff8c-71db-8ca9-2bc38965c950" testName="Bonds.IntegrationTests.PlansEndpointTests.Withdraw_SellsFundWithTax_ToReachNetAmount" computerName="MVV-PC" duration="00:00:00.2650196" startTime="2026-10-24T01:46:18.9547502+05:00" endTime="2026-10-24T01:46:18.9547505+05:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="79100985-f482-4dc9-85c2-ac3b659ec2dd" />
+    <UnitTestResult executionId="c8c45c8d-1bc6-4ceb-8c1d-274d062baf6b" testId="aa1f4aed-8359-a0b5-c83e-51bcacf15ad8" testName="Bonds.IntegrationTests.PlansEndpointTests.Preview_BuildsWithoutSaving_AndValidatesRule" computerName="MVV-PC" duration="00:00:00.2727459" startTime="2026-10-24T01:46:17.5245073+05:00" endTime="2026-10-24T01:46:17.5245075+05:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="c8c45c8d-1bc6-4ceb-8c1d-274d062baf6b" />
+    <UnitTestResult executionId="11fceb06-d068-49a3-9615-8e9ef9231849" testId="791230d2-52c8-0328-f2fa-3129d492764e" testName="Bonds.IntegrationTests.PlansEndpointTests.Runner_ExpiresStalePendingPlans" computerName="MVV-PC" duration="00:00:00.3816403" startTime="2026-10-24T01:46:16.8246617+05:00" endTime="2026-10-24T01:46:16.8246621+05:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="11fceb06-d068-49a3-9615-8e9ef9231849" />
+    <UnitTestResult executionId="606e0d34-7689-4dda-b691-3b5296cd9215" testId="abc00b4f-7668-3306-76cc-2d0169527ea4" testName="Bonds.IntegrationTests.PlansEndpointTests.Inflow_BuildsPendingDryRunPlan_ForLiquidityShare_AndStoresIt" computerName="MVV-PC" duration="00:00:00.3465477" startTime="2026-10-24T01:46:16.4427495+05:00" endTime="2026-10-24T01:46:16.4427498+05:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="606e0d34-7689-4dda-b691-3b5296cd9215" />
+    <UnitTestResult executionId="f7d23436-9340-4b05-b019-b87f7fe6af83" testId="08937e60-3dd7-1429-b490-9077f296f001" testName="Bonds.IntegrationTests.PlansEndpointTests.Runner_DryRunStaysTrue_EvenIfConfigSaysFalse" computerName="MVV-PC" duration="00:00:00.1821415" startTime="2026-10-24T01:46:17.2514508+05:00" endTime="2026-10-24T01:46:17.2514511+05:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="f7d23436-9340-4b05-b019-b87f7fe6af83" />
+    <UnitTestResult executionId="a64759f0-8ca2-45bf-9d09-62963b894c4d" testId="845c0318-143f-4aa2-0569-5885bcccbccc" testName="Bonds.IntegrationTests.PlansEndpointTests.Runner_P1_AutoApprovesWithinLimits_AndSecondRunDoesNotDuplicate" computerName="MVV-PC" duration="00:00:00.2343537" startTime="2026-10-24T01:46:18.6894108+05:00" endTime="2026-10-24T01:46:18.6894121+05:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="a64759f0-8ca2-45bf-9d09-62963b894c4d" />
+    <UnitTestResult executionId="c4b7ec6b-e955-4769-9c08-bbd14d29ad6c" testId="d0e3c09c-d07b-220a-1726-0b94f2eb1cb7" testName="Bonds.IntegrationTests.PlansEndpointTests.ExitBasket_TemporaryBasket_SellsAllMembers" computerName="MVV-PC" duration="00:00:00.2970941" startTime="2026-10-24T01:46:19.6316924+05:00" endTime="2026-10-24T01:46:19.6316927+05:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="c4b7ec6b-e955-4769-9c08-bbd14d29ad6c" />
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="Bonds.IntegrationTests.PlansEndpointTests.Preview_P7_FreedomTopUp_PicksCheaperRouteTicker_AndPricesInUsd" storage="m:\projects\bonds\tests\bonds.integrationtests\bin\debug\net8.0\bonds.integrationtests.dll" id="739d330e-a31b-0643-7011-c2c2a3e97073">
+      <Execution id="a746925b-c5cc-46bf-ada6-867ca31d7aef" />
+      <TestMethod codeBase="M:\Projects\bonds\tests\Bonds.IntegrationTests\bin\Debug\net8.0\Bonds.IntegrationTests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Bonds.IntegrationTests.PlansEndpointTests" name="Preview_P7_FreedomTopUp_PicksCheaperRouteTicker_AndPricesInUsd" />
+    </UnitTest>
+    <UnitTest name="Bonds.IntegrationTests.PlansEndpointTests.Runner_P2_NewDeposit_PlansOnce_BeforeP1ParksTheRest" storage="m:\projects\bonds\tests\bonds.integrationtests\bin\debug\net8.0\bonds.integrationtests.dll" id="fb4e93e0-6f62-9776-7118-9bb9bd056dbb">
+      <Execution id="45469c39-6735-4a94-b866-4d60ea07b642" />
+      <TestMethod codeBase="M:\Projects\bonds\tests\Bonds.IntegrationTests\bin\Debug\net8.0\Bonds.IntegrationTests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Bonds.IntegrationTests.PlansEndpointTests" name="Runner_P2_NewDeposit_PlansOnce_BeforeP1ParksTheRest" />
+    </UnitTest>
+    <UnitTest name="Bonds.IntegrationTests.PlansEndpointTests.Runner_P1_AutoApprovesWithinLimits_AndSecondRunDoesNotDuplicate" storage="m:\projects\bonds\tests\bonds.integrationtests\bin\debug\net8.0\bonds.integrationtests.dll" id="845c0318-143f-4aa2-0569-5885bcccbccc">
+      <Execution id="a64759f0-8ca2-45bf-9d09-62963b894c4d" />
+      <TestMethod codeBase="M:\Projects\bonds\tests\Bonds.IntegrationTests\bin\Debug\net8.0\Bonds.IntegrationTests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Bonds.IntegrationTests.PlansEndpointTests" name="Runner_P1_AutoApprovesWithinLimits_AndSecondRunDoesNotDuplicate" />
+    </UnitTest>
+    <UnitTest name="Bonds.IntegrationTests.PlansEndpointTests.Validation_Returns422_ForBadInflowWithdrawAndExit" storage="m:\projects\bonds\tests\bonds.integrationtests\bin\debug\net8.0\bonds.integrationtests.dll" id="7617d422-ce95-7794-9ca7-4fd9a415ba45">
+      <Execution id="4b61ccfd-c696-4054-8cea-7ef21c5a6168" />
+      <TestMethod codeBase="M:\Projects\bonds\tests\Bonds.IntegrationTests\bin\Debug\net8.0\Bonds.IntegrationTests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Bonds.IntegrationTests.PlansEndpointTests" name="Validation_Returns422_ForBadInflowWithdrawAndExit" />
+    </UnitTest>
+    <UnitTest name="Bonds.IntegrationTests.PlansEndpointTests.Runner_DryRunStaysTrue_EvenIfConfigSaysFalse" storage="m:\projects\bonds\tests\bonds.integrationtests\bin\debug\net8.0\bonds.integrationtests.dll" id="08937e60-3dd7-1429-b490-9077f296f001">
+      <Execution id="f7d23436-9340-4b05-b019-b87f7fe6af83" />
+      <TestMethod codeBase="M:\Projects\bonds\tests\Bonds.IntegrationTests\bin\Debug\net8.0\Bonds.IntegrationTests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Bonds.IntegrationTests.PlansEndpointTests" name="Runner_DryRunStaysTrue_EvenIfConfigSaysFalse" />
+    </UnitTest>
+    <UnitTest name="Bonds.IntegrationTests.PlansEndpointTests.ExitBasket_TemporaryBasket_SellsAllMembers" storage="m:\projects\bonds\tests\bonds.integrationtests\bin\debug\net8.0\bonds.integrationtests.dll" id="d0e3c09c-d07b-220a-1726-0b94f2eb1cb7">
+      <Execution id="c4b7ec6b-e955-4769-9c08-bbd14d29ad6c" />
+      <TestMethod codeBase="M:\Projects\bonds\tests\Bonds.IntegrationTests\bin\Debug\net8.0\Bonds.IntegrationTests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Bonds.IntegrationTests.PlansEndpointTests" name="ExitBasket_TemporaryBasket_SellsAllMembers" />
+    </UnitTest>
+    <UnitTest name="Bonds.IntegrationTests.PlansEndpointTests.Preview_BuildsWithoutSaving_AndValidatesRule" storage="m:\projects\bonds\tests\bonds.integrationtests\bin\debug\net8.0\bonds.integrationtests.dll" id="aa1f4aed-8359-a0b5-c83e-51bcacf15ad8">
+      <Execution id="c8c45c8d-1bc6-4ceb-8c1d-274d062baf6b" />
+      <TestMethod codeBase="M:\Projects\bonds\tests\Bonds.IntegrationTests\bin\Debug\net8.0\Bonds.IntegrationTests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Bonds.IntegrationTests.PlansEndpointTests" name="Preview_BuildsWithoutSaving_AndValidatesRule" />
+    </UnitTest>
+    <UnitTest name="Bonds.IntegrationTests.PlansEndpointTests.Runner_ExpiresStalePendingPlans" storage="m:\projects\bonds\tests\bonds.integrationtests\bin\debug\net8.0\bonds.integrationtests.dll" id="791230d2-52c8-0328-f2fa-3129d492764e">
+      <Execution id="11fceb06-d068-49a3-9615-8e9ef9231849" />
+      <TestMethod codeBase="M:\Projects\bonds\tests\Bonds.IntegrationTests\bin\Debug\net8.0\Bonds.IntegrationTests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Bonds.IntegrationTests.PlansEndpointTests" name="Runner_ExpiresStalePendingPlans" />
+    </UnitTest>
+    <UnitTest name="Bonds.IntegrationTests.PlansEndpointTests.Withdraw_SellsFundWithTax_ToReachNetAmount" storage="m:\projects\bonds\tests\bonds.integrationtests\bin\debug\net8.0\bonds.integrationtests.dll" id="e9542d71-ff8c-71db-8ca9-2bc38965c950">
+      <Execution id="79100985-f482-4dc9-85c2-ac3b659ec2dd" />
+      <TestMethod codeBase="M:\Projects\bonds\tests\Bonds.IntegrationTests\bin\Debug\net8.0\Bonds.IntegrationTests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Bonds.IntegrationTests.PlansEndpointTests" name="Withdraw_SellsFundWithTax_ToReachNetAmount" />
+    </UnitTest>
+    <UnitTest name="Bonds.IntegrationTests.PlansEndpointTests.Approve_ExpiredPlan_Returns409AndMarksExpired" storage="m:\projects\bonds\tests\bonds.integrationtests\bin\debug\net8.0\bonds.integrationtests.dll" id="1f52111c-abca-c51e-4c2a-1bcecdb34bde">
+      <Execution id="e21cd3cd-a0ac-4770-8130-b6e4b20da5e9" />
+      <TestMethod codeBase="M:\Projects\bonds\tests\Bonds.IntegrationTests\bin\Debug\net8.0\Bonds.IntegrationTests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Bonds.IntegrationTests.PlansEndpointTests" name="Approve_ExpiredPlan_Returns409AndMarksExpired" />
+    </UnitTest>
+    <UnitTest name="Bonds.IntegrationTests.PlansEndpointTests.Approve_InDryRun_MarksApprovedWithNote_AndSecondDecisionConflicts" storage="m:\projects\bonds\tests\bonds.integrationtests\bin\debug\net8.0\bonds.integrationtests.dll" id="bbbe2b45-e786-5e84-1bae-346fc418e600">
+      <Execution id="e9552d7f-6d9b-4e02-94a0-42b12a0ed949" />
+      <TestMethod codeBase="M:\Projects\bonds\tests\Bonds.IntegrationTests\bin\Debug\net8.0\Bonds.IntegrationTests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Bonds.IntegrationTests.PlansEndpointTests" name="Approve_InDryRun_MarksApprovedWithNote_AndSecondDecisionConflicts" />
+    </UnitTest>
+    <UnitTest name="Bonds.IntegrationTests.PlansEndpointTests.Inflow_BuildsPendingDryRunPlan_ForLiquidityShare_AndStoresIt" storage="m:\projects\bonds\tests\bonds.integrationtests\bin\debug\net8.0\bonds.integrationtests.dll" id="abc00b4f-7668-3306-76cc-2d0169527ea4">
+      <Execution id="606e0d34-7689-4dda-b691-3b5296cd9215" />
+      <TestMethod codeBase="M:\Projects\bonds\tests\Bonds.IntegrationTests\bin\Debug\net8.0\Bonds.IntegrationTests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Bonds.IntegrationTests.PlansEndpointTests" name="Inflow_BuildsPendingDryRunPlan_ForLiquidityShare_AndStoresIt" />
+    </UnitTest>
+    <UnitTest name="Bonds.IntegrationTests.PlansEndpointTests.Plans_AreIsolatedBetweenUsers" storage="m:\projects\bonds\tests\bonds.integrationtests\bin\debug\net8.0\bonds.integrationtests.dll" id="1c196daa-834b-faf5-0900-a21bc7b4c21e">
+      <Execution id="5799b3f3-c862-4e8e-ad98-9259edb203f3" />
+      <TestMethod codeBase="M:\Projects\bonds\tests\Bonds.IntegrationTests\bin\Debug\net8.0\Bonds.IntegrationTests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Bonds.IntegrationTests.PlansEndpointTests" name="Plans_AreIsolatedBetweenUsers" />
+    </UnitTest>
+    <UnitTest name="Bonds.IntegrationTests.PlansEndpointTests.Reject_MarksRejected_AndFiltersByStatus" storage="m:\projects\bonds\tests\bonds.integrationtests\bin\debug\net8.0\bonds.integrationtests.dll" id="64a24881-0cc0-d3d5-50c2-22bc33c4e11c">
+      <Execution id="63dce88b-4a02-42a3-8083-eca326994516" />
+      <TestMethod codeBase="M:\Projects\bonds\tests\Bonds.IntegrationTests\bin\Debug\net8.0\Bonds.IntegrationTests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Bonds.IntegrationTests.PlansEndpointTests" name="Reject_MarksRejected_AndFiltersByStatus" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="739d330e-a31b-0643-7011-c2c2a3e97073" executionId="a746925b-c5cc-46bf-ada6-867ca31d7aef" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="1c196daa-834b-faf5-0900-a21bc7b4c21e" executionId="5799b3f3-c862-4e8e-ad98-9259edb203f3" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="7617d422-ce95-7794-9ca7-4fd9a415ba45" executionId="4b61ccfd-c696-4054-8cea-7ef21c5a6168" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="fb4e93e0-6f62-9776-7118-9bb9bd056dbb" executionId="45469c39-6735-4a94-b866-4d60ea07b642" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="1f52111c-abca-c51e-4c2a-1bcecdb34bde" executionId="e21cd3cd-a0ac-4770-8130-b6e4b20da5e9" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="64a24881-0cc0-d3d5-50c2-22bc33c4e11c" executionId="63dce88b-4a02-42a3-8083-eca326994516" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="bbbe2b45-e786-5e84-1bae-346fc418e600" executionId="e9552d7f-6d9b-4e02-94a0-42b12a0ed949" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="e9542d71-ff8c-71db-8ca9-2bc38965c950" executionId="79100985-f482-4dc9-85c2-ac3b659ec2dd" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="aa1f4aed-8359-a0b5-c83e-51bcacf15ad8" executionId="c8c45c8d-1bc6-4ceb-8c1d-274d062baf6b" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="791230d2-52c8-0328-f2fa-3129d492764e" executionId="11fceb06-d068-49a3-9615-8e9ef9231849" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="abc00b4f-7668-3306-76cc-2d0169527ea4" executionId="606e0d34-7689-4dda-b691-3b5296cd9215" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="08937e60-3dd7-1429-b490-9077f296f001" executionId="f7d23436-9340-4b05-b019-b87f7fe6af83" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="845c0318-143f-4aa2-0569-5885bcccbccc" executionId="a64759f0-8ca2-45bf-9d09-62963b894c4d" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="d0e3c09c-d07b-220a-1726-0b94f2eb1cb7" executionId="c4b7ec6b-e955-4769-9c08-bbd14d29ad6c" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="Список результатов" id="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestList name="Все загруженные результаты" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Completed">
+    <Counters total="14" executed="14" passed="14" failed="0" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <Output>
+      <StdOut>[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v2.8.2+699d445a1a (64-bit .NET 8.0.25)&#xD;
+[xUnit.net 00:00:00.06]   Discovering: Bonds.IntegrationTests&#xD;
+[xUnit.net 00:00:00.11]   Discovered:  Bonds.IntegrationTests&#xD;
+[xUnit.net 00:00:00.12]   Starting:    Bonds.IntegrationTests&#xD;
+[testcontainers.org 00:00:00.04] Connected to Docker:&#xD;
+  Host: npipe://./pipe/docker_engine&#xD;
+  Server Version: 29.8.2&#xD;
+  Kernel Version: 6.18.54.1-microsoft-standard-WSL2&#xD;
+  API Version: 1.56&#xD;
+  Operating System: Docker Desktop (containerized)&#xD;
+  Total Memory: 31.02 GB&#xD;
+  Labels: &#xD;
+    com.docker.desktop.address=npipe://\\.\pipe\docker_cli&#xD;
+[testcontainers.org 00:00:00.17] Docker container ffe9465236b2 created&#xD;
+[testcontainers.org 00:00:00.20] Start Docker container ffe9465236b2&#xD;
+[testcontainers.org 00:00:00.38] Wait for Docker container ffe9465236b2 to complete readiness checks&#xD;
+[testcontainers.org 00:00:00.38] Docker container ffe9465236b2 ready&#xD;
+[testcontainers.org 00:00:00.49] Docker container 504de7125360 created&#xD;
+[testcontainers.org 00:00:00.50] Start Docker container 504de7125360&#xD;
+[testcontainers.org 00:00:00.68] Execute "mkdir /var/lib/mysql-files" at Docker container 504de7125360&#xD;
+[testcontainers.org 00:00:00.68] Add file to tar archive: Content length: 58 byte(s), Target file: "/etc/mysql/my.cnf"&#xD;
+[testcontainers.org 00:00:00.69] Copy tar archive to container: Content length: 58 byte(s), Docker container: 504de7125360&#xD;
+[testcontainers.org 00:00:00.71] Wait for Docker container 504de7125360 to complete readiness checks&#xD;
+[testcontainers.org 00:00:00.72] Execute "mysql bonds_test --wait --silent --execute=SELECT 1;" at Docker container 504de7125360&#xD;
+[testcontainers.org 00:00:01.75] Execute "mysql bonds_test --wait --silent --execute=SELECT 1;" at Docker container 504de7125360&#xD;
+[testcontainers.org 00:00:02.77] Execute "mysql bonds_test --wait --silent --execute=SELECT 1;" at Docker container 504de7125360&#xD;
+[testcontainers.org 00:00:03.80] Execute "mysql bonds_test --wait --silent --execute=SELECT 1;" at Docker container 504de7125360&#xD;
+[testcontainers.org 00:00:04.83] Execute "mysql bonds_test --wait --silent --execute=SELECT 1;" at Docker container 504de7125360&#xD;
+[testcontainers.org 00:00:05.85] Execute "mysql bonds_test --wait --silent --execute=SELECT 1;" at Docker container 504de7125360&#xD;
+[testcontainers.org 00:00:06.88] Execute "mysql bonds_test --wait --silent --execute=SELECT 1;" at Docker container 504de7125360&#xD;
+[testcontainers.org 00:00:07.91] Execute "mysql bonds_test --wait --silent --execute=SELECT 1;" at Docker container 504de7125360&#xD;
+[testcontainers.org 00:00:08.93] Execute "mysql bonds_test --wait --silent --execute=SELECT 1;" at Docker container 504de7125360&#xD;
+[testcontainers.org 00:00:09.96] Execute "mysql bonds_test --wait --silent --execute=SELECT 1;" at Docker container 504de7125360&#xD;
+[testcontainers.org 00:00:10.99] Execute "mysql bonds_test --wait --silent --execute=SELECT 1;" at Docker container 504de7125360&#xD;
+[testcontainers.org 00:00:12.01] Execute "mysql bonds_test --wait --silent --execute=SELECT 1;" at Docker container 504de7125360&#xD;
+[testcontainers.org 00:00:13.04] Execute "mysql bonds_test --wait --silent --execute=SELECT 1;" at Docker container 504de7125360&#xD;
+[testcontainers.org 00:00:14.06] Execute "mysql bonds_test --wait --silent --execute=SELECT 1;" at Docker container 504de7125360&#xD;
+[testcontainers.org 00:00:15.10] Execute "mysql bonds_test --wait --silent --execute=SELECT 1;" at Docker container 504de7125360&#xD;
+[testcontainers.org 00:00:16.12] Execute "mysql bonds_test --wait --silent --execute=SELECT 1;" at Docker container 504de7125360&#xD;
+[testcontainers.org 00:00:16.16] Docker container 504de7125360 ready&#xD;
+info: Bonds.Infrastructure.Policy.PolicyService[0]&#xD;
+      Trade plan 1 created: rule P5_WITHDRAW, status PendingApproval, 1 line(s), dry-run&#xD;
+info: Bonds.Infrastructure.Policy.PolicyService[0]&#xD;
+      Trade plan 2 created: rule P2_INFLOW, status PendingApproval, 1 line(s), dry-run&#xD;
+info: Bonds.Infrastructure.Policy.PolicyService[0]&#xD;
+      Trade plan 3 created: rule P5_WITHDRAW, status PendingApproval, 1 line(s), dry-run&#xD;
+info: Bonds.Infrastructure.Policy.PolicyRunner[0]&#xD;
+      Policy: P1: ᢮������ �㡫�� ���&#xD;
+info: Bonds.Infrastructure.Policy.PolicyRunner[0]&#xD;
+      Policy: P4: ���� �������, �� ��� ����� � �த�������� ����誠&#xD;
+info: Bonds.Infrastructure.Policy.PolicyRunner[0]&#xD;
+      Policy: FAFEE5D735: �뭮� ������&#xD;
+info: Bonds.Infrastructure.Policy.PolicyService[0]&#xD;
+      Trade plan 4 created: rule MANUAL, status PendingApproval, 0 line(s), dry-run&#xD;
+info: Bonds.Infrastructure.Policy.PolicyService[0]&#xD;
+      Trade plan 5 created: rule P5_WITHDRAW, status PendingApproval, 1 line(s), dry-run&#xD;
+info: Bonds.Infrastructure.Policy.PolicyService[0]&#xD;
+      Trade plan 6 created: rule P5_WITHDRAW, status PendingApproval, 1 line(s), dry-run&#xD;
+info: Bonds.Infrastructure.Policy.PolicyRunner[0]&#xD;
+      Policy: &lt;������樨&gt;: �������⮢ ��� 4250 RUB �� ��諮��&#xD;
+info: Bonds.Infrastructure.Policy.PolicyService[0]&#xD;
+      Trade plan 7 created: rule P2_INFLOW, status PendingApproval, 1 line(s), dry-run&#xD;
+info: Bonds.Infrastructure.Policy.PolicyService[0]&#xD;
+      Trade plan 8 created: rule P1_SWEEP, status AutoApproved, 2 line(s), dry-run&#xD;
+info: Bonds.Infrastructure.Policy.PolicyRunner[0]&#xD;
+      Policy: P1: ᢮������ �㡫�� �� 墠⠥� ���� �� ���� ��� ��� �㬠�� �ய�饭�&#xD;
+info: Bonds.Infrastructure.Policy.PolicyService[0]&#xD;
+      Trade plan 9 created: rule P5_WITHDRAW, status PendingApproval, 1 line(s), dry-run&#xD;
+info: Bonds.Infrastructure.Policy.PolicyService[0]&#xD;
+      Trade plan 10 created: rule P1_SWEEP, status AutoApproved, 2 line(s), dry-run&#xD;
+info: Bonds.Infrastructure.Policy.PolicyRunner[0]&#xD;
+      Policy: P1: ᢮������ �㡫�� �� 墠⠥� ���� �� ���� ��� ��� �㬠�� �ய�饭�&#xD;
+info: Bonds.Infrastructure.Policy.PolicyService[0]&#xD;
+      Trade plan 11 created: rule P5_WITHDRAW, status PendingApproval, 1 line(s), dry-run&#xD;
+info: Bonds.Infrastructure.Policy.PolicyService[0]&#xD;
+      Trade plan 12 created: rule MANUAL, status PendingApproval, 1 line(s), dry-run&#xD;
+info: Bonds.Infrastructure.Policy.PolicyService[0]&#xD;
+      Trade plan 13 created: rule P5_WITHDRAW, status PendingApproval, 1 line(s), dry-run&#xD;
+[testcontainers.org 00:00:27.64] Stop Docker container 504de7125360&#xD;
+[testcontainers.org 00:00:32.74] Delete Docker container 504de7125360&#xD;
+[xUnit.net 00:00:32.95]   Finished:    Bonds.IntegrationTests&#xD;
+</StdOut>
+    </Output>
+  </ResultSummary>
+</TestRun>

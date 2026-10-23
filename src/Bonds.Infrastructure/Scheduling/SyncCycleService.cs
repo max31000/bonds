@@ -222,6 +222,10 @@ public sealed class SyncCycleService : ISyncCycleRunner
         // шагом: сбой Freedom (сеть, ключи) пишется в лог и НЕ добавляется в result.Errors - цикл T-Invest неуспешным не помечается.
         await SyncFreedomAsync(sp, ct);
 
+        // --- 1a-quinquies. Правила и планы сделок (задача 63): ПОСЛЕ синка всех брокеров. Планы - только данные (dry-run, заявки не отправляются).
+        // Необязательный шаг: сбой - только лог, цикл НЕ помечается неуспешным.
+        await RunPoliciesAsync(sp, ct);
+
         // --- 1b. Бэкфилл истории стоимости, если она пуста/почти пуста (первый запуск, или миграция
         // пересчёта истории её очистила). Строго ПОСЛЕ успешного перечитывания журнала: история
         // строится из журнала, и бэкфилл из неполного журнала закрепился бы навсегда (бэкфилл
@@ -306,6 +310,30 @@ public sealed class SyncCycleService : ISyncCycleRunner
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Fund market data refresh failed — fund prices/distributions keep the previous values");
+        }
+    }
+
+    private async Task RunPoliciesAsync(IServiceProvider sp, CancellationToken ct)
+    {
+        try
+        {
+            // GetService (не Required): цикл не должен падать, если шаг не зарегистрирован (юнит-тесты цикла).
+            var runner = sp.GetService<Bonds.Infrastructure.Policy.PolicyRunner>();
+            if (runner is null) return;
+
+            var run = await runner.RunAllAsync(DateTime.UtcNow, ct);
+            if (run.CreatedPlanIds.Count > 0 || run.Expired > 0)
+            {
+                _logger.LogInformation("Policy run: {Created} plan(s) created, {Expired} expired (dry-run, no orders are sent)", run.CreatedPlanIds.Count, run.Expired);
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Policy run failed — plans keep the previous state");
         }
     }
 

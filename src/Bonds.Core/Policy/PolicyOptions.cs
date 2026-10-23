@@ -79,6 +79,12 @@ public sealed class PolicyOptions
     /// <summary>Сколько штук-лотов одной облигации покупает разбор кандидатов (как у <c>source=recommended</c>: 1 лот на бумагу — диверсификация).</summary>
     public int MaxBondLotsPerCandidate { get; set; } = 1;
 
+    /// <summary>Сколько лучших (по доходности после налога) облигаций вселенной получают стакан и метаданные брокера для подбора (остальные не запрашиваются: ограничение числа обращений к брокеру).</summary>
+    public int BondCandidatePool { get; set; } = 25;
+
+    /// <summary>Не больше стольких запросов метаданных брокера за один подбор кандидатов.</summary>
+    public int MaxMetaQueriesPerRun { get; set; } = 30;
+
     /// <summary>Пополнения старше этого окна не порождают P2 автоматически (иначе первый запуск «распределил» бы всю историю).</summary>
     public TimeSpan DepositLookback { get; set; } = TimeSpan.FromDays(3);
 
