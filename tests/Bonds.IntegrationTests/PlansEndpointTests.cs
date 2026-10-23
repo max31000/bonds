@@ -155,7 +155,7 @@ public class PlansEndpointTests
         line.GetProperty("side").GetString().Should().Be("Buy");
         line.GetProperty("limitPrice").GetDecimal().Should().Be(166.58m, "mid 166.58, покупка вниз к шагу 0.01");
         line.GetProperty("quantityLots").GetInt64().Should().BeGreaterThan(0);
-        line.GetProperty("estFee").GetDecimal().Should().BePositive();
+        line.GetProperty("estFee").GetDecimal().Should().Be(0m, "тестовые фонды — фонды управляющей компании (Policy:OwnFunds): комиссия 0");
         plan.GetProperty("summary").GetProperty("cashBefore").GetDecimal().Should().Be(7_340m);
         plan.GetProperty("summary").GetProperty("buyTotal").GetDecimal().Should().BeLessThanOrEqualTo(7_340m);
 
@@ -536,5 +536,164 @@ public class PlansEndpointTests
         line.GetProperty("limitPrice").GetDecimal().Should().Be(110.02m);
         line.GetProperty("estFee").GetDecimal().Should().Be(1.60m);
         plan.GetProperty("summary").GetProperty("currency").GetString().Should().Be("USD");
+    }
+
+    // ─── Фиксы по ревью: лимит дня, резерв в валюте портфеля, AutoApproved, дубликаты до сбора облигаций ───────────
+
+    private static readonly JsonSerializerOptions WebJson = new(JsonSerializerDefaults.Web);
+
+    private static TradePlan NewPlan(
+        ulong userId, string status, DateTime nowUtc, DateTime? expiresAt = null, string rule = PlanRules.P1Sweep, string trigger = "тест",
+        string broker = BrokerIds.TInvest, string currency = "RUB", decimal amount = 10_000m, decimal fee = 0m, TradePlanSummary? summary = null) => new()
+    {
+        UserId = userId, Rule = rule, Trigger = trigger, Status = status, DryRun = true, CreatedAt = nowUtc, ExpiresAt = expiresAt ?? nowUtc.AddMinutes(30),
+        DecidedAt = status is PlanStatuses.AutoApproved or PlanStatuses.Done or PlanStatuses.Submitting ? nowUtc : null,
+        DecidedVia = status is PlanStatuses.AutoApproved ? "auto" : null,
+        SummaryJson = JsonSerializer.Serialize(summary ?? new TradePlanSummary { Currency = currency }, WebJson),
+        Lines =
+        [
+            new TradePlanLine
+            {
+                LineNo = 1, Broker = broker, AccountId = 1, InstrumentKey = "K", Ticker = "K", Side = PlanSides.Buy, QuantityLots = 1, LotSize = 1m, LimitPrice = amount,
+                EstAmount = amount, EstFee = fee, Currency = currency, Reason = "тест",
+            },
+        ],
+    };
+
+    [Fact]
+    public async Task DayLimit_InDryRun_AutoApprovedPlansDoNotCount_ButDoneOnesDo()
+    {
+        var (factory, _) = NewFactory();
+        var (userId, _) = await NewUserAsync(factory);
+        var repo = new TradePlanRepository(Conn);
+        var now = DateTime.UtcNow;
+        await repo.InsertAsync(NewPlan(userId, PlanStatuses.AutoApproved, now, amount: 10_000m)); // в dry-run никогда не исполняется — деньги не потрачены
+        await repo.InsertAsync(NewPlan(userId, PlanStatuses.Done, now, amount: 5_000m));
+        await repo.InsertAsync(NewPlan(userId, PlanStatuses.Submitting, now, amount: 1_000m));
+        await repo.InsertAsync(NewPlan(userId, PlanStatuses.PendingApproval, now, amount: 77_000m));
+
+        var sum = await repo.SumAutoApprovedRubSinceAsync(userId, now.AddHours(-1));
+
+        sum.Should().Be(6_000m, "только Submitting/Done; AutoApproved в dry-run не считается");
+    }
+
+    [Fact]
+    public async Task ReservedBuys_AreTakenFromSummaryInPortfolioCurrency_NotFromMixedCurrencyLines()
+    {
+        var (factory, _) = NewFactory();
+        var (userId, _) = await NewUserAsync(factory);
+        var repo = new TradePlanRepository(Conn);
+        var now = DateTime.UtcNow;
+        // Freedom: строка в EUR (300.06) + комиссия в EUR (1.4545), портфель USD: резерв 331.666 USD (курс 1.1, комиссия 1.60 USD).
+        await repo.InsertAsync(NewPlan(userId, PlanStatuses.PendingApproval, now, broker: BrokerIds.Freedom, currency: "EUR", amount: 300.06m, fee: 1.4545m,
+            summary: new TradePlanSummary { Currency = "USD", ReservedBuy = 331.666m }));
+        // Approved dry-run деньги не резервирует; просроченный план — тоже.
+        await repo.InsertAsync(NewPlan(userId, PlanStatuses.Approved, now, broker: BrokerIds.Freedom, currency: "EUR", summary: new TradePlanSummary { Currency = "USD", ReservedBuy = 999m }));
+        await repo.InsertAsync(NewPlan(userId, PlanStatuses.PendingApproval, now.AddHours(-2), expiresAt: now.AddHours(-1), broker: BrokerIds.Freedom, currency: "EUR",
+            summary: new TradePlanSummary { Currency = "USD", ReservedBuy = 888m }));
+
+        (await repo.SumReservedBuysAsync(userId, BrokerIds.Freedom, "USD", now)).Should().Be(331.666m);
+        (await repo.SumReservedBuysAsync(userId, BrokerIds.Freedom, "RUB", now)).Should().Be(0m, "другая валюта портфеля");
+        (await repo.SumReservedBuysAsync(userId, BrokerIds.TInvest, "USD", now)).Should().Be(0m, "другой брокер");
+    }
+
+    [Fact]
+    public async Task Runner_RealPlan_SavesReservedBuy_ThatTheRepositoryReserves()
+    {
+        var (userId, _, _, _, _, _, factory) = await SeedRubAsync(cashRub: 7_340m, aQuantity: 0m);
+        var now = OpenNowUtc();
+        using (var scope = factory.Services.CreateScope())
+            await scope.ServiceProvider.GetRequiredService<PolicyRunner>().RunForUserAsync(userId, now, new PolicyRunResult());
+
+        var plan = (await PlansOfAsync(userId)).Single(p => p.Rule == PlanRules.P1Sweep);
+        var summary = JsonSerializer.Deserialize<TradePlanSummary>(plan.SummaryJson!, WebJson)!;
+        summary.ReservedBuy.Should().Be(plan.Lines.Sum(l => l.EstAmount + l.EstFee)).And.BeGreaterThan(7_000m);
+        (await new TradePlanRepository(Conn).SumReservedBuysAsync(userId, BrokerIds.TInvest, "RUB", now)).Should().Be(summary.ReservedBuy);
+    }
+
+    [Fact]
+    public async Task ExpirePending_AlsoExpiresAutoApproved_WithNotExecutedNote_AndRejectCancelsAutoApproved()
+    {
+        var (userId, client, _, _, _, _, _) = await SeedRubAsync(cashRub: 0m);
+        var repo = new TradePlanRepository(Conn);
+        var now = DateTime.UtcNow;
+        var stale = await repo.InsertAsync(NewPlan(userId, PlanStatuses.AutoApproved, now.AddHours(-1), expiresAt: now.AddMinutes(-5)));
+        var fresh = await repo.InsertAsync(NewPlan(userId, PlanStatuses.AutoApproved, now));
+
+        (await repo.ExpirePendingAsync(now)).Should().BeGreaterThanOrEqualTo(1);
+
+        var expired = (await repo.GetAsync(userId, stale))!;
+        expired.Status.Should().Be(PlanStatuses.Expired);
+        expired.SummaryJson.Should().Contain("не исполнен");
+        (await repo.GetAsync(userId, fresh))!.Status.Should().Be(PlanStatuses.AutoApproved, "не просроченный авто-план остаётся");
+
+        // Отменить авто-план можно тем же reject; подтвердить (approve) уже авто-подтверждённый нельзя.
+        (await client.PostAsync($"/api/plans/{fresh}/approve", null)).StatusCode.Should().Be(HttpStatusCode.Conflict);
+        var reject = await client.PostAsync($"/api/plans/{fresh}/reject", null);
+        reject.StatusCode.Should().Be(HttpStatusCode.OK);
+        (await ReadAsync(reject)).GetProperty("status").GetString().Should().Be("Rejected");
+        (await client.PostAsync($"/api/plans/{stale}/reject", null)).StatusCode.Should().Be(HttpStatusCode.Conflict, "истёкший план уже не отклонить");
+    }
+
+    private static (Mock<IBondUniverseRepository> Repo, Func<int> Calls) CountingUniverse()
+    {
+        var calls = 0;
+        var repo = new Mock<IBondUniverseRepository>();
+        repo.Setup(r => r.GetAllAsync(It.IsAny<CancellationToken>()))
+            .Callback(() => Interlocked.Increment(ref calls))
+            .ReturnsAsync((IReadOnlyList<BondUniverseEntry>)[]);
+        repo.Setup(r => r.GetRecentHistoryAsync(It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync((IReadOnlyList<BondUniverseHistoryPoint>)[]);
+        return (repo, () => Volatile.Read(ref calls));
+    }
+
+    [Fact]
+    public async Task Runner_P3b_OpenPlanWithSameTrigger_SkipsBondDataCollection()
+    {
+        var (userId, _, _, _, _, _, seeded) = await SeedRubAsync(cashRub: 0m, aQuantity: 100m); // ликвидность — весь портфель: HardAbove, вес > 0.20
+        var (universe, calls) = CountingUniverse();
+        var factory = seeded.WithWebHostBuilder(b =>
+        {
+            b.ConfigureAppConfiguration((_, c) => c.AddInMemoryCollection(new Dictionary<string, string?> { ["Policy:LiquidityCheckDay"] = "Wednesday" }));
+            b.ConfigureServices(s =>
+            {
+                s.RemoveAll<IBondUniverseRepository>();
+                s.AddScoped(_ => universe.Object);
+            });
+        });
+        var now = OpenNowUtc();
+        await new TradePlanRepository(Conn).InsertAsync(NewPlan(userId, PlanStatuses.PendingApproval, now, rule: PlanRules.P3bLiqToBonds, trigger: LiquidityToBondsRule.TriggerFor(now)));
+        var result = new PolicyRunResult();
+
+        using (var scope = factory.Services.CreateScope())
+            await scope.ServiceProvider.GetRequiredService<PolicyRunner>().RunForUserAsync(userId, now, result);
+
+        calls().Should().Be(0, "открытый P3b с той же причиной: дорогой сбор кандидатов не выполняется (а P4 не строится, пока открыт P3b)");
+        result.Notes.Should().Contain(n => n.Contains("данные по облигациям не собирались"));
+    }
+
+    [Fact]
+    public async Task Runner_P4_DuplicateTrigger_SkipsBondDataCollection_OnSecondRun()
+    {
+        var (userId, _, _, _, _, _, seeded) = await SeedRubAsync(cashRub: 0m, aQuantity: 100m);
+        var (universe, calls) = CountingUniverse();
+        var factory = seeded.WithWebHostBuilder(b => b.ConfigureServices(s =>
+        {
+            s.RemoveAll<IBondUniverseRepository>();
+            s.AddScoped(_ => universe.Object);
+        }));
+        var now = OpenNowUtc();
+
+        using (var scope = factory.Services.CreateScope())
+            await scope.ServiceProvider.GetRequiredService<PolicyRunner>().RunForUserAsync(userId, now, new PolicyRunResult());
+        var afterFirst = calls();
+        afterFirst.Should().BeGreaterThan(0, "контроль: первый прогон P4 собирает облигационные данные");
+        (await PlansOfAsync(userId)).Should().Contain(p => p.Rule == PlanRules.P4Rebalance);
+
+        var second = new PolicyRunResult();
+        using (var scope = factory.Services.CreateScope())
+            await scope.ServiceProvider.GetRequiredService<PolicyRunner>().RunForUserAsync(userId, now, second);
+
+        calls().Should().Be(afterFirst, "второй прогон: план P4 с той же причиной уже есть — кандидатов не собираем");
+        second.Notes.Should().Contain(n => n.Contains("P4_REBALANCE") && n.Contains("не собирались"));
     }
 }

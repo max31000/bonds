@@ -376,6 +376,7 @@ public sealed class PolicyInputBuilder
             NominalRub = isBond ? PolicyBondCandidateProvider.NominalRubOf(meta) : null,
             Bid = book?.Bid,
             Ask = book?.Ask,
+            Last = book?.Last,
             AccruedPerPiece = accrued,
             ReferenceCleanPricePerPiece = reference,
             FxToPortfolio = fx.Value,
@@ -414,6 +415,9 @@ public sealed class PolicyInputBuilder
         return result;
     }
 
+    private IReadOnlySet<string> OwnFundSet() =>
+        new HashSet<string>(_options.OwnFunds.Select(PlanFeeModel.NormalizeFund), StringComparer.OrdinalIgnoreCase);
+
     private async Task<PlanFeeModel> FeeModelAsync(ulong userId, Account account, CancellationToken ct)
     {
         if (account.Broker == BrokerIds.Freedom)
@@ -439,11 +443,12 @@ public sealed class PolicyInputBuilder
             }
 
             if (tariff is not (FreedomFeeModelIds.Investor or FreedomFeeModelIds.Standard)) tariff = PlanFeeModel.DefaultFreedomTariffId;
-            return new PlanFeeModel(0m, tariff);
+            return new PlanFeeModel(0m, tariff, OwnFundSet());
         }
 
         var rate = await _commission.GetAsync(account.Id, ct);
-        return new PlanFeeModel(rate.Rate, PlanFeeModel.DefaultFreedomTariffId);
+        // Фонды управляющей компании брокера — комиссия 0 (OwnFunds), у остальных ставка тарифа.
+        return new PlanFeeModel(rate.Rate, PlanFeeModel.DefaultFreedomTariffId, OwnFundSet());
     }
 }
 

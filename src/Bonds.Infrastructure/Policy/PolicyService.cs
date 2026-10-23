@@ -42,6 +42,7 @@ public sealed record PlanDecisionResult(PlanDecisionKind Kind, TradePlan? Plan);
 public sealed class PolicyService
 {
     public const string DryRunNote = "не исполнен: dry-run";
+    public const string NotExecutedExpiredNote = "не исполнен: срок действия истёк";
 
     internal static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
@@ -116,13 +117,15 @@ public sealed class PolicyService
         return new PlanDecisionResult(ok ? PlanDecisionKind.Ok : PlanDecisionKind.Conflict, current);
     }
 
+    /// <summary>Отклонить/отменить план. Допустимо из PendingApproval, Draft и AutoApproved (авто-план можно отменить до исполнения — в dry-run он не исполняется вовсе).</summary>
     public async Task<PlanDecisionResult> RejectAsync(ulong userId, ulong id, string via, DateTime nowUtc)
     {
         var plan = await _plans.GetAsync(userId, id);
         if (plan is null) return new PlanDecisionResult(PlanDecisionKind.NotFound, null);
-        if (plan.Status is not (PlanStatuses.PendingApproval or PlanStatuses.Draft)) return new PlanDecisionResult(PlanDecisionKind.Conflict, plan);
+        if (plan.Status is not (PlanStatuses.PendingApproval or PlanStatuses.Draft or PlanStatuses.AutoApproved)) return new PlanDecisionResult(PlanDecisionKind.Conflict, plan);
 
-        var ok = await _plans.TransitionAsync(userId, id, [PlanStatuses.PendingApproval, PlanStatuses.Draft], PlanStatuses.Rejected, via, nowUtc, null);
+        var ok = await _plans.TransitionAsync(
+            userId, id, [PlanStatuses.PendingApproval, PlanStatuses.Draft, PlanStatuses.AutoApproved], PlanStatuses.Rejected, via, nowUtc, null);
         return new PlanDecisionResult(ok ? PlanDecisionKind.Ok : PlanDecisionKind.Conflict, await _plans.GetAsync(userId, id));
     }
 

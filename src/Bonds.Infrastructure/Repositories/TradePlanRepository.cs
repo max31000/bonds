@@ -1,5 +1,7 @@
 using Bonds.Core.Interfaces.Repositories;
+using System.Text.Json;
 using Bonds.Core.Policy;
+using Bonds.Infrastructure.Policy;
 using Dapper;
 using MySqlConnector;
 
@@ -110,24 +112,45 @@ public class TradePlanRepository : ITradePlanRepository
 
     public async Task<decimal> SumAutoApprovedRubSinceAsync(ulong userId, DateTime sinceUtc)
     {
+        // Только Submitting/Done: в dry-run AutoApproved-план НИКОГДА не исполняется (исполнителя нет), его деньги не потрачены — в суточный лимит он не входит.
+        // Внутри одного цикла раннер сам наращивает счётчик по только что сохранённым AutoApproved (PolicyRunner.CarryForward).
         using var conn = CreateConnection();
         return await conn.ExecuteScalarAsync<decimal>(
             @"SELECT COALESCE(SUM(l.est_amount), 0)
               FROM trade_plans p JOIN trade_plan_lines l ON l.plan_id = p.id
-              WHERE p.user_id = @UserId AND p.status IN ('AutoApproved', 'Submitting', 'Done') AND p.decided_at >= @Since
+              WHERE p.user_id = @UserId AND p.status IN ('Submitting', 'Done') AND p.decided_at >= @Since
                 AND l.side = 'Buy' AND l.currency = 'RUB'",
             new { UserId = userId, Since = sinceUtc });
     }
 
     public async Task<decimal> SumReservedBuysAsync(ulong userId, string broker, string currency, DateTime nowUtc)
     {
+        // Строки хранятся в валюте ЦЕНЫ (EUR-строка Freedom, USD-комиссия и т.п.), складывать их напрямую нельзя: берём резерв из summary_json
+        // (TradePlanSummary.ReservedBuy — уже в валюте ПОРТФЕЛЯ плана). План без поля (до введения) резервирует 0.
         using var conn = CreateConnection();
-        return await conn.ExecuteScalarAsync<decimal>(
-            @"SELECT COALESCE(SUM(l.est_amount + l.est_fee), 0)
-              FROM trade_plans p JOIN trade_plan_lines l ON l.plan_id = p.id
+        var summaries = await conn.QueryAsync<string?>(
+            @"SELECT CAST(p.summary_json AS CHAR)
+              FROM trade_plans p
               WHERE p.user_id = @UserId AND p.status IN @Reserving AND p.expires_at > @Now
-                AND l.side = 'Buy' AND l.broker = @Broker AND l.currency = @Currency",
-            new { UserId = userId, Reserving = PlanStatuses.ReservingCash.ToArray(), Now = nowUtc, Broker = broker, Currency = currency });
+                AND EXISTS (SELECT 1 FROM trade_plan_lines l WHERE l.plan_id = p.id AND l.side = 'Buy' AND l.broker = @Broker)",
+            new { UserId = userId, Reserving = PlanStatuses.ReservingCash.ToArray(), Now = nowUtc, Broker = broker });
+
+        var total = 0m;
+        foreach (var json in summaries)
+        {
+            if (string.IsNullOrWhiteSpace(json)) continue;
+            try
+            {
+                var summary = JsonSerializer.Deserialize<TradePlanSummary>(json, PolicyService.JsonOptions);
+                if (summary is not null && string.Equals(summary.Currency, currency, StringComparison.OrdinalIgnoreCase)) total += summary.ReservedBuy;
+            }
+            catch (JsonException)
+            {
+                // Повреждённая сводка — резерв этого плана неизвестен, не учитываем (план всё равно живёт не дольше TTL).
+            }
+        }
+
+        return total;
     }
 
     public async Task<bool> TransitionAsync(
@@ -145,7 +168,25 @@ public class TradePlanRepository : ITradePlanRepository
     public async Task<int> ExpirePendingAsync(DateTime nowUtc)
     {
         using var conn = CreateConnection();
-        return await conn.ExecuteAsync(
+        var expired = await conn.ExecuteAsync(
             "UPDATE trade_plans SET status = 'Expired' WHERE status = 'PendingApproval' AND expires_at <= @Now", new { Now = nowUtc });
+
+        // AutoApproved тоже истекает: в dry-run он не исполняется, и без этого висел бы «одобренным» вечно. Помечаем «не исполнен».
+        var autos = (await conn.QueryAsync<AutoRow>(
+            "SELECT id AS Id, CAST(summary_json AS CHAR) AS Summary FROM trade_plans WHERE status = 'AutoApproved' AND expires_at <= @Now", new { Now = nowUtc })).ToList();
+        foreach (var auto in autos)
+        {
+            expired += await conn.ExecuteAsync(
+                "UPDATE trade_plans SET status = 'Expired', summary_json = COALESCE(@Summary, summary_json) WHERE id = @Id AND status = 'AutoApproved'",
+                new { auto.Id, Summary = PolicyService.WithNote(auto.Summary, PolicyService.NotExecutedExpiredNote) });
+        }
+
+        return expired;
+    }
+
+    private sealed class AutoRow
+    {
+        public ulong Id { get; set; }
+        public string? Summary { get; set; }
     }
 }

@@ -331,7 +331,7 @@ instrument|asset_class); таблица `target_allocations` **удалена** 
 (`ExecutionOptions.EffectiveDryRun` игнорирует `Execution:DryRun=false`; исполнитель — фаза 3), `approve` ставит `Approved` и пометку «не исполнен: dry-run». Статусы `Submitting/Done/Failed` есть только в модели.
 
 **Слои.** `Bonds.Core/Policy`: правила — чистые функции `(PolicyInput) → PolicyOutcome` (`SweepRule` P1, `InflowRule` P2, `LiquidityToBondsRule` P3b, `RebalanceRule` P4, `WithdrawRule` P5, `ExitBasketRule`,
-`FreedomTopUpRule` P7), общее ядро — `PolicyKit` (цена, лоты, комиссия, статус по лимитам, итоги), `LinePricer` (mid стакана к шагу: покупка ВНИЗ, продажа ВВЕРХ; нет bid/ask — бумага пропущена),
+`FreedomTopUpRule` P7 — маршрут ITS/Europe выбирается сравнением реальных комиссий `FreedomFeeModel` обоих маршрутов по тарифу счёта, при равенстве — `CheaperRoute`), общее ядро — `PolicyKit` (цена, лоты, комиссия, статус по лимитам, итоги), `LinePricer` (mid стакана к шагу: покупка ВНИЗ, продажа ВВЕРХ; нет bid/ask — бумага пропущена),
 `TradingHours` (будни, MSK = UTC+3: Мосбиржа 10:00–18:40, `SPBRU` как опция, Freedom `.US` 17:30–23:00, `.EU` 11:00–18:30; праздники бирж не учитываются). `Bonds.Infrastructure/Policy`: `PolicyInputBuilder`
 (собирает вход из `CapitalOverviewBuilder`, метаданных торгов, стаканов `IPlanQuoteSource` — T-Invest `GetQuotesAsync` (order book глубины 1) и Freedom `GetQuotesAsync`, позиций со средней ценой входа, комиссии),
 `PolicyBondCandidateProvider` (кандидаты-облигации), `PolicyService` (предпросмотр, ручные планы, approve/reject), `PolicyRunner` (шаг `SyncCycleService` после синка всех брокеров, сбой — только лог).
@@ -341,22 +341,27 @@ instrument|asset_class); таблица `target_allocations` **удалена** 
 ПОРТФЕЛЯ (rub — ₽, usd — $); строка плана — в ВАЛЮТЕ ЦЕНЫ бумаги (`est_amount` с НКД, `est_fee`, `est_tax` неотрицательны, сторона — в `side`); `FxToPortfolio` переводит валюту цены в валюту портфеля.
 Облигации T-Invest: стакан и сетка цен — в ПУНКТАХ (`min_price_increment_points`), `limit_price_points` — то, что отправит исполнитель; `limit_price` — чистая цена в рублях за штуку = пункты / 100 × номинал,
 номинал восстановлен из метаданных (рублёвый шаг ÷ шаг в пунктах × 100); у облигаций с нерублёвым номиналом (рублёвый шаг NULL) рубли для суммы берутся из последней известной цены (оценка), лимит — всё равно в пунктах.
-Количество — целые лоты (`quantity_lots` × `lot_size` = штуки). Комиссия: T-Invest — ставка `ICommissionRateProvider` (ДОЛЯ суммы), Freedom — `FreedomFeeModel` по тарифу из мета ключей (по умолчанию Standard).
+Количество — целые лоты (`quantity_lots` × `lot_size` = штуки). Комиссия: T-Invest — ставка `ICommissionRateProvider` (ДОЛЯ суммы; фонды УК брокера `PolicyOptions.OwnFunds` — 0), Freedom — `FreedomFeeModel` по тарифу из мета ключей (по умолчанию Standard).
+**Единая валюта комиссий и резерва:** `est_amount`/`est_fee`/`est_tax` строки — ВСЕГДА в валюте цены строки (`PlanFeeModel.Estimate` переводит USD-комиссию Freedom в валюту цены делением на `FxToPortfolio`); итоги
+`summary_json` (`buyTotal`, `feeTotal`, `reservedBuy`, `cashAfter`) — в валюте портфеля. Резерв денег (`SumReservedBuysAsync`) суммирует `summary.reservedBuy` (покупки + комиссия в валюте портфеля), а не сырые строки.
+Санити-проверка стакана (`LinePricer`): бумага пропускается при ask < bid, спреде > `MaxSpreadFraction` (2%, облигации `MaxBondSpreadFraction` 3%) или |mid − last|/last > `MaxLastDeviationFraction` (5%, если last известна).
 
 **Лимиты авто-подтверждения — из конфигурации, не из БД:** `ExecutionLimitsOptions` (`ExecutionLimits__AutoPerOrderRub` 25 000, `AutoPerDayRub` 50 000, `FreedomAutoUsd` 0). `AutoApproved` — только покупки, заявка ≤ лимита
 заявки, Σ плана + уже авто-подтверждённое за московские сутки ≤ лимита дня; корзина должна иметь `auto_buy`; на Freedom авто выключено (P7 всегда `PendingApproval`). Планы P2 с облигационной частью, P3b, P4, P5,
-выход из корзины и ВСЕ ручные планы — всегда `PendingApproval`. `PendingApproval` живёт `PolicyOptions.PendingTtl` (30 мин), но не дольше закрытия сессии рынка строк; просроченные переводит в `Expired` начало прогона.
+выход из корзины и ВСЕ ручные планы — всегда `PendingApproval`. `PendingApproval` и `AutoApproved` живут `PolicyOptions.PendingTtl` (30 мин), но не дольше закрытия сессии рынка строк; просроченные переводит в `Expired`
+начало прогона (у AutoApproved в сводке «не исполнен»). `AutoApproved` можно отменить тем же `POST /api/plans/{id}/reject`. Суточный лимит из БД считает только `Submitting`/`Done`: в dry-run AutoApproved не исполняется, поэтому в день не входит;
+внутри одного цикла `PolicyRunner.CarryForward` наращивает счётчик по только что сохранённым AutoApproved (иначе два авто-плана подряд обошли бы 50k/день). P1 не паркует кэш в «ликвидность» в состоянии Above/HardAbove.
 
 **Прогон (`PolicyRunner`).** Порядок: P2 по НОВЫМ пополнениям T-Invest (окно `DepositLookback` 3 суток, один план на пополнение навсегда; если плана нет — пополнение не «съедено», повтор в следующем цикле) → P1 (остаток
 свободных денег паркуется в «ликвидность» ПОСЛЕ P2, иначе P1 увёл бы всё пополнение) → P7 → P3b (в `LiquidityCheckDay`, по умолчанию понедельник МСК, при состоянии Above/HardAbove и весе > 0.20) → P4 (не при открытом P3b).
-Деньги созданных планов резервируются для следующих правил и циклов (`SumReservedBuysAsync`; Approved dry-run деньги НЕ резервирует). Дубликат не создаётся при открытом плане того же `rule` + `trigger` и в паузу
+Деньги созданных планов резервируются для следующих правил и циклов (`SumReservedBuysAsync`; Approved dry-run деньги НЕ резервирует). P3b/P4 проверяют дубликат ДО сбора облигационных данных. Дубликат не создаётся при открытом плане того же `rule` + `trigger` и в паузу
 `RepeatCooldown` (6 ч) после любого плана с тем же `rule` + `trigger` (иначе без исполнителя каждый цикл рождал бы новый). Вне часов торгов автоматические правила плана не строят; ручные запросы и `preview`
 игнорируют часы, но помечают итоги `pricesPossiblyStale`.
 
 **Кандидаты-облигации (P2/P3b/P4).** Отбор как у `source=recommended` (гигиена, не флоатер, ликвидность не Caution), но светофор — только Green; ранг — доходность к худшему после налога
 (`CandidateYieldRanking`), стакан и метаданные брокера запрашиваются только у верхушки пула (`BondCandidatePool` 25; недостающие метаданные — `TradingMetaRefresher.EnsureTInvestAsync`). Покупка — тот же
 `CashAllocationService.Allocate` (ось сектора, 1 лот на бумагу), но с РЕАЛЬНЫМ лотом и ценой по стакану (существующие вызовы `AllocationEndpoints` не менялись). P3b: after-tax доходность облигации ≥ after-tax ожидаемая доходность фонда
-ликвидности (`FundOutlookService`, взвешено по стоимости) + премия; лимит эмитента — `user_settings.default_max_concentration_percent` от стоимости облигаций; нет подходящих — плана нет («замены нет»).
+ликвидности (`FundOutlookService`, взвешено по стоимости) + премия; лимит эмитента — `user_settings.default_max_concentration_percent` от стоимости облигаций (учитывает и бумаги того же эмитента, набранные ранее в этом же плане); облигации с нерублёвым номиналом в автоподбор не попадают (пропуск с причиной); нет подходящих — плана нет («замены нет»).
 
 **Налог продаж (P5, P3b, P4, выход).** `SaleTaxEstimator` по СРЕДНЕЙ цене входа (журнал без FIFO-лотов — расхождение с фактом брокера возможно), плоские 13%, без сальдирования и ЛДВ; журнал неполон — оценка сверху 13% с выручки и
 предупреждение. P5: сначала свободные деньги, затем тиры 0→1→2 (hold и tier ≥ 3 — только по `includeBaskets`), внутри тира — по возрастанию ставки налога (налог ÷ выручка, убыточные первыми); сумма — «к выводу после налога и комиссии»; Freedom — предупреждение о

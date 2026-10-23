@@ -17,7 +17,7 @@ public sealed class PolicyRunResult
 }
 
 /// <summary>
-/// Шаг <c>SyncCycleService</c> ПОСЛЕ синка всех брокеров (задача 63). Для каждого пользователя: просроченные <c>PendingApproval</c> → <c>Expired</c>, затем правила
+/// Шаг <c>SyncCycleService</c> ПОСЛЕ синка всех брокеров (задача 63). Для каждого пользователя: просроченные <c>PendingApproval</c> и <c>AutoApproved</c> → <c>Expired</c>, затем правила
 /// P2 (по НОВЫМ пополнениям), P1, P7, P3b (в день недели из опций, по умолчанию понедельник), P4. Порядок P2 до P1 намеренный: пополнение сначала делится по
 /// дефициту корзин, и только оставшиеся свободные деньги паркует P1 (иначе P1 увёл бы всё в «ликвидность»). Дубликат не создаётся, если открыт план того же
 /// правила и причины; деньги уже созданных планов резервируются для следующих правил. Сбой одного пользователя/правила пишется в лог и не прерывает остальных.
@@ -114,20 +114,36 @@ public sealed class PolicyRunner
 
         if (inputs.TryGetValue(CapitalPortfolios.Rub, out var rubWeekly))
         {
+            // Дубликат проверяем ДО сбора облигационных данных (кандидаты, стаканы, метаданные брокера — дорого): открытый план или пауза повтора — выходим сразу.
             var isCheckDay = TradingHours.ToMoscow(nowUtc).DayOfWeek == _options.LiquidityCheckDay;
             if (isCheckDay && LiquidityLooksOverfilled(rubWeekly))
             {
-                var withBonds = await _builder.WithBondDataAsync(userId, rubWeekly, ct);
-                var outcome = LiquidityToBondsRule.Evaluate(withBonds);
-                inputs[CapitalPortfolios.Rub] = await ApplyAsync(userId, outcome, nowUtc, rubWeekly, result, dedupe: true);
+                if (await IsDuplicateAsync(userId, PlanRules.P3bLiqToBonds, LiquidityToBondsRule.TriggerFor(nowUtc), nowUtc))
+                {
+                    result.Notes.Add($"{PlanRules.P3bLiqToBonds}: план с той же причиной уже есть (открытый или созданный недавно) — данные по облигациям не собирались");
+                }
+                else
+                {
+                    var withBonds = await _builder.WithBondDataAsync(userId, rubWeekly, ct);
+                    var outcome = LiquidityToBondsRule.Evaluate(withBonds);
+                    inputs[CapitalPortfolios.Rub] = await ApplyAsync(userId, outcome, nowUtc, rubWeekly, result, dedupe: true);
+                }
             }
 
             // P4 не дублирует P3b: пока открыт перелив ликвидности, продажа той же корзины ребалансом не предлагается.
-            if (!await _plans.HasOpenRuleAsync(userId, PlanRules.P3bLiqToBonds, nowUtc) && HasHardDeviation(inputs[CapitalPortfolios.Rub]))
+            if (RebalanceRule.TriggerFor(inputs[CapitalPortfolios.Rub]) is { } p4Trigger
+                && !await _plans.HasOpenRuleAsync(userId, PlanRules.P3bLiqToBonds, nowUtc))
             {
-                var withBonds = await _builder.WithBondDataAsync(userId, inputs[CapitalPortfolios.Rub], ct);
-                var outcome = RebalanceRule.Evaluate(withBonds);
-                inputs[CapitalPortfolios.Rub] = await ApplyAsync(userId, outcome, nowUtc, inputs[CapitalPortfolios.Rub], result, dedupe: true);
+                if (await IsDuplicateAsync(userId, PlanRules.P4Rebalance, p4Trigger, nowUtc))
+                {
+                    result.Notes.Add($"{PlanRules.P4Rebalance}: план с той же причиной уже есть (открытый или созданный недавно) — данные по облигациям не собирались");
+                }
+                else
+                {
+                    var withBonds = await _builder.WithBondDataAsync(userId, inputs[CapitalPortfolios.Rub], ct);
+                    var outcome = RebalanceRule.Evaluate(withBonds);
+                    inputs[CapitalPortfolios.Rub] = await ApplyAsync(userId, outcome, nowUtc, inputs[CapitalPortfolios.Rub], result, dedupe: true);
+                }
             }
         }
 
@@ -158,7 +174,12 @@ public sealed class PolicyRunner
             .ToList();
     }
 
-    /// <summary>Сохраняет план (если он есть и не дублирует открытый) и возвращает вход с учётом зарезервированных планом денег.</summary>
+    /// <summary>Есть ли открытый план того же правила и причины либо созданный в паузу повтора (<see cref="PolicyOptions.RepeatCooldown"/>) в любом статусе.</summary>
+    private async Task<bool> IsDuplicateAsync(ulong userId, string rule, string trigger, DateTime nowUtc) =>
+        await _plans.ExistsAsync(userId, rule, trigger, openOnly: true, nowUtc)
+        || await _plans.ExistsAsync(userId, rule, trigger, openOnly: false, nowUtc, createdSince: nowUtc - _options.RepeatCooldown);
+
+    /// <summary>Сохраняет план (если он есть и не дублирует открытый) и возвращает вход с учётом зарезервированных планом денег и авто-лимита дня.</summary>
     private async Task<PolicyInput> ApplyAsync(
         ulong userId, PolicyOutcome outcome, DateTime nowUtc, PolicyInput input, PolicyRunResult result, bool dedupe)
     {
@@ -167,9 +188,7 @@ public sealed class PolicyRunner
 
         var draft = outcome.Plan;
         if (draft is null) return input;
-        if (dedupe
-            && (await _plans.ExistsAsync(userId, draft.Rule, draft.Trigger, openOnly: true, nowUtc)
-                || await _plans.ExistsAsync(userId, draft.Rule, draft.Trigger, openOnly: false, nowUtc, createdSince: nowUtc - _options.RepeatCooldown)))
+        if (dedupe && await IsDuplicateAsync(userId, draft.Rule, draft.Trigger, nowUtc))
         {
             result.Notes.Add($"{draft.Rule}: план с той же причиной уже есть (открытый или созданный недавно) — дубликат не создан");
             return input;
@@ -177,8 +196,25 @@ public sealed class PolicyRunner
 
         var plan = await _service.SaveAsync(userId, draft, nowUtc, forcePending: false);
         result.CreatedPlanIds.Add(plan.Id);
+        return CarryForward(input, draft, plan.Status);
+    }
 
-        var spent = draft.Summary.BuyTotal + draft.Lines.Where(l => l.Side == PlanSides.Buy).Sum(l => l.EstFee);
-        return input with { FreeCash = Math.Max(0m, input.FreeCash - spent), ReservedCash = input.ReservedCash + spent };
+    /// <summary>
+    /// Вход для СЛЕДУЮЩЕГО правила того же цикла после сохранения плана: деньги плана резервируются (<see cref="TradePlanSummary.ReservedBuy"/> — покупки + комиссия в
+    /// валюте портфеля) и, если план сохранён как <c>AutoApproved</c>, суточный счётчик <see cref="PolicyInput.AutoApprovedTodayRub"/> растёт на Σ покупок в RUB.
+    /// Иначе (AutoApproved в dry-run в суточную сумму из БД не входит) два авто-плана одного цикла по 40k обошли бы лимит 50k/день.
+    /// </summary>
+    internal static PolicyInput CarryForward(PolicyInput input, TradePlanDraft draft, string savedStatus)
+    {
+        var spent = draft.Summary.ReservedBuy;
+        var autoRub = savedStatus == PlanStatuses.AutoApproved
+            ? draft.Lines.Where(l => l.Side == PlanSides.Buy && string.Equals(l.Currency, "RUB", StringComparison.OrdinalIgnoreCase)).Sum(l => l.EstAmount)
+            : 0m;
+        return input with
+        {
+            FreeCash = Math.Max(0m, input.FreeCash - spent),
+            ReservedCash = input.ReservedCash + spent,
+            AutoApprovedTodayRub = input.AutoApprovedTodayRub + autoRub,
+        };
     }
 }
