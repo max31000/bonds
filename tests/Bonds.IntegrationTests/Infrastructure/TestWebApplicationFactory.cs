@@ -93,6 +93,11 @@ public class TestWebApplicationFactory : WebApplicationFactory<Program>, IAsyncL
                 .ReturnsAsync(TInvestTokenValidationResult.Valid("TEST-BROKER-ACCOUNT-1234"));
             services.AddScoped(_ => defaultValidator.Object);
 
+            // Telegram-бот (задача 64): сети нет — клиент заменён записывающим двойником (общий singleton на фабрику).
+            services.RemoveAll<Bonds.Infrastructure.Telegram.ITelegramBotClient>();
+            services.AddSingleton<FakeTelegramBotClient>();
+            services.AddSingleton<Bonds.Infrastructure.Telegram.ITelegramBotClient>(sp => sp.GetRequiredService<FakeTelegramBotClient>());
+
             Mvv42TestAuth.UseTestSigningKey(services);
             services.RemoveAll<IOwnerAccess>();
             services.AddSingleton<IOwnerAccess, AnyTelegramIdIsOwner>();

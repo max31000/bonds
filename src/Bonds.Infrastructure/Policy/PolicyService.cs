@@ -2,6 +2,7 @@ using System.Text.Json;
 using Bonds.Core.Capital;
 using Bonds.Core.Interfaces.Repositories;
 using Bonds.Core.Policy;
+using Bonds.Core.Telegram;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -90,6 +91,7 @@ public sealed class PolicyService
             ExpiresAt = draft.ExpiresAtUtc,
             DecidedAt = auto ? nowUtc : null,
             DecidedVia = auto ? DecidedVia.Auto : null,
+            BotNonce = BotCallback.NewNonce(),
             SummaryJson = JsonSerializer.Serialize(draft.Summary, JsonOptions),
             Lines = draft.Lines.ToList(),
         };

@@ -54,6 +54,13 @@ public class UserSettings
     /// </summary>
     public decimal? PriceDrawdownThresholdFraction { get; set; }
 
+    /// <summary>
+    /// Пауза (команда <c>/stop</c> в Telegram, задача 64; миграция 034). true — <c>PolicyRunner</c> не создаёт <c>AutoApproved</c>-планы (только <c>PendingApproval</c>),
+    /// а в фазе 3 исполнитель не отправляет ничего. Меняется ТОЛЬКО через <see cref="Bonds.Core.Interfaces.Repositories.IUserSettingsRepository.SetExecutionPausedAsync"/>,
+    /// <c>UpsertAsync</c> это поле не трогает.
+    /// </summary>
+    public bool ExecutionPaused { get; set; }
+
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
 }
