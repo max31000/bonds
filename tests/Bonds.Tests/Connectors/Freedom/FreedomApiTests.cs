@@ -23,13 +23,18 @@ public class FreedomApiTests
         private readonly Func<HttpRequestMessage, HttpResponseMessage> _respond;
         public List<HttpRequestMessage> Requests { get; } = [];
         public List<string> Bodies { get; } = [];
+        public List<byte[]> RawBodies { get; } = [];
+        public List<string?> ContentTypes { get; } = [];
 
         public FakeHandler(Func<HttpRequestMessage, HttpResponseMessage> respond) => _respond = respond;
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             Requests.Add(request);
-            Bodies.Add(request.Content is null ? "" : await request.Content.ReadAsStringAsync(cancellationToken));
+            var raw = request.Content is null ? [] : await request.Content.ReadAsByteArrayAsync(cancellationToken);
+            RawBodies.Add(raw);
+            ContentTypes.Add(request.Content?.Headers.ContentType?.ToString());
+            Bodies.Add(Encoding.UTF8.GetString(raw));
             return _respond(request);
         }
     }
@@ -87,11 +92,18 @@ public class FreedomApiTests
         var req = handler.Requests.Single();
         req.Method.Should().Be(HttpMethod.Post);
         req.RequestUri!.AbsolutePath.Should().Be("/api/getStockQuotesJson");
-        handler.Bodies.Single().Should().Be("{\"tickers\":\"VUAA.EU,SPYM.US\"}");
-        req.Content!.Headers.ContentType!.MediaType.Should().Be("application/json");
+        const string expectedBody = "{\"tickers\":\"VUAA.EU,SPYM.US\"}";
+        var expectedBytes = Encoding.UTF8.GetBytes(expectedBody);
+        handler.RawBodies.Single().Should().Equal(expectedBytes); // ровно UTF-8 без BOM (EF BB BF)
+        handler.RawBodies.Single().Take(3).Should().NotEqual(new byte[] { 0xEF, 0xBB, 0xBF });
+        handler.ContentTypes.Single().Should().Be("application/json"); // без charset-суффикса
         req.Headers.GetValues("X-NtApi-PublicKey").Single().Should().Be(Pub);
         req.Headers.GetValues("X-NtApi-Timestamp").Single().Should().Be("1700000000");
-        req.Headers.GetValues("X-NtApi-Sig").Single().Should().Be(FreedomRequestSigner.Sign(Priv, handler.Bodies.Single(), 1700000000));
+        req.Headers.GetValues("X-NtApi-Sig").Single().Should().Be(FreedomRequestSigner.Sign(Priv, expectedBody, 1700000000));
+        // подпись = HMAC-SHA256 ровно по отправленным байтам + timestamp
+        using var hmac = new System.Security.Cryptography.HMACSHA256(Encoding.UTF8.GetBytes(Priv));
+        var signed = hmac.ComputeHash(handler.RawBodies.Single().Concat(Encoding.UTF8.GetBytes("1700000000")).ToArray());
+        req.Headers.GetValues("X-NtApi-Sig").Single().Should().Be(Convert.ToHexString(signed).ToLowerInvariant());
     }
 
     [Fact]
@@ -217,6 +229,75 @@ public class FreedomApiTests
     [InlineData("{}")]
     public void ParseTrades_EmptyHistoryShapes_ReturnEmpty(string json) =>
         FreedomParser.ParseTrades(JsonDocument.Parse(json).RootElement).Should().BeEmpty();
+
+    [Fact]
+    public void ParseTrades_TypeMapping_UnknownIsSkipped()
+    {
+        var json = """
+            {"trades":{"trade":[
+              {"id":"1","type":"1","q":"1","p":"2","summ":"2"},
+              {"id":"2","type":"2","q":"1","p":"2","summ":"2"},
+              {"id":"3","type":"7","q":"1","p":"2","summ":"2"},
+              {"id":"4","q":"1","p":"2","summ":"2"}]}}
+            """;
+
+        var trades = FreedomParser.ParseTrades(JsonDocument.Parse(json).RootElement);
+
+        trades.Select(t => (t.Id, t.Side)).Should().Equal(("1", FreedomTradeSide.Buy), ("2", FreedomTradeSide.Sell));
+    }
+
+    [Fact]
+    public void ParseTrades_UnknownType_LogsWarning()
+    {
+        var logger = new Mock<Microsoft.Extensions.Logging.ILogger>();
+        logger.Setup(l => l.IsEnabled(It.IsAny<Microsoft.Extensions.Logging.LogLevel>())).Returns(true);
+
+        FreedomParser.ParseTrades(JsonDocument.Parse("{\"trades\":{\"trade\":{\"id\":\"9\",\"type\":\"5\"}}}").RootElement, logger.Object)
+            .Should().BeEmpty();
+
+        logger.Verify(l => l.Log(Microsoft.Extensions.Logging.LogLevel.Warning, It.IsAny<Microsoft.Extensions.Logging.EventId>(),
+            It.IsAny<It.IsAnyType>(), null, It.IsAny<Func<It.IsAnyType, Exception?, string>>()), Times.Once);
+    }
+
+    [Fact]
+    public void ParsePortfolio_SingleObjects_AreOneItemRegardlessOfId()
+    {
+        var json = """
+            {"result":{"ps":{"acc":{"curr":"USD","s":"5.5"},"pos":{"i":"LUV.US","name":"SW","q":3,"curr":"USD","bal_price_a":1,"mkt_price":2,"market_value":6}}}}
+            """;
+
+        var p = FreedomParser.ParsePortfolio(JsonDocument.Parse(json).RootElement);
+
+        p.Cash.Should().Equal(new FreedomCashBalance("USD", 5.5m));
+        p.Positions.Single().Should().Be(new FreedomPosition("LUV.US", "SW", 3m, "USD", 1m, 2m, 6m));
+    }
+
+    [Theory]
+    [InlineData("{\"result\":{\"ps\":{\"acc\":{},\"pos\":{\"@text\":\"\"}}}}")]
+    [InlineData("{\"result\":{\"ps\":{\"acc\":[],\"pos\":\"\"}}}")]
+    public void ParsePortfolio_EmptyShapes_AreEmpty(string json)
+    {
+        var p = FreedomParser.ParsePortfolio(JsonDocument.Parse(json).RootElement);
+        p.Cash.Should().BeEmpty();
+        p.Positions.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ParseQuotesAndFound_SingleObject_IsOneItem()
+    {
+        FreedomParser.ParseQuotes(JsonDocument.Parse("{\"q\":{\"c\":\"A.US\",\"ltp\":1.5}}").RootElement)
+            .Single().Ticker.Should().Be("A.US");
+        FreedomParser.ParseFound(JsonDocument.Parse("{\"found\":{\"t\":\"B.US\",\"nm\":\"B\"}}").RootElement)
+            .Single().Ticker.Should().Be("B.US");
+    }
+
+    [Fact]
+    public async Task OverflowInResponse_IsWrappedWithoutSecrets()
+    {
+        var (client, _) = Create(_ => Json("{\"q\":[{\"c\":\"A.US\",\"ltp\":1e999}]}"));
+        var ex = await Assert.ThrowsAsync<FreedomApiException>(() => client.GetQuotesAsync(Creds, ["A.US"]));
+        ex.Message.Should().NotContain(Priv).And.NotContain(Pub);
+    }
 
     [Fact]
     public void ParseCashFlows_Fixture_SignedAmountsAndCommissionComment()

@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
 using Bonds.Infrastructure.Connectors.Freedom.Models;
 
 namespace Bonds.Infrastructure.Connectors.Freedom;
@@ -79,24 +80,41 @@ public static class FreedomParser
     }
 
     /// <summary>Пустая история приходит не массивом (пустой объект/строка/отсутствует) — это пустой список, не ошибка.</summary>
-    public static IReadOnlyList<FreedomTrade> ParseTrades(JsonElement root)
+    public static IReadOnlyList<FreedomTrade> ParseTrades(JsonElement root, ILogger? logger = null)
     {
         var trades = Obj(root, "trades");
         if (trades is null) return [];
-        return Items(trades.Value, "trade")
-            .Select(t => new FreedomTrade(
+        var result = new List<FreedomTrade>();
+        foreach (var t in Items(trades.Value, "trade"))
+        {
+            // type: "1" = покупка, "2" = продажа; всё остальное пропускаем, а не угадываем сторону.
+            var side = Str(t, "type") switch
+            {
+                "1" => FreedomTradeSide.Buy,
+                "2" => FreedomTradeSide.Sell,
+                _ => (FreedomTradeSide?)null,
+            };
+            if (side is null)
+            {
+                logger?.LogWarning("Freedom: сделка {TradeId} пропущена — неизвестный type {Type}", Str(t, "id"), Str(t, "type"));
+                continue;
+            }
+
+            result.Add(new FreedomTrade(
                 Str(t, "id") ?? string.Empty,
                 Str(t, "order_id") ?? string.Empty,
                 Date(t, "date"),
                 Str(t, "instr_nm") ?? string.Empty,
-                Str(t, "type") == "2" ? FreedomTradeSide.Sell : FreedomTradeSide.Buy,
+                side.Value,
                 Dec(t, "q") ?? 0m,
                 Dec(t, "p") ?? 0m,
                 Dec(t, "summ") ?? 0m,
                 Str(t, "curr_c") ?? string.Empty,
                 Dec(t, "commission") ?? 0m,
-                Str(t, "commission_currency") ?? string.Empty))
-            .ToList();
+                Str(t, "commission_currency") ?? string.Empty));
+        }
+
+        return result;
     }
 
     public static IReadOnlyList<FreedomCashFlow> ParseCashFlows(JsonElement root) =>
@@ -128,10 +146,13 @@ public static class FreedomParser
         return e.ValueKind switch
         {
             JsonValueKind.Array => e.EnumerateArray().Where(x => x.ValueKind == JsonValueKind.Object).ToList(),
-            JsonValueKind.Object when e.EnumerateObject().Any() && e.TryGetProperty("id", out _) => [e],
+            JsonValueKind.Object when IsRealItem(e) => [e],
             _ => [],
         };
     }
+
+    /// <summary>Объект — настоящий элемент, если в нём есть свойства, кроме XML-обёртки <c>@text</c> (пустой объект/обёртка = «нет данных»).</summary>
+    private static bool IsRealItem(JsonElement e) => e.EnumerateObject().Any(p => p.Name != "@text");
 
     private static string? Str(JsonElement o, string name)
     {

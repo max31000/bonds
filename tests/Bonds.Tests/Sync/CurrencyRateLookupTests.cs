@@ -8,9 +8,20 @@ using Xunit;
 namespace Bonds.Tests.Sync;
 
 /// <summary>
+/// Изолирует тесты, трогающие статический <c>CurrencyRateRefresher.EmptyAttemptedOn</c>: конструктор RefresherTests делает Clear(),
+/// что в параллельном прогоне стирало ключ, выставленный Lookup-тестом (гонка → NoHistoryYet вместо OutsideHistory).
+/// </summary>
+[CollectionDefinition(Name, DisableParallelization = true)]
+public sealed class CurrencyRateStaticCollection
+{
+    public const string Name = "CurrencyRateRefresher static state";
+}
+
+/// <summary>
 /// Причина промаха курса. Регрессия 2026-10: у EUR на MOEX CETS сделок нет с 2024 (CLOSE = 0) — история не заполнится никогда, а
 /// классификация «истории ещё нет, самолечится» навсегда держала JournalSynced = false и блокировала бэкфилл истории стоимости.
 /// </summary>
+[Collection(CurrencyRateStaticCollection.Name)]
 public class CurrencyRateLookupTests
 {
     private readonly Mock<ICurrencyRepository> _currencies = new();

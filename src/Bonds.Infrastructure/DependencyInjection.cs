@@ -1,3 +1,4 @@
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Bonds.Core.Interfaces;
 using Bonds.Core.Interfaces.Repositories;
 using Bonds.Core.Signals;
@@ -138,7 +139,7 @@ public static class DependencyInjection
             client.BaseAddress = new Uri(o.BaseUrl);
             client.Timeout = TimeSpan.FromSeconds(o.TimeoutSeconds);
         });
-        services.AddSingleton(TimeProvider.System);
+        services.TryAddSingleton(TimeProvider.System);
         services.AddScoped<Bonds.Infrastructure.Connectors.Freedom.IFreedomApiClient, Bonds.Infrastructure.Connectors.Freedom.FreedomApiClient>();
 
         // Telegram Bot API — алерт владельцу при падении автосинка. Тот же бот,

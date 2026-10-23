@@ -52,7 +52,7 @@ public sealed class FreedomApiClient : IFreedomApiClient
             new("endDate", to.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)),
             new("max", 1000),
         };
-        return Parse("getTradesHistory", await SendAsync(credentials, "getTradesHistory", p, ct), FreedomParser.ParseTrades);
+        return Parse("getTradesHistory", await SendAsync(credentials, "getTradesHistory", p, ct), r => FreedomParser.ParseTrades(r, _logger));
     }
 
     public async Task<IReadOnlyList<FreedomCashFlow>> GetCashFlowsAsync(FreedomCredentials credentials, int take, CancellationToken ct = default)
@@ -76,7 +76,7 @@ public sealed class FreedomApiClient : IFreedomApiClient
             {
                 return parser(response.Doc.RootElement);
             }
-            catch (Exception ex) when (ex is FormatException or InvalidOperationException or KeyNotFoundException)
+            catch (Exception ex) when (ex is FormatException or InvalidOperationException or KeyNotFoundException or OverflowException or JsonException)
             {
                 throw new FreedomApiException(cmd, "неожиданный формат ответа", ex);
             }
