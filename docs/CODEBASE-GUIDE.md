@@ -42,6 +42,9 @@ MySQL для интеграционных), vitest + Testing Library + MSW.
 | `OperationItem.Quantity` / `QuantityRest` / `QuantityDone` | вход | `Quantity` — количество в ЗАЯВКЕ (у частично исполненной заявки больше факта, статус всё равно Executed) → в журнал пишется ИСПОЛНЕННОЕ: `QuantityDone` → `Quantity − QuantityRest` → `Quantity` (`TInvestPortfolioClient.ExecutedQuantity`). Баг 2026-10: «продажа 16 ОФЗ» на 3 020 ₽ (исполнено 3) обнуляла пул журнала до погашения |
 | MOEX ISS history бумаги с валютным номиналом (`IsOutOfScopeCurrency`) | вход | % номинала × `FaceValue` — в **валюте номинала** → рубли по курсу дня (`ICurrencyRateLookup`) в бэкфилле истории; `ACCINT` — в валюте расчётов РЕЖИМА (`CURRENCYID`: TQCB `SUR` — уже рубли, TQOD `USD` — × курс, `MoexHistoryPricePoint.AccruedIsRub`); нет курса — точка пропускается |
 | `accounts.cash_rub` (`TotalAmountCurrencies`) | БД | все валюты брокера **в рублях — ВКЛЮЧАЯ валютные позиции**: валюту нельзя прибавлять к нему (двойной счёт), только выделять: `cashRubOnly = max(0, cashRub − currencyValueRub)` |
+| Freedom (Tradernet API v3): `getPositionJson` `bal_price_a`/`mkt_price`/`market_value` | вход | **в ВАЛЮТЕ БУМАГИ** (`curr` позиции), не рубли; `acc[].s` — остаток в своей валюте. Поле `currval` (₽ за единицу валюты) у брокера бывает УСТАРЕВШИМ — **не использовать**, оценка только по курсам bonds (`FreedomParser` его не читает) |
+| Freedom `getUserCashFlows` `sumRaw`, `getTradesHistory` `p`/`q`/`summ`/`commission` | вход | числа приходят **строками** (InvariantCulture); `sumRaw` — в своей `currency` СО ЗНАКОМ (+ приход / − расход); комиссия сделки — в `commission_currency`, может отличаться от валюты сделки |
+| `FreedomFeeModel` (`Bonds.Core/Fees`): ставки | константы | **ДОЛИ** (0.005 = 0.5%); суммы — USD; Python-эталон `tn/fees.py` хранит ПРОЦЕНТЫ — конверсия ÷100 уже сделана в таблице |
 | `MarketQuote.CleanPrice/DirtyPrice/Accrued`, `intraday_quotes.dirty_price_rub` | БД | всегда рубли за бумагу (контракт в doc-comment модели) |
 | `Position.Accrued` | БД | НКД на ОДНУ бумагу (не на позицию) |
 | Знак `Operation.AmountRub` | БД | как отдал брокер — НЕ переписывать (см. `PortfolioXirrService.SignedAmount`) |
@@ -245,6 +248,19 @@ AccruedNow = Realized + Unrealized + NetCouponIncome + Taxes + Fees`. **`operati
 никогда (только маска `last4`). Легаси-исключение: `tinvest_read` хранит ГОЛУЮ строку токена с purpose
 `Bonds.TInvestToken.v1` (ciphertext скопирован из `user_settings` миграцией). Фронт: `useCredentialsStore`
 (+ `capabilities`, грузятся в `ServiceLayout`), секция `CredentialsSection` на странице настроек.
+
+### Freedom-коннектор (задача 59)
+
+`Bonds.Infrastructure/Connectors/Freedom`: `IFreedomApiClient` (только чтение; торговля — фаза 3) для Tradernet API v3.
+Клиент без состояния — `FreedomCredentials(PublicKey, PrivateKey)` приходит в каждый вызов (ключи из
+`IUserCredentialStore`, провайдер `freedom`). Запрос `POST {BaseUrl}/api/{cmd}`, тело — компактный JSON, подпись
+`X-NtApi-Sig = hex(HMAC-SHA256(privateKey, body + timestamp))` (`FreedomRequestSigner`, время — `TimeProvider`).
+Ошибка брокера (не-2xx, `errMsg`/`error`) → `FreedomApiException` без ключей. Тариф сравнивать по **id**
+(1430 Investor, 1431 Standard): имя в API бывает коротким. Тикеры `*.ITS` для этого типа счёта только котировочные
+(торговля отклоняется), торговать нужно `*.US` — маршрут на ITS выбирает брокер. Комиссии — `FreedomFeeModel`
+(`max(pct·сумма + perOrder + perUnit·qty, min)`, perOrder один раз на заявку). Секрет в реестре: `publicKey`
+(источник маски) + `privateKey`; валидатор делает `GetAllUserTexInfo` и кладёт в meta `accountNumber/tariffId/tariffName`.
+Синк в БД — задача 60.
 
 ## Тесты
 
