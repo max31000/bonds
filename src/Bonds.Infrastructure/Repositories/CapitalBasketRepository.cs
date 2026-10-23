@@ -63,7 +63,11 @@ public class CapitalBasketRepository : ICapitalBasketRepository
             using var tx = await conn.BeginTransactionAsync();
             try
             {
-                var existing = await conn.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM baskets WHERE user_id = @UserId", new { UserId = userId }, tx);
+                // Сериализация первых запросов одного пользователя: блокировка строки users держится до конца транзакции,
+                // поэтому второй посев ждёт коммита первого. COUNT — блокирующее чтение (FOR UPDATE), оно видит последние
+                // закоммиченные строки, а не снимок REPEATABLE READ: иначе ретрай не замечал чужой посев (флейк CI 2026-10-23).
+                await conn.ExecuteScalarAsync<ulong?>("SELECT id FROM users WHERE id = @UserId FOR UPDATE", new { UserId = userId }, tx);
+                var existing = await conn.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM baskets WHERE user_id = @UserId FOR UPDATE", new { UserId = userId }, tx);
                 if (existing > 0)
                 {
                     await tx.RollbackAsync();
