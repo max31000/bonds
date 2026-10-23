@@ -66,10 +66,38 @@ describe('Capital — страница «Капитал» (задача 62)', ()
     renderCapital();
     expect(await screen.findByTestId('capital-portfolio-usd')).toBeInTheDocument();
     expect(screen.getByTestId('capital-total-usd')).toHaveTextContent(/1\s674\s*USD/);
-    expect(screen.getByTestId('basket-state-global_core')).toHaveTextContent('Сильно выше цели');
+    expect(screen.getByTestId('basket-state-global_core')).toHaveTextContent('Ниже цели');
+  });
+
+  it('база доли ≤ 0: корзина с целью показывает «нет данных», без отклонения и дефицита', async () => {
+    const noData: BasketsResponse = {
+      ...baseBaskets,
+      portfolios: [
+        rubPortfolio,
+        {
+          ...usdPortfolio,
+          baskets: usdPortfolio.baskets.map((b) => ({ ...b, value: 0, weight: 0, drift: null, state: 'noData' as const, deficitToTarget: null })),
+        },
+      ],
+    };
+    server.use(http.get('*/api/baskets', () => HttpResponse.json(noData)));
+    useCredentialsStore.setState({ capabilities: capsFreedomOn });
+    renderCapital();
+
+    expect(await screen.findByTestId('basket-state-global_core')).toHaveTextContent('Нет данных');
+    expect(screen.getByTestId('basket-drift-global_core')).toHaveTextContent('нет данных');
+    expect(screen.getByTestId('basket-deficit-global_core')).toHaveTextContent('нет данных');
   });
 
   it('предупреждает, когда цели портфеля не сходятся к 100% (usd: 60%)', async () => {
+    const badUsd: BasketsResponse = {
+      ...baseBaskets,
+      portfolios: [
+        rubPortfolio,
+        { ...usdPortfolio, targetsSum: 0.6, baskets: usdPortfolio.baskets.map((b) => ({ ...b, targetWeight: 0.6, target: 0.6 })) },
+      ],
+    };
+    server.use(http.get('*/api/baskets', () => HttpResponse.json(badUsd)));
     useCredentialsStore.setState({ capabilities: capsFreedomOn });
     renderCapital();
 

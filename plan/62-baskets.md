@@ -69,7 +69,7 @@
 
    | Корзина | Цель | Тир | Правило | Состав / флаги |
    |---|---|---|---|---|
-   | `global_core` | 0.6 | 1 | fixed | VUAA.EU 0.8, SPYM.US 0.2; правило доливки — задача 63 |
+   | `global_core` | 1.0 (решение владельца: satellites/frozen вне целей, Σ=1) | 1 | fixed | VUAA.EU 0.8, SPYM.US 0.2; правило доливки — задача 63 |
    | `satellites` | null | 2 | hold | LUV, UFO, ROBO, SJPA, LGQM, OTGLY |
    | `frozen` | null | 3 | hold | FNMA, FMCC |
 

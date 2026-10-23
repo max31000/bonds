@@ -32,11 +32,12 @@ function deficitText(deficit: number | null, currency: string): string {
 /** Корзина или системная строка: цель, факт, отклонение, полоса с допуском, состав. Только показ (редактирование — `BasketTargetsForm`). */
 export function BasketCard({ basket, currency }: { basket: CapitalBasket; currency: string }) {
   const noTarget = basket.target === null;
+  const noData = basket.state === 'noData'; // у корзины есть цель, но база доли портфеля ≤ 0 — отклонение не считается
   const actual = noTarget ? basket.shareOfTotal : basket.weight;
 
   return (
     <Stack gap="xs" p="md" className="bonds-basket-card" data-testid={`basket-${basket.code}`}>
-      <Group justify="space-between" wrap="nowrap" gap="xs">
+      <Group justify="space-between" wrap="wrap" gap="xs">
         <Group gap="xs" wrap="wrap">
           <Text fw={600}>{basket.title}</Text>
           <Text size="xs" c="dimmed">
@@ -52,12 +53,12 @@ export function BasketCard({ basket, currency }: { basket: CapitalBasket; curren
         <Figure label="Цель" value={formatWeight(basket.target)} testId={`basket-target-${basket.code}`} />
         <Figure
           label={noTarget ? 'Доля портфеля' : 'Факт'}
-          value={formatWeight(actual)}
+          value={noData ? 'нет данных' : formatWeight(actual)}
           testId={`basket-weight-${basket.code}`}
         />
-        <Figure label="Отклонение" value={formatDrift(basket.drift)} testId={`basket-drift-${basket.code}`} />
+        <Figure label="Отклонение" value={noData ? 'нет данных' : formatDrift(basket.drift)} testId={`basket-drift-${basket.code}`} />
         <Figure label="Стоимость" value={formatPortfolioMoney(basket.value, currency)} />
-        <Figure label="До цели" value={deficitText(basket.deficitToTarget, currency)} testId={`basket-deficit-${basket.code}`} />
+        <Figure label="До цели" value={noData ? 'нет данных' : deficitText(basket.deficitToTarget, currency)} testId={`basket-deficit-${basket.code}`} />
       </SimpleGrid>
 
       {(!basket.isSystem || basket.code !== 'cash') && <BasketBar basket={basket} />}
@@ -70,7 +71,7 @@ export function BasketCard({ basket, currency }: { basket: CapitalBasket; curren
       {basket.members.length > 0 && (
         <Stack gap={2} data-testid={`basket-members-${basket.code}`}>
           {basket.members.map((m) => (
-            <Group key={m.id} justify="space-between" gap="xs" wrap="nowrap">
+            <Group key={m.id} justify="space-between" gap="xs" wrap="wrap">
               <Text size="sm">
                 {m.matchRule === 'asset_class' ? `все бумаги класса «${m.instrumentKey}»` : m.instrumentKey}
               </Text>
@@ -86,7 +87,7 @@ export function BasketCard({ basket, currency }: { basket: CapitalBasket; curren
       {basket.members.length === 0 && basket.positions.length > 0 && (
         <Stack gap={2} data-testid={`basket-positions-${basket.code}`}>
           {basket.positions.map((p) => (
-            <Group key={`${p.broker}-${p.key}`} justify="space-between" gap="xs" wrap="nowrap">
+            <Group key={`${p.broker}-${p.key}`} justify="space-between" gap="xs" wrap="wrap">
               <Text size="sm">{p.name || p.key}</Text>
               <Text size="xs" c="dimmed">
                 {formatPortfolioMoney(p.value, currency)}

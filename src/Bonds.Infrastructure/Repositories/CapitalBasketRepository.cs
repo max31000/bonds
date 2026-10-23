@@ -46,39 +46,57 @@ public class CapitalBasketRepository : ICapitalBasketRepository
         return baskets;
     }
 
+    private const int SeedMaxAttempts = 3;
+
+    /// <summary>
+    /// Ошибка гонки первого посева: параллельный запрос уже вставил корзины (UNIQUE user_id+code) либо InnoDB выбрал нас жертвой взаимной
+    /// блокировки двух конкурирующих INSERT. В обоих случаях транзакция откатывается и состояние перечитывается.
+    /// </summary>
+    public static bool IsSeedRaceError(MySqlErrorCode code) => code is MySqlErrorCode.DuplicateKeyEntry or MySqlErrorCode.LockDeadlock;
+
     public async Task<bool> SeedIfEmptyAsync(ulong userId, IReadOnlyList<CapitalBasket> defaults)
     {
-        using var conn = CreateConnection();
-        await conn.OpenAsync();
-        using var tx = await conn.BeginTransactionAsync();
-        try
+        for (var attempt = 1; ; attempt++)
         {
-            var existing = await conn.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM baskets WHERE user_id = @UserId", new { UserId = userId }, tx);
-            if (existing > 0)
+            using var conn = CreateConnection();
+            await conn.OpenAsync();
+            using var tx = await conn.BeginTransactionAsync();
+            try
             {
-                await tx.RollbackAsync();
-                return false;
-            }
+                var existing = await conn.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM baskets WHERE user_id = @UserId", new { UserId = userId }, tx);
+                if (existing > 0)
+                {
+                    await tx.RollbackAsync();
+                    return false;
+                }
 
-            foreach (var basket in defaults) await InsertBasketAsync(conn, tx, userId, basket);
-            await tx.CommitAsync();
-            return true;
-        }
-        catch (MySqlException ex) when (ex.ErrorCode == MySqlErrorCode.DuplicateKeyEntry)
-        {
-            // Параллельный первый запрос уже посеял корзины (UNIQUE user_id+code) — нам ничего делать не нужно.
-            await tx.RollbackAsync();
-            return false;
+                foreach (var basket in defaults) await InsertBasketAsync(conn, tx, userId, basket);
+                await tx.CommitAsync();
+                return true;
+            }
+            catch (MySqlException ex) when (IsSeedRaceError(ex.ErrorCode))
+            {
+                // Параллельный первый запрос уже посеял (или сеет) корзины. Откат и повторное чтение: увидим чужой посев — вернём false.
+                await tx.RollbackAsync();
+                if (attempt >= SeedMaxAttempts) throw;
+            }
         }
     }
 
-    public async Task ReplacePortfolioAsync(ulong userId, string portfolio, IReadOnlyList<CapitalBasket> defaults)
+    public Task ReplacePortfolioAsync(ulong userId, string portfolio, IReadOnlyList<CapitalBasket> defaults) =>
+        ReplacePortfoliosAsync(userId, new Dictionary<string, IReadOnlyList<CapitalBasket>> { [portfolio] = defaults });
+
+    public async Task ReplacePortfoliosAsync(ulong userId, IReadOnlyDictionary<string, IReadOnlyList<CapitalBasket>> defaultsByPortfolio)
     {
         using var conn = CreateConnection();
         await conn.OpenAsync();
         using var tx = await conn.BeginTransactionAsync();
-        await conn.ExecuteAsync("DELETE FROM baskets WHERE user_id = @UserId AND portfolio = @Portfolio", new { UserId = userId, Portfolio = portfolio }, tx);
-        foreach (var basket in defaults) await InsertBasketAsync(conn, tx, userId, basket);
+        foreach (var (portfolio, defaults) in defaultsByPortfolio)
+        {
+            await conn.ExecuteAsync("DELETE FROM baskets WHERE user_id = @UserId AND portfolio = @Portfolio", new { UserId = userId, Portfolio = portfolio }, tx);
+            foreach (var basket in defaults) await InsertBasketAsync(conn, tx, userId, basket);
+        }
+
         await tx.CommitAsync();
     }
 

@@ -104,6 +104,20 @@ public class CapitalBasketEndpointTests
         (await new CapitalBasketRepository(Conn).GetByUserAsync(userId)).Should().HaveCount(7);
     }
 
+    [Fact]
+    public async Task SeedIfEmpty_RepeatedAndConcurrent_SeedsOnceAndReturnsFalseForLosers()
+    {
+        var (_, userId) = await NewUserAsync();
+        var repo = new CapitalBasketRepository(Conn);
+        var defaults = Bonds.Core.Capital.DefaultBaskets.All(userId);
+
+        var results = await Task.WhenAll(Enumerable.Range(0, 6).Select(_ => repo.SeedIfEmptyAsync(userId, defaults)));
+
+        results.Count(r => r).Should().Be(1, "посев выполняет ровно один вызов; остальные (дубль ключа/дедлок) откатываются и перечитывают");
+        (await repo.GetByUserAsync(userId)).Should().HaveCount(7);
+        (await repo.SeedIfEmptyAsync(userId, defaults)).Should().BeFalse();
+    }
+
     // --- отклонения ---
 
     [Fact]
@@ -192,6 +206,28 @@ public class CapitalBasketEndpointTests
         Basket(usd, "global_core").GetProperty("value").GetDecimal().Should().Be(1000m);
         Basket(usd, "satellites").GetProperty("value").GetDecimal().Should().Be(612.5m, "LUV → LUV.US, ROBO → ROBO.EU");
         Basket(usd, "global_core").GetProperty("weight").GetDecimal().Should().BeApproximately(1000m / 1061.25m, 0.000001m);
+        Basket(usd, "global_core").GetProperty("target").GetDecimal().Should().Be(1m);
+        Basket(usd, "global_core").GetProperty("drift").GetDecimal().Should().BeApproximately(1000m / 1061.25m - 1m, 0.000001m);
+        usd.GetProperty("targetsSum").GetDecimal().Should().Be(1m, "стартовые цели usd: ядро 1.0, остальные вне целей");
+
+        // Голый член «LUV» получает значение и фактическую долю так же, как при назначении позиций (LUV → LUV.US).
+        var luv = Basket(usd, "satellites").GetProperty("members").EnumerateArray().Single(m => m.GetProperty("instrumentKey").GetString() == "LUV");
+        luv.GetProperty("value").GetDecimal().Should().Be(500m);
+        luv.GetProperty("actualSubShare").GetDecimal().Should().BeApproximately(500m / 612.5m, 0.000001m);
+    }
+
+    [Fact]
+    public async Task Get_UsdPortfolio_NoPositions_TargetBasketIsNoData()
+    {
+        var (client, userId) = await NewUserAsync();
+        await new AccountRepository(Conn).CreateAsync(
+            new Account { UserId = userId, Broker = BrokerIds.Freedom, BrokerAccountId = "F-" + Guid.NewGuid().ToString("N")[..8], Name = "Freedom" });
+
+        var core = Basket(Portfolio(await GetAsync(client), "usd"), "global_core");
+
+        core.GetProperty("state").GetString().Should().Be("noData");
+        core.GetProperty("drift").ValueKind.Should().Be(JsonValueKind.Null);
+        core.GetProperty("deficitToTarget").ValueKind.Should().Be(JsonValueKind.Null);
     }
 
     // --- редактирование и валидация ---
@@ -246,15 +282,32 @@ public class CapitalBasketEndpointTests
     }
 
     [Fact]
-    public async Task Put_FlagsOnly_DoesNotRequireTargetsToSumToOne_EvenWhenStartingUsdTargetsDoNot()
+    public async Task Put_FlagsOnly_DoesNotRecheckTargetsSum()
     {
         var (client, _) = await NewUserAsync();
-        var (id, _) = await FindAsync(client, "usd", "global_core"); // стартовая цель usd 0.6, Σ = 0.6
+        var (id, _) = await FindAsync(client, "usd", "global_core"); // стартовая цель usd 1.0, Σ = 1
 
-        var response = await client.PutAsJsonAsync($"/api/baskets/{id}", UpdateBody("Глобальное ядро", 0.6m, autoBuy: true));
+        var response = await client.PutAsJsonAsync($"/api/baskets/{id}", UpdateBody("Глобальное ядро", 1.0m, autoBuy: true));
 
         response.StatusCode.Should().Be(HttpStatusCode.OK, "цель не менялась — сумма не проверяется");
         Basket(Portfolio(await response.Content.ReadFromJsonAsync<JsonElement>(), "usd"), "global_core").GetProperty("autoBuy").GetBoolean().Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Put_UsdPortfolio_EditBand_Succeeds_AndChangingTargetAwayFromOneIs422()
+    {
+        var (client, _) = await NewUserAsync();
+        var (id, _) = await FindAsync(client, "usd", "global_core");
+
+        var ok = await client.PutAsJsonAsync($"/api/baskets/{id}", UpdateBody("Глобальное ядро", 1.0m, band: 0.03m, hard: 0.08m));
+        ok.StatusCode.Should().Be(HttpStatusCode.OK);
+        var core = Basket(Portfolio(await ok.Content.ReadFromJsonAsync<JsonElement>(), "usd"), "global_core");
+        core.GetProperty("band").GetDecimal().Should().Be(0.03m);
+        core.GetProperty("hardBand").GetDecimal().Should().Be(0.08m);
+
+        // единственная корзина с целью: 0.5 даёт Σ = 0.5 ≠ 1
+        (await client.PutAsJsonAsync($"/api/baskets/{id}", UpdateBody("Глобальное ядро", 0.5m))).StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
+        Basket(Portfolio(await GetAsync(client), "usd"), "global_core").GetProperty("targetWeight").GetDecimal().Should().Be(1.0m);
     }
 
     [Theory]
@@ -315,6 +368,19 @@ public class CapitalBasketEndpointTests
             .StatusCode.Should().Be(HttpStatusCode.Created);
     }
 
+    [Theory]
+    [InlineData("rub", "tinvest", "temporary", "TMON")]      // TMON@ уже в liquidity
+    [InlineData("usd", "freedom", "frozen", "UFO.US")]       // голый «UFO» уже в satellites
+    public async Task Members_BareKeyConflictsWithSuffixedForm_Returns422(string portfolio, string broker, string basketCode, string key)
+    {
+        var (client, _) = await NewUserAsync();
+        var (id, _) = await FindAsync(client, portfolio, basketCode);
+
+        var response = await client.PostAsJsonAsync($"/api/baskets/{id}/members", new { broker, instrumentKey = key });
+
+        response.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
+    }
+
     [Fact]
     public async Task Members_ForeignUsersBasket_Returns404()
     {
@@ -343,7 +409,7 @@ public class CapitalBasketEndpointTests
             },
         });
         var (core, _) = await FindAsync(client, "usd", "global_core");
-        await client.PutAsJsonAsync($"/api/baskets/{core}", UpdateBody("Моё ядро", 0.6m));
+        await client.PutAsJsonAsync($"/api/baskets/{core}", UpdateBody("Моё ядро", 1.0m));
 
         var reset = await client.PostAsync("/api/baskets/reset-defaults?portfolio=rub", null);
 

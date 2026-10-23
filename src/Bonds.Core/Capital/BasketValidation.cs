@@ -68,7 +68,21 @@ public static partial class BasketValidation
         return null;
     }
 
-    /// <summary>Ключ члена для проверки уникальности «один член — одна корзина портфеля».</summary>
+    /// <summary>
+    /// Члены конфликтуют (одна бумага в двух корзинах), если тот же брокер и: оба — правило класса с одним классом, либо оба — инструменты,
+    /// чьи ключи совпадают с учётом <see cref="BasketDriftService.KeyMatches"/> в любую сторону (голый «LUV» конфликтует с «LUV.US», «TMON»
+    /// — с «TMON@»), т. к. при назначении голый ключ подхватывает суффиксные формы.
+    /// </summary>
+    public static bool MembersConflict(CapitalBasketMember a, CapitalBasketMember b)
+    {
+        if (!string.Equals(a.Broker, b.Broker, StringComparison.OrdinalIgnoreCase) || a.MatchRule != b.MatchRule) return false;
+        if (a.MatchRule == BasketMatchRules.AssetClass)
+            return string.Equals(a.InstrumentKey.Trim(), b.InstrumentKey.Trim(), StringComparison.OrdinalIgnoreCase);
+        return BasketDriftService.KeyMatches(a.InstrumentKey, BasketDriftService.NormalizeKey(b.InstrumentKey))
+            || BasketDriftService.KeyMatches(b.InstrumentKey, BasketDriftService.NormalizeKey(a.InstrumentKey));
+    }
+
+    /// <summary>Ключ члена для проверки точного дубля внутри одной корзины.</summary>
     public static string MemberIdentity(CapitalBasketMember m) =>
         m.MatchRule == BasketMatchRules.AssetClass
             ? $"{m.Broker}|class|{m.InstrumentKey.Trim().ToLowerInvariant()}"

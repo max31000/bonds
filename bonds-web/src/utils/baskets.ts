@@ -42,6 +42,7 @@ export const BASKET_STATE_LABEL: Record<BasketState, string> = {
   hardBelow: 'Сильно ниже цели',
   hardAbove: 'Сильно выше цели',
   noTarget: 'Вне целей',
+  noData: 'Нет данных',
 };
 
 export const BASKET_STATE_COLOR: Record<BasketState, string> = {
@@ -51,6 +52,7 @@ export const BASKET_STATE_COLOR: Record<BasketState, string> = {
   hardBelow: 'red',
   hardAbove: 'red',
   noTarget: 'gray',
+  noData: 'gray',
 };
 
 /** Сумма целей сходится к 100% (допуск 0.0001 — как на бэкенде). Нет целей вовсе — проверять нечего. */

@@ -376,7 +376,8 @@
 .bonds-basket-bar__fill--hardAbove {
   background: var(--mvv-danger);
 }
-.bonds-basket-bar__fill--noTarget {
+.bonds-basket-bar__fill--noTarget,
+.bonds-basket-bar__fill--noData {
   background: var(--mvv-text-3);
 }
 .bonds-basket-bar__target {

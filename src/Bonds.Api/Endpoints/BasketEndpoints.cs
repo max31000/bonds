@@ -131,9 +131,8 @@ public static class BasketEndpoints
         if (BasketValidation.ValidateMember(basket.Portfolio, member) is { } error) return AnalyticsSupport.ValidationError(error);
 
         // Инвариант «позиция ровно в одной корзине»: одна бумага (и одно правило класса) — член не более чем одной корзины портфеля.
-        var identity = BasketValidation.MemberIdentity(member);
         var owner = all.Where(b => b.Portfolio == basket.Portfolio)
-            .FirstOrDefault(b => b.Members.Any(m => BasketValidation.MemberIdentity(m) == identity));
+            .FirstOrDefault(b => b.Members.Any(m => BasketValidation.MembersConflict(m, member)));
         if (owner is not null)
             return AnalyticsSupport.ValidationError($"«{member.InstrumentKey}» уже входит в корзину «{owner.Title}» — одна бумага состоит ровно в одной корзине.");
 
@@ -168,8 +167,9 @@ public static class BasketEndpoints
 
         // Если корзин нет вовсе — это и есть первый посев; иначе заменяем выбранные портфели.
         await builder.EnsureSeededAsync(userId);
-        foreach (var p in portfolio is null ? CapitalPortfolios.All : [portfolio])
-            await repo.ReplacePortfolioAsync(userId, p, DefaultBaskets.For(userId, p));
+        // Оба портфеля — одной транзакцией: сбой посередине не оставит один портфель сброшенным, а другой нет.
+        var targets = (portfolio is null ? CapitalPortfolios.All : [portfolio]).ToDictionary(p => p, p => DefaultBaskets.For(userId, p));
+        await repo.ReplacePortfoliosAsync(userId, targets);
 
         return Results.Ok(await BuildResponseAsync(builder, userId, ct));
     }
@@ -199,9 +199,9 @@ public static class BasketEndpoints
             decimal? value = null;
             if (m.MatchRule == BasketMatchRules.Instrument)
             {
-                var key = BasketDriftService.NormalizeKey(m.InstrumentKey);
+                // Тот же критерий, что при назначении позиций в BasketDriftService.Assign: голый «LUV» видит «LUV.US».
                 var held = row.Positions.Where(p => string.Equals(p.Broker, m.Broker, StringComparison.OrdinalIgnoreCase)
-                                                    && BasketDriftService.NormalizeKey(p.Key) == key).ToList();
+                                                    && BasketDriftService.KeyMatches(m.InstrumentKey, BasketDriftService.NormalizeKey(p.Key))).ToList();
                 if (held.Count > 0) value = held.Sum(p => p.Value);
             }
 

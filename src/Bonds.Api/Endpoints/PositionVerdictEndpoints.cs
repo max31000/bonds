@@ -169,7 +169,6 @@ public static class PositionVerdictEndpoints
 
         var issuerKey = holding.Issuer ?? PortfolioCompositionService.UnknownIssuerLabel;
         issuerValueRub.TryGetValue(issuerKey, out var issuerValue);
-        var limitPercent = defaultConcentrationLimitPercent;
 
         var verdict = PositionVerdictService.Evaluate(new PositionVerdictInput
         {
@@ -181,7 +180,7 @@ public static class PositionVerdictEndpoints
             BestReplacement = best?.Option,
             // Проценты с обеих сторон (SharePercent-контракт): лимит — проценты, доля после докупки — проценты.
             IssuerSharePercentAfterBuy = PositionVerdictService.ConcentrationAfterBuyPercent(issuerValue, portfolioValueRub),
-            ConcentrationLimitPercent = limitPercent,
+            ConcentrationLimitPercent = defaultConcentrationLimitPercent,
         });
 
         return new PositionVerdictDto

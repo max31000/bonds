@@ -37,6 +37,43 @@ public class BasketValidationTests
         usd.Select(BasketValidation.ValidateFields).Should().AllSatisfy(e => e.Should().BeNull());
     }
 
+    [Fact]
+    public void DefaultUsdBaskets_TargetsSumToOne_OnlyCoreHasTarget()
+    {
+        var usd = DefaultBaskets.For(1, CapitalPortfolios.Usd);
+
+        usd.Single(b => b.Code == "global_core").TargetWeight.Should().Be(1.0m);
+        usd.Where(b => b.Code != "global_core").Should().OnlyContain(b => b.TargetWeight == null);
+        BasketValidation.ValidateTargetsSum("usd", usd).Should().BeNull();
+    }
+
+    [Theory]
+    [InlineData("freedom", "LUV", "freedom", "LUV.US", true)]
+    [InlineData("freedom", "LUV.US", "freedom", "LUV", true)]
+    [InlineData("freedom", "LUV.US", "freedom", "LUV.US", true)]
+    [InlineData("freedom", "LUV.US", "freedom", "LUV.EU", false)]
+    [InlineData("freedom", "LUV", "freedom", "LUVX.US", false)]
+    [InlineData("tinvest", "TMON", "tinvest", "TMON@", true)]
+    [InlineData("tinvest", "TMON@", "tinvest", "tmon", true)]
+    [InlineData("tinvest", "TMON", "freedom", "TMON", false)]
+    public void MembersConflict_BareKeyAndSuffixedFormsConflict(string brokerA, string keyA, string brokerB, string keyB, bool conflict)
+    {
+        var a = new CapitalBasketMember { Broker = brokerA, InstrumentKey = keyA };
+        var b = new CapitalBasketMember { Broker = brokerB, InstrumentKey = keyB };
+
+        BasketValidation.MembersConflict(a, b).Should().Be(conflict);
+        BasketValidation.MembersConflict(b, a).Should().Be(conflict);
+    }
+
+    [Fact]
+    public void MembersConflict_AssetClass_SameClassOnly()
+    {
+        CapitalBasketMember C(string k) => new() { Broker = "tinvest", InstrumentKey = k, MatchRule = BasketMatchRules.AssetClass };
+
+        BasketValidation.MembersConflict(C("bond"), C("BOND")).Should().BeTrue();
+        BasketValidation.MembersConflict(C("bond"), C("fund")).Should().BeFalse();
+    }
+
     [Theory]
     [InlineData(0.15, 0.85, true)]
     [InlineData(0.15, 0.8501, true)]    // в допуске 0.0001

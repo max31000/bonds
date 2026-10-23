@@ -20,6 +20,9 @@ public enum BasketState
 
     /// <summary>У корзины нет цели (<c>target_weight = null</c>): отклонение не считается.</summary>
     NoTarget,
+
+    /// <summary>У корзины есть цель, но база доли портфеля ≤ 0 (нет данных/пустой портфель): отклонение и дефицит не считаются.</summary>
+    NoData,
 }
 
 /// <summary>
@@ -144,11 +147,11 @@ public static class BasketDriftService
     public static string NormalizeKey(string key) => key.Trim().ToUpperInvariant().TrimEnd('@');
 
     /// <summary>
-    /// Ключ члена совпадает с ключом позиции (<paramref name="positionKey"/> уже нормализован): точно, либо — если у члена нет суффикса биржи
+    /// Ключ члена совпадает с ключом позиции (<paramref name="positionKey"/> уже НОРМАЛИЗОВАН <see cref="NormalizeKey"/>): точно, либо — если у члена нет суффикса биржи
     /// (нет «.») — по базовому тикеру Freedom: член «LUV» подхватывает «LUV.US», а «VUAA.EU» — только «VUAA.EU». Облигации (ISIN) и тикеры
     /// фондов T-Invest точек не содержат и сравниваются точно.
     /// </summary>
-    private static bool KeyMatches(string memberKey, string positionKey)
+    public static bool KeyMatches(string memberKey, string positionKey)
     {
         var m = NormalizeKey(memberKey);
         return m == positionKey || (!m.Contains('.') && positionKey.StartsWith(m + ".", StringComparison.Ordinal));
@@ -162,9 +165,11 @@ public static class BasketDriftService
     {
         var value = members.Sum(p => p.Value);
         var weight = Ratio(value, baseValue);
-        decimal? drift = target is { } t ? weight - t : null;
-        decimal? deficit = target is { } t2 ? t2 * baseValue - value : null;
-        return new BasketDriftRow(id, code, title, isSystem, value, weight, Ratio(value, total), target, drift, StateOf(drift, band, hardBand), deficit, members);
+        var noData = target is not null && baseValue <= 0m; // доля от нулевой/отрицательной базы бессмысленна — не рисуем «недобор»
+        decimal? drift = target is { } t && !noData ? weight - t : null;
+        decimal? deficit = target is { } t2 && !noData ? t2 * baseValue - value : null;
+        var state = noData ? BasketState.NoData : StateOf(drift, band, hardBand);
+        return new BasketDriftRow(id, code, title, isSystem, value, weight, Ratio(value, total), target, drift, state, deficit, members);
     }
 
     /// <summary>Состояние по полосам: граница включена в «ближнюю» зону (|drift| = band — ещё Ok, |drift| = hardBand — ещё не Hard).</summary>

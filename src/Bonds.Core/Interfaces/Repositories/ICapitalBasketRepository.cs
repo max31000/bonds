@@ -17,6 +17,9 @@ public interface ICapitalBasketRepository
     /// <summary>Заменяет корзины портфеля стартовыми (удаляет прежние вместе с членами) — «сброс к умолчаниям».</summary>
     Task ReplacePortfolioAsync(ulong userId, string portfolio, IReadOnlyList<CapitalBasket> defaults);
 
+    /// <summary>То же для нескольких портфелей (portfolio → стартовые корзины) ОДНОЙ транзакцией: либо сброшены все, либо ни один.</summary>
+    Task ReplacePortfoliosAsync(ulong userId, IReadOnlyDictionary<string, IReadOnlyList<CapitalBasket>> defaultsByPortfolio);
+
     /// <summary>
     /// Обновляет редактируемые поля (title, target, band, hard_band, tier, fill_rule, auto_buy/sell, min_trade) нескольких корзин ОДНОЙ транзакцией.
     /// code/portfolio/sort_order не меняются. Чужие id игнорируются.

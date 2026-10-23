@@ -8,7 +8,8 @@ namespace Bonds.Core.Capital;
 /// цели стартовые, пользователь правит их в UI. Все веса — ДОЛИ.
 /// <para>
 /// Допущения (план не задаёт): полосы там, где не указаны, band 0.05 / hard 0.10; <c>ru_equity</c> — band 0.02, hard 0.05;
-/// цели usd-портфеля: у <c>global_core</c> 0.6 по плану, остальные без цели → Σ целей usd = 0.6 ≠ 1 (см. <see cref="BasketValidation"/>).
+/// цели usd-портфеля (решение владельца): у <c>global_core</c> 1.0, а <c>satellites</c>/<c>frozen</c> без цели (вне базы доли), поэтому
+/// Σ целей usd = 1 и <see cref="BasketValidation.ValidateTargetsSum"/> проходит.
 /// </para>
 /// </summary>
 public static class DefaultBaskets
@@ -38,7 +39,7 @@ public static class DefaultBaskets
 
     private static List<CapitalBasket> Usd(ulong userId) =>
     [
-        Basket(userId, CapitalPortfolios.Usd, "global_core", "Глобальное ядро", 0.6m, DefaultBand, DefaultHardBand, 1, BasketFillRules.Fixed, 110,
+        Basket(userId, CapitalPortfolios.Usd, "global_core", "Глобальное ядро", 1.0m, DefaultBand, DefaultHardBand, 1, BasketFillRules.Fixed, 110,
             autoBuy: false, autoSell: false,
             Member(BrokerIds.Freedom, "VUAA.EU", 0.8m), Member(BrokerIds.Freedom, "SPYM.US", 0.2m)),
         Basket(userId, CapitalPortfolios.Usd, "satellites", "Спутники", null, DefaultBand, DefaultHardBand, 2, BasketFillRules.Hold, 120,

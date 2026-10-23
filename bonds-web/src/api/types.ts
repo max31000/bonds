@@ -1950,7 +1950,7 @@ export interface CashOverviewResponse {
 
 export type CapitalPortfolioId = 'rub' | 'usd';
 
-export type BasketState = 'ok' | 'below' | 'above' | 'hardBelow' | 'hardAbove' | 'noTarget';
+export type BasketState = 'ok' | 'below' | 'above' | 'hardBelow' | 'hardAbove' | 'noTarget' | 'noData';
 
 export type BasketFillRule = 'fixed' | 'engine' | 'hold';
 

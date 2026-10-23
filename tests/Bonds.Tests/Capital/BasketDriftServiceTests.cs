@@ -224,8 +224,9 @@ public class BasketDriftServiceTests
         result.TotalValue.Should().Be(0m);
         var row = result.Rows.Single(r => r.Code == "liquidity");
         row.Weight.Should().Be(0m);
-        row.Drift.Should().Be(-0.15m);
-        row.DeficitToTarget.Should().Be(0m);
+        row.State.Should().Be(BasketState.NoData, "база доли 0 — отклонение не считается");
+        row.Drift.Should().BeNull();
+        row.DeficitToTarget.Should().BeNull();
     }
 
     [Fact]
@@ -234,5 +235,32 @@ public class BasketDriftServiceTests
         var result = BasketDriftService.Calculate([Basket("a", 1m, members: Inst("X"))], [Pos("X", "fund", 5m)], 0m);
 
         result.Rows.Select(r => r.Code).Should().BeEquivalentTo("a", SystemBaskets.Cash);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-5)]
+    public void NonPositiveBase_TargetBasketsAreNoData_NoDriftNoDeficit(int baseDelta)
+    {
+        // Вся стоимость — в корзине без цели: база доли = 0 (или меньше при отрицательной стоимости позиции).
+        var baskets = new[] { Basket("liquidity", 0.15m, 0.02m, 0.05m, 0, Inst("TMON@")), Basket("temporary", null, 0.02m, 0.05m, 1, Inst("TPAY")) };
+        var positions = new[] { Pos("TPAY", "fund", 100m), Pos("TMON@", "fund", baseDelta) };
+
+        var result = BasketDriftService.Calculate(baskets, positions, 0m);
+
+        var liquidity = result.Rows.Single(r => r.Code == "liquidity");
+        liquidity.State.Should().Be(BasketState.NoData);
+        liquidity.Target.Should().Be(0.15m);
+        liquidity.Drift.Should().BeNull();
+        liquidity.DeficitToTarget.Should().BeNull();
+        result.Rows.Single(r => r.Code == "temporary").State.Should().Be(BasketState.NoTarget);
+    }
+
+    [Fact]
+    public void EmptyPortfolio_TargetBasketsAreNoData()
+    {
+        var result = BasketDriftService.Calculate([Basket("liquidity", 1m, 0.02m, 0.05m, 0, Inst("TMON@"))], [], 0m);
+
+        result.Rows.Single(r => r.Code == "liquidity").State.Should().Be(BasketState.NoData);
     }
 }
