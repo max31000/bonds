@@ -138,6 +138,10 @@ public class UserCredentialStoreTests
             Rows.Remove((userId, provider));
             return Task.CompletedTask;
         }
+
+        public Task<IReadOnlyList<ulong>> ListUserIdsAsync(string provider, string status) =>
+            Task.FromResult<IReadOnlyList<ulong>>(
+                Rows.Values.Where(r => r.Provider == provider && r.Status == status).Select(r => r.UserId).OrderBy(x => x).ToList());
     }
 
     private sealed class FakeSettingsRepo : IUserSettingsRepository

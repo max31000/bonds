@@ -158,14 +158,38 @@ public static partial class FundsEndpoints
         FundOverviewBuilder overview,
         IncomeLedgerBuilder incomeBuilder,
         CurrencyOverviewBuilder currencyOverview,
+        BrokerHoldingsBuilder brokerHoldings,
         ILogger<Program> logger,
         CancellationToken ct)
     {
+        var asOf = BusinessClock.MoscowToday();
+
+        // Другие брокеры (Freedom, задача 60): не входят в totalRub (его смысл - T-Invest), идут отдельным полем и в capitalTotalRub.
+        // Сбой оценки - только лог: сводка T-Invest не должна падать из-за вторичного счёта.
+        decimal otherBrokers = 0m;
+        var otherBrokersIncomplete = false;
+        if (await currentUser.GetUserIdAsync() is { } userId)
+        {
+            try
+            {
+                (otherBrokers, otherBrokersIncomplete) = await brokerHoldings.GetOtherBrokersValueAsync(userId, asOf, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                logger.LogWarning(ex, "Portfolio summary: other brokers valuation failed — returned without it");
+                otherBrokersIncomplete = true;
+            }
+        }
+
         var accountId = await PositionsEndpoints.ResolveAccountIdAsync(currentUser, accountRepo);
         if (accountId is null)
-            return Results.Ok(new PortfolioSummaryDto { BondsValueRub = 0m, FundsValueRub = 0m, TotalRub = 0m, Disclaimer = FundsDisclaimer });
+            return Results.Ok(new PortfolioSummaryDto
+            {
+                BondsValueRub = 0m, FundsValueRub = 0m, TotalRub = 0m,
+                OtherBrokersValueRub = otherBrokers, OtherBrokersDataIncomplete = otherBrokersIncomplete, CapitalTotalRub = otherBrokers,
+                Disclaimer = FundsDisclaimer,
+            });
 
-        var asOf = BusinessClock.MoscowToday();
         var account = await accountRepo.GetByIdAsync(accountId.Value);
         var bonds = await overview.GetBondsValueRubAsync(accountId.Value, asOf, ct);
         var (funds, fundsIncomplete) = await overview.GetFundsValueAsync(accountId.Value, ct);
@@ -197,6 +221,9 @@ public static partial class FundsEndpoints
             CashRubOnly = account?.CashRub is { } cash ? CashBreakdown.CashRubOnly(cash, currencyValue) : null,
             CurrencyDataIncomplete = currencyIncomplete,
             TotalRub = total,
+            OtherBrokersValueRub = otherBrokers,
+            OtherBrokersDataIncomplete = otherBrokersIncomplete,
+            CapitalTotalRub = total + otherBrokers,
             BrokerTotalRub = account?.BrokerTotalRub,
             BrokerDiffRub = account?.BrokerTotalRub is { } broker ? broker - total : null,
             BalanceSyncedAt = account?.BalanceSyncedAt,

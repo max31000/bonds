@@ -10,7 +10,10 @@ public class Account
     public ulong Id { get; set; }
     public ulong UserId { get; set; }
 
-    /// <summary>Идентификатор счёта в T-Invest (account_id из брокерского API).</summary>
+    /// <summary>Брокер счёта (<see cref="Brokers"/>), по умолчанию T-Invest. Основной счёт продукта — только <c>tinvest</c> (задача 60).</summary>
+    public string Broker { get; set; } = Brokers.TInvest;
+
+    /// <summary>Идентификатор счёта у брокера (T-Invest: account_id; Freedom: номер счёта <c>trader_systems_id</c>).</summary>
     public string? BrokerAccountId { get; set; }
 
     public string Name { get; set; } = "Основной счёт";

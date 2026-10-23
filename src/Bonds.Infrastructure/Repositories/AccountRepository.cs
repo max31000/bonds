@@ -15,7 +15,7 @@ public class AccountRepository : IAccountRepository
     private IDbConnection CreateConnection() => new MySqlConnection(_connectionString);
 
     private const string SelectColumns = @"
-        id AS Id, user_id AS UserId, broker_account_id AS BrokerAccountId, name AS Name,
+        id AS Id, user_id AS UserId, broker AS Broker, broker_account_id AS BrokerAccountId, name AS Name,
         cash_rub AS CashRub, broker_total_rub AS BrokerTotalRub, balance_synced_at AS BalanceSyncedAt,
         created_at AS CreatedAt, updated_at AS UpdatedAt";
 
@@ -46,13 +46,14 @@ public class AccountRepository : IAccountRepository
     {
         using var conn = CreateConnection();
         const string sql = @"
-            INSERT INTO accounts (user_id, broker_account_id, name)
-            VALUES (@UserId, @BrokerAccountId, @Name);
+            INSERT INTO accounts (user_id, broker, broker_account_id, name)
+            VALUES (@UserId, @Broker, @BrokerAccountId, @Name);
             SELECT LAST_INSERT_ID();";
 
         return await conn.ExecuteScalarAsync<ulong>(sql, new
         {
             account.UserId,
+            Broker = string.IsNullOrEmpty(account.Broker) ? Brokers.TInvest : account.Broker,
             account.BrokerAccountId,
             account.Name,
         });
@@ -88,6 +89,14 @@ public class AccountRepository : IAccountRepository
     {
         using var conn = CreateConnection();
         return await conn.QueryFirstOrDefaultAsync<ulong?>(
-            "SELECT id FROM accounts ORDER BY id LIMIT 1");
+            "SELECT id FROM accounts WHERE broker = @Broker ORDER BY id LIMIT 1", new { Broker = Brokers.TInvest });
+    }
+
+    public async Task<IReadOnlyList<Account>> GetByUserIdAndBrokerAsync(ulong userId, string broker)
+    {
+        using var conn = CreateConnection();
+        return (await conn.QueryAsync<Account>(
+            $"SELECT {SelectColumns} FROM accounts WHERE user_id = @UserId AND broker = @Broker ORDER BY id",
+            new { UserId = userId, Broker = broker })).ToList();
     }
 }

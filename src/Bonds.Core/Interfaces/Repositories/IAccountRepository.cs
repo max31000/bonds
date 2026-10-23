@@ -23,7 +23,8 @@ public interface IAccountRepository
 
     /// <summary>
     /// Возвращает Id единственного брокерского счёта продукта (single-user, один
-    /// счёт на MVP) — самый старый (по Id) существующий <see cref="Account"/>, без привязки к
+    /// счёт на MVP) — самый старый (по Id) существующий <see cref="Account"/> T-Invest (<c>broker = 'tinvest'</c>: счёт Freedom
+    /// с меньшим Id «основным» стать не может, задача 60), без привязки к
     /// конкретному пользователю/сессии. Используется планировщиком (plan/07
     /// "Single-user продукт... используй тот же способ в Scheduler") и будущим HTTP force-refresh
     ///, которым неоткуда взять AccountId иначе, чем из единственной существующей
@@ -32,4 +33,7 @@ public interface IAccountRepository
     /// должен пропустить цикл без падения, не считать это ошибкой.
     /// </summary>
     Task<ulong?> GetPrimaryAccountIdAsync();
+
+    /// <summary>Счета пользователя у одного брокера (<see cref="Brokers"/>), по возрастанию Id (задача 60).</summary>
+    Task<IReadOnlyList<Account>> GetByUserIdAndBrokerAsync(ulong userId, string broker);
 }
