@@ -142,6 +142,27 @@ export function realizedOf(p: IncomePosition, periodMode: boolean): number {
   return periodMode ? p.periodRealizedPnlRub : p.realizedPnlRub;
 }
 
+const KIND_SHORT: Record<IncomeAssetKind, string> = { bond: 'облигации', fund: 'фонды', currency: 'валюта' };
+
+/**
+ * Разбивка реализованного результата по классам активов для подписи KPI «Прибыль от продаж и погашений»: иначе курсовая
+ * разница по валюте (продажа юаней) выглядит как «доход от погашения облигаций». Null — класс один или сумма строк не сходится
+ * с итогом (часть позиций скрыта фильтром).
+ */
+export function realizedByKindHint(
+  positions: IncomePosition[],
+  periodMode: boolean,
+  total: number,
+  fmt: (n: number | null | undefined) => string,
+): string | null {
+  const byKind = new Map<IncomeAssetKind, number>();
+  for (const p of positions) byKind.set(p.assetKind, (byKind.get(p.assetKind) ?? 0) + realizedOf(p, periodMode));
+  const parts = (['bond', 'fund', 'currency'] as const).filter((k) => Math.abs(byKind.get(k) ?? 0) >= 0.5);
+  const sum = parts.reduce((s, k) => s + (byKind.get(k) ?? 0), 0);
+  if (parts.length < 2 || Math.abs(sum - total) >= 1) return null;
+  return parts.map((k) => `${KIND_SHORT[k]} ${formatSignedRub(byKind.get(k), fmt)}`).join(' · ');
+}
+
 /** Денежный результат за период по позиции (без НКД и бумажной прибыли — они не режутся периодом по позиции). */
 export function periodResultOf(p: IncomePosition): number {
   return p.periodIncomeGrossRub + p.periodRealizedPnlRub + p.periodTaxesRub + p.periodFeesRub;

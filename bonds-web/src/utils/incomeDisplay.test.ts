@@ -1,8 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import { baseIncome, closedBond, fundPosition, openBond } from '../test/incomeFixtures';
-import { buildBreakdown, ledgerKindLabel, parsePeriod, parseShowClosed, periodRange, sortPositions } from './incomeDisplay';
+import { buildBreakdown, ledgerKindLabel, parsePeriod, parseShowClosed, periodRange, realizedByKindHint, sortPositions } from './incomeDisplay';
 
 describe('incomeDisplay', () => {
+  it('realizedByKindHint: курсовая разница валюты видна отдельно от облигаций; один класс или неполный список — null', () => {
+    const fmt = (n: number | null | undefined) => `${n} ₽`;
+    const currency = { ...closedBond, assetKind: 'currency' as const, assetId: 99, realizedPnlRub: 12207 };
+    const fund = { ...fundPosition, realizedPnlRub: -7100 };
+    expect(realizedByKindHint([closedBond, currency, fund], false, 1500 + 12207 - 7100, fmt)).toBe(
+      'облигации +1500 ₽ · фонды -7100 ₽ · валюта +12207 ₽',
+    );
+    expect(realizedByKindHint([closedBond, openBond], false, 1500, fmt)).toBeNull();
+    expect(realizedByKindHint([closedBond, currency], false, 99999, fmt)).toBeNull();
+  });
+
   it('parsePeriod: допустимые значения и откат на «всё время»', () => {
     expect(parsePeriod('ytd')).toBe('ytd');
     expect(parsePeriod('12m')).toBe('12m');

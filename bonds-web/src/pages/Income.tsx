@@ -19,6 +19,7 @@ import {
   periodNetCoupons,
   periodRange,
   positionKey,
+  realizedByKindHint,
   signClass,
   sortPositions,
   type IncomeSortKey,
@@ -121,7 +122,7 @@ function KpiBlock({ data, periodMode }: { data: IncomeResponse; periodMode: bool
         help={INCOME_HELP.realized}
         value={formatSignedRub(realized, formatRub)}
         tone={realized}
-        hint={periodMode ? 'за период' : 'за всё время'}
+        hint={realizedByKindHint(data.positions, periodMode, realized, formatRub) ?? (periodMode ? 'за период' : 'за всё время')}
       />
       <KpiMetric
         testId="income-kpi-unrealized"
