@@ -238,6 +238,52 @@ public sealed class TradingMetaRefresher
     }
 
     /// <summary>
+    /// Задача 63: метаданные T-Invest для облигаций-КАНДИДАТОВ (не в портфеле) по требованию: что уже есть в таблице — отдаётся как есть, недостающие ISIN
+    /// запрашиваются у брокера (не больше <paramref name="maxQueries"/> за вызов, провал помнится в <see cref="MissedUntil"/> как у суточного шага) и сохраняются.
+    /// Ключ результата — ISIN/тикер как передан (регистр не важен). Сбой одного ключа не роняет остальные.
+    /// </summary>
+    public async Task<IReadOnlyDictionary<string, InstrumentTradingMeta>> EnsureTInvestAsync(
+        IReadOnlyCollection<string> keys, DateTime utcNow, int maxQueries, CancellationToken ct = default)
+    {
+        var result = new Dictionary<string, InstrumentTradingMeta>(StringComparer.OrdinalIgnoreCase);
+        if (keys.Count == 0) return result;
+
+        foreach (var m in await _meta.GetByKeysAsync(Brokers.TInvest, keys)) result[m.InstrumentKey] = m;
+
+        var sent = 0;
+        foreach (var key in keys.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            ct.ThrowIfCancellationRequested();
+            if (result.ContainsKey(key) || IsMissed(Brokers.TInvest, key, utcNow) || sent >= maxQueries) continue;
+
+            if (sent > 0 && _options.QueryDelay > TimeSpan.Zero) await Task.Delay(_options.QueryDelay, ct);
+            sent++;
+            try
+            {
+                var listings = await _tInvest.GetInstrumentListingsAsync(key, ct);
+                var picked = TradingListingSelector.Pick(listings.Select(l => new TradingListing(l.ClassCode, l.ApiTradeAvailable)).ToList());
+                var listing = picked is null ? null : listings.First(l => string.Equals(l.ClassCode, picked.ClassCode, StringComparison.OrdinalIgnoreCase));
+                var meta = listing is null ? null : MapTInvest(listing, utcNow);
+                if (meta is null)
+                {
+                    MarkMissed(Brokers.TInvest, key, utcNow);
+                    continue;
+                }
+
+                await _meta.UpsertAsync(meta);
+                result[key] = meta;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogWarning(ex, "Trading meta: on-demand refresh of {Key} failed", key);
+                MarkMissed(Brokers.TInvest, key, utcNow, _options.FailureBackoff);
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>
     /// Листинг T-Invest → запись метаданных. Облигация: шаг брокера в ПУНКТАХ → рубли за бумагу (<see cref="BondPriceStep.PointsToRub"/>,
     /// номинал текущий), сырой шаг — в <see cref="InstrumentTradingMeta.MinPriceIncrementPoints"/>. Фонд: шаг уже в рублях за пай. Номинал не в RUB —
     /// рублёвый шаг null (остаётся шаг в пунктах). Нет номинала у облигации / шаг ≤ 0 / лот ≤ 0 — null (запись с неверным шагом хуже её отсутствия). Ключ — ISIN, иначе тикер.
