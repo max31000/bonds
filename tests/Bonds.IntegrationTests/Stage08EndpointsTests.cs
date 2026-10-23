@@ -109,6 +109,8 @@ public class Stage08EndpointsTests
     [InlineData("GET", "/api/income/bond/1/ledger")]
     [InlineData("GET", "/api/income/currency/1/ledger")]
     [InlineData("GET", "/api/currencies")]
+    [InlineData("GET", "/api/brokers/freedom/holdings")]
+    [InlineData("GET", "/api/brokers/freedom/operations")]
     [InlineData("GET", "/api/funds")]
     [InlineData("GET", "/api/funds/1")]
     [InlineData("PUT", "/api/funds/1/settings")]

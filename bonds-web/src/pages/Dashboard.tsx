@@ -9,7 +9,9 @@ import { fetchXirr, fetchComposition } from '../api/analytics';
 import { fetchCashflow } from '../api/cashflow';
 import { fetchLivePositions } from '../api/live';
 import { fetchFunds, fetchPortfolioSummary } from '../api/funds';
+import { fetchFreedomHoldings } from '../api/brokers';
 import { useLiveStore } from '../store/useLiveStore';
+import { useCredentialsStore } from '../store/useCredentialsStore';
 import { countAttention, useSignalsStore } from '../store/useSignalsStore';
 import { useLiveQuotes } from '../hooks/useLiveQuotes';
 import { useWidgetData } from '../hooks/useWidgetData';
@@ -17,6 +19,7 @@ import { Disclaimer } from '../components/Disclaimer';
 import { PortfolioIntradayChart } from '../components/PortfolioIntradayChart';
 import { CHART_EXPLANATIONS } from '../components/charts';
 import { FUND_DATA_INCOMPLETE } from '../components/fundsCopy';
+import { FREEDOM_DATA_INCOMPLETE } from '../components/freedomCopy';
 import { DIRTY_PRICE_TOOLTIP_TEXT } from '../utils/positionsDisplay';
 import type {
   CompositionSlice,
@@ -27,7 +30,7 @@ import type {
   PortfolioSummary,
   FundsResponse,
 } from '../api/types';
-import { formatRub, formatPercent, formatSharePercent, formatDate } from '../utils/format';
+import { formatRub, formatPercent, formatSharePercent, formatDate, formatMoney } from '../utils/format';
 
 /** Та же подсказка про «грязные» цены, что и у таблицы позиций (positionsDisplay.ts) — один источник текста. */
 const DIRTY_PRICE_EXPLANATION = DIRTY_PRICE_TOOLTIP_TEXT;
@@ -204,6 +207,56 @@ function FundsKpi({ funds }: { funds: FundsResponse | null }) {
           <span data-testid="kpi-funds-incomplete">{FUND_DATA_INCOMPLETE}</span>
         ) : (
           'паи БПИФ, по цене пая'
+        )
+      }
+    />
+  );
+}
+
+/**
+ * KPI «Freedom» (задача 60): стоимость счёта Freedom в рублях и в долларах. Рисуется ТОЛЬКО при `capabilities.freedom`
+ * (отдельный компонент — запрос `/api/brokers/freedom/holdings` не уходит без подключённых ключей). Отказ эндпоинта даёт «—».
+ */
+function FreedomKpi() {
+  const { data, error } = useWidgetData(fetchFreedomHoldings, []);
+  if (error) {
+    return <Metric data-testid="kpi-freedom" label="Freedom" value={<span data-testid="kpi-freedom-error">—</span>} hint="нет данных" />;
+  }
+  return (
+    <Metric
+      data-testid="kpi-freedom"
+      label="Freedom"
+      value={data ? formatRub(data.totalValueRub) : '—'}
+      hint={
+        data ? (
+          data.dataIncomplete ? (
+            <span data-testid="kpi-freedom-incomplete">{FREEDOM_DATA_INCOMPLETE}</span>
+          ) : data.totalValueUsd !== null ? (
+            <span data-testid="kpi-freedom-usd">≈ {formatMoney(data.totalValueUsd, 'USD', 0)}</span>
+          ) : (
+            'курс USD недоступен'
+          )
+        ) : (
+          'загрузка…'
+        )
+      }
+    />
+  );
+}
+
+/** KPI «Капитал всего» (задача 60): T-Invest + другие брокеры, РУБЛИ (`capitalTotalRub`); `totalRub` (T-Invest) не меняется. */
+function CapitalKpi({ summary }: { summary: PortfolioSummary | null }) {
+  if (!summary) return <Metric data-testid="kpi-capital" label="Капитал всего" value="—" hint="загрузка…" />;
+  return (
+    <Metric
+      data-testid="kpi-capital"
+      label="Капитал всего"
+      value={formatRub(summary.capitalTotalRub)}
+      hint={
+        summary.otherBrokersDataIncomplete ? (
+          <span data-testid="kpi-capital-incomplete">Нет курса валюты — итог занижен.</span>
+        ) : (
+          `T-Invest ${formatRub(summary.totalRub)} + Freedom ${formatRub(summary.otherBrokersValueRub)}`
         )
       }
     />
@@ -424,13 +477,17 @@ export function Dashboard() {
   const { data: summary, error: summaryError } = useWidgetData(fetchPortfolioSummary, []);
   const { data: funds } = useWidgetData(fetchFunds, []);
   const { data: cashflow, error: cashflowError } = useWidgetData(fetchCashflow, []);
+  // Freedom (задача 60): KPI только при подключённых ключах (capabilities грузит ServiceLayout; null = «ещё неизвестно» — не показываем).
+  const freedomEnabled = useCredentialsStore((s) => s.capabilities?.freedom === true);
 
   return (
     <Page title="Обзор" description="Стоимость, доходность и ближайшие поступления портфеля" width="wide">
       <MetricGrid data-testid="dashboard-kpi-row">
         <TotalBalanceKpi summary={summary} error={summaryError} />
+        {freedomEnabled && !summaryError && <CapitalKpi summary={summary} />}
         <PortfolioValueKpi positions={positions} />
         <FundsKpi funds={funds} />
+        {freedomEnabled && <FreedomKpi />}
         <CashKpi live={live} bondsTotal={bondsTotal} summary={summary} />
         <XirrKpi xirr={xirr} error={xirrError} summary={summary} />
         <NextPaymentKpi cashflow={cashflow} error={cashflowError} />

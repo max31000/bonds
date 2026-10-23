@@ -45,6 +45,8 @@ MySQL для интеграционных), vitest + Testing Library + MSW.
 | Freedom (Tradernet API v3): `getPositionJson` `bal_price_a`/`mkt_price`/`market_value` | вход | **в ВАЛЮТЕ БУМАГИ** (`curr` позиции), не рубли; `acc[].s` — остаток в своей валюте. Поле `currval` (₽ за единицу валюты) у брокера бывает УСТАРЕВШИМ — **не использовать**, оценка только по курсам bonds (`FreedomParser` его не читает) |
 | Freedom `getUserCashFlows` `sumRaw`, `getTradesHistory` `p`/`q`/`summ`/`commission` | вход | числа приходят **строками** (InvariantCulture); `sumRaw` — в своей `currency` СО ЗНАКОМ (+ приход / − расход); комиссия сделки — в `commission_currency`, может отличаться от валюты сделки |
 | `FreedomFeeModel` (`Bonds.Core/Fees`): ставки | константы | **ДОЛИ** (0.005 = 0.5%); суммы — USD; Python-эталон `tn/fees.py` хранит ПРОЦЕНТЫ — конверсия ÷100 уже сделана в таблице |
+| `broker_positions` / `broker_cash` / `broker_operations` (счёт Freedom, миграция 030) | БД | ВСЕ цены и суммы — в **ВАЛЮТЕ СТРОКИ** (колонка `currency`), НЕ в рублях; `broker_operations.amount` — со знаком (+ приход / − расход). Рубли — только на чтении через `ICurrencyRateLookup` (`BrokerHoldingsBuilder`), нет курса → `*Rub = null` + `dataIncomplete`. Freedom `RUR` нормализуется в `RUB` при записи. DTO `/api/brokers/freedom/*`: поля без суффикса `Rub`/`Usd` — в валюте строки, `unrealizedPnlFraction` — ДОЛЯ |
+| ЦБ РФ `XML_dynamic.asp` (`VunitRate`/`Value`/`Nominal`) | вход | десятичная ЗАПЯТАЯ; `VunitRate` — рубли за 1 единицу (нет — `Value ÷ Nominal`) → `currency_rate_history.close_rub` как есть, второй конверсии нет (`CbrRatesParser`) |
 | `MarketQuote.CleanPrice/DirtyPrice/Accrued`, `intraday_quotes.dirty_price_rub` | БД | всегда рубли за бумагу (контракт в doc-comment модели) |
 | `Position.Accrued` | БД | НКД на ОДНУ бумагу (не на позицию) |
 | Знак `Operation.AmountRub` | БД | как отдал брокер — НЕ переписывать (см. `PortfolioXirrService.SignedAmount`) |
@@ -260,7 +262,32 @@ AccruedNow = Realized + Unrealized + NetCouponIncome + Taxes + Fees`. **`operati
 (торговля отклоняется), торговать нужно `*.US` — маршрут на ITS выбирает брокер. Комиссии — `FreedomFeeModel`
 (`max(pct·сумма + perOrder + perUnit·qty, min)`, perOrder один раз на заявку). Секрет в реестре: `publicKey`
 (источник маски) + `privateKey`; валидатор делает `GetAllUserTexInfo` и кладёт в meta `accountNumber/tariffId/tariffName`.
-Синк в БД — задача 60.
+Синк в БД — задача 60 (ниже).
+
+### Счёт Freedom в сервисе (задача 60)
+
+`accounts.broker` (миграция 030, `tinvest` по умолчанию | `freedom`; UNIQUE `(user_id, broker, broker_account_id)`). **Основной счёт продукта — только `tinvest`:**
+`IAccountRepository.GetPrimaryAccountIdAsync` и `PositionsEndpoints.ResolveAccountIdAsync` фильтруют `broker='tinvest'` (иначе Freedom с меньшим id перехватил бы
+«основной»; закреплено регрессионными тестами); счёт Freedom — `ResolveBrokerAccountAsync(currentUser, accounts, Brokers.Freedom)`. Мультиаккаунт T-Invest не делается.
+Freedom — отдельный домен `broker_positions` / `broker_cash` / `broker_operations` (по образцу фондов/валюты; облигационный движок, `positions`, `instruments`, `operations`
+их не видят). `FreedomSyncService` (Infrastructure/Sync; отдельный шаг `SyncCycleService` ПОСЛЕ T-Invest, сбой — только `LogWarning`, цикл T-Invest неуспешным не
+помечается; ручной запуск — тот же `POST /api/sync`): для КАЖДОГО пользователя с валидным секретом `freedom` (`IUserCredentialStore.ListUserIdsWithValidAsync`, ключи нигде
+не логируются) `GetUserInfo` → upsert счёта (`broker_account_id` = номер счёта, имя «Freedom») → портфель (позиции + деньги) → сделки (с 2020-01-01 окнами по году, усечённое
+окно в 1000 сделок делится пополам) → 500 последних движений денег. Сверка позиций — `SyncGuards` (пустой ответ удаляет со 2-го раза); деньги: нули не хранятся, `acc` пустой —
+остатки не трогаем. Маппинг журнала — `FreedomOperationMapper` (чистый): сделка → `trade:{id}` Buy/Sell (amount ∓|summ|, валюта сделки; комиссию сделки в журнал НЕ пишем —
+она приходит отдельной строкой `commission_for_trades`), конвертация валют (`instr_nm` вида `EUR/USD`) → Other/`fx` без тикера; движения: `bank`/`card` → Deposit (+) /
+Withdrawal (−), `commission_for_trades` → Fee (тикер из комментария `\(Trade \d+ (buy|sell) ([A-Z0-9.\-]+) \)`), `dividend` → Dividend, `tax` → Tax (тикер `(XXX.US)` из
+комментария — best effort), прочее → Other с `raw_type`; нулевые суммы пропускаются; `external_id` = `cf:` + sha256(datetime|type|sum|comment)[..32], идентичные строки
+одного ответа различаются суффиксом `#2`. Класс актива — `BrokerAssetClassifier` (ETF|UCITS|Fund в названии → `etf`, иначе `stock` — эвристика).
+**Курсы.** `CurrencyRateRefresher` ВСЕГДА ведёт USD, EUR, GBP (`CurrencyRateOptions.AlwaysTrackedCurrencies`, заглушки справочника `figi = FX:USD`, заменяются настоящим
+FIGI первым синком T-Invest — `CurrencyRepository.UpsertAsync` обновляет и `figi`). Источники (`TrackedCurrencies`, сверено с живыми MOEX ISS и cbr.ru): USD — MOEX CETS
+`USD000UTSTOM`; `EUR_RUB__TOM` и `GBPRUB_TOM` существуют, но сделок нет (CLOSE = 0) — EUR/GBP берутся из официального курса ЦБ РФ (`R01239`, `R01035`, `ICbrRatesClient`);
+если MOEX ничего не отдал, а код ЦБ известен — курс ЦБ. Оценка в рублях — `BrokerHoldingsBuilder` (только `ICurrencyRateLookup`, RUB = 1; поле `currval` брокера не
+используется). API: `GET /api/brokers/freedom/holdings` (404 без счёта Freedom; позиции + `marketValueRub`, деньги + `amountRub`, `totalValueRub/Usd`, `syncedAt`,
+`dataIncomplete`, `fees.feesPaidUsd` — Σ комиссий в USD, положительное число), `GET /api/brokers/freedom/operations?from&to`. `/api/portfolio/summary`: `otherBrokersValueRub`
+(Σ не-T-Invest счетов, 0 без них), `otherBrokersDataIncomplete`, `capitalTotalRub = totalRub + otherBrokersValueRub`; **`totalRub` не менялся** (сверка и XIRR).
+Фронт: вкладка «Freedom» на «Позициях» (`?tab=freedom`, `FreedomTable`, `useFreedomStore`) и KPI «Freedom» (₽ и $) / «Капитал всего» на «Обзоре» — ТОЛЬКО при
+`capabilities.freedom` (без неё запросов к `/api/brokers/*` нет; подсказка — в карточке Freedom в «Подключениях»); суммы в валюте бумаги — `formatMoney` с КОДОМ валюты.
 
 ## Тесты
 

@@ -20,6 +20,8 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { usePositionsStore } from '../store/usePositionsStore';
 import { useFundsStore } from '../store/useFundsStore';
 import { useCurrenciesStore } from '../store/useCurrenciesStore';
+import { useFreedomStore } from '../store/useFreedomStore';
+import { useCredentialsStore } from '../store/useCredentialsStore';
 import { useSettingsStore } from '../store/useSettingsStore';
 import { useRelativeValueStore } from '../store/useRelativeValueStore';
 import { usePositionVerdictStore } from '../store/usePositionVerdictStore';
@@ -27,6 +29,8 @@ import { useLiveQuotes } from '../hooks/useLiveQuotes';
 import { Disclaimer } from '../components/Disclaimer';
 import { FundsTable } from '../components/FundsTable';
 import { CurrenciesTable } from '../components/CurrenciesTable';
+import { FreedomTable } from '../components/FreedomTable';
+import { FREEDOM_EMPTY_DESCRIPTION, FREEDOM_EMPTY_TITLE, FREEDOM_FX_NOTE } from '../components/freedomCopy';
 import { CURRENCY_FX_DISCLAIMER } from '../components/currenciesCopy';
 import { FUND_KEY_RATE_NOTE } from '../components/fundsCopy';
 import { PortfolioIntradayChart } from '../components/PortfolioIntradayChart';
@@ -47,18 +51,21 @@ import { formatRub, formatDaysUntil, formatPercent, formatNumber, formatBp } fro
 import { computePositionsTotals } from '../utils/positionsAggregation';
 import { buildYieldHeatmapScale } from '../utils/yieldHeatmap';
 
-type PositionsTab = 'bonds' | 'funds' | 'currency';
+type PositionsTab = 'bonds' | 'funds' | 'currency' | 'freedom';
 
 /**
- * Экран «Позиции»: вкладки «Облигации | Фонды | Валюта» (задачи 53, 56). Вкладка живёт в URL (`?tab=funds|currency`),
+ * Экран «Позиции»: вкладки «Облигации | Фонды | Валюта | Freedom» (задачи 53, 56, 60). Вкладка живёт в URL (`?tab=funds|currency|freedom`),
  * по умолчанию — облигации: существующая таблица без изменений. Фонды и валюта — отдельные домены, в облигационные
  * виджеты не подмешиваются. Вкладка «Валюта» показывается, только если `/api/currencies` вернул хотя бы одну валюту
- * (включая проданную) — либо если открыта по прямой ссылке.
+ * (включая проданную) — либо если открыта по прямой ссылке. Вкладка «Freedom» — ТОЛЬКО при `capabilities.freedom` (ключи подключены):
+ * без неё ни вкладки, ни запроса `/api/brokers/freedom/holdings`, а `?tab=freedom` открывает облигации.
  */
 export function Positions() {
   const [params, setParams] = useSearchParams();
   const rawTab = params.get('tab');
-  const tab: PositionsTab = rawTab === 'funds' ? 'funds' : rawTab === 'currency' ? 'currency' : 'bonds';
+  const freedomEnabled = useCredentialsStore((s) => s.capabilities?.freedom === true);
+  const tab: PositionsTab =
+    rawTab === 'funds' ? 'funds' : rawTab === 'currency' ? 'currency' : rawTab === 'freedom' && freedomEnabled ? 'freedom' : 'bonds';
   const hasCurrencies = useCurrenciesStore((s) => s.currencies.length > 0);
   const loadCurrencies = useCurrenciesStore((s) => s.load);
 
@@ -70,6 +77,7 @@ export function Positions() {
     { value: 'bonds', label: 'Облигации' },
     { value: 'funds', label: 'Фонды' },
     ...(hasCurrencies || tab === 'currency' ? [{ value: 'currency', label: 'Валюта' }] : []),
+    ...(freedomEnabled ? [{ value: 'freedom', label: 'Freedom' }] : []),
   ];
 
   const tabs = (
@@ -78,7 +86,7 @@ export function Positions() {
       value={tab}
       onChange={(v) => {
         const next = new URLSearchParams(params);
-        if (v === 'funds' || v === 'currency') next.set('tab', v);
+        if (v === 'funds' || v === 'currency' || v === 'freedom') next.set('tab', v);
         else next.delete('tab');
         setParams(next, { replace: true });
       }}
@@ -88,6 +96,7 @@ export function Positions() {
   );
 
   if (tab === 'currency') return <CurrencyPositionsView tabs={tabs} />;
+  if (tab === 'freedom') return <FreedomPositionsView tabs={tabs} />;
   return tab === 'funds' ? <FundsPositionsView tabs={tabs} /> : <BondsPositionsView tabs={tabs} />;
 }
 
@@ -131,6 +140,50 @@ function CurrencyPositionsView({ tabs }: { tabs: ReactNode }) {
       )}
 
       <Disclaimer text={disclaimer} />
+    </Page>
+  );
+}
+
+/** Вкладка «Freedom»: позиции и деньги счёта Freedom (GET /api/brokers/freedom/holdings), суммы в валюте бумаги + рубли по курсам bonds. */
+function FreedomPositionsView({ tabs }: { tabs: ReactNode }) {
+  const { holdings, loaded, isLoading, error, load } = useFreedomStore();
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  return (
+    <Page title="Позиции" description="Счёт Freedom: ETF и акции в валюте бумаги, оценка в рублях" width="wide">
+      {tabs}
+
+      {(isLoading || !loaded) && !error && (
+        <div className="bonds-center">
+          <Loader />
+        </div>
+      )}
+
+      {!isLoading && error && (
+        <Section>
+          <ErrorState title="Не удалось загрузить счёт Freedom" error={error} data-testid="freedom-error" />
+        </Section>
+      )}
+
+      {!isLoading && loaded && !error && holdings && holdings.positions.length === 0 && holdings.cash.length === 0 && (
+        <Section>
+          <EmptyState data-testid="freedom-empty" title={FREEDOM_EMPTY_TITLE} description={FREEDOM_EMPTY_DESCRIPTION} />
+        </Section>
+      )}
+
+      {!isLoading && !error && holdings && (holdings.positions.length > 0 || holdings.cash.length > 0) && (
+        <>
+          <p className="bonds-note" data-testid="freedom-fx-note">
+            {FREEDOM_FX_NOTE}
+          </p>
+          <FreedomTable holdings={holdings} />
+        </>
+      )}
+
+      <Disclaimer text={holdings?.disclaimer} />
     </Page>
   );
 }
