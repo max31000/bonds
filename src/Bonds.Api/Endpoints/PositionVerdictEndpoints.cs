@@ -37,7 +37,6 @@ public static class PositionVerdictEndpoints
         RelativeValueSnapshotBuilder snapshotBuilder,
         ReliabilityScoreProvider scoreProvider,
         ISignalRepository signalRepo,
-        ITargetAllocationRepository targetAllocationRepo,
         IUserSettingsRepository settingsRepo,
         ICommissionRateProvider commissionRateProvider,
         ISecurityDetailsRepository detailsRepo,
@@ -70,7 +69,6 @@ public static class PositionVerdictEndpoints
         var options = signalOptions.Value.WithOverrides(
             settings?.UpcomingEventDaysThreshold, settings?.UninvestedCashThresholdRub, settings?.DefaultMaxConcentrationPercent);
 
-        var targetAllocations = (await targetAllocationRepo.GetByAccountIdAsync(accountId.Value)).ToList();
         var activeSignals = (await signalRepo.GetByAccountIdAsync(accountId.Value))
             .Where(s => s.InstrumentId is not null)
             .ToList();
@@ -111,7 +109,7 @@ public static class PositionVerdictEndpoints
             {
                 verdicts.Add(EvaluatePosition(
                     holding, snapshot, book, bankByIsin, horizonYears, commission.Rate, asOf, options.DefaultMaxConcentrationPercent,
-                    eventTypesByInstrument, defaultEmitentIds, cardEmitentBySecid, targetAllocations, issuerValueRub, composition.TotalMarketValueRub));
+                    eventTypesByInstrument, defaultEmitentIds, cardEmitentBySecid, issuerValueRub, composition.TotalMarketValueRub));
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -147,7 +145,6 @@ public static class PositionVerdictEndpoints
         IReadOnlyDictionary<ulong, IReadOnlyList<SignalType>> eventTypesByInstrument,
         IReadOnlySet<int> defaultEmitentIds,
         IReadOnlyDictionary<string, int> cardEmitentBySecid,
-        IReadOnlyList<TargetAllocation> targetAllocations,
         IReadOnlyDictionary<string, decimal> issuerValueRub,
         decimal portfolioValueRub)
     {
@@ -172,9 +169,6 @@ public static class PositionVerdictEndpoints
 
         var issuerKey = holding.Issuer ?? PortfolioCompositionService.UnknownIssuerLabel;
         issuerValueRub.TryGetValue(issuerKey, out var issuerValue);
-        var limitPercent = targetAllocations
-            .FirstOrDefault(ta => ta.Issuer is not null && string.Equals(ta.Issuer, issuerKey, StringComparison.OrdinalIgnoreCase))
-            ?.MaxConcentrationPercent ?? defaultConcentrationLimitPercent;
 
         var verdict = PositionVerdictService.Evaluate(new PositionVerdictInput
         {
@@ -186,7 +180,7 @@ public static class PositionVerdictEndpoints
             BestReplacement = best?.Option,
             // Проценты с обеих сторон (SharePercent-контракт): лимит — проценты, доля после докупки — проценты.
             IssuerSharePercentAfterBuy = PositionVerdictService.ConcentrationAfterBuyPercent(issuerValue, portfolioValueRub),
-            ConcentrationLimitPercent = limitPercent,
+            ConcentrationLimitPercent = defaultConcentrationLimitPercent,
         });
 
         return new PositionVerdictDto

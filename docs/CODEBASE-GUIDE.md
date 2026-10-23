@@ -52,6 +52,7 @@ MySQL для интеграционных), vitest + Testing Library + MSW.
 | `MarketQuote.CleanPrice/DirtyPrice/Accrued`, `intraday_quotes.dirty_price_rub` | БД | всегда рубли за бумагу (контракт в doc-comment модели) |
 | `Position.Accrued` | БД | НКД на ОДНУ бумагу (не на позицию) |
 | Знак `Operation.AmountRub` | БД | как отдал брокер — НЕ переписывать (см. `PortfolioXirrService.SignedAmount`) |
+| Корзины капитала (`baskets`/`basket_members`, `/api/baskets`, задача 62): `target_weight`, `band`, `hard_band`, `sub_weight`, `weight`/`target`/`drift`/`shareOfTotal`/`actualSubShare`/`targetsSum` | БД, DTO | **ДОЛИ** (0.15 = 15%; band — абсолютное отклонение доли портфеля); проценты — только фронт (`utils/baskets.ts`: `percentToFraction`/`fractionToPercent`, ввод формы «Капитал» в %, конверсия один раз при отправке). `value`/`deficitToTarget`/`min_trade`/`freeCash` — в **ВАЛЮТЕ ПОРТФЕЛЯ** (rub — рубли, usd — доллары по курсам bonds) |
 
 Правило: каждая конверсия на границе — с doc-comment'ом «из чего во что». Ревьюер обязан
 проверить единицы каждого нового поля.
@@ -92,7 +93,7 @@ DTO этих эндпоинтов — `Endpoints/Dtos/Analytics*Dtos.cs`; общ
 исторически `/api/signals` (`SignalsEndpoints`): `SignalsEngine` отдаёт ПОЛНЫЙ набор активных
 событий на дату (состояние), `SignalSetSynchronizer` сводит его с таблицей `signals` по
 `EventKey` (insert/refresh/resolve); лимит концентрации — из `UserSettings`
-(`DefaultMaxConcentrationPercent`), индивидуальный лимит по эмитенту — `target_allocations`.
+(`DefaultMaxConcentrationPercent`), индивидуальных лимитов нет (таблица `target_allocations` удалена задачей 62, миграция 032).
 **Рыночные и кредитные события (задача 49).** Три правила `SignalsEngine` поверх позиций Quantity > 0: `SpreadWidening` (Warning:
 эффективный G-спред сегодня − МЕДИАНА его же значений за прошлые ≤ 20 торговых дней > порога 30 б.п. (раннее предупреждение; критический `SpreadShock` скоркарты — отдельная, более высокая ступень 50 б.п.), флоатеры/бумаги вне банка
 пропускаются), `PriceDrawdown` (Warning: чистая цена ниже максимума за 20 дней > 5%; формула та же, что компонент `price_drawdown`
@@ -307,6 +308,21 @@ TPAY`, сторонние `LQDT SBFR SBRB OBLG SBGB AKMB`); `ITInvestPortfolioCl
 по брокерам пользователя — остатки по валютам, `cashRubOnly` = свободные рубли БЕЗ валюты (T-Invest: `cashRub − валюта`, Freedom: остаток RUB), последние 10 пополнений/
 выводов) и `GET /api/trading-meta?broker&keys` (общая справка, ≤ 200 ключей, без `keys` — все записи брокера). Фронт: блок «Деньги на счетах» на «Обзоре»
 (`CashOverviewSection`, независимая загрузка `fetchCash`).
+
+### Корзины капитала (задача 62)
+
+Модель целей и расчёт отклонений, **без правил и заявок**. Миграция 032: `baskets` (user_id, `portfolio` rub|usd, `code` UNIQUE в пределах пользователя, цели/полосы — ДОЛИ, `liquidity_tier` 0..3,
+`fill_rule` fixed|engine|hold, `auto_buy/sell`, `min_trade` — валюта портфеля) и `basket_members` (broker, `instrument_key` — ISIN/тикер либо класс актива, `sub_weight`, `match_rule`
+instrument|asset_class); таблица `target_allocations` **удалена** (лимит эмитента — только `user_settings.default_max_concentration_percent`). Два самостоятельных портфеля: **rub** = T-Invest
+(облигации, фонды, рубли, валюта; оценка в рублях) и **usd** = Freedom (оценка в долларах: бумага в USD — как есть, иначе рубли по курсам bonds ÷ курс USD; нет курса → `dataIncomplete`).
+Стартовые корзины (`DefaultBaskets`) сидятся при ПЕРВОМ `GET /api/baskets` (данные пользователя, не миграция; гонка двух первых запросов безопасна — UNIQUE user_id+code), `POST /api/baskets/reset-defaults[?portfolio=]` возвращает их.
+`BasketDriftService` (Core, чистый): позиция → явный член (брокер + ключ без регистра и хвостового «@»; у члена Freedom без суффикса биржи `LUV` совпадает с `LUV.US`, `VUAA.EU` — только точно) → правило класса
+(`asset_class`: bond/fund/currency у T-Invest, etf/stock у Freedom) → системная строка: валюта T-Invest — `fx`, остальное — `unassigned` (обе вне целей). Свободные деньги — строка `cash` (T-Invest: `CashBreakdown.CashRubOnly`, Freedom: Σ остатков в USD).
+База доли = портфель − корзины с `target_weight = null` (включая `fx`/`unassigned`); `cash` в базе. `weight` = value ÷ база; `drift` = weight − target; `deficitToTarget` = target × база − value (положительное — недобор);
+состояние: |drift| ≤ band — Ok, ≤ hard_band — Below/Above, дальше — HardBelow/HardAbove, без цели — NoTarget, цель есть, но база доли ≤ 0 — NoData (drift/дефицит = null). Стоимость берётся только из существующих точек истины (`PortfolioHoldingsBuilder`, `ResolveFundPriceAsync`,
+`ResolveCurrencyPriceAsync`, `BrokerHoldingsBuilder`) в `CapitalOverviewBuilder`. API: `GET /api/baskets`, `PUT /api/baskets/{id}` и пакетный `PUT /api/baskets` (цели нескольких корзин атомарно — иначе 15/85 → 20/80 невозможно),
+`POST/DELETE /api/baskets/{id}/members`. Валидация (422): Σ целей портфеля = 1 ± 0.0001 — проверяется на ИТОГОВОМ состоянии и только для портфелей, где цель хоть одной корзины изменилась; band < hard_band; бумага — член ровно одной корзины портфеля;
+брокер члена соответствует портфелю. Фронт: страница «Капитал» (`/capital`, `pages/Capital.tsx`, `components/capital/*`, `useBasketsStore`), раздел usd — только при `capabilities.freedom`, дисклеймер «оценка, не рекомендация».
 
 ## Тесты
 

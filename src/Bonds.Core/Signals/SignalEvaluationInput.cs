@@ -104,8 +104,5 @@ public sealed record SignalEvaluationInput
     /// <summary>Эмитенты открытых позиций с признаком дефолта/техдефолта (задача 49): вход IssuerDefaultEvent.</summary>
     public IReadOnlyList<IssuerDefaultContext> IssuerDefaults { get; init; } = Array.Empty<IssuerDefaultContext>();
 
-    /// <summary>TargetAllocation счёта (может быть пустым). Используется только для персональных лимитов концентрации.</summary>
-    public IReadOnlyList<TargetAllocation> TargetAllocations { get; init; } = Array.Empty<TargetAllocation>();
-
     public SignalEngineOptions Options { get; init; } = new();
 }
