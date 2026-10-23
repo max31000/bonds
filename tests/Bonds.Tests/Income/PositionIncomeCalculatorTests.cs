@@ -129,6 +129,46 @@ public class PositionIncomeCalculatorTests
     }
 
     [Fact]
+    public void RealJournal_Ofz26226_PartialFillsAsExecuted_RedemptionCountsAndTotalMatchesCashFlows()
+    {
+        // Журнал владельца (ОФЗ 26226, 2026), количества — ИСПОЛНЕННЫЕ (до фикса коннектора в журнал шли заявленные: продажа 16 вместо 3,
+        // 10 вместо 5, покупка 2 вместо 1 — пул обнулялся до погашения, и 8 000 ₽ погашения выпадали из итога как «неизвестная себестоимость»).
+        // Покупки: 29 шт., брутто 28 604.78, НКД 607.93 → чистая себестоимость 27 996.85, средняя 965.40862...
+        // Продажи 21 шт.: чистая выручка 20 702.98 − 21 × средняя → +429.40; погашение 8 шт.: 8 000 − 8 × средняя → +276.73.
+        // Итог по потокам: −28 604.78 + 21 142.09 + 1 387.40 (купоны) + 8 000 = 1 924.71.
+        // Средняя с бесконечной дробью — инварианты с допуском на округление decimal (общий хелпер сравнивает точно).
+        List<LedgerEntry> entries = [
+            B(284, LedgerEntryKind.Buy, -16_767.61m, 17, 359.21m),
+            B(283, LedgerEntryKind.Buy, -1_970.50m, 2, 42.68m),
+            B(277, LedgerEntryKind.Buy, -3_938.60m, 4, 90.60m),
+            B(275, LedgerEntryKind.Buy, -984.35m, 1, 23.09m),
+            B(273, LedgerEntryKind.Buy, -986.24m, 1, 23.96m),
+            B(254, LedgerEntryKind.Buy, -990.65m, 1, 27.66m),
+            B(240, LedgerEntryKind.Buy, -996.69m, 1, 30.71m),
+            B(197, LedgerEntryKind.Income, 1_070.28m),
+            B(197, LedgerEntryKind.Buy, -979.19m, 1, 0.44m),
+            B(155, LedgerEntryKind.Buy, -990.95m, 1, 9.58m),
+            B(105, LedgerEntryKind.Sell, 3_020.07m, 3, 62.73m),
+            B(105, LedgerEntryKind.Sell, 5_033.45m, 5, 104.55m),
+            B(105, LedgerEntryKind.Sell, 6_040.20m, 6, 125.46m),
+            B(105, LedgerEntryKind.Sell, 7_048.37m, 7, 146.37m),
+            B(16, LedgerEntryKind.Income, 317.12m),
+            B(16, LedgerEntryKind.Redemption, 8_000m),
+        ];
+        var r = PositionIncomeCalculator.CalculateDetailed(AssetKind.Bond, 1, entries, 0, 0m, 0m, Today);
+        var p = r.Income;
+        (p.RealizedPnlRub + p.NetCouponIncomeRub + p.TaxesRub + p.FeesRub).Should().BeApproximately(p.TotalResultRub, 1e-20m, "инвариант 2");
+        r.Rows.Sum(x => x.RealizedPnlRub).Should().Be(p.RealizedPnlRub);
+
+        p.Status.Should().Be(PositionIncomeStatus.Redeemed);
+        p.HasUnknownLots.Should().BeFalse();
+        p.UnknownCostProceedsRub.Should().Be(0m);
+        p.TotalResultRub.Should().Be(1_924.71m);
+        p.RealizedPnlRub.Should().BeApproximately(706.13m, 0.01m);
+        p.NetCouponIncomeRub.Should().Be(1_218.58m);
+    }
+
+    [Fact]
     public void Redemption_InJournal_OverridesStalePositionThatBrokerStillReports()
     {
         // Позиция ещё не удалена сверкой (qty 10, котировка 10 050 чистая), но погашение уже в журнале → стоимость 0, приток учтён.

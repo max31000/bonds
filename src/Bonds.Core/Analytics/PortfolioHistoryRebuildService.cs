@@ -49,7 +49,8 @@ public static class PortfolioHistoryRebuildService
         DateOnly asOf,
         IReadOnlyDictionary<ulong, DateOnly>? maturityDates = null)
     {
-        var allOps = operations.OrderBy(o => o.Date).ToList();
+        // Ряд стартует с первой операции с бумагой: более ранние комиссии «по счёту» к облигациям не относятся (см. PortfolioXirrService).
+        var allOps = PortfolioXirrService.FromFirstBondOperation(operations).OrderBy(o => o.Date).ToList();
         if (allOps.Count == 0)
         {
             return [];

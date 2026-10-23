@@ -34,6 +34,24 @@ public class PortfolioHistoryRebuildServiceTests
         };
 
     [Fact]
+    public void Rebuild_AccountFeesBeforeFirstBond_SeriesStartsAtFirstBondOperation()
+    {
+        // Комиссии «по счёту» за годы до первой облигации (эпоха фондов) к облигациям не относятся: раньше ряд стартовал с них —
+        // стоимость 0 и XIRR −60% годами. Комиссия ПОСЛЕ первой облигации остаётся в XIRR.
+        var operations = new[]
+        {
+            Op(OperationType.Fee, BaseDate.AddDays(-900), -50m, instrumentId: null),
+            Op(OperationType.Buy, BaseDate, -10000m, quantity: 10m),
+            Op(OperationType.Fee, BaseDate.AddDays(3), -10m, instrumentId: null),
+        };
+
+        var points = PortfolioHistoryRebuildService.Rebuild(operations, PriceMap(InstrumentId, (BaseDate, 1000m)), BaseDate.AddDays(7));
+
+        points.First().Date.Should().Be(BaseDate);
+        PortfolioXirrService.FromFirstBondOperation(operations).Should().HaveCount(2);
+    }
+
+    [Fact]
     public void Rebuild_TwoBuysAndCoupon_MatchesHandComputedMarketValueAtCheckpoints()
     {
         // Покупка 10 шт по 950 (цена входа не участвует в расчёте стоимости — только количество),

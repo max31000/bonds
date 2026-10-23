@@ -184,7 +184,7 @@ public sealed class TInvestPortfolioClient : ITInvestPortfolioClient
                     PaymentRub = item.Payment.ToDecimal(),
                     PaymentCurrency = string.IsNullOrWhiteSpace(item.Payment?.Currency) ? null : item.Payment.Currency.Trim().ToLowerInvariant(),
                     UnitPrice = item.Price.ToNullableDecimal(),
-                    Quantity = item.Quantity == 0 ? null : item.Quantity,
+                    Quantity = ExecutedQuantity(item.Quantity, item.QuantityRest, item.QuantityDone),
                     AccruedInterest = item.AccruedInt.ToNullableDecimal(),
                 });
             }
@@ -193,6 +193,18 @@ public sealed class TInvestPortfolioClient : ITInvestPortfolioClient
         } while (!string.IsNullOrEmpty(cursor));
 
         return result;
+    }
+
+    /// <summary>
+    /// ИСПОЛНЕННОЕ количество операции (штуки/паи/единицы валюты). <c>OperationItem.Quantity</c> — количество в ЗАЯВКЕ: у частично
+    /// исполненной заявки (статус всё равно Executed) оно больше фактического, и журнал «продавал» бумаги, которых не было (пул
+    /// обнулялся раньше погашения). Порядок: <c>QuantityDone</c> → <c>Quantity − QuantityRest</c> → <c>Quantity</c>; 0 — null (не отдано).
+    /// </summary>
+    internal static decimal? ExecutedQuantity(long quantity, long quantityRest, long quantityDone)
+    {
+        if (quantityDone > 0) return quantityDone;
+        if (quantityRest > 0 && quantity > quantityRest) return quantity - quantityRest;
+        return quantity == 0 ? null : quantity;
     }
 
     /// <summary>

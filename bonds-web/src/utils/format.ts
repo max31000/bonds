@@ -131,10 +131,13 @@ export function commissionSourceLabel(source: 'UserOverride' | 'EstimatedFromTra
   }
 }
 
-/** Форматирует месяц вида "2026-07" в человекочитаемый "июль 2026". */
+/**
+ * Форматирует месяц вида "2026-07" в человекочитаемый "июль 2026". Принимает и первое число месяца "2026-07-01" — так
+ * `/api/cashflow` сериализует `DateOnly` месяца (без этого ось «Денежного потока» показывала сырые ISO-даты).
+ */
 export function formatMonthLabel(month: string | null | undefined): string {
   if (!month) return '—';
-  const match = /^(\d{4})-(\d{2})$/.exec(month);
+  const match = /^(\d{4})-(\d{2})(?:-\d{2})?$/.exec(month);
   if (!match) return month;
   const [, year, monthNum] = match;
   const monthNames = [

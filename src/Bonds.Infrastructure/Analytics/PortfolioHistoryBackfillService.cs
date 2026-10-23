@@ -2,6 +2,7 @@ using Bonds.Core.Analytics;
 using Bonds.Core.Interfaces.Repositories;
 using Bonds.Core.Models;
 using Bonds.Infrastructure.Connectors.Moex;
+using Bonds.Infrastructure.Sync;
 using Microsoft.Extensions.Logging;
 
 namespace Bonds.Infrastructure.Analytics;
@@ -28,6 +29,7 @@ public sealed class PortfolioHistoryBackfillService
     private readonly IInstrumentRepository _instruments;
     private readonly IPortfolioValueSnapshotRepository _snapshots;
     private readonly IMoexIssClient _moex;
+    private readonly ICurrencyRateLookup _rates;
     private readonly ILogger<PortfolioHistoryBackfillService> _logger;
 
     public PortfolioHistoryBackfillService(
@@ -35,12 +37,14 @@ public sealed class PortfolioHistoryBackfillService
         IInstrumentRepository instruments,
         IPortfolioValueSnapshotRepository snapshots,
         IMoexIssClient moex,
+        ICurrencyRateLookup rates,
         ILogger<PortfolioHistoryBackfillService> logger)
     {
         _operations = operations;
         _instruments = instruments;
         _snapshots = snapshots;
         _moex = moex;
+        _rates = rates;
         _logger = logger;
     }
 
@@ -160,9 +164,17 @@ public sealed class PortfolioHistoryBackfillService
             {
                 if (point.ClosePricePercent is null) continue;
 
-                var dirtyPriceRub = (point.ClosePricePercent.Value / 100m * instrument.FaceValue)
-                                     + (point.AccruedInterestRub ?? 0m);
-                series[point.Date] = dirtyPriceRub;
+                var dirtyPrice = (point.ClosePricePercent.Value / 100m * instrument.FaceValue)
+                                 + (point.AccruedInterestRub ?? 0m);
+                if (instrument.IsOutOfScopeCurrency)
+                {
+                    // Валютный номинал (замещающие USD-бумаги): номинал и НКД ISS — в валюте номинала, не рубли. Без курса цена
+                    // занижалась в ~80 раз (XIRR истории −87%). Курса на дату нет — точку пропускаем (forward fill / «приближённо»).
+                    var rate = await _rates.GetRubPerUnitAsync(instrument.Currency, point.Date, ct);
+                    if (rate is not > 0m) continue;
+                    dirtyPrice *= rate.Value;
+                }
+                series[point.Date] = dirtyPrice;
             }
 
             if (series.Count > 0)

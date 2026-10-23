@@ -43,7 +43,7 @@ public static class PortfolioXirrService
     {
         var flows = new List<XirrCalculator.CashFlow>();
 
-        foreach (var op in operations)
+        foreach (var op in FromFirstBondOperation(operations))
         {
             var signedAmount = SignedAmount(op);
             if (signedAmount == 0m) continue;
@@ -57,6 +57,23 @@ public static class PortfolioXirrService
         }
 
         return XirrCalculator.Calculate(flows);
+    }
+
+    /// <summary>
+    /// Журнал облигационного XIRR: налоги/комиссии «по счёту» (без бумаги), датированные РАНЬШЕ первой операции с облигацией,
+    /// к облигациям не относятся (у владельца это годы торговли фондами до первой облигации) — без отсечения ряд истории стартовал
+    /// с 2020 с нулевой стоимостью и XIRR −60%. Нет ни одной операции с бумагой — отсекать не от чего, журнал как есть.
+    /// </summary>
+    public static IReadOnlyList<Operation> FromFirstBondOperation(IEnumerable<Operation> operations)
+    {
+        var list = operations as IReadOnlyList<Operation> ?? operations.ToList();
+        DateTime? first = null;
+        foreach (var op in list)
+        {
+            if (op.InstrumentId is not null && (first is null || op.Date < first)) first = op.Date;
+        }
+        if (first is null) return list;
+        return list.Where(o => o.InstrumentId is not null || o.Date >= first.Value).ToList();
     }
 
     /// <summary>

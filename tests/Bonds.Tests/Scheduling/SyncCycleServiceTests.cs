@@ -128,6 +128,7 @@ public class SyncCycleServiceTests
         services.AddScoped<InstrumentEnrichmentService>();
         services.AddScoped<WatchlistSyncService>();
         services.AddScoped<PortfolioHistoryBackfillService>();
+        services.AddScoped(_ => new Mock<ICurrencyRateLookup>().Object);
         services.AddScoped<InstrumentRiskLevelRefresher>();
         services.AddScoped<Bonds.Infrastructure.Universe.PositionMarketContextBuilder>();
 

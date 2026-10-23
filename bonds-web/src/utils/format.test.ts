@@ -183,6 +183,8 @@ describe('formatMonthLabel', () => {
     expect(formatMonthLabel('2026-07')).toBe('июль 2026');
     expect(formatMonthLabel('2026-01')).toBe('январь 2026');
     expect(formatMonthLabel('2026-12')).toBe('декабрь 2026');
+    // /api/cashflow отдаёт месяц как DateOnly первого числа
+    expect(formatMonthLabel('2026-10-01')).toBe('октябрь 2026');
   });
 
   it('returns the original string for malformed input', () => {

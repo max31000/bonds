@@ -2,6 +2,7 @@ using Bonds.Core.Interfaces.Repositories;
 using Bonds.Core.Models;
 using Bonds.Infrastructure.Analytics;
 using Bonds.Infrastructure.Connectors.Moex;
+using Bonds.Infrastructure.Sync;
 using FluentAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
@@ -24,9 +25,10 @@ public class PortfolioHistoryBackfillServiceTests
     private readonly Mock<IInstrumentRepository> _instruments = new();
     private readonly Mock<IPortfolioValueSnapshotRepository> _snapshots = new();
     private readonly Mock<IMoexIssClient> _moex = new();
+    private readonly Mock<ICurrencyRateLookup> _rates = new();
 
     private PortfolioHistoryBackfillService CreateService() => new(
-        _operations.Object, _instruments.Object, _snapshots.Object, _moex.Object,
+        _operations.Object, _instruments.Object, _snapshots.Object, _moex.Object, _rates.Object,
         NullLogger<PortfolioHistoryBackfillService>.Instance);
 
     private static Operation Op(OperationType type, DateOnly date, decimal amount, decimal? quantity, ulong? instrumentId = InstrumentId) => new()
@@ -86,6 +88,31 @@ public class PortfolioHistoryBackfillServiceTests
         written.Should().Be(2, "два чекпоинта: BaseDate и asOf=BaseDate+7");
         captured.Should().NotBeNull();
         captured!.MarketValueRub.Should().Be(10170m, "10 шт × (101.5% × 1000 + 2 НКД) = 10 × 1017");
+    }
+
+    [Fact]
+    public async Task BackfillAsync_ForeignCurrencyNominal_ConvertsPriceByRateOfTheDay()
+    {
+        // Замещающая USD-бумага: номинал 100 USD, ISS — 92% + 0.5 USD НКД = 92.5 USD; курс 80 → 7 400 ₽ за бумагу.
+        // Без курса цена считалась «92.5 рубля» — стоимость в истории занижалась в ~80 раз.
+        var operations = new[] { Op(OperationType.Buy, BaseDate, -7400m, quantity: 1m) };
+        _operations.Setup(r => r.GetByAccountIdAsync(AccountId, null, null)).ReturnsAsync(operations);
+        _instruments.Setup(r => r.GetByIdAsync(InstrumentId)).ReturnsAsync(new Instrument
+        {
+            Id = InstrumentId, Isin = "RU000A108G70", Secid = "RU000A108G70", FaceValue = 100m,
+            Currency = "USD", IsOutOfScopeCurrency = true,
+        });
+        _moex.Setup(m => m.GetHistoryPricesAsync("RU000A108G70", BaseDate, BaseDate, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<MoexHistoryPricePoint> { new(BaseDate, 92m, 0.5m) });
+        _rates.Setup(r => r.GetRubPerUnitAsync("USD", BaseDate, It.IsAny<CancellationToken>())).ReturnsAsync(80m);
+        _snapshots.Setup(r => r.GetByAccountIdAsync(AccountId, null, null)).ReturnsAsync(Array.Empty<PortfolioValueSnapshot>());
+        PortfolioValueSnapshot? captured = null;
+        _snapshots.Setup(r => r.UpsertAsync(It.IsAny<PortfolioValueSnapshot>()))
+            .Callback<PortfolioValueSnapshot>(s => captured = s).Returns(Task.CompletedTask);
+
+        await CreateService().BackfillAsync(AccountId, BaseDate);
+
+        captured!.MarketValueRub.Should().Be(7400m);
     }
 
     [Fact]
