@@ -272,7 +272,8 @@ public sealed class MoexIssClient : IMoexIssClient
                 var date = row.GetDateOnly("TRADEDATE");
                 if (date is null) continue;
 
-                points.Add(new MoexHistoryPricePoint(date.Value, row.GetDecimal("CLOSE"), row.GetDecimal("ACCINT")));
+                points.Add(new MoexHistoryPricePoint(
+                    date.Value, row.GetDecimal("CLOSE"), row.GetDecimal("ACCINT"), row.GetString("CURRENCYID")));
             }
 
             if (table.RowCount < IssHistoryPageSize)

@@ -164,17 +164,19 @@ public sealed class PortfolioHistoryBackfillService
             {
                 if (point.ClosePricePercent is null) continue;
 
-                var dirtyPrice = (point.ClosePricePercent.Value / 100m * instrument.FaceValue)
-                                 + (point.AccruedInterestRub ?? 0m);
+                var cleanPrice = point.ClosePricePercent.Value / 100m * instrument.FaceValue;
+                var accrued = point.AccruedInterestRub ?? 0m;
                 if (instrument.IsOutOfScopeCurrency)
                 {
-                    // Валютный номинал (замещающие USD-бумаги): номинал и НКД ISS — в валюте номинала, не рубли. Без курса цена
-                    // занижалась в ~80 раз (XIRR истории −87%). Курса на дату нет — точку пропускаем (forward fill / «приближённо»).
+                    // Валютный номинал (замещающие USD-бумаги): % × номинал — в валюте номинала, не рубли. Без курса цена занижалась
+                    // в ~80 раз (XIRR истории −87%). НКД — в валюте расчётов режима: в рублёвом TQCB он уже в рублях, в TQOD — в USD.
+                    // Курса на дату нет — точку пропускаем (forward fill / «приближённо»).
                     var rate = await _rates.GetRubPerUnitAsync(instrument.Currency, point.Date, ct);
                     if (rate is not > 0m) continue;
-                    dirtyPrice *= rate.Value;
+                    cleanPrice *= rate.Value;
+                    if (!point.AccruedIsRub) accrued *= rate.Value;
                 }
-                series[point.Date] = dirtyPrice;
+                series[point.Date] = cleanPrice + accrued;
             }
 
             if (series.Count > 0)

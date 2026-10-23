@@ -93,7 +93,7 @@ public class PortfolioHistoryBackfillServiceTests
     [Fact]
     public async Task BackfillAsync_ForeignCurrencyNominal_ConvertsPriceByRateOfTheDay()
     {
-        // Замещающая USD-бумага: номинал 100 USD, ISS — 92% + 0.5 USD НКД = 92.5 USD; курс 80 → 7 400 ₽ за бумагу.
+        // Замещающая USD-бумага: номинал 100 USD, режим TQOD — 92% + 0.5 USD НКД = 92.5 USD; курс 80 → 7 400 ₽ за бумагу.
         // Без курса цена считалась «92.5 рубля» — стоимость в истории занижалась в ~80 раз.
         var operations = new[] { Op(OperationType.Buy, BaseDate, -7400m, quantity: 1m) };
         _operations.Setup(r => r.GetByAccountIdAsync(AccountId, null, null)).ReturnsAsync(operations);
@@ -103,7 +103,32 @@ public class PortfolioHistoryBackfillServiceTests
             Currency = "USD", IsOutOfScopeCurrency = true,
         });
         _moex.Setup(m => m.GetHistoryPricesAsync("RU000A108G70", BaseDate, BaseDate, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<MoexHistoryPricePoint> { new(BaseDate, 92m, 0.5m) });
+            .ReturnsAsync(new List<MoexHistoryPricePoint> { new(BaseDate, 92m, 0.5m, "USD") });
+        _rates.Setup(r => r.GetRubPerUnitAsync("USD", BaseDate, It.IsAny<CancellationToken>())).ReturnsAsync(80m);
+        _snapshots.Setup(r => r.GetByAccountIdAsync(AccountId, null, null)).ReturnsAsync(Array.Empty<PortfolioValueSnapshot>());
+        PortfolioValueSnapshot? captured = null;
+        _snapshots.Setup(r => r.UpsertAsync(It.IsAny<PortfolioValueSnapshot>()))
+            .Callback<PortfolioValueSnapshot>(s => captured = s).Returns(Task.CompletedTask);
+
+        await CreateService().BackfillAsync(AccountId, BaseDate);
+
+        captured!.MarketValueRub.Should().Be(7400m);
+    }
+
+    [Fact]
+    public async Task BackfillAsync_ForeignCurrencyNominal_RubSettlementBoard_AccruedAlreadyInRub()
+    {
+        // Тот же выпуск в рублёвом режиме TQCB (CURRENCYID = SUR): ISS RU000A108G70 22.10.2026 — CLOSE 92.7753, ACCINT 90.1713 (РУБЛИ).
+        // Цена: 92% × 100 USD × 80 = 7 360 ₽, НКД 40 ₽ без курса → 7 400 ₽. Умножение НКД на курс завышало историю на ~7 тыс. ₽ на бумагу.
+        var operations = new[] { Op(OperationType.Buy, BaseDate, -7400m, quantity: 1m) };
+        _operations.Setup(r => r.GetByAccountIdAsync(AccountId, null, null)).ReturnsAsync(operations);
+        _instruments.Setup(r => r.GetByIdAsync(InstrumentId)).ReturnsAsync(new Instrument
+        {
+            Id = InstrumentId, Isin = "RU000A108G70", Secid = "RU000A108G70", FaceValue = 100m,
+            Currency = "USD", IsOutOfScopeCurrency = true,
+        });
+        _moex.Setup(m => m.GetHistoryPricesAsync("RU000A108G70", BaseDate, BaseDate, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<MoexHistoryPricePoint> { new(BaseDate, 92m, 40m, "SUR") });
         _rates.Setup(r => r.GetRubPerUnitAsync("USD", BaseDate, It.IsAny<CancellationToken>())).ReturnsAsync(80m);
         _snapshots.Setup(r => r.GetByAccountIdAsync(AccountId, null, null)).ReturnsAsync(Array.Empty<PortfolioValueSnapshot>());
         PortfolioValueSnapshot? captured = null;
