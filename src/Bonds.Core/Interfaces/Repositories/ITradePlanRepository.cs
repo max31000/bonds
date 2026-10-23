@@ -19,8 +19,9 @@ public interface ITradePlanRepository
     /// <summary>
     /// Есть ли план того же правила и причины. <paramref name="openOnly"/> = true — только «открытые» (<see cref="PlanStatuses.Open"/>) и не просроченные
     /// (<c>expires_at</c> позже <paramref name="nowUtc"/>); false — в любом статусе (пополнение планируется один раз).
+    /// <paramref name="createdSince"/> — если задан, учитываются только планы, созданные не раньше этого момента (пауза повтора).
     /// </summary>
-    Task<bool> ExistsAsync(ulong userId, string rule, string trigger, bool openOnly, DateTime nowUtc);
+    Task<bool> ExistsAsync(ulong userId, string rule, string trigger, bool openOnly, DateTime nowUtc, DateTime? createdSince = null);
 
     /// <summary>Есть ли у пользователя открытый (и не просроченный) план правила — для согласования P3b/P4.</summary>
     Task<bool> HasOpenRuleAsync(ulong userId, string rule, DateTime nowUtc);

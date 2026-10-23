@@ -4,7 +4,6 @@ using Bonds.Core.Interfaces.Repositories;
 using Bonds.Core.Policy;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using BrokerIds = Bonds.Core.Models.Brokers;
 
 namespace Bonds.Infrastructure.Policy;
 
@@ -211,6 +210,4 @@ public sealed class PolicyService
         var normalized = portfolio.Trim().ToLowerInvariant();
         return CapitalPortfolios.All.Contains(normalized) ? normalized : throw new PolicyValidationException("portfolio должен быть 'rub' или 'usd'");
     }
-
-    internal static string BrokerOfPortfolio(string portfolio) => portfolio == CapitalPortfolios.Usd ? BrokerIds.Freedom : BrokerIds.TInvest;
 }

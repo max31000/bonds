@@ -87,14 +87,15 @@ public class TradePlanRepository : ITradePlanRepository
         return plans;
     }
 
-    public async Task<bool> ExistsAsync(ulong userId, string rule, string trigger, bool openOnly, DateTime nowUtc)
+    public async Task<bool> ExistsAsync(ulong userId, string rule, string trigger, bool openOnly, DateTime nowUtc, DateTime? createdSince = null)
     {
         using var conn = CreateConnection();
         var count = await conn.ExecuteScalarAsync<long>(
             @"SELECT COUNT(*) FROM trade_plans
               WHERE user_id = @UserId AND rule = @Rule AND `trigger` = @Trigger
-                AND (@OpenOnly = 0 OR (status IN @Open AND expires_at > @Now))",
-            new { UserId = userId, Rule = rule, Trigger = trigger, OpenOnly = openOnly ? 1 : 0, Open = PlanStatuses.Open.ToArray(), Now = nowUtc });
+                AND (@OpenOnly = 0 OR (status IN @Open AND expires_at > @Now))
+                AND (@CreatedSince IS NULL OR created_at >= @CreatedSince)",
+            new { UserId = userId, Rule = rule, Trigger = trigger, OpenOnly = openOnly ? 1 : 0, Open = PlanStatuses.Open.ToArray(), Now = nowUtc, CreatedSince = createdSince });
         return count > 0;
     }
 

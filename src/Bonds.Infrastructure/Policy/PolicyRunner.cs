@@ -167,9 +167,11 @@ public sealed class PolicyRunner
 
         var draft = outcome.Plan;
         if (draft is null) return input;
-        if (dedupe && await _plans.ExistsAsync(userId, draft.Rule, draft.Trigger, openOnly: true, nowUtc))
+        if (dedupe
+            && (await _plans.ExistsAsync(userId, draft.Rule, draft.Trigger, openOnly: true, nowUtc)
+                || await _plans.ExistsAsync(userId, draft.Rule, draft.Trigger, openOnly: false, nowUtc, createdSince: nowUtc - _options.RepeatCooldown)))
         {
-            result.Notes.Add($"{draft.Rule}: открытый план с той же причиной уже есть — дубликат не создан");
+            result.Notes.Add($"{draft.Rule}: план с той же причиной уже есть (открытый или созданный недавно) — дубликат не создан");
             return input;
         }
 

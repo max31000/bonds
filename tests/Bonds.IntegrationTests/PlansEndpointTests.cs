@@ -5,6 +5,7 @@ using Bonds.Core.Capital;
 using Bonds.Core.Interfaces.Repositories;
 using Bonds.Core.Models;
 using Bonds.Core.Policy;
+using Bonds.Infrastructure.Connectors.TInvest;
 using Bonds.Infrastructure.Policy;
 using Bonds.Infrastructure.Repositories;
 using Bonds.IntegrationTests.Infrastructure;
@@ -14,6 +15,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Moq;
 using MySqlConnector;
 using Xunit;
 using BrokerIds = Bonds.Core.Models.Brokers;
@@ -46,7 +48,8 @@ public class PlansEndpointTests
             Task.FromResult<IReadOnlyDictionary<string, BookQuote>>(Freedom.Where(p => tickers.Contains(p.Key, StringComparer.OrdinalIgnoreCase)).ToDictionary(p => p.Key, p => p.Value));
     }
 
-    private (Microsoft.AspNetCore.Mvc.Testing.WebApplicationFactory<Program> Factory, FakeQuotes Quotes) NewFactory(Dictionary<string, string?>? config = null)
+    private (Microsoft.AspNetCore.Mvc.Testing.WebApplicationFactory<Program> Factory, FakeQuotes Quotes) NewFactory(
+        Dictionary<string, string?>? config = null, Action<IServiceCollection>? configure = null)
     {
         var quotes = new FakeQuotes();
         var factory = _factory.WithWebHostBuilder(b =>
@@ -56,6 +59,7 @@ public class PlansEndpointTests
             {
                 s.RemoveAll<IPlanQuoteSource>();
                 s.AddSingleton<IPlanQuoteSource>(quotes);
+                configure?.Invoke(s);
             });
         });
         return (factory, quotes);
@@ -243,6 +247,76 @@ public class PlansEndpointTests
         plan.GetProperty("status").GetString().Should().Be("PendingApproval");
     }
 
+    [Fact]
+    public async Task Inflow_EngineBasket_BuysGreenBondCandidate_WithRealLotAndPointsGrid()
+    {
+        var marker = Guid.NewGuid().ToString("N")[..6].ToUpperInvariant();
+        string secid = $"PB{marker}", isin = $"IPB{marker}000", figi = $"FIGIPB{marker}";
+        var conn = Conn;
+
+        // Брокер знает лот 2 и шаг 0.01 пункта, номинал 1000 ₽; остальные ISIN у брокера не находятся.
+        var tInvest = new Mock<ITInvestPortfolioClient>();
+        tInvest.Setup(c => c.GetInstrumentListingsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(new List<TInvestInstrumentListing>());
+        tInvest.Setup(c => c.GetInstrumentListingsAsync(isin, It.IsAny<CancellationToken>())).ReturnsAsync(new List<TInvestInstrumentListing>
+        {
+            new()
+            {
+                Uid = "uid-" + marker, Figi = figi, Ticker = secid, ClassCode = "TQCB", Isin = isin, IsBond = true, Lot = 2m, MinPriceIncrementRaw = 0.01m,
+                Nominal = 1000m, NominalCurrency = "RUB", Currency = "RUB", ApiTradeAvailable = true, BuyAvailable = true, SellAvailable = true,
+            },
+        });
+        var (factory, quotes) = NewFactory(configure: s =>
+        {
+            s.RemoveAll<ITInvestPortfolioClient>();
+            s.AddScoped(_ => tInvest.Object);
+        });
+        quotes.TInvest[figi] = new BookQuote(99.90m, 100.10m, 100m);
+        var (userId, client) = await NewUserAsync(factory);
+        var accounts = new AccountRepository(conn);
+        var accountId = await accounts.CreateAsync(new Account { UserId = userId, Name = "Основной счёт", BrokerAccountId = "T-" + marker });
+        await accounts.UpdateBalanceAsync(accountId, 100_000m, 100_000m, DateTime.UtcNow);
+        await new CapitalBasketRepository(conn).SeedIfEmptyAsync(userId,
+        [
+            Basket(userId, "bonds", "Облигации", 1m, 2, BasketFillRules.Engine, 20, false, false,
+                new CapitalBasketMember { Broker = BrokerIds.TInvest, InstrumentKey = "bond", MatchRule = BasketMatchRules.AssetClass }),
+        ]);
+
+        // Green: здоровый эмитент, листинг 1, живая ликвидность. Доходность выше любых соседей по общей БД, чтобы попасть в верхушку пула.
+        var entry = new BondUniverseEntry
+        {
+            Secid = secid, Isin = isin, ShortName = "BOND " + secid, SecName = "Full " + secid, FaceValue = 1000m, Sector = "Sector" + marker,
+            YieldFraction = 0.449m, DurationYears = 2m, PricePercent = 100m, AccruedRub = 10m, TurnoverRub = 10_000_000m, BidPercent = 99.9m, OfferPercent = 100m,
+            NumTrades = 10, ListLevel = 1, GspreadApproxFraction = 0.349m, MaturityDate = DateOnly.FromDateTime(DateTime.UtcNow.AddYears(3)), UpdatedAt = DateTime.UtcNow,
+        };
+        try
+        {
+            await new BondUniverseRepository(conn).UpsertSnapshotBatchAsync([entry]);
+            await ReliabilitySeed.SeedHealthyIssuerAsync(conn, secid, isin);
+
+            var response = await client.PostAsJsonAsync("/api/plans/inflow", new { amount = 50_000m });
+
+            response.StatusCode.Should().Be(HttpStatusCode.OK);
+            var body = await ReadAsync(response);
+            body.GetProperty("plan").ValueKind.Should().NotBe(JsonValueKind.Null, body.GetProperty("notes").ToString());
+            var plan = body.GetProperty("plan");
+            plan.GetProperty("status").GetString().Should().Be("PendingApproval", "облигационная часть — всегда на подтверждение");
+            var line = plan.GetProperty("lines").EnumerateArray().Single(l => l.GetProperty("ticker").GetString() == secid);
+            line.GetProperty("side").GetString().Should().Be("Buy");
+            line.GetProperty("lotSize").GetDecimal().Should().Be(2m, "реальный лот из метаданных брокера, а не 1");
+            line.GetProperty("quantityLots").GetInt64().Should().Be(1);
+            line.GetProperty("quantityPieces").GetDecimal().Should().Be(2m);
+            line.GetProperty("limitPricePoints").GetDecimal().Should().Be(100.00m, "mid 100.00 пунктов, шаг 0.01 пункта");
+            line.GetProperty("limitPrice").GetDecimal().Should().Be(1000m, "100 пунктов × номинал 1000 ₽ / 100");
+            line.GetProperty("estAmount").GetDecimal().Should().Be(2_020m, "2 шт × (чистая 1000 + НКД 10)");
+        }
+        finally
+        {
+            await using var db = new MySqlConnection(conn);
+            await db.ExecuteAsync("DELETE FROM bond_universe WHERE secid = @Secid", new { Secid = secid });
+            await db.ExecuteAsync("DELETE FROM instrument_trading_meta WHERE broker = 'tinvest' AND instrument_key = @Isin", new { Isin = isin });
+        }
+    }
+
     // ─── approve / reject ──────────────────────────────────────────────────────────────────
 
     private static async Task<ulong> CreateWithdrawPlanAsync(HttpClient client)
@@ -341,8 +415,14 @@ public class PlansEndpointTests
             await scope.ServiceProvider.GetRequiredService<PolicyRunner>().RunForUserAsync(userId, now, new PolicyRunResult());
         }
 
+        // Пауза повтора: после истечения плана тот же план не возвращается сразу (иначе без исполнителя каждый цикл рождал бы новый).
+        await using (var db = new MySqlConnection(Conn))
+            await db.ExecuteAsync("UPDATE trade_plans SET expires_at = @Past WHERE user_id = @UserId", new { Past = now.AddMinutes(-1), UserId = userId });
+        using (var scope = factory.Services.CreateScope())
+            await scope.ServiceProvider.GetRequiredService<PolicyRunner>().RunForUserAsync(userId, now, new PolicyRunResult());
+
         var plans = await PlansOfAsync(userId);
-        var p1 = plans.Where(p => p.Rule == PlanRules.P1Sweep).Should().ContainSingle().Subject;
+        var p1 = plans.Where(p => p.Rule == PlanRules.P1Sweep).Should().ContainSingle("повтор в паузу не создаёт новый план").Subject;
         p1.Status.Should().Be(PlanStatuses.AutoApproved, "корзина auto_buy, суммы в пределах лимитов из конфигурации");
         p1.DecidedVia.Should().Be("auto");
         p1.DryRun.Should().BeTrue();

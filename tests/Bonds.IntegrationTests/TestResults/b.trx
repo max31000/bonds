@@ -1,0 +1,74 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="b85c4497-54c9-4e8a-8f3f-05e4af0f33f1" name="maxvo@MVV-PC 2026-10-24 01:52:56" runUser="MVV-PC\maxvo" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-10-24T01:52:56.5445941+05:00" queuing="2026-10-24T01:52:56.5445944+05:00" start="2026-10-24T01:52:31.8859193+05:00" finish="2026-10-24T01:53:01.0316881+05:00" />
+  <TestSettings name="default" id="d988443d-b119-4713-bff2-2d7711c467b9">
+    <Deployment runDeploymentRoot="maxvo_MVV-PC_2026-10-24_01_52_56" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="75f1e9ad-1518-472c-b710-dcddd48c51ad" testId="ba713be5-7a4c-9674-ddc2-dff17c76f8f6" testName="Bonds.IntegrationTests.PlansEndpointTests.Inflow_EngineBasket_BuysGreenBondCandidate_WithRealLotAndPointsGrid" computerName="MVV-PC" duration="00:00:00.8350489" startTime="2026-10-24T01:52:55.8626512+05:00" endTime="2026-10-24T01:52:55.8627076+05:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="75f1e9ad-1518-472c-b710-dcddd48c51ad" />
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="Bonds.IntegrationTests.PlansEndpointTests.Inflow_EngineBasket_BuysGreenBondCandidate_WithRealLotAndPointsGrid" storage="m:\projects\bonds\tests\bonds.integrationtests\bin\debug\net8.0\bonds.integrationtests.dll" id="ba713be5-7a4c-9674-ddc2-dff17c76f8f6">
+      <Execution id="75f1e9ad-1518-472c-b710-dcddd48c51ad" />
+      <TestMethod codeBase="M:\Projects\bonds\tests\Bonds.IntegrationTests\bin\Debug\net8.0\Bonds.IntegrationTests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Bonds.IntegrationTests.PlansEndpointTests" name="Inflow_EngineBasket_BuysGreenBondCandidate_WithRealLotAndPointsGrid" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="ba713be5-7a4c-9674-ddc2-dff17c76f8f6" executionId="75f1e9ad-1518-472c-b710-dcddd48c51ad" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="Список результатов" id="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestList name="Все загруженные результаты" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Completed">
+    <Counters total="1" executed="1" passed="1" failed="0" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <Output>
+      <StdOut>[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v2.8.2+699d445a1a (64-bit .NET 8.0.25)&#xD;
+[xUnit.net 00:00:00.06]   Discovering: Bonds.IntegrationTests&#xD;
+[xUnit.net 00:00:00.11]   Discovered:  Bonds.IntegrationTests&#xD;
+[xUnit.net 00:00:00.11]   Starting:    Bonds.IntegrationTests&#xD;
+[testcontainers.org 00:00:00.04] Connected to Docker:&#xD;
+  Host: npipe://./pipe/docker_engine&#xD;
+  Server Version: 29.8.2&#xD;
+  Kernel Version: 6.18.54.1-microsoft-standard-WSL2&#xD;
+  API Version: 1.56&#xD;
+  Operating System: Docker Desktop (containerized)&#xD;
+  Total Memory: 31.02 GB&#xD;
+  Labels: &#xD;
+    com.docker.desktop.address=npipe://\\.\pipe\docker_cli&#xD;
+[testcontainers.org 00:00:00.17] Docker container 0f88dcd2b63f created&#xD;
+[testcontainers.org 00:00:00.19] Start Docker container 0f88dcd2b63f&#xD;
+[testcontainers.org 00:00:00.36] Wait for Docker container 0f88dcd2b63f to complete readiness checks&#xD;
+[testcontainers.org 00:00:00.37] Docker container 0f88dcd2b63f ready&#xD;
+[testcontainers.org 00:00:00.49] Docker container 12a0de373e00 created&#xD;
+[testcontainers.org 00:00:00.49] Start Docker container 12a0de373e00&#xD;
+[testcontainers.org 00:00:00.67] Execute "mkdir /var/lib/mysql-files" at Docker container 12a0de373e00&#xD;
+[testcontainers.org 00:00:00.67] Add file to tar archive: Content length: 58 byte(s), Target file: "/etc/mysql/my.cnf"&#xD;
+[testcontainers.org 00:00:00.68] Copy tar archive to container: Content length: 58 byte(s), Docker container: 12a0de373e00&#xD;
+[testcontainers.org 00:00:00.70] Wait for Docker container 12a0de373e00 to complete readiness checks&#xD;
+[testcontainers.org 00:00:00.71] Execute "mysql bonds_test --wait --silent --execute=SELECT 1;" at Docker container 12a0de373e00&#xD;
+[testcontainers.org 00:00:01.74] Execute "mysql bonds_test --wait --silent --execute=SELECT 1;" at Docker container 12a0de373e00&#xD;
+[testcontainers.org 00:00:02.77] Execute "mysql bonds_test --wait --silent --execute=SELECT 1;" at Docker container 12a0de373e00&#xD;
+[testcontainers.org 00:00:03.79] Execute "mysql bonds_test --wait --silent --execute=SELECT 1;" at Docker container 12a0de373e00&#xD;
+[testcontainers.org 00:00:04.82] Execute "mysql bonds_test --wait --silent --execute=SELECT 1;" at Docker container 12a0de373e00&#xD;
+[testcontainers.org 00:00:05.85] Execute "mysql bonds_test --wait --silent --execute=SELECT 1;" at Docker container 12a0de373e00&#xD;
+[testcontainers.org 00:00:06.88] Execute "mysql bonds_test --wait --silent --execute=SELECT 1;" at Docker container 12a0de373e00&#xD;
+[testcontainers.org 00:00:07.90] Execute "mysql bonds_test --wait --silent --execute=SELECT 1;" at Docker container 12a0de373e00&#xD;
+[testcontainers.org 00:00:08.93] Execute "mysql bonds_test --wait --silent --execute=SELECT 1;" at Docker container 12a0de373e00&#xD;
+[testcontainers.org 00:00:09.96] Execute "mysql bonds_test --wait --silent --execute=SELECT 1;" at Docker container 12a0de373e00&#xD;
+[testcontainers.org 00:00:10.99] Execute "mysql bonds_test --wait --silent --execute=SELECT 1;" at Docker container 12a0de373e00&#xD;
+[testcontainers.org 00:00:12.02] Execute "mysql bonds_test --wait --silent --execute=SELECT 1;" at Docker container 12a0de373e00&#xD;
+[testcontainers.org 00:00:13.05] Execute "mysql bonds_test --wait --silent --execute=SELECT 1;" at Docker container 12a0de373e00&#xD;
+[testcontainers.org 00:00:14.08] Execute "mysql bonds_test --wait --silent --execute=SELECT 1;" at Docker container 12a0de373e00&#xD;
+[testcontainers.org 00:00:15.10] Execute "mysql bonds_test --wait --silent --execute=SELECT 1;" at Docker container 12a0de373e00&#xD;
+[testcontainers.org 00:00:16.14] Execute "mysql bonds_test --wait --silent --execute=SELECT 1;" at Docker container 12a0de373e00&#xD;
+[testcontainers.org 00:00:16.17] Docker container 12a0de373e00 ready&#xD;
+info: Bonds.Infrastructure.Policy.PolicyService[0]&#xD;
+      Trade plan 1 created: rule P2_INFLOW, status PendingApproval, 1 line(s), dry-run&#xD;
+[testcontainers.org 00:00:23.57] Stop Docker container 12a0de373e00&#xD;
+[testcontainers.org 00:00:28.62] Delete Docker container 12a0de373e00&#xD;
+[xUnit.net 00:00:28.84]   Finished:    Bonds.IntegrationTests&#xD;
+</StdOut>
+    </Output>
+  </ResultSummary>
+</TestRun>

@@ -85,6 +85,12 @@ public sealed class PolicyOptions
     /// <summary>Не больше стольких запросов метаданных брокера за один подбор кандидатов.</summary>
     public int MaxMetaQueriesPerRun { get; set; } = 30;
 
+    /// <summary>
+    /// Минимальная пауза между планами одного правила и одной причины в ЛЮБОМ статусе (в том числе отклонённых и истёкших). Пока исполнителя нет (dry-run), без неё
+    /// каждый цикл после истечения плана рождал бы такой же новый; с ней неподтверждённый план возвращается не чаще, чем раз в эту паузу.
+    /// </summary>
+    public TimeSpan RepeatCooldown { get; set; } = TimeSpan.FromHours(6);
+
     /// <summary>Пополнения старше этого окна не порождают P2 автоматически (иначе первый запуск «распределил» бы всю историю).</summary>
     public TimeSpan DepositLookback { get; set; } = TimeSpan.FromDays(3);
 
