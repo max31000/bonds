@@ -21,7 +21,34 @@ public static class LinePricer
     public static decimal RoundToStep(decimal price, decimal step, string side) =>
         side == PlanSides.Sell ? Math.Ceiling(price / step) * step : Math.Floor(price / step) * step;
 
-    public static PricedQuote? TryPrice(PolicyQuote q, string side, out string? skipReason)
+    private static readonly PolicyOptions DefaultOptions = new();
+
+    /// <summary>
+    /// Санити-проверка стакана до построения цены: перевёрнутый (ask &lt; bid), слишком широкий спред ((ask−bid)/mid &gt; <see cref="PolicyOptions.MaxSpreadFraction"/>,
+    /// для облигаций <see cref="PolicyOptions.MaxBondSpreadFraction"/>) или mid далеко от последней сделки (|mid−last|/last &gt; <see cref="PolicyOptions.MaxLastDeviationFraction"/>,
+    /// только при известной last). Все пороги — ДОЛИ; bid/ask/last в одних единицах (облигации — пункты), поэтому отношения безразмерны.
+    /// </summary>
+    public static string? SanityProblem(PolicyQuote q, PolicyOptions options)
+    {
+        var bid = q.Bid!.Value;
+        var ask = q.Ask!.Value;
+        if (ask < bid) return "перевёрнутый стакан (ask < bid) — цене нельзя доверять";
+
+        var mid = (bid + ask) / 2m;
+        var maxSpread = q.Kind == PolicyAssetKind.Bond ? options.MaxBondSpreadFraction : options.MaxSpreadFraction;
+        var spread = (ask - bid) / mid;
+        if (spread > maxSpread) return $"спред стакана {spread:P1} шире допустимого {maxSpread:P1}";
+
+        if (q.Last is > 0m)
+        {
+            var deviation = Math.Abs(mid - q.Last.Value) / q.Last.Value;
+            if (deviation > options.MaxLastDeviationFraction) return $"mid отклоняется от последней сделки на {deviation:P1} (допустимо {options.MaxLastDeviationFraction:P1})";
+        }
+
+        return null;
+    }
+
+    public static PricedQuote? TryPrice(PolicyQuote q, string side, out string? skipReason, PolicyOptions? options = null)
     {
         skipReason = null;
         if (q.Bid is not > 0m || q.Ask is not > 0m)
@@ -29,6 +56,9 @@ public static class LinePricer
             skipReason = "нет стакана (bid/ask)";
             return null;
         }
+
+        skipReason = SanityProblem(q, options ?? DefaultOptions);
+        if (skipReason is not null) return null;
 
         var mid = (q.Bid.Value + q.Ask.Value) / 2m;
         if (q.Kind == PolicyAssetKind.Bond)
@@ -168,7 +198,7 @@ internal static class PolicyKit
                 continue;
             }
 
-            var priced = LinePricer.TryPrice(q, PlanSides.Buy, out var why);
+            var priced = LinePricer.TryPrice(q, PlanSides.Buy, out var why, input.Options);
             if (priced is null)
             {
                 skipped.Add(new PlanSkip(q.Ticker, why ?? "нет цены"));
@@ -268,13 +298,21 @@ internal static class PolicyKit
                 continue;
             }
 
+            // Автоподбор — только рублёвые облигации: сумма и комиссия считаются в рублях, а у облигации с валютным номиналом рубли берутся лишь из
+            // ориентира цены (оценка), заявка идёт в пунктах валютного номинала. Такие бумаги в авто-кандидаты не попадают (покупка — вручную).
+            if (!string.Equals(q.Currency, "RUB", StringComparison.OrdinalIgnoreCase) || q.NominalRub is not > 0m)
+            {
+                skipped.Add(new PlanSkip(cand.Secid, "номинал облигации не в рублях — исключена из автоматического подбора"));
+                continue;
+            }
+
             if (!MarketOpen(input, q))
             {
                 skipped.Add(new PlanSkip(cand.Secid, "рынок закрыт"));
                 continue;
             }
 
-            var p = LinePricer.TryPrice(q, PlanSides.Buy, out var why);
+            var p = LinePricer.TryPrice(q, PlanSides.Buy, out var why, input.Options);
             if (p is null)
             {
                 skipped.Add(new PlanSkip(cand.Secid, why ?? "нет цены"));
@@ -318,14 +356,18 @@ internal static class PolicyKit
         }
 
         var lines = new List<TradePlanLine>();
+        var plannedByIssuer = new Dictionary<string, decimal>(StringComparer.Ordinal); // рубли, уже набранные в ЭТОМ плане по эмитенту
         foreach (var allocation in result.Allocations)
         {
             var (cand, q, p) = byKey[allocation.Secid!];
             var lots = (long)Math.Round(allocation.Quantity / q.Lot);
+            var perLotRub = p.DirtyPerPiece * q.Lot;
             if (applyIssuerLimit && cand.IssuerKey is not null && input.BondsPortfolioValueRub > 0m)
             {
+                // Лимит эмитента учитывает и уже удерживаемое, и купленное РАНЕЕ в этом же плане другими бумагами того же эмитента.
+                var alreadyPlanned = plannedByIssuer.GetValueOrDefault(cand.IssuerKey);
                 var maxByIssuer = Math.Floor(
-                    (input.MaxIssuerSharePercent / 100m * input.BondsPortfolioValueRub - cand.IssuerHeldValueRub) / (p.DirtyPerPiece * q.Lot));
+                    (input.MaxIssuerSharePercent / 100m * input.BondsPortfolioValueRub - cand.IssuerHeldValueRub - alreadyPlanned) / perLotRub);
                 if (maxByIssuer < lots) lots = (long)Math.Max(0, maxByIssuer);
                 if (lots <= 0)
                 {
@@ -333,6 +375,8 @@ internal static class PolicyKit
                     continue;
                 }
             }
+
+            if (cand.IssuerKey is not null) plannedByIssuer[cand.IssuerKey] = plannedByIssuer.GetValueOrDefault(cand.IssuerKey) + lots * perLotRub;
 
             var yieldText = cand.AfterTaxYieldFraction is { } y ? $", после налога {y:P2} годовых" : string.Empty;
             lines.Add(BuildLine(input, q, p, PlanSides.Buy, lots, $"{reasonPrefix}: кандидат {cand.Name}{yieldText}"));
@@ -445,6 +489,7 @@ internal static class PolicyKit
         var buy = lines.Where(l => l.Side == PlanSides.Buy).Sum(l => l.EstAmount * FxOf(input, l));
         var sell = lines.Where(l => l.Side == PlanSides.Sell).Sum(l => l.EstAmount * FxOf(input, l));
         var fee = lines.Sum(l => l.EstFee * FxOf(input, l));
+        var reservedBuy = lines.Where(l => l.Side == PlanSides.Buy).Sum(l => (l.EstAmount + l.EstFee) * FxOf(input, l)); // валюта портфеля
         var tax = lines.Sum(l => l.EstTax * FxOf(input, l));
         var cashAfter = input.FreeCash - buy + sell - fee - tax;
 
@@ -455,6 +500,7 @@ internal static class PolicyKit
             CashBefore = input.FreeCash,
             CashAfter = cashAfter,
             BuyTotal = buy,
+            ReservedBuy = reservedBuy,
             SellTotal = sell,
             FeeTotal = fee,
             TaxTotal = tax,

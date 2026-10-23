@@ -21,6 +21,9 @@ public class PolicyRulesTests
         Basket("liquidity", target, tier: 0, fill: BasketFillRules.Fixed, autoBuy: autoBuy, autoSell: autoSell,
             members: [Member("TMON@", 0.5m), Member("TSAV", 0.5m), .. extra]);
 
+    /// <summary>Комиссия T-Invest без «своих» фондов: все бумаги тарифицируются по ставке (для проверки учёта комиссии в бюджете).</summary>
+    private static PlanFeeModel ThirdPartyFees(decimal rate) => new(rate, PlanFeeModel.DefaultFreedomTariffId, new HashSet<string>());
+
     private static CapitalBasket Bonds() =>
         Basket("bonds", 0.85m, tier: 2, fill: BasketFillRules.Engine, members: [ClassMember("bond")]);
 
@@ -119,11 +122,12 @@ public class PolicyRulesTests
     [Fact]
     public void P1_FeeIsIncludedInBudget()
     {
-        // Комиссия 0.3% входит в стоимость лота: на 1 000 ₽ при цене 999.99–1000.01 лот TSAV не помещается (1 003 > 1 000).
+        // Комиссия 0.3% входит в стоимость лота: на 1 000 ₽ при цене 999.99–1000.01 лот не помещается (1 003 > 1 000). Список «своих» фондов пуст:
+        // у фондов управляющей компании брокера комиссия 0 (см. P1_OwnFunds_HaveZeroFee_...), здесь проверяется именно сторонний фонд.
         var basket = Basket("liquidity", 0.15m, autoBuy: true, members: [Member("TSAV", 1m)]);
-        SweepRule.Evaluate(Input([basket], [], 1_000m, [Tsav], feeRate: 0.003m)).Plan.Should().BeNull();
+        SweepRule.Evaluate(Input([basket], [], 1_000m, [Tsav]) with { Fees = ThirdPartyFees(0.003m) }).Plan.Should().BeNull();
 
-        var plan = SweepRule.Evaluate(Input([basket], [], 1_003m, [Tsav], feeRate: 0.003m)).Plan!;
+        var plan = SweepRule.Evaluate(Input([basket], [], 1_003m, [Tsav]) with { Fees = ThirdPartyFees(0.003m) }).Plan!;
         plan.Lines.Single().EstFee.Should().Be(3m);
         plan.Lines.Single().QuantityLots.Should().Be(1);
     }
@@ -382,7 +386,7 @@ public class PolicyRulesTests
     public void P5_IncludesCommissionInTheNetTarget()
     {
         // Комиссия 0.3%: один лот TSAV даёт 1 000 − 3 = 997 < 1 000 → нужны 2 лота (чистыми 1 994).
-        var plan = WithdrawRule.Evaluate(WithdrawInput(feeRate: 0.003m), 1_000m, null, null).Plan!;
+        var plan = WithdrawRule.Evaluate(WithdrawInput(feeRate: 0.003m) with { Fees = ThirdPartyFees(0.003m) }, 1_000m, null, null).Plan!;
 
         plan.Lines.Single().QuantityLots.Should().Be(2);
         plan.Lines.Single().EstFee.Should().Be(6m);

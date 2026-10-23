@@ -62,7 +62,8 @@ public static class DecidedVia
 /// (штуки = лоты × <see cref="LotSize"/>); <see cref="LimitPrice"/> — валюта цены за 1 штуку (для облигаций — ЧИСТАЯ цена в рублях за штуку);
 /// <see cref="LimitPricePoints"/> — только облигации: цена в ПУНКТАХ (процент номинала) по сетке <c>min_price_increment_points</c>, её и
 /// будет отправлять исполнитель; <see cref="EstAmount"/>, <see cref="EstFee"/>, <see cref="EstTax"/> — неотрицательные оценки в
-/// <see cref="Currency"/> (сумма сделки с НКД, комиссия, налог продажи).
+/// <see cref="Currency"/> — ВАЛЮТЕ ЦЕНЫ бумаги (сумма сделки с НКД, комиссия, налог продажи); в валюту портфеля их приводят по <see cref="PolicyQuote.FxToPortfolio"/>
+/// (итоги и резерв в <see cref="TradePlanSummary"/> уже в валюте портфеля).
 /// </summary>
 public sealed class TradePlanLine
 {
@@ -135,6 +136,12 @@ public sealed record TradePlanSummary
     public decimal CashAfter { get; init; }
 
     public decimal BuyTotal { get; init; }
+
+    /// <summary>
+    /// Сколько денег план резервирует под покупки: Σ (сумма + комиссия) строк Buy в валюте ПОРТФЕЛЯ (<see cref="Currency"/>), строки в другой валюте цены приведены по курсу.
+    /// Именно это число суммирует <c>SumReservedBuysAsync</c> (строки хранятся в валюте цены, складывать их в SQL нельзя). Нет поля (старый план) — резерв 0.
+    /// </summary>
+    public decimal ReservedBuy { get; init; }
     public decimal SellTotal { get; init; }
     public decimal FeeTotal { get; init; }
     public decimal TaxTotal { get; init; }

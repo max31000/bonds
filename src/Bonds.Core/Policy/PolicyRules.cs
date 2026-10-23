@@ -31,6 +31,10 @@ public static class SweepRule
         if (basket is null) return PolicyOutcome.None("P1: нет корзины «liquidity»");
         if (basket.FillRule == BasketFillRules.Hold) return PolicyOutcome.None("P1: корзина «liquidity» в режиме hold");
         if (input.FreeCash <= 0m) return PolicyOutcome.None("P1: свободных рублей нет");
+
+        // Корзина уже выше цели (Above/HardAbove): парковать в неё дальше нельзя — кэш остаётся свободным (его разберёт P2/P3b/P4 или владелец).
+        if (input.RowByCode(PolicyNames.Liquidity) is { State: BasketState.Above or BasketState.HardAbove } liquidityRow)
+            return PolicyOutcome.None($"P1: корзина «liquidity» выше цели ({liquidityRow.State}) — кэш не паркуется, остаётся свободным");
         if (basket.MinTrade > 0m && input.FreeCash < basket.MinTrade) return PolicyOutcome.None("P1: свободных рублей меньше минимальной сделки корзины");
 
         var lines = PolicyKit.BuyMembers(input, basket.Members, input.FreeCash, "P1 парковка кэша", skipped);
@@ -156,7 +160,7 @@ internal static class BasketSell
             if (q is null) { skipped.Add(new PlanSkip(h.Ticker, "нет торговых метаданных или стакана")); continue; }
             if (!q.SellAvailable) { skipped.Add(new PlanSkip(h.Ticker, "продажа недоступна у брокера")); continue; }
             if (!PolicyKit.MarketOpen(input, q)) { skipped.Add(new PlanSkip(h.Ticker, "рынок закрыт")); continue; }
-            var p = LinePricer.TryPrice(q, PlanSides.Sell, out var why);
+            var p = LinePricer.TryPrice(q, PlanSides.Sell, out var why, input.Options);
             if (p is null) { skipped.Add(new PlanSkip(h.Ticker, why ?? "нет цены")); continue; }
 
             var perLot = p.DirtyPerPiece * q.Lot * q.FxToPortfolio;
@@ -229,10 +233,9 @@ public static class RebalanceRule
 {
     public static string TriggerFor(IEnumerable<string> codes) => $"Жёсткое отклонение корзин: {string.Join(", ", codes.OrderBy(c => c, StringComparer.Ordinal))}";
 
-    public static PolicyOutcome Evaluate(PolicyInput input)
+    /// <summary>Корзины, которые P4 рассматривает: не системные, HardAbove/HardBelow, не hold.</summary>
+    private static List<(BasketDriftRow Row, CapitalBasket Basket)> HardRows(PolicyInput input)
     {
-        var notes = new List<string>();
-        var skipped = new List<PlanSkip>();
         var rows = new List<(BasketDriftRow Row, CapitalBasket Basket)>();
         foreach (var row in input.Drift.Rows.Where(r => !r.IsSystem && r.State is BasketState.HardAbove or BasketState.HardBelow))
         {
@@ -241,6 +244,21 @@ public static class RebalanceRule
             rows.Add((row, basket));
         }
 
+        return rows;
+    }
+
+    /// <summary>Причина (trigger) плана P4 для входа без построения плана (раннер проверяет дубликат ДО дорогого сбора облигационных данных); null — жёстких отклонений нет.</summary>
+    public static string? TriggerFor(PolicyInput input)
+    {
+        var rows = HardRows(input);
+        return rows.Count == 0 ? null : TriggerFor(rows.Select(r => r.Basket.Code));
+    }
+
+    public static PolicyOutcome Evaluate(PolicyInput input)
+    {
+        var notes = new List<string>();
+        var skipped = new List<PlanSkip>();
+        var rows = HardRows(input);
         if (rows.Count == 0) return PolicyOutcome.None("P4: жёстких отклонений нет");
 
         var lines = new List<TradePlanLine>();
@@ -336,7 +354,7 @@ public static class WithdrawRule
                 if (q is null) { skipped.Add(new PlanSkip(h.Ticker, "нет торговых метаданных или стакана")); continue; }
                 if (!q.SellAvailable) { skipped.Add(new PlanSkip(h.Ticker, "продажа недоступна у брокера")); continue; }
                 if (!PolicyKit.MarketOpen(input, q)) { skipped.Add(new PlanSkip(h.Ticker, "рынок закрыт")); continue; }
-                var p = LinePricer.TryPrice(q, PlanSides.Sell, out var why);
+                var p = LinePricer.TryPrice(q, PlanSides.Sell, out var why, input.Options);
                 if (p is null) { skipped.Add(new PlanSkip(h.Ticker, why ?? "нет цены")); continue; }
 
                 var maxLots = (long)Math.Floor(h.QuantityPieces / q.Lot);
@@ -399,7 +417,7 @@ public static class ExitBasketRule
             if (q is null) { skipped.Add(new PlanSkip(h.Ticker, "нет торговых метаданных или стакана")); continue; }
             if (!q.SellAvailable) { skipped.Add(new PlanSkip(h.Ticker, "продажа недоступна у брокера")); continue; }
             if (!PolicyKit.MarketOpen(input, q)) { skipped.Add(new PlanSkip(h.Ticker, "рынок закрыт")); continue; }
-            var p = LinePricer.TryPrice(q, PlanSides.Sell, out var why);
+            var p = LinePricer.TryPrice(q, PlanSides.Sell, out var why, input.Options);
             if (p is null) { skipped.Add(new PlanSkip(h.Ticker, why ?? "нет цены")); continue; }
 
             var lots = (long)Math.Floor(h.QuantityPieces / q.Lot);
@@ -438,21 +456,47 @@ public static class FreedomTopUpRule
         if (input.FreeCash < input.Options.MinFreedomTopUpUsd) return PolicyOutcome.None($"P7: свободных долларов меньше ${input.Options.MinFreedomTopUpUsd:0}");
         if (input.BasketByCode(PolicyNames.GlobalCore) is null) return PolicyOutcome.None("P7: нет корзины «global_core»");
 
-        var market = FreedomFeeModel.CheaperRoute(input.FreeCash);
-        var ticker = market == FreedomMarket.KazakhstanItsFunds ? input.Options.FreedomSmallTopUpTicker : input.Options.FreedomLargeTopUpTicker;
-        var q = input.FindQuote(ticker);
-        if (q is null) return PolicyOutcome.None($"P7: нет торговых метаданных или стакана {ticker}");
-        if (!q.BuyAvailable) return PolicyOutcome.None($"P7: покупка {ticker} недоступна");
-        if (!PolicyKit.MarketOpen(input, q)) return PolicyOutcome.None($"P7: рынок {ticker} закрыт");
-        var p = LinePricer.TryPrice(q, PlanSides.Buy, out var why);
-        if (p is null) return PolicyOutcome.None($"P7: {ticker} — {why}");
+        // Маршрут выбираем по РЕАЛЬНЫМ комиссиям FreedomFeeModel обоих маршрутов для фактической суммы заявки (весь свободный остаток) и тарифу счёта:
+        // на Investor ITS-фонды дешевле при любой сумме (CheaperRoute знает только Standard). При равенстве комиссий с точностью до цента — CheaperRoute.
+        var routes = new List<(string Ticker, FreedomMarket Market, PolicyQuote Quote, PricedQuote Price, decimal Fee)>();
+        foreach (var (ticker, market) in new[]
+                 {
+                     (input.Options.FreedomSmallTopUpTicker, FreedomMarket.KazakhstanItsFunds),
+                     (input.Options.FreedomLargeTopUpTicker, FreedomMarket.Europe),
+                 })
+        {
+            var q = input.FindQuote(ticker);
+            if (q is null) { notes.Add($"P7: нет торговых метаданных или стакана {ticker}"); continue; }
+            var priced = LinePricer.TryPrice(q, PlanSides.Buy, out var why, input.Options);
+            if (priced is null) { notes.Add($"P7: {ticker} — {why}"); continue; }
 
-        var lots = PolicyKit.MaxAffordableLots(input, q, p, input.FreeCash, market);
-        if (lots <= 0) return PolicyOutcome.None($"P7: свободных долларов не хватает на один лот {ticker}");
+            if (PolicyKit.MaxAffordableLots(input, q, priced, input.FreeCash, market) <= 0)
+            {
+                notes.Add($"P7: свободных долларов не хватает на один лот {ticker}");
+                continue;
+            }
 
-        var route = market == FreedomMarket.KazakhstanItsFunds ? "ITS-фонды 0.5%" : "Europe 0.12% + $1.2";
-        var line = PolicyKit.BuildLine(input, q, p, PlanSides.Buy, lots, $"P7 доливка global_core: {ticker} ({route})", freedomMarket: market);
-        notes.Add($"Маршрут комиссии: {route}; точка безубыточности ≈ ${FreedomFeeModel.BreakEvenAmountUsd:0.00}");
+            var pieces = Math.Floor(input.FreeCash / (priced.DirtyPerPiece * q.FxToPortfolio));
+            var feeUsd = FreedomFeeModel.Fee(input.Fees.FreedomTariffId, market, input.FreeCash, pieces);
+            routes.Add((ticker, market, q, priced, feeUsd));
+        }
+
+        if (routes.Count == 0) return PolicyOutcome.None(notes.ToArray());
+
+        var best = routes.OrderBy(r => r.Fee).First();
+        if (routes.Count > 1 && routes.All(r => r.Fee == best.Fee)) best = routes.First(r => r.Market == FreedomFeeModel.CheaperRoute(input.FreeCash));
+        var (chosenTicker, chosenMarket, chosenQuote, chosenPrice, _) = best;
+
+        // Доступность и часы проверяем у ВЫБРАННОГО (самого дешёвого) маршрута: дорогой запасной вариант молча не подставляем.
+        if (!chosenQuote.BuyAvailable) return PolicyOutcome.None(notes.Append($"P7: покупка {chosenTicker} недоступна").ToArray());
+        if (!PolicyKit.MarketOpen(input, chosenQuote)) return PolicyOutcome.None(notes.Append($"P7: рынок {chosenTicker} закрыт").ToArray());
+
+        var lots = PolicyKit.MaxAffordableLots(input, chosenQuote, chosenPrice, input.FreeCash, chosenMarket);
+
+        var route = chosenMarket == FreedomMarket.KazakhstanItsFunds ? "ITS-фонды 0.5%" : "Europe 0.12% + $1.2";
+        var line = PolicyKit.BuildLine(input, chosenQuote, chosenPrice, PlanSides.Buy, lots, $"P7 доливка global_core: {chosenTicker} ({route})", freedomMarket: chosenMarket);
+        notes.Add($"Маршрут комиссии: {route} (сравнены комиссии обоих маршрутов по тарифу {input.Fees.FreedomTariffId}: "
+                  + string.Join(", ", routes.Select(r => $"{r.Ticker} ${r.Fee:0.00}")) + $"); точка безубыточности Standard ≈ ${FreedomFeeModel.BreakEvenAmountUsd:0.00}");
         return PolicyKit.Finish(input, PlanRules.P7FreedomTopUp, TriggerText, [line], autoAllowed: false, skipped, notes);
     }
 }

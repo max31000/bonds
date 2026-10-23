@@ -97,6 +97,18 @@ public sealed class PolicyOptions
     /// <summary>Тикеры (без «@») фондов управляющей компании брокера: комиссия известна без журнала. Сторонние фонды в авто — только с известной комиссией из журнала.</summary>
     public List<string> OwnFunds { get; set; } = ["TMON", "TSAV", "TBRU", "TOFZ", "TPAY"];
 
+    /// <summary>
+    /// Санити-проверка стакана (<see cref="LinePricer"/>): бумага пропускается, если (ask−bid)/mid больше этой ДОЛИ — фонды, акции, ETF (0.02 = 2%). Широкий спред =
+    /// пустой/«дырявый» стакан, mid по нему не цена.
+    /// </summary>
+    public decimal MaxSpreadFraction { get; set; } = 0.02m;
+
+    /// <summary>То же для облигаций (спред считается в пунктах относительно mid): облигации торгуются шире фондов, поэтому порог 3%.</summary>
+    public decimal MaxBondSpreadFraction { get; set; } = 0.03m;
+
+    /// <summary>Санити-проверка: |mid − last| / last больше этой ДОЛИ (0.05 = 5%) — бумага пропускается; проверка только при известной цене last.</summary>
+    public decimal MaxLastDeviationFraction { get; set; } = 0.05m;
+
     /// <summary>Мосбиржа: 10:00–18:40 МСК.</summary>
     public TradingSessionOptions Moex { get; set; } = new(new TimeSpan(10, 0, 0), new TimeSpan(18, 40, 0));
 

@@ -59,6 +59,9 @@ public sealed record PolicyQuote
     public decimal? Bid { get; init; }
     public decimal? Ask { get; init; }
 
+    /// <summary>Цена последней сделки в тех же единицах, что bid/ask (облигации — пункты); null — неизвестна. Только для санити-проверки стакана.</summary>
+    public decimal? Last { get; init; }
+
     /// <summary>Облигация: НКД на штуку (валюта цены); для остальных 0.</summary>
     public decimal AccruedPerPiece { get; init; }
 
@@ -76,14 +79,35 @@ public sealed record PolicyQuote
     public bool KnownCommission { get; init; } = true;
 }
 
-/// <summary>Оценка комиссии брокера. T-Invest — ДОЛЯ суммы (<see cref="TInvestRate"/>, 0.003 = 0.3%, как <c>ICommissionRateProvider</c>), Freedom — <see cref="FreedomFeeModel"/> по тарифу.</summary>
-public sealed record PlanFeeModel(decimal TInvestRate, int FreedomTariffId)
+/// <summary>
+/// Оценка комиссии брокера. T-Invest — ДОЛЯ суммы (<see cref="TInvestRate"/>, 0.003 = 0.3%, как <c>ICommissionRateProvider</c>), КРОМЕ фондов управляющей компании
+/// брокера (<see cref="OwnFunds"/>, тикеры без «@») — по ним комиссия 0; Freedom — <see cref="FreedomFeeModel"/> по тарифу.
+/// <para>
+/// <b>Валюта:</b> <see cref="Estimate"/> ВСЕГДА возвращает комиссию в валюте ЦЕНЫ бумаги (как <c>EstAmount</c> строки): Freedom считает в USD, поэтому для бумаги,
+/// котируемой в другой валюте (EUR), USD-комиссия делится на <see cref="PolicyQuote.FxToPortfolio"/>. В валюту портфеля её приводят умножением на тот же курс.
+/// </para>
+/// </summary>
+public sealed record PlanFeeModel(decimal TInvestRate, int FreedomTariffId, IReadOnlySet<string>? OwnFunds = null)
 {
     public const int DefaultFreedomTariffId = FreedomFeeModel.StandardTariffId;
 
+    private static readonly IReadOnlySet<string> DefaultOwnFunds =
+        new HashSet<string>(new PolicyOptions().OwnFunds.Select(NormalizeFund), StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Нормализация тикера фонда для сравнения: без «@» и пробелов, ВЕРХНИЙ регистр.</summary>
+    public static string NormalizeFund(string ticker) => ticker.Trim().TrimEnd('@').ToUpperInvariant();
+
+    /// <summary>Фонд управляющей компании брокера (комиссия 0)? Список — <see cref="OwnFunds"/> либо значения <see cref="PolicyOptions.OwnFunds"/> по умолчанию.</summary>
+    public bool IsOwnFund(PolicyQuote quote)
+    {
+        if (quote.Broker != BrokerIds.TInvest || quote.Kind != PolicyAssetKind.Fund) return false;
+        var key = NormalizeFund(quote.Ticker);
+        return (OwnFunds ?? DefaultOwnFunds).Any(f => string.Equals(NormalizeFund(f), key, StringComparison.OrdinalIgnoreCase));
+    }
+
     /// <summary>
     /// Комиссия в ВАЛЮТЕ ЦЕНЫ бумаги за заявку на <paramref name="amount"/> (валюта цены) и <paramref name="pieces"/> штук.
-    /// <paramref name="freedomMarketOverride"/> — явный маршрут Freedom (P7 выбирает его сам по <c>CheaperRoute</c>).
+    /// <paramref name="freedomMarketOverride"/> — явный маршрут Freedom (P7 выбирает его сам по реальным комиссиям маршрутов).
     /// </summary>
     public decimal Estimate(PolicyQuote quote, decimal amount, decimal pieces, FreedomMarket? freedomMarketOverride = null)
     {
@@ -91,11 +115,12 @@ public sealed record PlanFeeModel(decimal TInvestRate, int FreedomTariffId)
         {
             var market = freedomMarketOverride
                          ?? FreedomFeeModel.RouteFor(quote.Ticker, quote.ItsTwin, quote.Kind is PolicyAssetKind.Etf or PolicyAssetKind.Fund);
-            var amountUsd = amount * quote.FxToPortfolio; // портфель Freedom измеряется в USD
-            return FreedomFeeModel.Fee(FreedomTariffId, market, amountUsd, pieces);
+            var fx = quote.FxToPortfolio > 0m ? quote.FxToPortfolio : 1m;
+            var amountUsd = amount * fx; // портфель Freedom измеряется в USD
+            return FreedomFeeModel.Fee(FreedomTariffId, market, amountUsd, pieces) / fx; // USD → валюта цены
         }
 
-        return amount * TInvestRate;
+        return IsOwnFund(quote) ? 0m : amount * TInvestRate;
     }
 }
 

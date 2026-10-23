@@ -27,14 +27,16 @@ public interface ITradePlanRepository
     Task<bool> HasOpenRuleAsync(ulong userId, string rule, DateTime nowUtc);
 
     /// <summary>
-    /// Σ <c>est_amount</c> покупок планов, уже авто-подтверждённых с <paramref name="sinceUtc"/> (по <c>decided_at</c>), в рублях — для суточного лимита.
-    /// Считаются <c>AutoApproved</c>, <c>Submitting</c>, <c>Done</c> со строками в RUB.
+    /// Σ <c>est_amount</c> покупок планов, ИСПОЛНЯЕМЫХ с <paramref name="sinceUtc"/> (по <c>decided_at</c>), в рублях — для суточного лимита. Считаются только
+    /// <c>Submitting</c> и <c>Done</c> со строками в RUB. <c>AutoApproved</c> НЕ считается: в dry-run он никогда не исполняется (деньги не потрачены); счётчик внутри
+    /// одного цикла наращивает <c>PolicyRunner</c>. TODO фаза 3: когда появится исполнитель, учитывать AutoApproved, ожидающие исполнения.
     /// </summary>
     Task<decimal> SumAutoApprovedRubSinceAsync(ulong userId, DateTime sinceUtc);
 
     /// <summary>
-    /// Σ (<c>est_amount + est_fee</c>) покупок открытых, не просроченных планов, РЕЗЕРВИРУЮЩИХ деньги (<see cref="PlanStatuses.ReservingCash"/>), по брокеру
-    /// и валюте строк. Деньги Approved dry-run не резервируются.
+    /// Σ <c>TradePlanSummary.ReservedBuy</c> (покупки + комиссия в валюте ПОРТФЕЛЯ) открытых, не просроченных планов, РЕЗЕРВИРУЮЩИХ деньги
+    /// (<see cref="PlanStatuses.ReservingCash"/>), с покупками у брокера <paramref name="broker"/> и валютой портфеля <paramref name="currency"/>.
+    /// Деньги Approved dry-run не резервируются.
     /// </summary>
     Task<decimal> SumReservedBuysAsync(ulong userId, string broker, string currency, DateTime nowUtc);
 
@@ -45,6 +47,9 @@ public interface ITradePlanRepository
     Task<bool> TransitionAsync(
         ulong userId, ulong id, IReadOnlyCollection<string> fromStatuses, string toStatus, string? decidedVia, DateTime decidedAtUtc, string? summaryJson);
 
-    /// <summary>Переводит просроченные <c>PendingApproval</c> (по <c>expires_at</c>) в <c>Expired</c>; возвращает число планов.</summary>
+    /// <summary>
+    /// Переводит просроченные <c>PendingApproval</c> и <c>AutoApproved</c> (по <c>expires_at</c>) в <c>Expired</c>; возвращает число планов. У AutoApproved в сводку
+    /// дописывается «не исполнен» (в dry-run он не исполнялся).
+    /// </summary>
     Task<int> ExpirePendingAsync(DateTime nowUtc);
 }
