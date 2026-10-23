@@ -2045,3 +2045,108 @@ export interface BasketUpdateBody {
 export interface BasketBatchItem extends BasketUpdateBody {
   id: number;
 }
+
+// ─── Планы сделок (задача 63, /api/plans). РЕЖИМ НАБЛЮДЕНИЯ: заявки брокерам НЕ отправляются, план — только данные ───
+// ЕДИНИЦЫ: quantityLots — целые лоты (штуки = lots × lotSize); limitPrice — валюта цены за штуку (облигации — ЧИСТАЯ цена в рублях), limitPricePoints —
+// облигации: цена в ПУНКТАХ (процент номинала); estAmount/estFee/estTax — неотрицательные оценки в `currency` строки; все суммы summary — в валюте портфеля плана;
+// fraction в запросе вывода — ДОЛЯ портфеля (0.1 = 10%), проценты рисует только фронт.
+
+export type PlanStatus =
+  | 'Draft'
+  | 'PendingApproval'
+  | 'AutoApproved'
+  | 'Approved'
+  | 'Rejected'
+  | 'Expired'
+  | 'Submitting'
+  | 'Done'
+  | 'Failed';
+
+export type PlanRule = 'P1_SWEEP' | 'P2_INFLOW' | 'P3B_LIQ_TO_BONDS' | 'P4_REBALANCE' | 'P5_WITHDRAW' | 'P7_FREEDOM_TOPUP' | 'MANUAL';
+
+export interface PlanLine {
+  lineNo: number;
+  broker: string;
+  accountId: number;
+  instrumentKey: string;
+  ticker: string;
+  side: 'Buy' | 'Sell';
+  quantityLots: number;
+  lotSize: number;
+  quantityPieces: number;
+  limitPrice: number;
+  limitPricePoints: number | null;
+  estAmount: number;
+  estFee: number;
+  estTax: number;
+  currency: string;
+  reason: string;
+}
+
+export interface PlanSkip {
+  ticker: string;
+  reason: string;
+}
+
+export interface PlanSummary {
+  portfolio: string;
+  currency: string;
+  cashBefore: number;
+  cashAfter: number;
+  buyTotal: number;
+  sellTotal: number;
+  feeTotal: number;
+  taxTotal: number;
+  /** P5: запрошенная сумма «к выводу после налога и комиссии». */
+  requestedNet: number | null;
+  netToWithdraw: number | null;
+  /** P5: сколько не хватило, если продавать больше нечего. */
+  shortfall: number | null;
+  warnings: string[];
+  notes: string[];
+  skipped: PlanSkip[];
+  pricesPossiblyStale: boolean;
+  executionNote: string | null;
+}
+
+export interface Plan {
+  /** 0 — предпросмотр (не сохранён). */
+  id: number;
+  rule: PlanRule;
+  trigger: string;
+  status: PlanStatus;
+  dryRun: boolean;
+  createdAt: string;
+  expiresAt: string;
+  decidedAt: string | null;
+  decidedVia: string | null;
+  summary: PlanSummary | null;
+  lines: PlanLine[];
+}
+
+export interface PlansResponse {
+  items: Plan[];
+  /** Режим наблюдения: true — сделки не отправляются. */
+  dryRun: boolean;
+  disclaimer: string;
+}
+
+export interface PlanResult {
+  plan: Plan | null;
+  notes: string[];
+  dryRun: boolean;
+  disclaimer: string;
+}
+
+export interface PlanInflowBody {
+  amount: number;
+  portfolio?: CapitalPortfolioId;
+}
+
+export interface PlanWithdrawBody {
+  amount?: number;
+  /** ДОЛЯ портфеля (0.1 = 10%). */
+  fraction?: number;
+  portfolio?: CapitalPortfolioId;
+  includeBaskets?: string[];
+}

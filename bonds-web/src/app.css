@@ -388,3 +388,28 @@
   margin-left: -1px;
   background: var(--mvv-text);
 }
+
+/* Планы сделок (задача 63): баннер режима наблюдения и строки плана. */
+.bonds-dryrun-banner {
+  display: flex;
+  gap: var(--mvv-sp-2);
+  align-items: center;
+  padding: var(--mvv-sp-3) var(--mvv-sp-4);
+  border: 1px solid var(--mvv-warning);
+  border-radius: var(--mvv-r-md);
+  background: var(--mvv-surface-2);
+  color: var(--mvv-text);
+  font-size: var(--mvv-fs-13);
+  font-weight: 600;
+}
+.bonds-dryrun-banner svg {
+  flex: none;
+  color: var(--mvv-warning);
+}
+.bonds-plan-card {
+  border-top: 1px solid var(--mvv-border);
+}
+.bonds-plan-line {
+  padding: var(--mvv-sp-2) 0;
+  border-top: 1px dashed var(--mvv-border);
+}

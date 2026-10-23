@@ -29,6 +29,7 @@ const NAV_ITEMS: BondsNavItem[] = [
   { label: 'Позиции', path: '/positions' },
   { label: 'Доходы', path: '/income' },
   { label: 'Капитал', path: '/capital' },
+  { label: 'Планы', path: '/plans' },
   { label: 'Денежный поток', path: '/cashflow' },
   { label: 'Аналитика', path: '/analytics' },
   { label: 'Рекомендации', path: '/recommendations' },
