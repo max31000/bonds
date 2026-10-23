@@ -64,6 +64,9 @@ public sealed class CurrencyRateLookup : ICurrencyRateLookup
         await GetRubPerUnitAsync(isoCode, DateOnly.MinValue, ct);
         var currency = await _currencies.GetByIsoAsync(isoCode);
         if (currency is null) return RateMissKind.NotInDirectory;
-        return _cache[isoCode].Count == 0 ? RateMissKind.NoHistoryYet : RateMissKind.OutsideHistory;
+        if (_cache[isoCode].Count > 0) return RateMissKind.OutsideHistory;
+        // Истории нет, но рефрешер её уже запрашивал и MOEX ничего не отдал (EUR_RUB__TOM: сделок нет с 2024, CLOSE = 0) — сама
+        // не появится. Иначе «самолечащийся» пропуск навсегда держал JournalSynced = false и блокировал бэкфилл истории.
+        return CurrencyRateRefresher.EmptyAttemptedOn.ContainsKey(currency.Id) ? RateMissKind.OutsideHistory : RateMissKind.NoHistoryYet;
     }
 }
