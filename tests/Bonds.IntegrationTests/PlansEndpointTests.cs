@@ -5,6 +5,7 @@ using Bonds.Core.Capital;
 using Bonds.Core.Interfaces.Repositories;
 using Bonds.Core.Models;
 using Bonds.Core.Policy;
+using Bonds.Core.Telegram;
 using Bonds.Infrastructure.Connectors.TInvest;
 using Bonds.Infrastructure.Policy;
 using Bonds.Infrastructure.Repositories;
@@ -427,6 +428,59 @@ public class PlansEndpointTests
         p1.DecidedVia.Should().Be("auto");
         p1.DryRun.Should().BeTrue();
         p1.Lines.Should().NotBeEmpty().And.OnlyContain(l => l.Side == PlanSides.Buy);
+    }
+
+    [Fact]
+    public async Task Runner_AutoApprovedPlan_SendsInformationalTelegramMessage_WithoutButtons()
+    {
+        var (userId, _, _, _, _, _, factory) = await SeedRubAsync(cashRub: 7_340m, aQuantity: 0m);
+        var telegramId = (await new UserRepository(Conn).GetByIdAsync(userId))!.TelegramId;
+        var now = OpenNowUtc();
+
+        for (var i = 0; i < 2; i++)
+        {
+            using var scope = factory.Services.CreateScope();
+            await scope.ServiceProvider.GetRequiredService<PolicyRunner>().RunForUserAsync(userId, now, new PolicyRunResult());
+        }
+
+        var plans = await PlansOfAsync(userId);
+        plans.Should().NotBeEmpty().And.OnlyContain(p => p.Status == PlanStatuses.AutoApproved);
+        var sent = factory.Services.GetRequiredService<FakeTelegramBotClient>().SentTo(telegramId);
+        sent.Should().HaveCount(plans.Count, "одно сообщение на план, повторный прогон дубликатов не создаёт");
+        sent.Should().OnlyContain(m => m.Keyboard == null && m.Html.Contains("Авто-подтверждено"));
+    }
+
+    [Fact]
+    public async Task Runner_WhenPaused_CreatesOnlyPendingApproval_AndNotifiesOncePerPlanWithButtons()
+    {
+        var (userId, _, _, _, _, _, factory) = await SeedRubAsync(cashRub: 7_340m, aQuantity: 0m);
+        var telegramId = (await new UserRepository(Conn).GetByIdAsync(userId))!.TelegramId;
+        await new UserSettingsRepository(Conn).SetExecutionPausedAsync(userId, true);
+        var now = OpenNowUtc();
+
+        for (var i = 0; i < 2; i++)
+        {
+            using var scope = factory.Services.CreateScope();
+            await scope.ServiceProvider.GetRequiredService<PolicyRunner>().RunForUserAsync(userId, now, new PolicyRunResult());
+        }
+
+        // Пауза (/stop): та же ситуация, что в тесте авто-подтверждения, но ни одного AutoApproved — только PendingApproval без решения.
+        var plans = await PlansOfAsync(userId);
+        plans.Should().NotBeEmpty();
+        plans.Should().OnlyContain(p => p.Status == PlanStatuses.PendingApproval && p.DecidedVia == null && p.DecidedAt == null);
+        plans.Should().OnlyContain(p => !string.IsNullOrEmpty(p.BotNonce));
+
+        var sent = factory.Services.GetRequiredService<FakeTelegramBotClient>().SentTo(telegramId);
+        sent.Should().HaveCount(plans.Count, "ровно одно сообщение на план");
+        foreach (var plan in plans)
+        {
+            var message = sent.Should().ContainSingle(m => m.Html.Contains($"План №{plan.Id}")).Subject;
+            message.Html.Should().Contain("режим наблюдения: сделка не отправляется");
+            var data = message.Keyboard!.Rows.SelectMany(r => r).Select(b => b.CallbackData).Where(d => d != null).ToList();
+            data.Should().Equal(
+                BotCallback.Build((ulong)plan.Id, BotPlanAction.Approve, plan.BotNonce!),
+                BotCallback.Build((ulong)plan.Id, BotPlanAction.Reject, plan.BotNonce!));
+        }
     }
 
     [Fact]

@@ -358,6 +358,16 @@ instrument|asset_class); таблица `target_allocations` **удалена** 
 `RepeatCooldown` (6 ч) после любого плана с тем же `rule` + `trigger` (иначе без исполнителя каждый цикл рождал бы новый). Вне часов торгов автоматические правила плана не строят; ручные запросы и `preview`
 игнорируют часы, но помечают итоги `pricesPossiblyStale`.
 
+**Telegram-бот (задача 64).** Тот же бот (`Telegram:BotToken`), long polling `getUpdates` (25 с), webhook нет. `Bonds.Core/Telegram` — чистые функции: `BotCommandParser` («15%» → ДОЛЯ 0.15 один раз), `BotCallback`
+(`p:{planId}:{a|r}:{nonce}`, nonce = 8 случайных байт base64url в `trade_plans.bot_nonce`, не уходит в API), `PlanMessageFormatter`/`BotTexts`/`BotFormat` (HTML-экранирование, русская локаль независимо от
+культуры сервера, «режим наблюдения: сделка не отправляется»). `Bonds.Infrastructure/Telegram`: `ITelegramBotClient` (sendMessage c inline-клавиатурой, editMessageText, answerCallbackQuery, getUpdates),
+`TelegramBotPollingService` (offset в `bot_state`, сбой — `LogWarning` + 5 с; HTTP 409 = второй потребитель getUpdates или webhook → пауза 60 с и ОДИН алерт владельцу через `ITelegramAlertSender` раз в 6 ч;
+пустой/плейсхолдерный токен — простой), `TelegramBotUpdateHandler` (пользователь = строка `users` по Telegram id, любой зарегистрированный управляет СВОИМИ планами, остальным «Нет доступа»; команды только в личке;
+approve/reject — тот же `PolicyService`, что веб, `decided_via=telegram`), `TelegramPlanNotifier` (`IPlanNotifier`, вызывается `PolicyRunner` после сохранения плана: PendingApproval — с кнопками, AutoApproved — без).
+`/stop` → `user_settings.execution_paused` (миграция 034): `PolicyRunner` сохраняет планы с `forcePending` (никаких AutoApproved). Токен — часть пути запроса: логи стандартного HttpClient для `telegram-bot*`
+приглушены до Warning (иначе путь с токеном печатается на Information), в исключения бота url не попадает. Кнопка «Детали» — `TelegramBot:WebBaseUrl` + `/bonds/plans/{id}` (пусто — кнопки нет).
+В интеграционных тестах клиент заменён `FakeTelegramBotClient`.
+
 **Кандидаты-облигации (P2/P3b/P4).** Отбор как у `source=recommended` (гигиена, не флоатер, ликвидность не Caution), но светофор — только Green; ранг — доходность к худшему после налога
 (`CandidateYieldRanking`), стакан и метаданные брокера запрашиваются только у верхушки пула (`BondCandidatePool` 25; недостающие метаданные — `TradingMetaRefresher.EnsureTInvestAsync`). Покупка — тот же
 `CashAllocationService.Allocate` (ось сектора, 1 лот на бумагу), но с РЕАЛЬНЫМ лотом и ценой по стакану (существующие вызовы `AllocationEndpoints` не менялись). P3b: after-tax доходность облигации ≥ after-tax ожидаемая доходность фонда
