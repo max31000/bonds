@@ -213,6 +213,10 @@ public sealed class SyncCycleService : ISyncCycleRunner
         // --- 1a-ter. История курса валют (задача 55, MOEX CETS) - тот же суточный шаг и те же правила (необязательный, сбой - лог).
         await RefreshCurrencyRatesAsync(sp, ct);
 
+        // --- 1a-quater. Счёт Freedom (задача 60): позиции, деньги, журнал по всем пользователям с ключами. СТРОГО после T-Invest и отдельным
+        // шагом: сбой Freedom (сеть, ключи) пишется в лог и НЕ добавляется в result.Errors - цикл T-Invest неуспешным не помечается.
+        await SyncFreedomAsync(sp, ct);
+
         // --- 1b. Бэкфилл истории стоимости, если она пуста/почти пуста (первый запуск, или миграция
         // пересчёта истории её очистила). Строго ПОСЛЕ успешного перечитывания журнала: история
         // строится из журнала, и бэкфилл из неполного журнала закрепился бы навсегда (бэкфилл
@@ -297,6 +301,30 @@ public sealed class SyncCycleService : ISyncCycleRunner
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Fund market data refresh failed — fund prices/distributions keep the previous values");
+        }
+    }
+
+    private async Task SyncFreedomAsync(IServiceProvider sp, CancellationToken ct)
+    {
+        try
+        {
+            // GetService (не Required): цикл не должен падать, если шаг не зарегистрирован (юнит-тесты цикла).
+            var freedom = sp.GetService<FreedomSyncService>();
+            if (freedom is null) return;
+
+            var freedomResult = await freedom.SyncAllAsync(ct);
+            if (freedomResult.Errors.Count > 0)
+            {
+                _logger.LogWarning("Freedom sync finished with {Count} problem(s): {Errors}", freedomResult.Errors.Count, string.Join("; ", freedomResult.Errors));
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Freedom sync step failed — Freedom data keeps the previous values");
         }
     }
 

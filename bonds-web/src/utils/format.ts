@@ -13,6 +13,25 @@ export function formatRub(value: number | null | undefined): string {
   }).format(value);
 }
 
+/**
+ * Сумма в валюте инструмента с КОДОМ валюты ("1 234,56 USD") — для брокерских позиций (Freedom, задача 60): знак ₽ тут был бы ложью.
+ * Неизвестный Intl код валюты не роняет экран — число и код через пробел.
+ */
+export function formatMoney(value: number | null | undefined, currency: string, fractionDigits = 2): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return '—';
+  try {
+    return new Intl.NumberFormat('ru-RU', {
+      style: 'currency',
+      currency,
+      currencyDisplay: 'code',
+      minimumFractionDigits: fractionDigits,
+      maximumFractionDigits: fractionDigits,
+    }).format(value);
+  } catch {
+    return `${new Intl.NumberFormat('ru-RU', { minimumFractionDigits: fractionDigits, maximumFractionDigits: fractionDigits }).format(value)} ${currency}`;
+  }
+}
+
 /** Рубли с копейками (цена пая, выплата на пай): "101,35 ₽". Для крупных сумм используйте `formatRub`. */
 export function formatRubPrecise(value: number | null | undefined): string {
   if (value === null || value === undefined || Number.isNaN(value)) return '—';

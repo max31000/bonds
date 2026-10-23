@@ -101,6 +101,11 @@ public static class DependencyInjection
         services.AddScoped<ICurrencyOperationRepository>(sp => new CurrencyOperationRepository(GetConnStr(sp)));
         services.AddScoped<ICurrencyMarketDataRepository>(sp => new CurrencyMarketDataRepository(GetConnStr(sp)));
 
+        // Задача 60: позиции, деньги и журнал не-T-Invest счетов (Freedom) - отдельный домен broker_*, цены и суммы в валюте строки.
+        services.AddScoped<IBrokerPositionRepository>(sp => new BrokerPositionRepository(GetConnStr(sp)));
+        services.AddScoped<IBrokerCashRepository>(sp => new BrokerCashRepository(GetConnStr(sp)));
+        services.AddScoped<IBrokerOperationRepository>(sp => new BrokerOperationRepository(GetConnStr(sp)));
+
         // Migration runner
         services.AddSingleton(sp => new MigrationRunner(
             GetConnStr(sp),
@@ -117,6 +122,15 @@ public static class DependencyInjection
             client.Timeout = TimeSpan.FromSeconds(15);
         });
         services.AddScoped<IMoexIssClient, MoexIssClient>();
+
+        // ЦБ РФ (cbr.ru): официальные курсы USD/EUR/GBP для оценки брокерских позиций в рублях (задача 60) - публичный API без авторизации.
+        services.AddHttpClient(Bonds.Infrastructure.Connectors.Cbr.CbrRatesClient.HttpClientName, client =>
+        {
+            client.BaseAddress = new Uri("https://www.cbr.ru");
+            client.Timeout = TimeSpan.FromSeconds(15);
+        });
+        services.AddScoped<Bonds.Infrastructure.Connectors.Cbr.ICbrRatesClient, Bonds.Infrastructure.Connectors.Cbr.CbrRatesClient>();
+        services.Configure<CurrencyRateOptions>(configuration.GetSection(CurrencyRateOptions.SectionName));
 
         // ГИР БО ФНС (bo.nalog.gov.ru): открытая отчётность организаций по ИНН, без авторизации и секретов,
         // но с обязательным User-Agent. Таймаут 30 с — сервис медленный.
@@ -179,6 +193,11 @@ public static class DependencyInjection
         services.AddScoped<ICurrencySyncService, CurrencySyncService>();
         services.AddScoped<ICurrencyRateLookup, CurrencyRateLookup>();
         services.AddScoped<CurrencyRateRefresher>();
+
+        // Задача 60: синк счёта Freedom (по всем пользователям с ключами) - отдельный шаг SyncCycleService после T-Invest - и
+        // оценка брокерских позиций в рублях (читается эндпоинтами и сводкой портфеля).
+        services.AddScoped<FreedomSyncService>();
+        services.AddScoped<Bonds.Infrastructure.Analytics.BrokerHoldingsBuilder>();
 
         // Единый путь "обогатить одну бумагу по ISIN" (резолв инструмента +
         // MOEX-котировка), вынесенный из WatchlistSyncService — переиспользуется watchlist

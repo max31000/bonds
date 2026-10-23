@@ -272,14 +272,24 @@ public static class PositionsEndpoints
     /// Резолвит AccountId владельца запроса: локальный UserId (ICurrentUser, по tg-claim) → IAccountRepository.GetByUserIdAsync
     /// (первый/единственный счёт, single-user продукт — spec §2). Null, если у пользователя ещё
     /// нет ни одного счёта (чистая инсталляция до первого синка) — вызывающий код должен
-    /// деградировать на пустой ответ, не на 500.
+    /// деградировать на пустой ответ, не на 500. Учитываются ТОЛЬКО счета T-Invest (<c>broker = 'tinvest'</c>): счёт Freedom
+    /// (задача 60) с меньшим Id не должен перехватывать «основной» счёт; счёт Freedom резолвится отдельно
+    /// (<see cref="ResolveBrokerAccountAsync"/>).
     /// </summary>
     internal static async Task<ulong?> ResolveAccountIdAsync(ICurrentUser currentUser, IAccountRepository accountRepo)
     {
         if (await currentUser.GetUserIdAsync() is not { } userId) return null;
 
         var accounts = await accountRepo.GetByUserIdAsync(userId);
-        return accounts.Select(a => a.Id).OrderBy(id => id).FirstOrDefault();
+        return accounts.Where(a => a.Broker == Brokers.TInvest).Select(a => a.Id).OrderBy(id => id).FirstOrDefault();
+    }
+
+    /// <summary>Счёт пользователя у указанного (не-T-Invest) брокера: самый старый по Id; null — пользователя или счёта нет.</summary>
+    internal static async Task<Account?> ResolveBrokerAccountAsync(ICurrentUser currentUser, IAccountRepository accountRepo, string broker)
+    {
+        if (await currentUser.GetUserIdAsync() is not { } userId) return null;
+
+        return (await accountRepo.GetByUserIdAndBrokerAsync(userId, broker)).OrderBy(a => a.Id).FirstOrDefault();
     }
 }
 

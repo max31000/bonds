@@ -5,6 +5,7 @@ import { notifications } from '@mantine/notifications';
 import dayjs from 'dayjs';
 import { useCredentialsStore } from '../store/useCredentialsStore';
 import type { CredentialCategory, CredentialRow } from '../api/types';
+import { FREEDOM_CONNECT_HINT } from './freedomCopy';
 
 /** Пояснения к провайдерам (только копирайт; сам реестр и статусы приходят с бэкенда). */
 const PROVIDER_HINTS: Record<string, string[]> = {
@@ -16,6 +17,7 @@ const PROVIDER_HINTS: Record<string, string[]> = {
   freedom: [
     'Ключи создаются в веб-терминале Freedom: профиль → API-ключи. Нужны публичный и секретный ключ; используются только для чтения.',
     'Секретный ключ никогда не отображается повторно после сохранения.',
+    FREEDOM_CONNECT_HINT,
   ],
   claude_code: [
     'Выполните `claude setup-token` на своём компьютере и вставьте токен. Используется подписка Claude, а не API-ключ.',

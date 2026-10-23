@@ -63,6 +63,14 @@ public class UserCredentialRepository : IUserCredentialRepository
             new { UserId = userId, Provider = provider, Status = status, StatusMessage = statusMessage });
     }
 
+    public async Task<IReadOnlyList<ulong>> ListUserIdsAsync(string provider, string status)
+    {
+        using var conn = CreateConnection();
+        return (await conn.QueryAsync<ulong>(
+            "SELECT user_id FROM user_credentials WHERE provider = @Provider AND status = @Status ORDER BY user_id",
+            new { Provider = provider, Status = status })).ToList();
+    }
+
     public async Task DeleteAsync(ulong userId, string provider)
     {
         using var conn = CreateConnection();

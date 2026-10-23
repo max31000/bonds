@@ -12,6 +12,7 @@ import {
   formatSharePercent,
   formatBp,
   formatYearsWord,
+  formatMoney,
 } from './format';
 
 describe('formatRub', () => {
@@ -249,5 +250,24 @@ describe('formatYearsWord', () => {
   it('uses the genitive singular for fractional years', () => {
     expect(formatYearsWord(0.5)).toBe('0.5 года');
     expect(formatYearsWord(2.5)).toBe('2.5 года');
+  });
+});
+
+describe('formatMoney (сумма в валюте инструмента, с кодом валюты)', () => {
+  it('USD/EUR/GBP — с кодом, а не со знаком рубля', () => {
+    expect(formatMoney(1234.5, 'USD')).toMatch(/1\s234,50\s*USD/);
+    expect(formatMoney(81.21, 'EUR')).toMatch(/81,21\s*EUR/);
+    expect(formatMoney(72, 'GBP')).not.toContain('₽');
+  });
+
+  it('знаков после запятой — по параметру', () => {
+    expect(formatMoney(24.4075, 'EUR', 4)).toMatch(/24,4075\s*EUR/);
+    expect(formatMoney(835.05, 'USD', 0)).toMatch(/835\s*USD/);
+  });
+
+  it('null/NaN — «—»; неизвестный код валюты не бросает', () => {
+    expect(formatMoney(null, 'USD')).toBe('—');
+    expect(formatMoney(Number.NaN, 'USD')).toBe('—');
+    expect(formatMoney(5, 'not-a-currency')).toContain('not-a-currency');
   });
 });

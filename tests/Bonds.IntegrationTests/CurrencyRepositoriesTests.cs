@@ -155,4 +155,28 @@ public class CurrencyRepositoriesTests
         (await repo.GetLastRateDateAsync(currencyId)).Should().Be(d.AddDays(1));
         (await repo.GetRatesAsync(currencyId, d.AddDays(5), d.AddDays(9))).Should().BeEmpty();
     }
+
+    [Fact]
+    public async Task Currency_Upsert_ReplacesFxPlaceholderFigi_ButNeverOverwritesRealFigi()
+    {
+        var repo = new CurrencyRepository(Conn);
+        var iso = NewIso();
+        var placeholderId = await repo.UpsertAsync(new Currency { Figi = "FX:" + iso, IsoCode = iso, Name = iso });
+
+        // Первый синк T-Invest: заглушка FX:* заменяется настоящим FIGI, id сохраняется.
+        var realFigi = $"BBG{Guid.NewGuid():N}"[..20];
+        var id1 = await repo.UpsertAsync(new Currency { Figi = realFigi, IsoCode = iso, Name = "Real" });
+        id1.Should().Be(placeholderId);
+        (await repo.GetByIsoAsync(iso))!.Figi.Should().Be(realFigi);
+
+        // Второй инструмент той же валюты (TOD) не перетирает настоящий FIGI.
+        var otherFigi = $"BBG{Guid.NewGuid():N}"[..20];
+        var id2 = await repo.UpsertAsync(new Currency { Figi = otherFigi, IsoCode = iso, Name = "Real TOD" });
+        id2.Should().Be(placeholderId);
+        (await repo.GetByIsoAsync(iso))!.Figi.Should().Be(realFigi);
+
+        // Повторная заглушка тоже не откатывает настоящий FIGI.
+        await repo.UpsertAsync(new Currency { Figi = "FX:" + iso, IsoCode = iso, Name = iso });
+        (await repo.GetByIsoAsync(iso))!.Figi.Should().Be(realFigi);
+    }
 }

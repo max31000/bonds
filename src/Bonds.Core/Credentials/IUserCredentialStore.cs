@@ -47,4 +47,7 @@ public interface IUserCredentialStore
 
     /// <summary>true — запись есть и status = ok.</summary>
     Task<bool> HasValidAsync(ulong userId, string provider);
+
+    /// <summary>Id всех пользователей с записью провайдера в статусе ok — фоновые синки обходят их без HTTP-контекста (задача 60).</summary>
+    Task<IReadOnlyList<ulong>> ListUserIdsWithValidAsync(string provider);
 }

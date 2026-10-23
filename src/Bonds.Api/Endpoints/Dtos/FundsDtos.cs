@@ -255,8 +255,20 @@ public sealed record PortfolioSummaryDto
     /// <summary>У открытой валюты нет курса вообще - <c>currencyValueRub</c> занижен (на <c>totalRub</c> не влияет).</summary>
     public bool CurrencyDataIncomplete { get; init; }
 
-    /// <summary>Облигации + фонды + деньги (null-деньги = 0).</summary>
+    /// <summary>
+    /// Облигации + фонды + деньги (null-деньги = 0) - ТОЛЬКО счёт T-Invest. Смысл поля не менялся (на нём сверка с брокером и XIRR);
+    /// другие брокеры - в <see cref="OtherBrokersValueRub"/>, общий капитал - в <see cref="CapitalTotalRub"/>.
+    /// </summary>
     public required decimal TotalRub { get; init; }
+
+    /// <summary>Стоимость всех не-T-Invest счетов (Freedom), РУБЛИ по курсам bonds; 0, если таких счетов нет (задача 60).</summary>
+    public decimal OtherBrokersValueRub { get; init; }
+
+    /// <summary>У части позиций/денег других брокеров нет курса валюты - <see cref="OtherBrokersValueRub"/> занижен.</summary>
+    public bool OtherBrokersDataIncomplete { get; init; }
+
+    /// <summary>Капитал целиком, РУБЛИ: <c>totalRub + otherBrokersValueRub</c> (задача 60).</summary>
+    public decimal CapitalTotalRub { get; init; }
 
     /// <summary>Полная стоимость счёта по оценке брокера — для сверки.</summary>
     public decimal? BrokerTotalRub { get; init; }

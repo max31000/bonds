@@ -1587,7 +1587,89 @@ export interface PortfolioSummary {
   portfolioXirrFraction: number | null;
   /** У открытого фонда нет цены вообще — fundsValueRub/totalRub занижены. */
   fundsDataIncomplete: boolean;
+  /** Задача 60: стоимость всех не-T-Invest счетов (Freedom), РУБЛИ по курсам bonds; 0, если таких счетов нет. В totalRub НЕ входит. */
+  otherBrokersValueRub: number;
+  /** У части позиций/денег других брокеров нет курса валюты — otherBrokersValueRub занижен. */
+  otherBrokersDataIncomplete: boolean;
+  /** Капитал целиком, РУБЛИ: totalRub + otherBrokersValueRub. */
+  capitalTotalRub: number;
   disclaimer: string;
+}
+
+// ── Счёт Freedom (задача 60; контракт — Endpoints/Dtos/BrokerHoldingsDtos.cs).
+//    Поля без суффикса Rub/Usd — в ВАЛЮТЕ СТРОКИ (поле currency), НЕ в рублях; *Rub — рубли по курсам bonds, null = курса нет;
+//    доли — ДОЛИ (0.05 = 5%). ──
+
+export type BrokerAssetClass = 'etf' | 'stock' | 'bond' | 'fund' | 'other';
+
+/** Позиция Freedom: цены, стоимость и P&L — в валюте бумаги (`currency`). */
+export interface BrokerPositionRow {
+  ticker: string;
+  name: string;
+  assetClass: BrokerAssetClass;
+  /** ISO-код валюты бумаги (USD/EUR/GBP...). */
+  currency: string;
+  quantity: number;
+  /** Средняя цена входа за бумагу, в валюте бумаги. */
+  avgPrice: number;
+  /** Текущая цена за бумагу, в валюте бумаги. */
+  lastPrice: number;
+  /** Стоимость позиции, в валюте бумаги. */
+  marketValue: number;
+  /** Стоимость − средняя × количество, в валюте бумаги. */
+  unrealizedPnl: number;
+  /** P&L к стоимости входа, ДОЛЯ; null — цены входа нет. */
+  unrealizedPnlFraction: number | null;
+  /** Стоимость в РУБЛЯХ; null — нет курса валюты. */
+  marketValueRub: number | null;
+}
+
+/** Остаток денег Freedom: `amount` — в своей валюте, `amountRub` — рубли (null — нет курса). */
+export interface BrokerCashRow {
+  currency: string;
+  amount: number;
+  amountRub: number | null;
+}
+
+export interface BrokerFees {
+  /** Сколько комиссий уплачено за всё время, USD (положительное число). */
+  feesPaidUsd: number;
+  dataIncomplete: boolean;
+}
+
+/** GET /api/brokers/freedom/holdings. */
+export interface BrokerHoldingsResponse {
+  positions: BrokerPositionRow[];
+  cash: BrokerCashRow[];
+  /** Σ позиций и денег, РУБЛИ (при dataIncomplete занижено). */
+  totalValueRub: number;
+  /** То же в USD по курсу USD; null — курса USD нет. */
+  totalValueUsd: number | null;
+  syncedAt: string | null;
+  dataIncomplete: boolean;
+  fees: BrokerFees;
+  disclaimer: string;
+}
+
+export type BrokerOperationType = 'buy' | 'sell' | 'deposit' | 'withdrawal' | 'fee' | 'dividend' | 'tax' | 'other';
+
+/** Операция журнала Freedom; `amount` — в валюте операции СО ЗНАКОМ (плюс — деньги пришли). */
+export interface BrokerOperationRow {
+  externalId: string;
+  date: string;
+  type: BrokerOperationType;
+  ticker: string | null;
+  quantity: number | null;
+  price: number | null;
+  amount: number;
+  currency: string;
+  rawType: string;
+  comment: string | null;
+}
+
+/** GET /api/brokers/freedom/operations — новые сверху. */
+export interface BrokerOperationsResponse {
+  operations: BrokerOperationRow[];
 }
 
 // ── Доходы (задача 54; контракт — Endpoints/Dtos/IncomeDtos.cs). Деньги — РУБЛИ, доли — ДОЛИ (0.12 = 12%). ──

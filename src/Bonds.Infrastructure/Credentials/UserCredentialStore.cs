@@ -132,6 +132,9 @@ public sealed class UserCredentialStore : IUserCredentialStore
             r.VerifiedAt is { } v ? DateTime.SpecifyKind(v, DateTimeKind.Utc) : null))
         .ToList();
 
+    public Task<IReadOnlyList<ulong>> ListUserIdsWithValidAsync(string provider) =>
+        _repo.ListUserIdsAsync(provider, CredentialStatus.Ok);
+
     public async Task<bool> HasValidAsync(ulong userId, string provider) =>
         (await _repo.GetAsync(userId, provider))?.Status == CredentialStatus.Ok;
 }

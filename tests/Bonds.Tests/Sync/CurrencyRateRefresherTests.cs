@@ -1,9 +1,11 @@
 using Bonds.Core.Interfaces.Repositories;
 using Bonds.Core.Models;
+using Bonds.Infrastructure.Connectors.Cbr;
 using Bonds.Infrastructure.Connectors.Moex;
 using Bonds.Infrastructure.Sync;
 using FluentAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Moq;
 using Xunit;
 
@@ -22,7 +24,12 @@ public class CurrencyRateRefresherTests
 
     public CurrencyRateRefresherTests() => CurrencyRateRefresher.EmptyAttemptedOn.Clear();
 
-    private CurrencyRateRefresher Create() => new(_currencies.Object, _market.Object, _moex.Object, NullLogger<CurrencyRateRefresher>.Instance);
+    private readonly Mock<ICbrRatesClient> _cbr = new();
+
+    private CurrencyRateRefresher Create(params string[] alwaysTracked) => new(
+        _currencies.Object, _market.Object, _moex.Object, _cbr.Object,
+        Options.Create(new CurrencyRateOptions { AlwaysTrackedCurrencies = alwaysTracked }),
+        NullLogger<CurrencyRateRefresher>.Instance);
 
     private void SetupCurrency(decimal face = 1m, string secid = "CNYRUB_TOM", ulong id = 3)
         => _currencies.Setup(c => c.GetAllAsync()).ReturnsAsync(new List<Currency>
@@ -127,5 +134,84 @@ public class CurrencyRateRefresherTests
         _currencies.Setup(c => c.GetAllAsync()).ReturnsAsync(new List<Currency>());
 
         (await Create().RefreshIfDueAsync(Today)).Should().Be(new CurrencyRateRefreshResult(0, 0));
+    }
+    // --- Задача 60: всегда отслеживаемые USD/EUR/GBP ---
+
+    [Fact]
+    public async Task Refresh_AlwaysTracked_SeedsMissingCurrencies_WithPlaceholderFigi_AndMoexSecidOnlyForUsd()
+    {
+        _currencies.Setup(c => c.GetByIsoAsync(It.IsAny<string>())).ReturnsAsync((Currency?)null);
+        _currencies.Setup(c => c.GetAllAsync()).ReturnsAsync(new List<Currency>());
+
+        await Create("USD", "EUR", "GBP").RefreshIfDueAsync(Today);
+
+        _currencies.Verify(c => c.UpsertAsync(It.Is<Currency>(x => x.IsoCode == "USD" && x.Figi == "FX:USD" && x.MoexSecid == "USD000UTSTOM")), Times.Once);
+        _currencies.Verify(c => c.UpsertAsync(It.Is<Currency>(x => x.IsoCode == "EUR" && x.Figi == "FX:EUR" && x.MoexSecid == null)), Times.Once);
+        _currencies.Verify(c => c.UpsertAsync(It.Is<Currency>(x => x.IsoCode == "GBP" && x.Figi == "FX:GBP" && x.MoexSecid == null)), Times.Once);
+    }
+
+    [Fact]
+    public async Task Refresh_AlwaysTracked_ExistingCurrencyRow_IsNotOverwritten()
+    {
+        _currencies.Setup(c => c.GetByIsoAsync("USD")).ReturnsAsync(new Currency { Id = 1, Figi = "BBG0013HGFT4", IsoCode = "USD" });
+        _currencies.Setup(c => c.GetAllAsync()).ReturnsAsync(new List<Currency>());
+
+        await Create("USD").RefreshIfDueAsync(Today);
+
+        _currencies.Verify(c => c.UpsertAsync(It.IsAny<Currency>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Refresh_AlwaysTracked_UnknownIso_IsSkippedWithoutFailing()
+    {
+        _currencies.Setup(c => c.GetAllAsync()).ReturnsAsync(new List<Currency>());
+
+        await Create("XXX").RefreshIfDueAsync(Today);
+
+        _currencies.Verify(c => c.UpsertAsync(It.IsAny<Currency>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Refresh_Eur_UsesCbrOnly_AndNeverCallsMoex()
+    {
+        // EUR на CETS не торгуется (EUR_RUB__TOM: CLOSE = 0) - источник только ЦБ; MOEX с выведенным EURRUB_TOM не опрашивается.
+        _currencies.Setup(c => c.GetAllAsync()).ReturnsAsync(new List<Currency> { new() { Id = 5, Figi = "FX:EUR", IsoCode = "EUR" } });
+        _market.Setup(m => m.GetLastRateDateAsync(5, It.IsAny<CancellationToken>())).ReturnsAsync((DateOnly?)null);
+        _cbr.Setup(c => c.GetRatesAsync("R01239", Today.AddYears(-2), Today, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([new CbrRatePoint(Today.AddDays(-1), 91.1364m)]);
+
+        var result = await Create().RefreshIfDueAsync(Today);
+
+        result.Should().Be(new CurrencyRateRefreshResult(1, 1));
+        _market.Verify(m => m.UpsertRatesAsync(5, It.Is<IReadOnlyList<CurrencyRatePoint>>(l => l.Single().CloseRub == 91.1364m), It.IsAny<CancellationToken>()), Times.Once);
+        _moex.Verify(m => m.GetCurrencyHistoryAsync(It.IsAny<string>(), It.IsAny<DateOnly>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Refresh_Usd_PrefersMoex_AndFallsBackToCbrWhenMoexIsEmpty()
+    {
+        _currencies.Setup(c => c.GetAllAsync()).ReturnsAsync(new List<Currency> { new() { Id = 6, Figi = "FX:USD", IsoCode = "USD", MoexSecid = "USD000UTSTOM" } });
+        _market.Setup(m => m.GetLastRateDateAsync(6, It.IsAny<CancellationToken>())).ReturnsAsync((DateOnly?)null);
+        _moex.Setup(m => m.GetCurrencyHistoryAsync("USD000UTSTOM", It.IsAny<DateOnly>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([new MoexCurrencyClosePoint(Today.AddDays(-1), 0m)]);
+        _cbr.Setup(c => c.GetRatesAsync("R01235", It.IsAny<DateOnly>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([new CbrRatePoint(Today.AddDays(-1), 83.9497m)]);
+
+        await Create().RefreshIfDueAsync(Today);
+
+        _market.Verify(m => m.UpsertRatesAsync(6, It.Is<IReadOnlyList<CurrencyRatePoint>>(l => l.Single().CloseRub == 83.9497m), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Refresh_Usd_MoexHasData_CbrNotCalled()
+    {
+        _currencies.Setup(c => c.GetAllAsync()).ReturnsAsync(new List<Currency> { new() { Id = 6, Figi = "FX:USD", IsoCode = "USD", MoexSecid = "USD000UTSTOM" } });
+        _market.Setup(m => m.GetLastRateDateAsync(6, It.IsAny<CancellationToken>())).ReturnsAsync((DateOnly?)null);
+        _moex.Setup(m => m.GetCurrencyHistoryAsync("USD000UTSTOM", It.IsAny<DateOnly>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([new MoexCurrencyClosePoint(Today.AddDays(-1), 84.18m)]);
+
+        await Create().RefreshIfDueAsync(Today);
+
+        _cbr.Verify(c => c.GetRatesAsync(It.IsAny<string>(), It.IsAny<DateOnly>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 }

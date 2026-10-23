@@ -112,6 +112,7 @@ app.MapXirrEndpoints();
 app.MapIncomeEndpoints();
 app.MapFundsEndpoints();
 app.MapCurrenciesEndpoints();
+app.MapBrokerHoldingsEndpoints();
 app.MapPortfolioAnalyticsEndpoints();
 app.MapReplacementEndpoints();
 app.MapPositionVerdictEndpoints();
