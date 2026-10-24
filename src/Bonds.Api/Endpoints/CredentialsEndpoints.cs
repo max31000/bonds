@@ -75,7 +75,9 @@ public static class CredentialsEndpoints
         var validator = validators.FirstOrDefault(v => v.ProviderId == descriptor.Id)
             ?? throw new InvalidOperationException($"Для провайдера {descriptor.Id} не зарегистрирован валидатор");
 
-        var validation = await validator.ValidateAsync(fields, ct);
+        var primaryAccountId = await PositionsEndpoints.ResolveAccountIdAsync(currentUser, accountRepo);
+        var primaryBrokerAccountId = primaryAccountId is > 0 ? (await accountRepo.GetByIdAsync(primaryAccountId.Value))?.BrokerAccountId : null;
+        var validation = await validator.ValidateAsync(fields, new CredentialValidationContext(userId, primaryBrokerAccountId), ct);
         if (!validation.Ok)
         {
             // Ничего не сохраняем; сообщение валидатора не содержит секрет (контракт ICredentialValidator).

@@ -538,9 +538,11 @@ public class PolicyRulesTests
     }
 
     [Fact]
-    public void ExecutionOptions_DryRunIsAlwaysEffectiveInPhase2()
+    public void ExecutionOptions_DisabledByDefault_DryRunFlagDoesNotEnableExecution()
     {
+        // Задача 65: исполнение включает только Execution:Enabled (по умолчанию false); старый DryRun=false ничего не включает.
         new ExecutionOptions { DryRun = false }.EffectiveDryRun.Should().BeTrue();
+        new ExecutionOptions().Enabled.Should().BeFalse();
         new ExecutionOptions().DryRun.Should().BeTrue();
         new ExecutionLimitsOptions().Should().BeEquivalentTo(new ExecutionLimitsOptions { AutoPerOrderRub = 25_000m, AutoPerDayRub = 50_000m, FreedomAutoUsd = 0m });
         FreedomFeeModel.CheaperRoute(315m).Should().Be(FreedomMarket.KazakhstanItsFunds);

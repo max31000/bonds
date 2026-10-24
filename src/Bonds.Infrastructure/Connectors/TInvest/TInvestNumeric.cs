@@ -24,6 +24,20 @@ public static class TInvestNumeric
     public static decimal? ToNullableDecimal(this Quotation? value)
         => value is null ? null : value.ToDecimal();
 
+    /// <summary>
+    /// <see cref="decimal"/> → <see cref="Quotation"/> (задача 65; ЕДИНСТВЕННОЕ место конверсии цены заявки в формат брокера). Units — целая часть (усечение к нулю),
+    /// Nano — дробная часть × 10^9 с ТЕМ ЖЕ знаком (−1.5 → Units −1, Nano −500 000 000), как требует контракт T-Invest. Единицы НЕ меняются: облигация — пункты
+    /// (процент номинала), остальное — валюта за штуку; что именно передаётся, решает вызывающий через <c>PriceType</c>. Больше 9 знаков после запятой —
+    /// <see cref="ArgumentException"/> (цена заявки должна лежать на сетке шага, а шаги T-Invest не мельче 10^-9).
+    /// </summary>
+    public static Quotation ToQuotation(decimal value)
+    {
+        if (decimal.Round(value, 9) != value) throw new ArgumentException("Цена заявки точнее 10^-9 — не на сетке шага", nameof(value));
+        var units = decimal.Truncate(value);
+        var nano = (value - units) * NanoScale;
+        return new Quotation { Units = (long)units, Nano = (int)nano };
+    }
+
     /// <summary>Порог различения единиц TER: выше — «проценты», в диапазоне (0, порог] — уже «доля».</summary>
     private const decimal ExpenseFractionCeiling = 0.05m;
 

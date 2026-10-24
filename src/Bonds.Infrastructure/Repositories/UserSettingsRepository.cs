@@ -77,4 +77,22 @@ public class UserSettingsRepository : IUserSettingsRepository
               ON DUPLICATE KEY UPDATE execution_paused = @Paused",
             new { UserId = userId, Paused = paused ? 1 : 0 });
     }
+
+    public async Task<string> GetExecutionModeAsync(ulong userId)
+    {
+        using var conn = CreateConnection();
+        var mode = await conn.ExecuteScalarAsync<string?>(
+            "SELECT execution_mode FROM user_settings WHERE user_id = @UserId", new { UserId = userId });
+        return Bonds.Core.Execution.ExecutionModes.Normalize(mode);
+    }
+
+    public async Task SetExecutionModeAsync(ulong userId, string mode)
+    {
+        if (!Bonds.Core.Execution.ExecutionModes.IsValid(mode)) throw new ArgumentOutOfRangeException(nameof(mode), mode, "observe | live");
+        using var conn = CreateConnection();
+        await conn.ExecuteAsync(
+            @"INSERT INTO user_settings (user_id, execution_mode) VALUES (@UserId, @Mode)
+              ON DUPLICATE KEY UPDATE execution_mode = @Mode",
+            new { UserId = userId, Mode = mode });
+    }
 }

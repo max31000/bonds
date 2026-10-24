@@ -10,13 +10,16 @@ public enum BotPlanAction
 {
     Approve,
     Reject,
+
+    /// <summary>Снять висящие заявки исполняемого плана (задача 65, кнопка «Отменить»).</summary>
+    CancelExecution,
 }
 
 /// <summary>Разобранный <c>callback_data</c> кнопки плана.</summary>
 public sealed record BotCallbackData(ulong PlanId, BotPlanAction Action, string Nonce);
 
 /// <summary>
-/// Формат <c>callback_data</c> кнопок плана (задача 64): <c>p:{planId}:{a|r}:{nonce}</c>, nonce — случайные 8 байт в base64url (11 символов, хранится в
+/// Формат <c>callback_data</c> кнопок плана (задача 64): <c>p:{planId}:{a|r|c}:{nonce}</c> (c — снять заявки исполняемого плана, задача 65), nonce — случайные 8 байт в base64url (11 символов, хранится в
 /// <c>trade_plans.bot_nonce</c>). Лимит Telegram на callback_data — 64 байта: максимум около 2 + 20 + 2 + 11 = 35. Чистые функции, без БД и сети.
 /// </summary>
 public static partial class BotCallback
@@ -24,6 +27,7 @@ public static partial class BotCallback
     public const string Prefix = "p";
     private const string ApproveCode = "a";
     private const string RejectCode = "r";
+    private const string CancelCode = "c";
 
     [GeneratedRegex("^[A-Za-z0-9_-]{8,16}$", RegexOptions.CultureInvariant)]
     private static partial Regex NonceRegex();
@@ -33,7 +37,14 @@ public static partial class BotCallback
         Convert.ToBase64String(RandomNumberGenerator.GetBytes(8)).TrimEnd('=').Replace('+', '-').Replace('/', '_');
 
     public static string Build(ulong planId, BotPlanAction action, string nonce) =>
-        $"{Prefix}:{planId}:{(action == BotPlanAction.Approve ? ApproveCode : RejectCode)}:{nonce}";
+        $"{Prefix}:{planId}:{CodeOf(action)}:{nonce}";
+
+    private static string CodeOf(BotPlanAction action) => action switch
+    {
+        BotPlanAction.Approve => ApproveCode,
+        BotPlanAction.Reject => RejectCode,
+        _ => CancelCode,
+    };
 
     /// <summary>Разбор; любой мусор/чужой формат — false.</summary>
     public static bool TryParse(string? data, out BotCallbackData? parsed)
@@ -46,6 +57,7 @@ public static partial class BotCallback
         BotPlanAction action;
         if (parts[2] == ApproveCode) action = BotPlanAction.Approve;
         else if (parts[2] == RejectCode) action = BotPlanAction.Reject;
+        else if (parts[2] == CancelCode) action = BotPlanAction.CancelExecution;
         else return false;
         if (!NonceRegex().IsMatch(parts[3])) return false;
         parsed = new BotCallbackData(id, action, parts[3]);

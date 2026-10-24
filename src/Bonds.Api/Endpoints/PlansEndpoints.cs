@@ -4,17 +4,22 @@ using Bonds.Api.Endpoints.Dtos;
 using Bonds.Core.Interfaces.Repositories;
 using Bonds.Core.Policy;
 using Bonds.Infrastructure.Policy;
-using Microsoft.Extensions.Options;
+using Bonds.Core.Execution;
+using Bonds.Infrastructure.Execution;
 
 namespace Bonds.Api.Endpoints;
 
 /// <summary>
-/// Планы сделок (задача 63). <b>Режим наблюдения: заявки брокерам НЕ отправляются</b> — планы только данные (<c>dry_run</c> всегда true), <c>approve</c> лишь
-/// переводит план в <c>Approved</c> с пометкой «не исполнен: dry-run». Никаких вызовов размещения заявок в этом слое нет и быть не должно (исполнитель — фаза 3).
+/// Планы сделок (задача 63). Этот слой брокеров не вызывает: <c>approve</c> переводит план в <c>Approved</c>; dry-run план не исполняется, план с <c>dry_run = 0</c>
+/// (живой режим пользователя на момент создания) исполняет фоновый исполнитель (задача 65). <c>cancel-execution</c> лишь ставит флаг снятия висящих заявок.
 /// Данные только своего пользователя; суммы — в валюте портфеля плана, доли — ДОЛИ.
 /// </summary>
 public static class PlansEndpoints
 {
+    internal const string LiveDisclaimer =
+        "Исполнение включено: подтверждённые планы отправляются брокеру лимитными заявками. План — оценка по стакану на момент построения (комиссия и налог приблизительны), " +
+        "не инвестиционная рекомендация.";
+
     internal const string Disclaimer =
         "Режим наблюдения: сделки не отправляются. План — оценка по стакану на момент построения (комиссия и налог приблизительны: налог по средней цене входа, " +
         "плоские 13%, без сальдирования и ЛДВ), не инвестиционная рекомендация.";
@@ -29,23 +34,41 @@ public static class PlansEndpoints
         app.MapPost("/api/plans/withdraw", CreateWithdraw);
         app.MapPost("/api/plans/exit-basket", CreateExitBasket);
         app.MapPost("/api/plans/preview", Preview);
+        app.MapPost("/api/plans/{id:long}/cancel-execution", CancelExecution);
     }
 
     private static async Task<IResult> ListPlans(
-        string? status, int? limit, ICurrentUser currentUser, ITradePlanRepository repo, IOptions<ExecutionOptions> execution)
+        string? status, int? limit, ICurrentUser currentUser, ITradePlanRepository repo, ITradeOrderRepository orders, IExecutionGateResolver gate)
     {
         if (status is not null && !PlanStatuses.All.Contains(status)) return AnalyticsSupport.ValidationError($"status: допустимо {string.Join(", ", PlanStatuses.All)}.");
         if (await currentUser.GetUserIdAsync() is not { } userId) return Results.Ok(new PlansResponseDto { Items = [], DryRun = true, Disclaimer = Disclaimer });
 
         var plans = await repo.ListAsync(userId, status, limit ?? 100);
-        return Results.Ok(new PlansResponseDto { Items = plans.Select(ToDto).ToList(), DryRun = execution.Value.EffectiveDryRun, Disclaimer = Disclaimer });
+        var byPlan = (await orders.ListByPlansAsync(plans.Select(p => p.Id).ToList())).ToLookup(o => o.PlanId);
+        var dryRun = (await gate.ResolveAsync(userId)).DryRun;
+        return Results.Ok(new PlansResponseDto
+        {
+            Items = plans.Select(p => ToDto(p, byPlan[p.Id].ToList())).ToList(), DryRun = dryRun, Disclaimer = dryRun ? Disclaimer : LiveDisclaimer,
+        });
     }
 
-    private static async Task<IResult> GetPlan(long id, ICurrentUser currentUser, ITradePlanRepository repo)
+    private static async Task<IResult> GetPlan(long id, ICurrentUser currentUser, ITradePlanRepository repo, ITradeOrderRepository orders)
     {
         if (await currentUser.GetUserIdAsync() is not { } userId) return Results.NotFound();
         var plan = await repo.GetAsync(userId, (ulong)id);
-        return plan is null ? Results.NotFound() : Results.Ok(ToDto(plan));
+        return plan is null ? Results.NotFound() : Results.Ok(ToDto(plan, await orders.ListByPlanAsync(plan.Id)));
+    }
+
+    /// <summary>Снять висящие заявки плана (как кнопка «Отменить» в боте): флаг для исполнителя, сам эндпоинт брокера не вызывает. 409 — план не исполняется.</summary>
+    private static async Task<IResult> CancelExecution(long id, ICurrentUser currentUser, ITradePlanRepository repo, ITradeOrderRepository orders)
+    {
+        if (await currentUser.GetUserIdAsync() is not { } userId) return Results.NotFound();
+        var plan = await repo.GetAsync(userId, (ulong)id);
+        if (plan is null) return Results.NotFound();
+        if (!await repo.RequestCancelAsync(userId, plan.Id))
+            return Results.Json(new { error = "План не исполняется — отменять нечего.", type = "PlanConflict" }, statusCode: StatusCodes.Status409Conflict);
+        var current = await repo.GetAsync(userId, plan.Id);
+        return Results.Ok(ToDto(current!, await orders.ListByPlanAsync(plan.Id)));
     }
 
     private static Task<IResult> Approve(long id, ICurrentUser currentUser, PolicyService service) =>
@@ -60,30 +83,30 @@ public static class PlansEndpoints
         var result = await decide(userId, (ulong)id);
         return result.Kind switch
         {
-            PlanDecisionKind.Ok => Results.Ok(ToDto(result.Plan!)),
+            PlanDecisionKind.Ok => Results.Ok(ToDto(result.Plan!, [])),
             PlanDecisionKind.NotFound => Results.NotFound(),
             PlanDecisionKind.Expired => Results.Json(
-                new { error = "План просрочен и больше не может быть подтверждён.", type = "PlanExpired", plan = result.Plan is null ? null : ToDto(result.Plan) },
+                new { error = "План просрочен и больше не может быть подтверждён.", type = "PlanExpired", plan = result.Plan is null ? null : ToDto(result.Plan, []) },
                 statusCode: StatusCodes.Status409Conflict),
             _ => Results.Json(
-                new { error = "План уже решён или находится в статусе, из которого решение невозможно.", type = "PlanConflict", plan = result.Plan is null ? null : ToDto(result.Plan) },
+                new { error = "План уже решён или находится в статусе, из которого решение невозможно.", type = "PlanConflict", plan = result.Plan is null ? null : ToDto(result.Plan, []) },
                 statusCode: StatusCodes.Status409Conflict),
         };
     }
 
-    private static Task<IResult> CreateInflow(PlanInflowRequest? request, ICurrentUser currentUser, PolicyService service, IOptions<ExecutionOptions> execution) =>
+    private static Task<IResult> CreateInflow(PlanInflowRequest? request, ICurrentUser currentUser, PolicyService service, IExecutionGateResolver execution) =>
         CreateAsync(currentUser, service, execution, PlanRules.P2Inflow, new PlanParams(Amount: request?.Amount, Portfolio: request?.Portfolio), requireAmount: true);
 
-    private static Task<IResult> CreateWithdraw(PlanWithdrawRequest? request, ICurrentUser currentUser, PolicyService service, IOptions<ExecutionOptions> execution) =>
+    private static Task<IResult> CreateWithdraw(PlanWithdrawRequest? request, ICurrentUser currentUser, PolicyService service, IExecutionGateResolver execution) =>
         CreateAsync(
             currentUser, service, execution, PlanRules.P5Withdraw,
             new PlanParams(Amount: request?.Amount, Fraction: request?.Fraction, Portfolio: request?.Portfolio, IncludeBaskets: request?.IncludeBaskets));
 
-    private static Task<IResult> CreateExitBasket(PlanExitBasketRequest? request, ICurrentUser currentUser, PolicyService service, IOptions<ExecutionOptions> execution) =>
+    private static Task<IResult> CreateExitBasket(PlanExitBasketRequest? request, ICurrentUser currentUser, PolicyService service, IExecutionGateResolver execution) =>
         CreateAsync(currentUser, service, execution, PlanRules.Manual, new PlanParams(Code: request?.Code));
 
     private static async Task<IResult> CreateAsync(
-        ICurrentUser currentUser, PolicyService service, IOptions<ExecutionOptions> execution, string rule, PlanParams parameters, bool requireAmount = false)
+        ICurrentUser currentUser, PolicyService service, IExecutionGateResolver execution, string rule, PlanParams parameters, bool requireAmount = false)
     {
         if (requireAmount && parameters.Amount is not > 0m) return AnalyticsSupport.ValidationError("amount должен быть положительным.");
         if (await currentUser.GetUserIdAsync() is not { } userId) return Results.NotFound();
@@ -93,10 +116,10 @@ public static class PlansEndpoints
             var (plan, outcome) = await service.CreateManualAsync(userId, rule, parameters, DateTime.UtcNow);
             return Results.Ok(new PlanResultDto
             {
-                Plan = plan is null ? null : ToDto(plan),
+                Plan = plan is null ? null : ToDto(plan, []),
                 Notes = outcome.Notes,
-                DryRun = execution.Value.EffectiveDryRun,
-                Disclaimer = Disclaimer,
+                DryRun = plan?.DryRun ?? (await execution.ResolveAsync(userId)).DryRun,
+                Disclaimer = (plan?.DryRun ?? true) ? Disclaimer : LiveDisclaimer,
             });
         }
         catch (PolicyValidationException ex)
@@ -105,7 +128,7 @@ public static class PlansEndpoints
         }
     }
 
-    private static async Task<IResult> Preview(PlanPreviewRequest? request, ICurrentUser currentUser, PolicyService service, IOptions<ExecutionOptions> execution)
+    private static async Task<IResult> Preview(PlanPreviewRequest? request, ICurrentUser currentUser, PolicyService service, IExecutionGateResolver execution)
     {
         if (request?.Rule is not { Length: > 0 } rule || !PlanRules.All.Contains(rule)) return AnalyticsSupport.ValidationError($"rule: допустимо {string.Join(", ", PlanRules.All)}.");
         if (await currentUser.GetUserIdAsync() is not { } userId) return Results.NotFound();
@@ -119,7 +142,7 @@ public static class PlansEndpoints
             {
                 Plan = outcome.Plan is null ? null : ToDto(outcome.Plan),
                 Notes = outcome.Notes,
-                DryRun = execution.Value.EffectiveDryRun,
+                DryRun = (await execution.ResolveAsync(userId)).DryRun,
                 Disclaimer = Disclaimer,
             });
         }
@@ -133,7 +156,7 @@ public static class PlansEndpoints
 
     private static DateTime Utc(DateTime value) => DateTime.SpecifyKind(value, DateTimeKind.Utc);
 
-    internal static PlanDto ToDto(TradePlan plan) => new()
+    internal static PlanDto ToDto(TradePlan plan, IReadOnlyCollection<TradeOrder> orders) => new()
     {
         Id = plan.Id,
         Rule = plan.Rule,
@@ -145,7 +168,7 @@ public static class PlansEndpoints
         DecidedAt = plan.DecidedAt is { } d ? Utc(d) : null,
         DecidedVia = plan.DecidedVia,
         Summary = ParseSummary(plan.SummaryJson),
-        Lines = plan.Lines.Select(ToDto).ToList(),
+        Lines = plan.Lines.Select(l => ToDto(l, orders.Where(o => o.LineNo == l.LineNo).OrderBy(o => o.Attempt).ToList())).ToList(),
     };
 
     /// <summary>Предпросмотр (черновик без id).</summary>
@@ -159,11 +182,14 @@ public static class PlansEndpoints
         CreatedAt = DateTime.UtcNow,
         ExpiresAt = Utc(draft.ExpiresAtUtc),
         Summary = draft.Summary,
-        Lines = draft.Lines.Select(ToDto).ToList(),
+        Lines = draft.Lines.Select(l => ToDto(l, [])).ToList(),
     };
 
-    private static PlanLineDto ToDto(TradePlanLine l) => new()
+    private static PlanLineDto ToDto(TradePlanLine l, IReadOnlyList<TradeOrder> orders)
     {
+        var state = LineExecutionState.From(l, orders);
+        return new PlanLineDto
+        {
         LineNo = l.LineNo,
         Broker = l.Broker,
         AccountId = l.AccountId,
@@ -180,7 +206,16 @@ public static class PlansEndpoints
         EstTax = l.EstTax,
         Currency = l.Currency,
         Reason = l.Reason,
-    };
+        ExecutionStatus = state.Status,
+        FilledLots = state.FilledLots,
+        Orders = orders.Select(o => new PlanOrderDto
+        {
+            Attempt = o.Attempt, Status = o.Status, LimitPrice = o.LimitPrice, PriceUnit = o.PriceUnit, LotsRequested = o.LotsRequested, LotsFilled = o.LotsFilled,
+            AvgFillPrice = o.AvgFillPrice, ExecutedCommission = o.ExecutedCommission, Currency = o.Currency, ErrorCode = o.ErrorCode, ErrorMessage = o.ErrorMessage,
+            CreatedAt = Utc(o.CreatedAt), UpdatedAt = Utc(o.UpdatedAt),
+        }).ToList(),
+        };
+    }
 
     private static TradePlanSummary? ParseSummary(string? json)
     {

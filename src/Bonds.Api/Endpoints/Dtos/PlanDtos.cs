@@ -3,7 +3,7 @@ using Bonds.Core.Policy;
 namespace Bonds.Api.Endpoints.Dtos;
 
 /// <summary>
-/// Строка плана = будущая лимитная заявка (в этой фазе — только данные, заявки НЕ отправляются). <b>Единицы:</b> <see cref="QuantityLots"/> — целые лоты,
+/// Строка плана = будущая лимитная заявка (исполняется только у плана с <c>dryRun = false</c>, задача 65). <b>Единицы:</b> <see cref="QuantityLots"/> — целые лоты,
 /// <see cref="QuantityPieces"/> = лоты × <see cref="LotSize"/>; <see cref="LimitPrice"/> — валюта цены за штуку (облигации — ЧИСТАЯ цена, рубли),
 /// <see cref="LimitPricePoints"/> — облигации: цена в ПУНКТАХ (процент номинала); <see cref="EstAmount"/>/<see cref="EstFee"/>/<see cref="EstTax"/> — неотрицательные оценки
 /// в <see cref="Currency"/>.
@@ -26,6 +26,36 @@ public sealed record PlanLineDto
     public required decimal EstTax { get; init; }
     public required string Currency { get; init; }
     public required string Reason { get; init; }
+
+    /// <summary>Исполнение строки (задача 65): <c>Pending</c> (заявок нет) или статус последней заявки (<c>TradeOrderStatuses</c>), полностью исполнена — <c>Filled</c>.</summary>
+    public string ExecutionStatus { get; init; } = "Pending";
+
+    /// <summary>Исполнено лотов по всем попыткам.</summary>
+    public long FilledLots { get; init; }
+
+    /// <summary>Заявки исполнителя по строке (попытки по порядку). Пусто — не исполнялась.</summary>
+    public IReadOnlyList<PlanOrderDto> Orders { get; init; } = [];
+}
+
+/// <summary>
+/// Заявка исполнителя (одна попытка). <b>Единицы:</b> <see cref="LimitPrice"/> — как отправлена брокеру: <see cref="PriceUnit"/> = <c>points</c> (облигации, процент номинала) или
+/// <c>currency</c> (валюта за штуку); <see cref="AvgFillPrice"/>/<see cref="ExecutedCommission"/> — в <see cref="Currency"/>. Внутренние id брокера не отдаются.
+/// </summary>
+public sealed record PlanOrderDto
+{
+    public required int Attempt { get; init; }
+    public required string Status { get; init; }
+    public required decimal LimitPrice { get; init; }
+    public required string PriceUnit { get; init; }
+    public required long LotsRequested { get; init; }
+    public required long LotsFilled { get; init; }
+    public decimal? AvgFillPrice { get; init; }
+    public decimal? ExecutedCommission { get; init; }
+    public required string Currency { get; init; }
+    public string? ErrorCode { get; init; }
+    public string? ErrorMessage { get; init; }
+    public required DateTime CreatedAt { get; init; }
+    public required DateTime UpdatedAt { get; init; }
 }
 
 /// <summary>План сделок. <see cref="Id"/> = 0 у предпросмотра (не сохранён). Суммы <see cref="Summary"/> — в валюте портфеля плана.</summary>
@@ -48,7 +78,7 @@ public sealed record PlansResponseDto
 {
     public required IReadOnlyList<PlanDto> Items { get; init; }
 
-    /// <summary>Режим наблюдения: true — сделки не отправляются (фаза 2: всегда true).</summary>
+    /// <summary>Режим наблюдения пользователя: true — сделки не отправляются (ворота исполнения закрыты, задача 65).</summary>
     public required bool DryRun { get; init; }
 
     public required string Disclaimer { get; init; }

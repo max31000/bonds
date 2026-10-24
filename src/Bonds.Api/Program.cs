@@ -123,6 +123,7 @@ app.MapAllocationEndpoints();
 app.MapSignalsEndpoints();
 app.MapSyncEndpoints();
 app.MapSettingsEndpoints();
+app.MapExecutionSettingsEndpoints();
 app.MapCredentialsEndpoints();
 app.MapLiveEndpoints();
 app.MapWatchlistEndpoints();

@@ -2,6 +2,7 @@ using Bonds.Core.Credentials;
 using Bonds.Core.Interfaces.Repositories;
 using Bonds.Core.Models;
 using Bonds.Infrastructure.Credentials;
+using Bonds.Infrastructure.Execution;
 using Bonds.Infrastructure.Services;
 using FluentAssertions;
 using Microsoft.AspNetCore.DataProtection;
@@ -94,17 +95,104 @@ public class ClaudeCodeCredentialValidatorTests
     }
 }
 
+/// <summary>Задача 65: сетевая проверка торгового токена — ровно один счёт, полный доступ, открыт, совпадает с основным счётом; в meta — маска и отметка сетевой проверки.</summary>
 public class TInvestTradeCredentialValidatorTests
 {
-    [Theory]
-    [InlineData("t.abc", true)]
-    [InlineData("", false)]
-    [InlineData("t.a bc", false)]
-    public async Task FormalCheckOnly(string token, bool ok)
+    private const string Primary = "2000123456";
+
+    private static (TInvestTradeCredentialValidator Validator, Mock<ITInvestOrderGateway> Gateway) Create(params TInvestTradeAccount[] accounts)
     {
-        var r = await new TInvestTradeCredentialValidator().ValidateAsync(new Dictionary<string, string> { ["token"] = token });
-        r.Ok.Should().Be(ok);
+        var gateway = new Mock<ITInvestOrderGateway>(MockBehavior.Strict);
+        gateway.Setup(g => g.ProbeAccountsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(accounts);
+        return (new TInvestTradeCredentialValidator(gateway.Object), gateway);
     }
+
+    private static Dictionary<string, string> Token(string token = "t.trade") => new() { ["token"] = token };
+
+    private static CredentialValidationContext Ctx(string? primary = Primary) => new(1, primary);
+
+    [Fact]
+    public async Task SingleFullAccessPrimaryAccount_IsValid_MetaHasOnlyLast4AndNetworkMark()
+    {
+        var (validator, _) = Create(new TInvestTradeAccount(Primary, FullAccess: true, Open: true));
+
+        var r = await validator.ValidateAsync(Token(), Ctx());
+
+        r.Ok.Should().BeTrue();
+        r.MetaJson.Should().Contain("\"accountIdLast4\":\"3456\"").And.Contain("\"verification\":\"network\"").And.NotContain(Primary);
+        TradeCredentialMeta.IsNetworkVerified(r.MetaJson).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task TokenForAllAccounts_IsInvalid_WithHint()
+    {
+        var (validator, _) = Create(new TInvestTradeAccount(Primary, true, true), new TInvestTradeAccount("2000999999", true, true));
+        var r = await validator.ValidateAsync(Token(), Ctx());
+        r.Ok.Should().BeFalse();
+        r.Message.Should().Contain("токен на один счёт");
+    }
+
+    [Fact]
+    public async Task ReadOnlyAccess_IsInvalid_NoTradingRights()
+    {
+        var (validator, _) = Create(new TInvestTradeAccount(Primary, FullAccess: false, Open: true));
+        var r = await validator.ValidateAsync(Token(), Ctx());
+        r.Ok.Should().BeFalse();
+        r.Message.Should().Contain("Нет прав на торговлю");
+    }
+
+    [Fact]
+    public async Task OtherAccount_IsInvalid()
+    {
+        var (validator, _) = Create(new TInvestTradeAccount("2000777777", true, true));
+        var r = await validator.ValidateAsync(Token(), Ctx());
+        r.Ok.Should().BeFalse();
+        r.Message.Should().Contain("другой счёт").And.NotContain("2000777777");
+    }
+
+    [Fact]
+    public async Task NoAccounts_ClosedAccount_NoPrimary_AreInvalid()
+    {
+        (await Create().Validator.ValidateAsync(Token(), Ctx())).Ok.Should().BeFalse();
+        (await Create(new TInvestTradeAccount(Primary, true, Open: false)).Validator.ValidateAsync(Token(), Ctx())).Ok.Should().BeFalse();
+        (await Create(new TInvestTradeAccount(Primary, true, true)).Validator.ValidateAsync(Token(), Ctx(primary: null))).Ok.Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("t.a bc")]
+    public async Task MalformedToken_IsInvalid_WithoutNetworkCall(string token)
+    {
+        var (validator, gateway) = Create(new TInvestTradeAccount(Primary, true, true));
+        (await validator.ValidateAsync(Token(token), Ctx())).Ok.Should().BeFalse();
+        gateway.Verify(g => g.ProbeAccountsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task WithoutUserContext_IsInvalid()
+    {
+        var (validator, _) = Create(new TInvestTradeAccount(Primary, true, true));
+        (await ((ICredentialValidator)validator).ValidateAsync(Token())).Ok.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task BrokerRejectsToken_IsInvalid_MessageHasNoToken()
+    {
+        var gateway = new Mock<ITInvestOrderGateway>();
+        gateway.Setup(g => g.ProbeAccountsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new TInvestGatewayException(GatewayErrorKind.Rejected, "Unauthenticated", "x"));
+        var r = await new TInvestTradeCredentialValidator(gateway.Object).ValidateAsync(Token("t.secret-token-value"), Ctx());
+        r.Ok.Should().BeFalse();
+        r.Message.Should().NotContain("secret-token-value");
+    }
+
+    [Theory]
+    [InlineData(null, false)]
+    [InlineData("{}", false)]
+    [InlineData("{\"accountIdLast4\":\"1234\"}", false)]
+    [InlineData("{\"verification\":\"network\",\"accessLevel\":\"full\"}", true)]
+    [InlineData("not json", false)]
+    public void NetworkVerificationMark_IsRequired(string? meta, bool ok) => TradeCredentialMeta.IsNetworkVerified(meta).Should().Be(ok);
 }
 
 public class UserCredentialStoreTests
@@ -159,6 +247,8 @@ public class UserCredentialStoreTests
             (Settings ??= new UserSettings { UserId = userId }).ExecutionPaused = paused;
             return Task.CompletedTask;
         }
+        public Task<string> GetExecutionModeAsync(ulong userId) => Task.FromResult("observe");
+        public Task SetExecutionModeAsync(ulong userId, string mode) => Task.CompletedTask;
     }
 
     private readonly InMemoryRepo _repo = new();

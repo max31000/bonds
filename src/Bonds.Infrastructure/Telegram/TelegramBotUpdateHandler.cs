@@ -18,8 +18,8 @@ public interface ITelegramUpdateHandler
 }
 
 /// <summary>
-/// Обработка входящих апдейтов бота (задача 64). <b>Заявки брокерам НЕ отправляются</b>: «Подтвердить» — это <see cref="PolicyService.ApproveAsync"/> (план →
-/// <c>Approved</c>, «не исполнен: dry-run»), ровно как в вебе. Пользователь определяется по Telegram id в таблице <c>users</c> (любой зарегистрированный
+/// Обработка входящих апдейтов бота (задача 64). Бот брокеров не вызывает: «Подтвердить» — это <see cref="PolicyService.ApproveAsync"/> (план → <c>Approved</c>),
+/// ровно как в вебе; исполняет план (если он не dry-run) только исполнитель. «Отменить» (задача 65) лишь ставит флаг <c>cancel_requested</c>. Пользователь определяется по Telegram id в таблице <c>users</c> (любой зарегистрированный
 /// управляет СВОИМИ планами, владелец не зашит); чужие и незнакомые id получают «Нет доступа» и дальше не обрабатываются. Команды — только в личном чате с ботом.
 /// Нажатие кнопки проверяет: пользователь — владелец плана, nonce совпал, статус <c>PendingApproval</c>, срок не истёк; повторное нажатие безопасно
 /// (решение атомарно в <see cref="ITradePlanRepository.TransitionAsync"/>).
@@ -34,7 +34,7 @@ public sealed class TelegramBotUpdateHandler : ITelegramUpdateHandler
     private readonly IUserSettingsRepository _settings;
     private readonly PolicyService _policy;
     private readonly CapitalOverviewBuilder _capital;
-    private readonly ExecutionOptions _execution;
+    private readonly Bonds.Infrastructure.Execution.IExecutionGateResolver _gate;
     private readonly TelegramBotOptions _options;
     private readonly TimeProvider _time;
     private readonly ILogger<TelegramBotUpdateHandler> _logger;
@@ -46,7 +46,7 @@ public sealed class TelegramBotUpdateHandler : ITelegramUpdateHandler
         IUserSettingsRepository settings,
         PolicyService policy,
         CapitalOverviewBuilder capital,
-        IOptions<ExecutionOptions> execution,
+        Bonds.Infrastructure.Execution.IExecutionGateResolver gate,
         IOptions<TelegramBotOptions> options,
         TimeProvider time,
         ILogger<TelegramBotUpdateHandler> logger)
@@ -57,7 +57,7 @@ public sealed class TelegramBotUpdateHandler : ITelegramUpdateHandler
         _settings = settings;
         _policy = policy;
         _capital = capital;
-        _execution = execution.Value;
+        _gate = gate;
         _options = options.Value;
         _time = time;
         _logger = logger;
@@ -122,7 +122,7 @@ public sealed class TelegramBotUpdateHandler : ITelegramUpdateHandler
                     break;
                 case BotCommandKind.Stop:
                     await _settings.SetExecutionPausedAsync(user.Id, true);
-                    await ReplyAsync(message.ChatId, "⏸ Пауза включена: авто-подтверждение выключено, новые планы ждут вашего решения. Снять — /resume.", null, ct);
+                    await ReplyAsync(message.ChatId, "⏸ Пауза включена: авто-подтверждение и исполнение остановлены (висящие заявки снимаются), новые планы ждут вашего решения. Снять — /resume.", null, ct);
                     break;
                 case BotCommandKind.Resume:
                     await _settings.SetExecutionPausedAsync(user.Id, false);
@@ -176,7 +176,7 @@ public sealed class TelegramBotUpdateHandler : ITelegramUpdateHandler
             .Select(p => new StatusPortfolio(p.Portfolio, p.Currency, p.Drift, p.FreeCash, p.DataIncomplete))
             .ToList();
         var open = await OpenPlansAsync(userId, now);
-        return BotTexts.Status(portfolios, open.Count, await _settings.IsExecutionPausedAsync(userId), _execution.EffectiveDryRun);
+        return BotTexts.Status(portfolios, open.Count, await _settings.IsExecutionPausedAsync(userId), (await _gate.ResolveAsync(userId)).DryRun);
     }
 
     /// <summary>«Открытые» для бота — ждущие решения (<c>PendingApproval</c>) и авто-подтверждённые (<c>AutoApproved</c>), срок которых не истёк.</summary>
@@ -226,6 +226,15 @@ public sealed class TelegramBotUpdateHandler : ITelegramUpdateHandler
         if (plan is null || !BotCallback.NonceEquals(plan.BotNonce, data.Nonce))
         {
             await _bot.AnswerCallbackQueryAsync(callback.Id, "План не найден или кнопка недействительна.", true, ct);
+            return;
+        }
+
+        if (data.Action == BotPlanAction.CancelExecution)
+        {
+            // «Отменить» у висящей заявки (задача 65): только флаг — заявки снимает исполнитель на ближайшем тике (без гонки с перевыставлением).
+            var requested = await _plans.RequestCancelAsync(user.Id, plan.Id);
+            await _bot.AnswerCallbackQueryAsync(
+                callback.Id, requested ? "Отмена запрошена — заявки будут сняты в течение минуты." : "Нечего отменять: план уже не исполняется.", !requested, ct);
             return;
         }
 
@@ -286,6 +295,10 @@ public sealed class TelegramBotUpdateHandler : ITelegramUpdateHandler
         PlanStatuses.Expired => "срок истёк",
         PlanStatuses.AutoApproved => "авто-подтверждён",
         PlanStatuses.PendingApproval => "ждёт решения",
+        PlanStatuses.Submitting => "исполняется",
+        PlanStatuses.Done => "исполнен",
+        PlanStatuses.PartiallyDone => "исполнен частично",
+        PlanStatuses.Failed => "не исполнен",
         null => "не найден",
         _ => status,
     };
