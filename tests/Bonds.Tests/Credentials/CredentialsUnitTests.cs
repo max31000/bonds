@@ -227,6 +227,12 @@ public class UserCredentialStoreTests
             return Task.CompletedTask;
         }
 
+        public Task UpdateMetaAsync(ulong userId, string provider, string? metaJson)
+        {
+            if (Rows.TryGetValue((userId, provider), out var r)) r.MetaJson = metaJson;
+            return Task.CompletedTask;
+        }
+
         public Task<IReadOnlyList<ulong>> ListUserIdsAsync(string provider, string status) =>
             Task.FromResult<IReadOnlyList<ulong>>(
                 Rows.Values.Where(r => r.Provider == provider && r.Status == status).Select(r => r.UserId).OrderBy(x => x).ToList());

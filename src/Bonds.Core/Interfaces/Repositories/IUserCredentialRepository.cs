@@ -27,6 +27,9 @@ public interface IUserCredentialRepository
 
     Task DeleteAsync(ulong userId, string provider);
 
+    /// <summary>Меняет только meta_json существующей записи (несекретные метаданные: тариф, номер счёта — задача 67, #6).</summary>
+    Task UpdateMetaAsync(ulong userId, string provider, string? metaJson);
+
     /// <summary>Id пользователей, у которых есть запись провайдера в статусе <paramref name="status"/> (для фоновых синков по всем пользователям).</summary>
     Task<IReadOnlyList<ulong>> ListUserIdsAsync(string provider, string status);
 }

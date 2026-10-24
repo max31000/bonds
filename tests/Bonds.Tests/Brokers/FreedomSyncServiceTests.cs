@@ -78,6 +78,37 @@ public class FreedomSyncServiceTests
     }
 
     [Fact]
+    public async Task T67_Sync_RefreshesFreedomTariffInCredentialMeta_KeepsOtherFields()
+    {
+        // Задача 67 (#6): брокер перевёл счёт на Investor (1432) — meta секрета обновляется на синке (GetUserInfoAsync уже вызывается), прочие поля сохраняются.
+        _store.Setup(s => s.ListStatusesAsync(1)).ReturnsAsync(
+            [new CredentialStatusInfo("freedom", "ok", null, "7890", @"{""accountNumber"":""100001"",""tariffId"":1431,""tariffName"":""Standard"",""extra"":""x""}", null)]);
+        _api.Setup(a => a.GetUserInfoAsync(It.IsAny<FreedomCredentials>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new FreedomUserInfo("100001", 1432, "Investor"));
+        string? saved = null;
+        _store.Setup(s => s.UpdateMetaAsync(1, "freedom", It.IsAny<string?>())).Callback<ulong, string, string?>((_, _, m) => saved = m).Returns(Task.CompletedTask);
+
+        await Create().SyncAllAsync();
+
+        saved.Should().NotBeNull();
+        using var doc = System.Text.Json.JsonDocument.Parse(saved!);
+        doc.RootElement.GetProperty("tariffId").GetInt32().Should().Be(1432);
+        doc.RootElement.GetProperty("tariffName").GetString().Should().Be("Investor");
+        doc.RootElement.GetProperty("extra").GetString().Should().Be("x");
+    }
+
+    [Fact]
+    public async Task T67_Sync_SameTariff_DoesNotRewriteMeta()
+    {
+        _store.Setup(s => s.ListStatusesAsync(1)).ReturnsAsync(
+            [new CredentialStatusInfo("freedom", "ok", null, "7890", @"{""accountNumber"":""100001"",""tariffId"":1431,""tariffName"":""Standard""}", null)]);
+
+        await Create().SyncAllAsync();
+
+        _store.Verify(s => s.UpdateMetaAsync(It.IsAny<ulong>(), It.IsAny<string>(), It.IsAny<string?>()), Times.Never);
+    }
+
+    [Fact]
     public async Task Sync_LegacyRurBalance_IsStoredAsRub()
     {
         SetupPortfolio(new FreedomPortfolio([new FreedomCashBalance("RUR", 1500m)], []));

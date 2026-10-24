@@ -126,11 +126,48 @@ public sealed class FreedomSyncService
 
         var info = await _api.GetUserInfoAsync(credentials, ct);
         var account = await EnsureAccountAsync(userId, info);
+        await RefreshMetaAsync(userId, info);
 
         await RunStepAsync("portfolio", result, () => SyncPortfolioAsync(account.Id, credentials, result, ct));
         await RunStepAsync("trades", result, () => SyncTradesAsync(account.Id, credentials, result, ct));
         await RunStepAsync("cashflows", result, () => SyncCashFlowsAsync(account.Id, credentials, result, ct));
         return true;
+    }
+
+    /// <summary>
+    /// Задача 67 (#6): тариф (и номер счёта) в meta секрета <c>freedom</c> обновляются на КАЖДОМ синке по <c>GetUserInfoAsync</c> — смена тарифа у брокера
+    /// сразу попадает в модель комиссий правил (PolicyInputBuilder читает <c>tariffId</c> из meta). Прочие поля meta сохраняются; без изменений — не пишем.
+    /// </summary>
+    private async Task RefreshMetaAsync(ulong userId, FreedomUserInfo info)
+    {
+        try
+        {
+            var current = (await _credentials.ListStatusesAsync(userId)).FirstOrDefault(s => s.Provider == CredentialProviders.Freedom)?.MetaJson;
+            var node = ParseObject(current);
+            var before = node.ToJsonString();
+            if (!string.IsNullOrWhiteSpace(info.AccountNumber)) node["accountNumber"] = info.AccountNumber.Trim();
+            if (info.TariffId > 0) node["tariffId"] = info.TariffId;
+            if (!string.IsNullOrWhiteSpace(info.TariffName)) node["tariffName"] = info.TariffName;
+            var after = node.ToJsonString();
+            if (after != before) await _credentials.UpdateMetaAsync(userId, CredentialProviders.Freedom, after);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Freedom sync: tariff meta refresh failed for user {UserId}", userId);
+        }
+    }
+
+    private static System.Text.Json.Nodes.JsonObject ParseObject(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return new System.Text.Json.Nodes.JsonObject();
+        try
+        {
+            return System.Text.Json.Nodes.JsonNode.Parse(json) as System.Text.Json.Nodes.JsonObject ?? new System.Text.Json.Nodes.JsonObject();
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return new System.Text.Json.Nodes.JsonObject();
+        }
     }
 
     private async Task RunStepAsync(string step, FreedomSyncResult result, Func<Task> action)
