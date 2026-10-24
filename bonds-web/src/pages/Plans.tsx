@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
+import { useParams } from 'react-router-dom';
 import { EmptyState, ErrorState, Page, Section } from '@mvv42/kit';
-import { Skeleton } from '@mantine/core';
+import { Alert, Skeleton } from '@mantine/core';
 import { Disclaimer } from '../components/Disclaimer';
 import { ActiveOrdersBanner, DryRunBanner } from '../components/plans/DryRunBanner';
 import { PlanCard } from '../components/plans/PlanCard';
@@ -17,12 +18,21 @@ export const PLANS_DISCLAIMER =
  */
 export function Plans() {
   const { data, isLoading, error, decidingId, load, approve, reject, cancelExecution, stop, releaseCashHold } = usePlansStore();
+  // Задача 67 (NIT): ссылка «Детали» из бота ведёт на /plans/:id — та же страница, план подсвечивается и прокручивается в видимую область.
+  const { id: focusParam } = useParams();
+  const focusId = focusParam && /^\d+$/.test(focusParam) ? Number(focusParam) : null;
 
   useEffect(() => {
     void load();
   }, [load]);
 
   const items = data?.items ?? [];
+  const focused = focusId === null ? undefined : items.find((p) => p.id === focusId);
+
+  useEffect(() => {
+    if (!focused) return;
+    document.querySelector(`[data-testid="plan-${focused.id}"]`)?.scrollIntoView?.({ block: 'start' });
+  }, [focused]);
   const waiting = items.filter((p) => isDecidable(p.status));
   const history = items.filter((p) => !isDecidable(p.status));
 
@@ -30,6 +40,11 @@ export function Plans() {
     <Page title="Планы" description="Какие сделки сервис рассчитал как кандидаты по правилам: оценка по ценам стакана, не рекомендация" width="wide" data-testid="plans-page">
       <DryRunBanner live={data?.dryRun === false} brokers={data?.brokers} onStop={stop} />
       <ActiveOrdersBanner count={data?.activeOrders ?? 0} />
+      {data && focusId !== null && (
+        <Alert color={focused ? 'violet' : 'gray'} variant="light" data-testid="plans-focus">
+          {focused ? `План #${focusId} — ниже, в разделе «${isDecidable(focused.status) ? 'Ждут решения' : 'История'}»` : `План #${focusId} не найден среди последних планов`}
+        </Alert>
+      )}
       {isLoading && !data && (
         <Section>
           <Skeleton height={120} />

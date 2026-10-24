@@ -128,7 +128,7 @@ public sealed class TelegramBotUpdateHandler : ITelegramUpdateHandler
             switch (command.Kind)
             {
                 case BotCommandKind.Help:
-                    await ReplyAsync(message.ChatId, BotTexts.Help(await _settings.IsExecutionPausedAsync(user.Id)), null, ct);
+                    await ReplyAsync(message.ChatId, BotTexts.Help(await _settings.IsExecutionPausedAsync(user.Id), (await _gate.ResolveAsync(user.Id)).DryRun), null, ct);
                     break;
                 case BotCommandKind.Status:
                     await ReplyAsync(message.ChatId, await BuildStatusAsync(user.Id, now, ct), null, ct);

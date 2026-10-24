@@ -35,7 +35,24 @@ public class PlanMessageFormatterTests
     [Fact]
     public void FormatLine_ReferenceString()
     {
-        PlanMessageFormatter.FormatLine(Plan().Lines[0]).Should().Be("КУПИТЬ TMON@ ×44 @ 166.57 ≈ 7 329 ₽, комиссия 0");
+        PlanMessageFormatter.FormatLine(Plan().Lines[0]).Should().Be("КУПИТЬ TMON@ 44 шт. @ 166.57 ₽ ≈ 7 329 ₽, комиссия 0");
+    }
+
+    [Fact]
+    public void T67_FormatLine_BondPriceInPercentOfNominal_AndLotsWhenLotIsNotOne()
+    {
+        // Задача 67 (NIT): облигация — цена в «% ном.» (так уходит заявка), а не рубли без единицы; лот ≠ 1 — штуки и лоты.
+        var bond = new TradePlanLine
+        {
+            LineNo = 1, Ticker = "SU26238", Side = PlanSides.Buy, QuantityLots = 2, LotSize = 1m, LimitPrice = 985m, LimitPricePoints = 98.5m, EstAmount = 1990m, Currency = "RUB",
+        };
+        PlanMessageFormatter.FormatLine(bond).Should().Be("КУПИТЬ SU26238 2 шт. @ 98.5% ном. ≈ 1\u00A0990 ₽, комиссия 0");
+
+        var lot10 = new TradePlanLine
+        {
+            LineNo = 1, Ticker = "LQDT", Side = PlanSides.Buy, QuantityLots = 3, LotSize = 10m, LimitPrice = 1.85m, EstAmount = 55.5m, Currency = "RUB",
+        };
+        PlanMessageFormatter.FormatLine(lot10).Should().Be("КУПИТЬ LQDT 30 шт. (3 лот.) @ 1.85 ₽ ≈ 56 ₽, комиссия 0");
     }
 
     [Fact]
@@ -44,7 +61,7 @@ public class PlanMessageFormatterTests
         var line = Plan().Lines[0];
         line.Side = PlanSides.Sell;
         line.EstFee = 3.7m;
-        PlanMessageFormatter.FormatLine(line).Should().Be("ПРОДАТЬ TMON@ ×44 @ 166.57 ≈ 7 329 ₽, комиссия 4 ₽");
+        PlanMessageFormatter.FormatLine(line).Should().Be("ПРОДАТЬ TMON@ 44 шт. @ 166.57 ₽ ≈ 7 329 ₽, комиссия 4 ₽");
     }
 
     [Fact]
@@ -53,7 +70,7 @@ public class PlanMessageFormatterTests
         var message = PlanMessageFormatter.ForNewPlan(Plan(), Now, "https://example.org/");
 
         message.Html.Should().Contain("<b>План №42</b>").And.Contain("размещение свободных денег");
-        message.Html.Should().Contain("<code>КУПИТЬ TMON@ ×44 @ 166.57 ≈ 7 329 ₽, комиссия 0</code>");
+        message.Html.Should().Contain("<code>КУПИТЬ TMON@ 44 шт. @ 166.57 ₽ ≈ 7 329 ₽, комиссия 0</code>");
         message.Html.Should().Contain("покупки ≈ 7 329 ₽");
         message.Html.Should().Contain("Свободные деньги: 7 340 ₽ → 11 ₽");
         message.Html.Should().Contain("Действует до 12:30 МСК");

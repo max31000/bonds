@@ -23,7 +23,11 @@ public static class BotTexts
     public const string ResumeReply =
         "▶ Пауза снята: авто-подтверждение работает в пределах лимитов; подтверждённые планы, срок которых не истёк, исполняются (в часы торгов).";
 
-    public static string Help(bool paused) =>
+    /// <summary>
+    /// Справка. Задача 67 (NIT): текст зависит от режима — в режиме наблюдения (<paramref name="dryRun"/>) — пометка «сделка не отправляется», в живом —
+    /// «подтверждённые планы исполняются: реальные заявки» и двухшаговое подтверждение; пауза — своей строкой.
+    /// </summary>
+    public static string Help(bool paused, bool dryRun = true) =>
         "<b>Команды</b>\n" +
         "/status — капитал, корзины и отклонения, свободные деньги, открытые планы\n" +
         "/plans — открытые планы\n" +
@@ -31,11 +35,15 @@ public static class BotTexts
         "/withdraw 15% · /withdraw 50000 · /withdraw 200 usd — план вывода\n" +
         "/exit temporary — план выхода из корзины без цели\n" +
         "/withdrawn — деньги выведены в банк: снять удержание под вывод\n" +
-        "/stop — пауза: авто-подтверждение выключено, планы ждут вашего решения\n" +
+        (dryRun
+            ? "/stop — пауза: авто-подтверждение выключено, планы ждут вашего решения\n"
+            : "/stop — пауза: заявки не отправляются; подтверждённые планы ждут до конца срока\n") +
         "/resume — снять паузу\n" +
         "/help — эта справка\n\n" +
-        (paused ? "Сейчас: пауза (авто-подтверждение выключено).\n" : string.Empty) +
-        $"<i>{PlanMessageFormatter.ObservationNote}</i>";
+        (paused ? (dryRun ? "Сейчас: пауза (авто-подтверждение выключено).\n" : "Сейчас: пауза — заявки не отправляются.\n") : string.Empty) +
+        (dryRun
+            ? $"<i>{PlanMessageFormatter.ObservationNote}</i>"
+            : $"<b>{PlanMessageFormatter.RealOrdersMark}</b>: подтверждённые планы исполняются — заявки уходят брокеру. Подтверждение в два шага: «Подтвердить» → «Отправить заявки».");
 
     public static string Status(IReadOnlyList<StatusPortfolio> portfolios, int openPlans, bool paused, bool dryRun)
     {

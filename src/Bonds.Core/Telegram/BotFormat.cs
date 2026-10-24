@@ -120,6 +120,15 @@ public static class BotFormat
         return (negative ? "−" : string.Empty) + sb + fraction;
     }
 
+    /// <summary>Знак валюты для цены: ₽, $, € (прочие — ISO-код).</summary>
+    public static string CurrencySign(string? currency) => (currency ?? string.Empty).Trim().ToUpperInvariant() switch
+    {
+        "RUB" or "RUR" or "" => "₽",
+        "USD" => "$",
+        "EUR" => "€",
+        var code => code,
+    };
+
     /// <summary>Сумма с валютой: рубли — без копеек («7 329 ₽»), прочие валюты — 2 знака («1 234,56 $»).</summary>
     public static string Money(decimal amount, string? currency)
     {

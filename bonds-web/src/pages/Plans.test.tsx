@@ -1,7 +1,7 @@
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { MantineProvider } from '@mantine/core';
 import { http, HttpResponse } from 'msw';
 import { server } from '../test/msw-handlers';
@@ -171,5 +171,40 @@ describe('Plans — страница «Планы» (задача 63, режим
 
     await waitFor(() => expect(released).toBe(true));
     await waitFor(() => expect(screen.queryByTestId('plan-13-release-hold')).not.toBeInTheDocument());
+  });
+});
+
+describe('Plans — ссылка на план из бота /plans/:id (задача 67, NIT)', () => {
+  beforeEach(() => {
+    usePlansStore.setState({ data: null, isLoading: false, error: null, decidingId: null });
+  });
+
+  function renderAt(path: string) {
+    return render(
+      <MantineProvider>
+        <MemoryRouter initialEntries={[path]}>
+          <Routes>
+            <Route path="/plans" element={<Plans />} />
+            <Route path="/plans/:id" element={<Plans />} />
+          </Routes>
+        </MemoryRouter>
+      </MantineProvider>,
+    );
+  }
+
+  it('/plans/11 открывает страницу планов и указывает на план #11', async () => {
+    server.use(http.get('*/api/plans', () => HttpResponse.json(plansResponse([sweepPlan]))));
+    renderAt('/plans/11');
+
+    expect(await screen.findByTestId('plan-11')).toBeInTheDocument();
+    expect(screen.getByTestId('plans-focus')).toHaveTextContent('План #11');
+    expect(screen.getByTestId('plans-focus')).toHaveTextContent('Ждут решения');
+  });
+
+  it('/plans/999 — план не найден среди последних', async () => {
+    server.use(http.get('*/api/plans', () => HttpResponse.json(plansResponse([sweepPlan]))));
+    renderAt('/plans/999');
+
+    expect(await screen.findByTestId('plans-focus')).toHaveTextContent('не найден');
   });
 });

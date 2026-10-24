@@ -54,7 +54,14 @@ public static class PlanMessageFormatter
     {
         var verb = line.Side == PlanSides.Sell ? "ПРОДАТЬ" : "КУПИТЬ";
         var fee = line.EstFee > 0m ? BotFormat.Money(line.EstFee, line.Currency) : "0";
-        return $"{verb} {line.Ticker} ×{BotFormat.Number(line.QuantityPieces, line.QuantityPieces % 1m == 0m ? 0 : 4)} @ {BotFormat.Price(line.LimitPrice)} ≈ {BotFormat.Money(line.EstAmount, line.Currency)}, комиссия {fee}";
+        // Задача 67 (NIT): количество — в штуках («шт.»), при лоте ≠ 1 — ещё и в лотах; цена — с единицей: облигации в процентах номинала (так уходит
+        // заявка), остальное — в валюте цены за штуку.
+        var pieces = $"{BotFormat.Number(line.QuantityPieces, line.QuantityPieces % 1m == 0m ? 0 : 4)} шт.";
+        if (line.LotSize != 1m) pieces += $" ({line.QuantityLots} лот.)";
+        var price = line.LimitPricePoints is { } points
+            ? $"{BotFormat.Price(points)}% ном."
+            : $"{BotFormat.Price(line.LimitPrice)} {BotFormat.CurrencySign(line.Currency)}";
+        return $"{verb} {line.Ticker} {pieces} @ {price} ≈ {BotFormat.Money(line.EstAmount, line.Currency)}, комиссия {fee}";
     }
 
     /// <summary>
