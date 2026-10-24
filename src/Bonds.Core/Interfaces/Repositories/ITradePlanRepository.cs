@@ -86,11 +86,12 @@ public interface ITradePlanRepository
     /// <summary>
     /// Атомарно переводит план из одного из <paramref name="fromStatuses"/> в <paramref name="toStatus"/> (с <c>decided_at</c>, <c>decided_via</c> и, если задан, новым
     /// <c>summary_json</c>). false — план не найден или находится в другом статусе (гонка двух решений). <paramref name="notExpiredAt"/> (задача 67, NIT) —
-    /// переход только у плана с <c>expires_at</c> позже этого момента (проверка в том же UPDATE: срок мог истечь между чтением и решением).
+    /// переход только у плана с <c>expires_at</c> позже этого момента (проверка в том же UPDATE: срок мог истечь между чтением и решением). <paramref name="dryRun"/>
+    /// (T-67E, M3) — если задан, <c>dry_run</c> пишется в том же UPDATE, что и статус (исполнитель не увидит Approved со старым флагом).
     /// </summary>
     Task<bool> TransitionAsync(
         ulong userId, ulong id, IReadOnlyCollection<string> fromStatuses, string toStatus, string? decidedVia, DateTime decidedAtUtc, string? summaryJson,
-        DateTime? notExpiredAt = null);
+        DateTime? notExpiredAt = null, bool? dryRun = null);
 
     /// <summary>
     /// Переводит просроченные <c>PendingApproval</c> и <c>AutoApproved</c> (по <c>expires_at</c>) в <c>Expired</c>; возвращает число планов. У AutoApproved в сводку

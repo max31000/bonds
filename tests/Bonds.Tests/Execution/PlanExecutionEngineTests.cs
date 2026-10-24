@@ -963,7 +963,8 @@ public sealed class InMemoryPlans : ITradePlanRepository
     public Task<int> ReleaseCashHoldsAsync(ulong userId, DateTime nowUtc) => throw new NotSupportedException();
     public Task<bool> RotateNonceAsync(ulong userId, ulong id, string expectedNonce, string newNonce) => throw new NotSupportedException();
     public Task<bool> TransitionAsync(
-        ulong userId, ulong id, IReadOnlyCollection<string> fromStatuses, string toStatus, string? decidedVia, DateTime decidedAtUtc, string? summaryJson, DateTime? notExpiredAt = null) =>
+        ulong userId, ulong id, IReadOnlyCollection<string> fromStatuses, string toStatus, string? decidedVia, DateTime decidedAtUtc, string? summaryJson, DateTime? notExpiredAt = null,
+        bool? dryRun = null) =>
         throw new NotSupportedException();
     public Task<int> ExpirePendingAsync(DateTime nowUtc) => throw new NotSupportedException();
 }

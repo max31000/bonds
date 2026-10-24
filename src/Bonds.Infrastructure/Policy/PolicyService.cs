@@ -45,11 +45,21 @@ public enum PlanDecisionKind
 public sealed record PlanDecisionResult(PlanDecisionKind Kind, TradePlan? Plan);
 
 /// <summary>
-/// Построение, сохранение и решения по планам (задача 63). Здесь брокеров не вызывают: <c>approve</c> переводит план в <c>Approved</c>. <c>dry_run</c> плана
-/// (задача 65) = НЕ живой режим пользователя в момент сохранения (<see cref="IExecutionGateResolver"/>: env + режим live + проверенный торговый токен + нет паузы)
-/// по КАЖДОМУ брокеру строк плана (задача 66: T-Invest — <c>tinvest_trade</c>, Freedom — <c>freedom_trade</c>), ИЛИ в плане есть строки брокера без исполнителя,
-/// ИЛИ это <c>AutoApproved</c>-план со строками Freedom (Freedom исполняется только после ручного подтверждения). dry-run план после approve помечается
-/// «не исполнен: dry-run»; план с <c>dry_run = 0</c> исполняет <c>PlanExecutionEngine</c>, который перепроверяет ворота сам.
+/// Построение, сохранение и решения по планам (задача 63). Здесь брокеров не вызывают: <c>approve</c> переводит план в <c>Approved</c>.
+/// <para>
+/// <b><c>dry_run</c> плана</b> (задача 65; T-67E, M3) = НЕ «живой без учёта паузы» (<see cref="IExecutionGateResolver"/>: env <c>Execution__Enabled</c> + режим
+/// <c>live</c> + проверенный торговый ключ; <b>пауза /stop НЕ учитывается</b>) по КАЖДОМУ брокеру строк плана (задача 66: T-Invest — <c>tinvest_trade</c>,
+/// Freedom — <c>freedom_trade</c>), ИЛИ в плане нет строк / есть строки брокера без исполнителя, ИЛИ это <c>AutoApproved</c>-план со строками Freedom. Пауза —
+/// временное состояние: её перепроверяет исполнитель (<c>PlanExecutionEngine</c>: неначатый план ЖДЁТ в Approved до <c>expires_at</c>, /resume — исполнится),
+/// поэтому план, сохранённый на паузе, не «замораживается» в dry-run навсегда.
+/// </para>
+/// <para>
+/// <b>При ручном подтверждении</b> (<see cref="ApproveAsync"/>) <c>dry_run</c> вычисляется ЗАНОВО по ТЕКУЩИМ воротам (тоже без учёта паузы) и пишется в том же
+/// UPDATE, что и статус Approved: план исполнится, только если исполнение включено (env + live + ключ) В МОМЕНТ ПОДТВЕРЖДЕНИЯ. Значит: план, построенный в режиме
+/// наблюдения, а подтверждённый ПОСЛЕ переключения в live, — исполняется; построенный в live, а подтверждённый после возврата в observe (или после отзыва ключа), —
+/// НЕ исполняется («не исполнен: dry-run»). Переключение режима ПОСЛЕ подтверждения на уже Approved-план не влияет на флаг — его закрывают ворота исполнителя.
+/// Бот показывает двухшаговое подтверждение реальных заявок по тому же вычислению (<see cref="WillExecuteOnApproveAsync"/>), а не по сохранённому флагу.
+/// </para>
 /// <para>
 /// Ручные запросы (inflow/withdraw/exit-basket) и предпросмотр игнорируют часы торгов, но помечают цены «возможно устарели»; план, созданный вручную, всегда
 /// <c>PendingApproval</c> (решение по нему принимает пользователь, а не лимиты авто-подтверждения).
@@ -118,8 +128,9 @@ public sealed class PolicyService
     {
         var status = forcePending && draft.Status == PlanStatuses.AutoApproved ? PlanStatuses.PendingApproval : draft.Status;
         var auto = status == PlanStatuses.AutoApproved;
-        var gate = await CombinedGateAsync(userId, draft.Lines);
-        var dryRun = !gate.Live || draft.Lines.Count == 0 || (auto && draft.Lines.Any(l => IsBroker(l, Bonds.Core.Models.Brokers.Freedom)));
+        // Пауза НЕ замораживает dry_run (T-67E, M3): её перепроверяет исполнитель перед стартом и перед каждой отправкой.
+        var (_, liveIgnoringPause) = await CombinedGateAsync(userId, draft.Lines);
+        var dryRun = !liveIgnoringPause || draft.Lines.Count == 0 || (auto && draft.Lines.Any(l => IsBroker(l, Bonds.Core.Models.Brokers.Freedom)));
         var plan = new TradePlan
         {
             UserId = userId,
@@ -147,12 +158,38 @@ public sealed class PolicyService
 
     /// <summary>
     /// Ворота плана = ворота КАЖДОГО его брокера (задача 66): живой — только если открыты все; причины — с префиксом брокера, когда брокеров несколько.
-    /// Строка брокера без исполнителя — закрыто. Без строк — ворота T-Invest (для заметки).
+    /// Строка брокера без исполнителя — закрыто. Без строк — ворота T-Invest (для заметки). <c>LiveIgnoringPause</c> (T-67E, M3) — то же, но без условия «нет паузы»
+    /// (env + режим live + проверенный ключ по каждому брокеру): по нему решается <c>dry_run</c>.
     /// </summary>
-    private async Task<ExecutionGateResult> CombinedGateAsync(ulong userId, IReadOnlyCollection<TradePlanLine> lines)
+    private async Task<(ExecutionGateResult Gate, bool LiveIgnoringPause)> CombinedGateAsync(ulong userId, IReadOnlyCollection<TradePlanLine> lines)
+    {
+        var (gate, perBroker) = await CombinedGateCoreAsync(userId, lines);
+        return (gate, perBroker.All(g => LiveIgnoringPause(g)));
+    }
+
+    /// <summary>Живой без учёта паузы: env + режим live + проверенный торговый ключ (ровно условия <see cref="ExecutionGate.Evaluate"/> кроме паузы).</summary>
+    internal static bool LiveIgnoringPause(ExecutionGateResult g) => ExecutionGate.Evaluate(g.GlobalEnabled, g.Mode, g.TradeCredentialOk, paused: false).Live;
+
+    /// <summary>
+    /// Исполнится ли план, если пользователь подтвердит его СЕЙЧАС (T-67E, M3): то же вычисление <c>dry_run</c>, что в <see cref="ApproveAsync"/>. Для бота —
+    /// двухшаговое подтверждение реальных заявок показывается по нему, а не по сохранённому флагу.
+    /// </summary>
+    public async Task<bool> WillExecuteOnApproveAsync(ulong userId, TradePlan plan)
+    {
+        if (plan.Lines.Count == 0) return false;
+        var (_, live) = await CombinedGateAsync(userId, plan.Lines);
+        return live;
+    }
+
+    private async Task<(ExecutionGateResult Gate, IReadOnlyList<ExecutionGateResult> PerBroker)> CombinedGateCoreAsync(ulong userId, IReadOnlyCollection<TradePlanLine> lines)
     {
         var brokers = lines.Select(l => (l.Broker ?? string.Empty).Trim().ToLowerInvariant()).Distinct(StringComparer.Ordinal).ToList();
-        if (brokers.Count == 0) return await _gate.ResolveAsync(userId);
+        if (brokers.Count == 0)
+        {
+            var single = await _gate.ResolveAsync(userId);
+            return (single, [single]);
+        }
+
         var results = new List<(string Broker, ExecutionGateResult Gate)>();
         foreach (var b in brokers)
         {
@@ -162,10 +199,11 @@ public sealed class PolicyService
             results.Add((b, g));
         }
 
-        if (results.Count == 1) return results[0].Gate;
+        var per = results.Select(r => r.Gate).ToList();
+        if (results.Count == 1) return (results[0].Gate, per);
         var reasons = results.SelectMany(r => r.Gate.Reasons.Select(x => $"{r.Broker}: {x}")).ToList();
         var first = results[0].Gate;
-        return new ExecutionGateResult(reasons.Count == 0, first.GlobalEnabled, first.Mode, results.All(r => r.Gate.TradeCredentialOk), first.Paused, reasons);
+        return (new ExecutionGateResult(reasons.Count == 0, first.GlobalEnabled, first.Mode, results.All(r => r.Gate.TradeCredentialOk), first.Paused, reasons), per);
     }
 
     public async Task<PlanDecisionResult> ApproveAsync(ulong userId, ulong id, string via, DateTime nowUtc)
@@ -189,17 +227,23 @@ public sealed class PolicyService
             return new PlanDecisionResult(held ? PlanDecisionKind.Ok : PlanDecisionKind.Conflict, await _plans.GetAsync(userId, id));
         }
 
+        // T-67E (M3): dry_run пересчитывается по ТЕКУЩИМ воротам без учёта паузы — исполнится, только если исполнение включено в момент подтверждения
+        // (план из режима наблюдения, подтверждённый после включения live, — исполняется; наоборот — нет). Пишется в том же UPDATE, что и статус.
+        var (gate, liveIgnoringPause) = await CombinedGateAsync(userId, plan.Lines);
+        var dryRun = !liveIgnoringPause || plan.Lines.Count == 0;
+        if (dryRun != plan.DryRun)
+            _logger.LogInformation("Trade plan {PlanId}: dry-run {Old} → {New} at approval (current execution gates)", plan.Id, plan.DryRun, dryRun);
+
         // Живой план (dry_run = 0): срок продлевается до конца БЛИЖАЙШЕЙ сессии, в которой ещё можно выставить заявки (подтверждение вечером — исполнение завтра
-        // утром, а не «истёк до исполнения»); заметка — по ТЕКУЩИМ воротам (они могли закрыться после построения плана).
+        // утром, а не «истёк до исполнения»); заметка — по ТЕКУЩИМ воротам (пауза — «ждёт»).
         DateTime? extendTo = null;
         string note;
-        if (plan.DryRun)
+        if (dryRun)
         {
             note = DryRunNote;
         }
         else
         {
-            var gate = await CombinedGateAsync(userId, plan.Lines);
             extendTo = ExecutionDeadline(plan, nowUtc);
             note = !gate.Live
                 ? "ждёт: исполнение сейчас закрыто — " + string.Join("; ", gate.Reasons)
@@ -210,7 +254,8 @@ public sealed class PolicyService
 
         var summaryJson = WithNote(plan.SummaryJson, note);
         // Задача 67 (NIT): срок проверяется и в самом UPDATE — план, истёкший между чтением и решением, не станет Approved.
-        var ok = await _plans.TransitionAsync(userId, id, [PlanStatuses.PendingApproval, PlanStatuses.Draft], PlanStatuses.Approved, via, nowUtc, summaryJson, notExpiredAt: nowUtc);
+        var ok = await _plans.TransitionAsync(
+            userId, id, [PlanStatuses.PendingApproval, PlanStatuses.Draft], PlanStatuses.Approved, via, nowUtc, summaryJson, notExpiredAt: nowUtc, dryRun: dryRun);
         if (ok && extendTo is { } deadline && deadline > plan.ExpiresAt) await _plans.ExtendExpiryAsync(userId, id, deadline);
         var current = await _plans.GetAsync(userId, id);
         return new PlanDecisionResult(ok ? PlanDecisionKind.Ok : PlanDecisionKind.Conflict, current);

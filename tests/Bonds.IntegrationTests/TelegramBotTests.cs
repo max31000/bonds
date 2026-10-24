@@ -1,6 +1,9 @@
+using Bonds.Core.Credentials;
+using Bonds.Core.Execution;
 using Bonds.Core.Models;
 using Bonds.Core.Policy;
 using Bonds.Core.Telegram;
+using Bonds.Infrastructure.Execution;
 using Bonds.Infrastructure.Repositories;
 using Bonds.Infrastructure.Telegram;
 using Bonds.IntegrationTests.Infrastructure;
@@ -63,16 +66,17 @@ public class TelegramBotTests
 
     private async Task<TradePlan> ReloadAsync(TradePlan plan) => (await new TradePlanRepository(Conn).GetAsync(plan.UserId, plan.Id))!;
 
-    private async Task SendAsync(BotUpdate update)
+    private async Task SendAsync(BotUpdate update, Microsoft.AspNetCore.Mvc.Testing.WebApplicationFactory<Program>? factory = null)
     {
-        using var scope = _factory.Services.CreateScope();
+        using var scope = (factory ?? _factory).Services.CreateScope();
         await scope.ServiceProvider.GetRequiredService<ITelegramUpdateHandler>().HandleAsync(update);
     }
 
     private static long _updateId = 1000;
 
-    private Task PressAsync(long fromId, string callbackId, string data, long? chatId = null, string chatType = "private") =>
-        SendAsync(new BotUpdate(Interlocked.Increment(ref _updateId), null, new BotIncomingCallback(callbackId, fromId, chatId ?? fromId, chatType, 900, data)));
+    private Task PressAsync(
+        long fromId, string callbackId, string data, long? chatId = null, string chatType = "private", Microsoft.AspNetCore.Mvc.Testing.WebApplicationFactory<Program>? factory = null) =>
+        SendAsync(new BotUpdate(Interlocked.Increment(ref _updateId), null, new BotIncomingCallback(callbackId, fromId, chatId ?? fromId, chatType, 900, data)), factory);
 
     private Task TextAsync(long fromId, string text, long? chatId = null, string chatType = "private") =>
         SendAsync(new BotUpdate(Interlocked.Increment(ref _updateId), new BotIncomingMessage(chatId ?? fromId, chatType, fromId, "T", text), null));
@@ -120,13 +124,23 @@ public class TelegramBotTests
             await Dapper.SqlMapper.ExecuteAsync(conn, "UPDATE trade_plans SET dry_run = 0 WHERE id = @Id", new { plan.Id });
         var firstApprove = Approve(plan);
 
+        // T-67E (M3): «живой» решается по ТЕКУЩИМ воротам (как пересчитает ApproveAsync) — открываем их: env, режим live, проверенный торговый токен.
+        var live = _factory.WithWebHostBuilder(b => b.UseSetting("Execution:Enabled", "true"));
+        await new UserSettingsRepository(Conn).SetExecutionModeAsync(userId, ExecutionModes.Live);
+        using (var scope = live.Services.CreateScope())
+            await scope.ServiceProvider.GetRequiredService<IUserCredentialStore>().SaveAsync(
+                userId, CredentialProviders.TInvestTrade, new Dictionary<string, string> { ["token"] = "t.trade-test" }, "test", TradeCredentialMeta.Build("ACC-T67E"));
+        var bot = live.Services.GetRequiredService<FakeTelegramBotClient>();
+        FakeTelegramBotClient.Answered AnswerFor(string callbackId) => bot.Answers.Single(a => a.CallbackId == callbackId);
+        Task PressAsync(long fromId, string callbackId, string data) => this.PressAsync(fromId, callbackId, data, factory: live);
+
         // Шаг 1: «Подтвердить» — план НЕ решён, сообщение показывает реальные заявки и кнопку «Отправить заявки» с новым nonce.
         var cb1 = "cb-" + Guid.NewGuid();
         await PressAsync(tg, cb1, firstApprove);
         var afterFirst = await ReloadAsync(plan);
         afterFirst.Status.Should().Be(PlanStatuses.PendingApproval);
         afterFirst.BotNonce.Should().NotBe(plan.BotNonce, "nonce меняется на каждом шаге");
-        var edit = Bot.Edits.Last(e => e.ChatId == tg);
+        var edit = bot.Edits.Last(e => e.ChatId == tg);
         edit.Html.Should().Contain("РЕАЛЬНЫЕ ЗАЯВКИ").And.Contain("TMON@");
         var send = BotCallback.Build(plan.Id, BotPlanAction.Send, afterFirst.BotNonce!);
         edit.Keyboard!.Rows.SelectMany(r => r).Select(b => b.CallbackData).Should().Contain(send);

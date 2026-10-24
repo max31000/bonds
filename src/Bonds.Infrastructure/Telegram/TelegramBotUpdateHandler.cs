@@ -297,7 +297,8 @@ public sealed class TelegramBotUpdateHandler : ITelegramUpdateHandler
 
         // Задача 67 (#4): ЖИВОЙ план (dry_run = 0) подтверждается в два шага. Первое «Подтвердить» ничего не решает: nonce меняется (старые кнопки умирают),
         // сообщение показывает реальные заявки и кнопку «Отправить заявки». Решает только она — и её nonce тоже одноразовый (меняется до подтверждения).
-        if (data.Action == BotPlanAction.Approve && !plan.DryRun)
+        // T-67E (M3): «живой ли» — по ТЕКУЩИМ воротам (как ApproveAsync пересчитает dry_run), а не по флагу на момент построения.
+        if (data.Action == BotPlanAction.Approve && await _policy.WillExecuteOnApproveAsync(user.Id, plan))
         {
             var next = BotCallback.NewNonce();
             if (!await _plans.RotateNonceAsync(user.Id, plan.Id, data.Nonce, next))
