@@ -115,11 +115,12 @@ public class TradePlanRepository : ITradePlanRepository
     {
         // Исполняемые/исполненные (Submitting, PartiallyDone, Done) + AutoApproved, ждущий исполнителя (dry_run = 0). AutoApproved dry-run НИКОГДА не исполняется —
         // его деньги не потрачены, в лимит он не входит. Внутри одного цикла раннер сам наращивает счётчик (PolicyRunner.CarryForward).
+        // Задача 67 (#10): только планы, решённые АВТОМАТИЧЕСКИ (decided_via = 'auto') — ручная покупка не съедает авто-лимит.
         using var conn = CreateConnection();
         return await conn.ExecuteScalarAsync<decimal>(
             @"SELECT COALESCE(SUM(l.est_amount), 0)
               FROM trade_plans p JOIN trade_plan_lines l ON l.plan_id = p.id
-              WHERE p.user_id = @UserId AND p.decided_at >= @Since
+              WHERE p.user_id = @UserId AND p.decided_at >= @Since AND p.decided_via = 'auto'
                 AND (p.status IN ('Submitting', 'PartiallyDone', 'Done') OR (p.status = 'AutoApproved' AND p.dry_run = 0))
                 AND (@Exclude IS NULL OR p.id <> @Exclude)
                 AND l.side = 'Buy' AND l.currency = 'RUB'",
@@ -131,7 +132,7 @@ public class TradePlanRepository : ITradePlanRepository
         using var conn = CreateConnection();
         var plans = (await conn.QueryAsync<TradePlan>(
             $@"SELECT {PlanColumns} FROM trade_plans
-               WHERE user_id = @UserId AND decided_at >= @Since
+               WHERE user_id = @UserId AND decided_at >= @Since AND decided_via = 'auto'
                  AND (status IN ('Submitting', 'PartiallyDone', 'Done', 'Failed') OR (status = 'AutoApproved' AND dry_run = 0))
                ORDER BY id",
             new { UserId = userId, Since = sinceUtc })).ToList();

@@ -29,14 +29,15 @@ public interface ITradePlanRepository
     /// <summary>
     /// Σ <c>est_amount</c> покупок планов, ИСПОЛНЯЕМЫХ с <paramref name="sinceUtc"/> (по <c>decided_at</c>), в рублях — для суточного лимита. Считаются только
     /// <c>Submitting</c>, <c>PartiallyDone</c>, <c>Done</c> и (задача 65) <c>AutoApproved</c> с <c>dry_run = 0</c> — ждущий исполнителя, со строками в RUB. AutoApproved
-    /// dry-run НЕ считается: он никогда не исполняется (деньги не потрачены); счётчик внутри одного цикла наращивает <c>PolicyRunner</c>.
+    /// dry-run НЕ считается: он никогда не исполняется (деньги не потрачены); счётчик внутри одного цикла наращивает <c>PolicyRunner</c>. Задача 67 (#10): только
+    /// <c>decided_via = auto</c> — ручные покупки авто-лимит не расходуют.
     /// <paramref name="excludePlanId"/> — исключить план (исполнитель проверяет лимит для самого плана).
     /// </summary>
     Task<decimal> SumAutoApprovedRubSinceAsync(ulong userId, DateTime sinceUtc, ulong? excludePlanId = null);
 
     /// <summary>
     /// Планы (со строками), входящие в суточный лимит авто-исполнения с <paramref name="sinceUtc"/> (по <c>decided_at</c>): <c>Submitting</c>, <c>PartiallyDone</c>,
-    /// <c>Done</c>, <c>Failed</c> и <c>AutoApproved</c> с <c>dry_run = 0</c>. Суммы считает исполнитель по ФАКТУ заявок (<c>AutoDayUsage</c>), а не по оценке.
+    /// <c>Done</c>, <c>Failed</c> и <c>AutoApproved</c> с <c>dry_run = 0</c>; только <c>decided_via = auto</c> (задача 67, #10). Суммы считает исполнитель по ФАКТУ заявок (<c>AutoDayUsage</c>), а не по оценке.
     /// </summary>
     Task<IReadOnlyList<TradePlan>> ListAutoDayPlansAsync(ulong userId, DateTime sinceUtc);
 

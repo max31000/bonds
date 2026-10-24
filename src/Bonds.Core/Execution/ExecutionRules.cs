@@ -237,7 +237,8 @@ public static class PlanExecutionOutcome
 
 /// <summary>
 /// Суточный лимит авто-исполнения по ФАКТУ (задача 65, ревью): исполненное — <c>lots_filled × lot_size × avg_fill_price</c> (рубли, цена ОДНОЙ штуки), ещё не
-/// завершённое (план ждёт исполнителя или строка в работе) — оценка <c>est_amount</c> пропорционально неисполненным лотам. Только покупки в RUB.
+/// завершённое (план ждёт исполнителя или строка в работе) — оценка <c>est_amount</c> пропорционально неисполненным лотам. Только покупки в RUB и только планы
+/// с <c>decided_via = auto</c> (задача 67, #10: ручное подтверждение лимит авто не расходует).
 /// </summary>
 public static class AutoDayUsage
 {
@@ -250,6 +251,7 @@ public static class AutoDayUsage
         foreach (var plan in plans)
         {
             if (excludePlanId is { } exclude && plan.Id == exclude) continue;
+            if (!string.Equals(plan.DecidedVia, DecidedVia.Auto, StringComparison.Ordinal)) continue; // задача 67 (#10): ручные планы авто-лимит не тратят
             var planTerminal = TerminalPlans.Contains(plan.Status);
             foreach (var line in plan.Lines.Where(l => l.Side == PlanSides.Buy && IsRub(l.Currency)))
             {

@@ -153,12 +153,12 @@ public class ExecutionReviewFixesTests
     [Fact]
     public void AutoDayUsage_FilledByFact_InFlightByEstimate_ExcludesPlan()
     {
-        var done = new TradePlan { Id = 1, Status = PlanStatuses.Done, Lines = [Buy(1, 10, 100m)] }; // оценка 1 000, факт 10 × 110 = 1 100
-        var partial = new TradePlan { Id = 2, Status = PlanStatuses.PartiallyDone, Lines = [Buy(1, 10, 100m)] }; // факт 4 × 100, остаток не считается (план завершён)
-        var running = new TradePlan { Id = 3, Status = PlanStatuses.Submitting, Lines = [Buy(1, 10, 100m), Buy(2, 5, 200m)] }; // 3 × 105 + 7/10 × 1 000 + 1 000 (не начата)
-        var waiting = new TradePlan { Id = 4, Status = PlanStatuses.AutoApproved, Lines = [Buy(1, 2, 500m)] }; // 1 000 — оценка
-        var usd = new TradePlan { Id = 5, Status = PlanStatuses.Done, Lines = [Buy(1, 1, 100m, currency: "USD")] }; // не рубли
-        var self = new TradePlan { Id = 6, Status = PlanStatuses.Submitting, Lines = [Buy(1, 1, 9_999m)] };
+        var done = new TradePlan { Id = 1, Status = PlanStatuses.Done, DecidedVia = DecidedVia.Auto, Lines = [Buy(1, 10, 100m)] }; // оценка 1 000, факт 10 × 110 = 1 100
+        var partial = new TradePlan { Id = 2, Status = PlanStatuses.PartiallyDone, DecidedVia = DecidedVia.Auto, Lines = [Buy(1, 10, 100m)] }; // факт 4 × 100, остаток не считается (план завершён)
+        var running = new TradePlan { Id = 3, Status = PlanStatuses.Submitting, DecidedVia = DecidedVia.Auto, Lines = [Buy(1, 10, 100m), Buy(2, 5, 200m)] }; // 3 × 105 + 7/10 × 1 000 + 1 000 (не начата)
+        var waiting = new TradePlan { Id = 4, Status = PlanStatuses.AutoApproved, DecidedVia = DecidedVia.Auto, Lines = [Buy(1, 2, 500m)] }; // 1 000 — оценка
+        var usd = new TradePlan { Id = 5, Status = PlanStatuses.Done, DecidedVia = DecidedVia.Auto, Lines = [Buy(1, 1, 100m, currency: "USD")] }; // не рубли
+        var self = new TradePlan { Id = 6, Status = PlanStatuses.Submitting, DecidedVia = DecidedVia.Auto, Lines = [Buy(1, 1, 9_999m)] };
         var orders = new List<TradeOrder>
         {
             Order(1, 1, 1, TradeOrderStatuses.Filled, 10, 10, 110m),
@@ -170,6 +170,22 @@ public class ExecutionReviewFixesTests
         var spent = AutoDayUsage.SpentRub([done, partial, running, waiting, usd, self], orders, excludePlanId: 6);
 
         spent.Should().Be(1_100m + 400m + (315m + 700m + 1_000m) + 1_000m);
+    }
+
+    [Fact]
+    public void T67_AutoDayUsage_ManualBuy200k_DoesNotEatAutoLimit()
+    {
+        // Задача 67 (#10): ручная (web/telegram) покупка на 200 000 ₽ исполнена сегодня — в авто-лимит она не входит, считается только авто-план.
+        var manual = new TradePlan { Id = 1, Status = PlanStatuses.Done, DecidedVia = DecidedVia.Web, Lines = [Buy(1, 1, 200_000m)] };
+        var viaBot = new TradePlan { Id = 2, Status = PlanStatuses.Submitting, DecidedVia = DecidedVia.Telegram, Lines = [Buy(1, 1, 50_000m)] };
+        var auto = new TradePlan { Id = 3, Status = PlanStatuses.Done, DecidedVia = DecidedVia.Auto, Lines = [Buy(1, 10, 100m)] };
+        var orders = new List<TradeOrder>
+        {
+            Order(1, 1, 1, TradeOrderStatuses.Filled, 1, 1, 200_000m),
+            Order(3, 1, 1, TradeOrderStatuses.Filled, 10, 10, 100m),
+        };
+
+        AutoDayUsage.SpentRub([manual, viaBot, auto], orders).Should().Be(1_000m);
     }
 
     private static List<CapitalBasket> Baskets(bool autoBuy, string member = "TMON") =>

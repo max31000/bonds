@@ -191,7 +191,10 @@ public class ExecutionIntegrationTests
         await engine.RunForUserAsync(s.UserId, Noon.AddSeconds(40));
         gateway.PostCount.Should().Be(1);
 
-        // Суточный лимит авто учитывает исполненное (Done) — и только RUB-покупки.
+        // Суточный лимит авто учитывает исполненное (Done) — но только решённое автоматически (задача 67, #10): этот план подтверждён в вебе.
+        (await new TradePlanRepository(Conn).SumAutoApprovedRubSinceAsync(s.UserId, Noon.AddHours(-1))).Should().Be(0m);
+        await using (var conn = new MySqlConnector.MySqlConnection(Conn))
+            await Dapper.SqlMapper.ExecuteAsync(conn, "UPDATE trade_plans SET decided_via = 'auto' WHERE id = @Id", new { Id = plan.Id });
         (await new TradePlanRepository(Conn).SumAutoApprovedRubSinceAsync(s.UserId, Noon.AddHours(-1))).Should().Be(166.57m * 3);
         (await new TradePlanRepository(Conn).SumAutoApprovedRubSinceAsync(s.UserId, Noon.AddHours(-1), plan.Id)).Should().Be(0m);
     }

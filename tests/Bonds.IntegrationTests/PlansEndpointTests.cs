@@ -624,13 +624,37 @@ public class PlansEndpointTests
         var repo = new TradePlanRepository(Conn);
         var now = DateTime.UtcNow;
         await repo.InsertAsync(NewPlan(userId, PlanStatuses.AutoApproved, now, amount: 10_000m)); // в dry-run никогда не исполняется — деньги не потрачены
-        await repo.InsertAsync(NewPlan(userId, PlanStatuses.Done, now, amount: 5_000m));
-        await repo.InsertAsync(NewPlan(userId, PlanStatuses.Submitting, now, amount: 1_000m));
+        await repo.InsertAsync(Auto(NewPlan(userId, PlanStatuses.Done, now, amount: 5_000m)));
+        await repo.InsertAsync(Auto(NewPlan(userId, PlanStatuses.Submitting, now, amount: 1_000m)));
         await repo.InsertAsync(NewPlan(userId, PlanStatuses.PendingApproval, now, amount: 77_000m));
 
         var sum = await repo.SumAutoApprovedRubSinceAsync(userId, now.AddHours(-1));
 
         sum.Should().Be(6_000m, "только Submitting/Done; AutoApproved в dry-run не считается");
+    }
+
+    private static TradePlan Auto(TradePlan plan)
+    {
+        plan.DecidedVia = DecidedVia.Auto;
+        return plan;
+    }
+
+    [Fact]
+    public async Task T67_DayLimit_ManualBuy200k_DoesNotEatAutoLimit()
+    {
+        // Задача 67 (#10): ручная покупка на 200 000 ₽ (подтверждена в вебе, исполнена) не входит в суточный авто-лимит — ни в оценку раннера, ни в факт исполнителя.
+        var (factory, _) = NewFactory();
+        var (userId, _) = await NewUserAsync(factory);
+        var repo = new TradePlanRepository(Conn);
+        var now = DateTime.UtcNow;
+        var manual = NewPlan(userId, PlanStatuses.Done, now, rule: PlanRules.P2Inflow, amount: 200_000m);
+        manual.DecidedVia = DecidedVia.Web;
+        manual.DryRun = false;
+        await repo.InsertAsync(manual);
+        await repo.InsertAsync(Auto(NewPlan(userId, PlanStatuses.Done, now, amount: 3_000m)));
+
+        (await repo.SumAutoApprovedRubSinceAsync(userId, now.AddHours(-1))).Should().Be(3_000m);
+        (await repo.ListAutoDayPlansAsync(userId, now.AddHours(-1))).Should().ContainSingle().Which.DecidedVia.Should().Be(DecidedVia.Auto);
     }
 
     [Fact]
