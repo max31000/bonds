@@ -239,7 +239,7 @@ public class ExecutionReviewIntegrationTests
 
         // Ворота в тестовой фабрике закрыты (Execution__Enabled=false) — заметка говорит об этом, а не «передан исполнителю».
         var body = await resp.Content.ReadFromJsonAsync<JsonElement>();
-        body.GetProperty("summary").GetProperty("executionNote").GetString().Should().StartWith("не будет исполнен");
+        body.GetProperty("summary").GetProperty("executionNote").GetString().Should().StartWith("ждёт: исполнение сейчас закрыто");
 
         // dry-run план срок не продлевает.
         var dry = await InsertPlanAsync(s, PlanStatuses.PendingApproval, dryRun: true, expiresAt: now.AddMinutes(20));

@@ -132,7 +132,7 @@ public class FreedomPlanExecutionTests
         _freedom.PostCount.Should().Be(allOpen ? 1 : 0);
         if (!allOpen)
         {
-            _plans[plan.Id].Status.Should().Be(PlanStatuses.Failed);
+            _plans[plan.Id].Status.Should().Be(PlanStatuses.Approved, "задача 67 (#11): закрытые ворота не убивают неначатый план — он ждёт до срока");
             _orders.All.Should().BeEmpty("при закрытых воротах в trade_orders ничего не пишется");
         }
     }
@@ -158,7 +158,7 @@ public class FreedomPlanExecutionTests
         await Tick(Noon);
 
         _freedom.PostCount.Should().Be(0);
-        _plans[plan.Id].Status.Should().Be(PlanStatuses.Failed);
+        _plans[plan.Id].Status.Should().Be(PlanStatuses.Approved, "задача 67 (#11): закрытые ворота не убивают неначатый план — он ждёт до срока");
         _credentialRecords.Verify(r => r.UpdateStatusAsync(UserId, CredentialProviders.FreedomTrade, CredentialStatus.Invalid, It.IsAny<string?>()), Times.Once);
     }
 
@@ -758,7 +758,7 @@ public class FreedomPlanExecutionTests
     }
 
     [Fact]
-    public async Task MixedPlan_BothGatesClosed_PlanFailsLikeBefore()
+    public async Task MixedPlan_BothGatesClosed_PlanWaitsUntilExpiry()
     {
         _gate.TInvest = ExecutionGate.Evaluate(false, ExecutionModes.Live, true, false);
         _gate.Freedom = ExecutionGate.Evaluate(false, ExecutionModes.Live, true, false, ExecutionGate.NoFreedomTradeCredential);
@@ -768,7 +768,7 @@ public class FreedomPlanExecutionTests
 
         _tinvest.PostCount.Should().Be(0);
         _freedom.PostCount.Should().Be(0);
-        _plans[plan.Id].Status.Should().Be(PlanStatuses.Failed);
+        _plans[plan.Id].Status.Should().Be(PlanStatuses.Approved, "задача 67 (#11): закрытые ворота не убивают неначатый план — он ждёт до срока");
     }
 
     [Fact]

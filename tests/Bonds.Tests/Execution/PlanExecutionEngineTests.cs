@@ -106,17 +106,41 @@ public class PlanExecutionEngineTests
     // ─── Ворота ────────────────────────────────────────────────────────────────────────────
 
     [Fact]
-    public async Task GateClosed_NothingPosted_ApprovedPlanFailsWithReason()
+    public async Task GateClosed_NothingPosted_ApprovedPlanWaitsWithReason_NotifiedOnce_ExpiresAfterTtl()
     {
         _gate.Result = ExecutionGate.Evaluate(true, ExecutionModes.Observe, true, false);
         var plan = AddPlan();
         Book(FundUid, 166.50m, 166.60m, Noon);
 
         await Engine().RunTickAsync(Noon);
+        await Engine().RunTickAsync(Noon.AddSeconds(20));
 
         _gateway.PostCount.Should().Be(0);
-        _plans[plan.Id].Status.Should().Be(PlanStatuses.Failed);
-        _notifier.Texts.Should().Contain(t => t.Contains("Режим наблюдения"));
+        _plans[plan.Id].Status.Should().Be(PlanStatuses.Approved, "задача 67 (#11): закрытые ворота не убивают неначатый план — он ждёт до срока");
+        _notifier.Texts.Should().ContainSingle(t => t.Contains("Режим наблюдения") && t.Contains("ждёт"));
+
+        await Engine().RunTickAsync(Noon.AddHours(1));
+        _plans[plan.Id].Status.Should().Be(PlanStatuses.Expired, "срок истёк, пока ворота были закрыты");
+    }
+
+    [Fact]
+    public async Task T67_StopThenResumeWithinTtl_ApprovedPlanExecutes()
+    {
+        // Задача 67 (#11): /stop (пауза) до старта плана — план ждёт в Approved; /resume в пределах срока — следующий тик отправляет заявку.
+        _gate.Result = ExecutionGate.Evaluate(true, ExecutionModes.Live, true, paused: true);
+        var plan = AddPlan();
+        Book(FundUid, 166.50m, 166.60m, Noon);
+
+        await Engine().RunTickAsync(Noon);
+        _gateway.PostCount.Should().Be(0);
+        _plans[plan.Id].Status.Should().Be(PlanStatuses.Approved);
+
+        _gate.Result = ExecutionGate.Evaluate(true, ExecutionModes.Live, true, paused: false);
+        Book(FundUid, 166.50m, 166.60m, Noon.AddMinutes(5));
+        await Engine().RunTickAsync(Noon.AddMinutes(5));
+
+        _gateway.PostCount.Should().Be(1);
+        _plans[plan.Id].Status.Should().Be(PlanStatuses.Submitting);
     }
 
     [Fact]
@@ -130,7 +154,7 @@ public class PlanExecutionEngineTests
         await Engine().RunTickAsync(Noon);
 
         _gateway.PostCount.Should().Be(0);
-        _plans[plan.Id].Status.Should().Be(PlanStatuses.Failed);
+        _plans[plan.Id].Status.Should().Be(PlanStatuses.Approved, "задача 67 (#11): закрытые ворота не убивают неначатый план — он ждёт до срока");
         _credentialRecords.Verify(r => r.UpdateStatusAsync(UserId, CredentialProviders.TInvestTrade, CredentialStatus.Invalid, It.IsAny<string?>()), Times.Once);
     }
 
@@ -154,7 +178,7 @@ public class PlanExecutionEngineTests
         var plan = AddPlan(lines: line);
         await Engine().RunTickAsync(Noon);
         _gateway.PostCount.Should().Be(0);
-        _plans[plan.Id].Status.Should().Be(PlanStatuses.Failed);
+        _plans[plan.Id].Status.Should().Be(PlanStatuses.Approved, "задача 67 (#11): закрытые ворота не убивают неначатый план — он ждёт до срока");
     }
 
     // ─── Отправка и идемпотентность ────────────────────────────────────────────────────────

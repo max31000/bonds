@@ -144,7 +144,7 @@ public class FreedomExecutionIntegrationTests
         var allOpen = enabled && live && key && !paused;
         freedom.PostCount.Should().Be(allOpen ? 1 : 0);
         var stored = await new TradePlanRepository(Conn).GetAsync(s.UserId, plan.Id);
-        stored!.Status.Should().Be(allOpen ? PlanStatuses.Submitting : PlanStatuses.Failed);
+        stored!.Status.Should().Be(allOpen ? PlanStatuses.Submitting : PlanStatuses.Approved);
         if (!allOpen) (await new TradeOrderRepository(Conn).ListByPlanAsync(plan.Id)).Should().BeEmpty();
     }
 

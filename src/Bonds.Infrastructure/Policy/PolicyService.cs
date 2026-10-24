@@ -182,7 +182,7 @@ public sealed class PolicyService
             var gate = await CombinedGateAsync(userId, plan.Lines);
             extendTo = ExecutionDeadline(plan, nowUtc);
             note = !gate.Live
-                ? "не будет исполнен: исполнение сейчас закрыто — " + string.Join("; ", gate.Reasons)
+                ? "ждёт: исполнение сейчас закрыто — " + string.Join("; ", gate.Reasons)
                 : extendTo is { } until && !plan.Lines.All(l => TradingHours.IsOpen(MarketOf(l), nowUtc, _policy))
                     ? QueuedNote + string.Create(CultureInfo.InvariantCulture, $" — ждёт открытия торгов, срок до {TradingHours.ToMoscow(until):dd.MM HH:mm} МСК")
                     : QueuedNote;

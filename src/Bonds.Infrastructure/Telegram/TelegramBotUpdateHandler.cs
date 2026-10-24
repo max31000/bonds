@@ -124,11 +124,11 @@ public sealed class TelegramBotUpdateHandler : ITelegramUpdateHandler
                     break;
                 case BotCommandKind.Stop:
                     await _settings.SetExecutionPausedAsync(user.Id, true);
-                    await ReplyAsync(message.ChatId, "⏸ Пауза включена: авто-подтверждение и исполнение остановлены (висящие заявки снимаются), новые планы ждут вашего решения. Снять — /resume.", null, ct);
+                    await ReplyAsync(message.ChatId, BotTexts.StopReply, null, ct);
                     break;
                 case BotCommandKind.Resume:
                     await _settings.SetExecutionPausedAsync(user.Id, false);
-                    await ReplyAsync(message.ChatId, "▶ Пауза снята: авто-подтверждение работает в пределах лимитов.", null, ct);
+                    await ReplyAsync(message.ChatId, BotTexts.ResumeReply, null, ct);
                     break;
                 case BotCommandKind.Withdrawn:
                 {

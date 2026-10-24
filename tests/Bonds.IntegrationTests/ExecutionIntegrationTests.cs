@@ -140,7 +140,7 @@ public class ExecutionIntegrationTests
 
         var expected = enabled && live && token && !paused;
         gateway.PostCount.Should().Be(expected ? 1 : 0);
-        (await ReloadAsync(plan)).Status.Should().Be(expected ? PlanStatuses.Submitting : PlanStatuses.Failed);
+        (await ReloadAsync(plan)).Status.Should().Be(expected ? PlanStatuses.Submitting : PlanStatuses.Approved);
         var orders = await new TradeOrderRepository(Conn).ListByPlanAsync(plan.Id);
         if (expected) orders.Should().ContainSingle(o => o.Status == TradeOrderStatuses.Submitted && o.ClientOrderId == gateway.Posted[0].Order.ClientOrderId);
         else orders.Should().BeEmpty("при закрытых воротах заявки даже не создаются");

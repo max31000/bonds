@@ -915,7 +915,8 @@ public sealed class PlanExecutionEngine
         await OnLineTerminalAsync(plan, line, orders, filled < line.QuantityLots ? last?.ErrorMessage ?? "исполнено не полностью" : null, ctx, ct);
     }
 
-    private async Task FinalizeAsync(TradePlan plan, List<TradeOrder> orders, Ctx ctx, CancellationToken ct)
+    /// <param name="reason">Причина остановки (ворота закрылись во время исполнения, задача 67 #11) — дописывается к итогу плана.</param>
+    private async Task FinalizeAsync(TradePlan plan, List<TradeOrder> orders, Ctx ctx, CancellationToken ct, string? reason = null)
     {
         var states = plan.Lines.Select(l => (Line: l, State: LineState(l, orders))).ToList();
         if (states.Any(s => !s.State.Terminal) || plan.Lines.Any(l => FeePending(l, orders))) return;
@@ -927,6 +928,7 @@ public sealed class PlanExecutionEngine
             PlanStatuses.PartiallyDone => "исполнен частично",
             _ => "не исполнен",
         };
+        if (reason is not null && outcome != PlanStatuses.Done) note += ": остановлен — " + reason;
         if (!await _plans.SetExecutionStatusAsync(ctx.UserId, plan.Id, [PlanStatuses.Submitting], outcome, WithNote(plan.SummaryJson, note))) return;
         plan.Status = outcome;
         ctx.Result.PlansFinished++;
@@ -936,21 +938,50 @@ public sealed class PlanExecutionEngine
     }
 
     /// <summary>
-    /// Ворота ВСЕХ брокеров плана закрыты (или ключ не прошёл сверку): НИЧЕГО не отправляем. Неначатый план → Failed с причиной; у исполняемого висящие заявки
-    /// снимаются (снятие — не отправка, оно уменьшает риск), неначатые строки → Failed, план закрывается итогом. Снять нельзя (нет ключа, чужой счёт, брокер отказал) —
-    /// одно уведомление на заявку «снимите её в терминале брокера», план остаётся Submitting и попытки повторяются каждый тик.
+    /// Ворота ВСЕХ брокеров плана закрыты (или ключ не прошёл сверку): НИЧЕГО не отправляем. Задача 67 (#11): неначатый план (Approved/AutoApproved) НЕ убивается —
+    /// он ждёт в своём статусе до <c>expires_at</c> (пауза /stop → /resume в пределах срока — план исполнится), по истечении → Expired; владельцу ОДНО уведомление
+    /// «ждёт» (повтор — только при смене причины: заметка плана хранит её). У исполняемого висящие заявки снимаются (снятие — не отправка, оно уменьшает риск),
+    /// неначатые строки → Failed, план закрывается итогом (PartiallyDone/Failed) с причиной. Снять нельзя (нет ключа, чужой счёт, брокер отказал) — одно уведомление
+    /// на заявку «снимите её в терминале брокера», план остаётся Submitting и попытки повторяются каждый тик.
     /// </summary>
     private async Task HaltPlanAsync(TradePlan plan, string reason, Ctx ctx, CancellationToken ct)
     {
         if (plan.Status != PlanStatuses.Submitting)
         {
-            if (await _plans.SetExecutionStatusAsync(ctx.UserId, plan.Id, Startable, PlanStatuses.Failed, WithNote(plan.SummaryJson, "не исполнен: " + reason)))
-                await _notifier.NotifyAsync(ctx.UserId, new BotMessage(ExecutionMessages.PlanNotStarted(plan, reason)), ct);
+            if (plan.ExpiresAt <= ctx.NowUtc)
+            {
+                if (await _plans.SetExecutionStatusAsync(ctx.UserId, plan.Id, Startable, PlanStatuses.Expired,
+                        WithNote(plan.SummaryJson, "не исполнен: срок истёк, пока исполнение было закрыто — " + reason)))
+                    await _notifier.NotifyAsync(ctx.UserId, new BotMessage(ExecutionMessages.PlanNotStarted(plan, "срок истёк, пока исполнение было закрыто — " + reason)), ct);
+                return;
+            }
+
+            ctx.Result.Notes.Add($"plan {plan.Id}: waiting — execution closed");
+            var waiting = WaitingNotePrefix + reason;
+            if (string.Equals(NoteOf(plan.SummaryJson), waiting, StringComparison.Ordinal)) return;
+            if (await _plans.SetExecutionStatusAsync(ctx.UserId, plan.Id, [plan.Status], plan.Status, WithNote(plan.SummaryJson, waiting)))
+                await _notifier.NotifyAsync(ctx.UserId, new BotMessage(ExecutionMessages.PlanWaiting(plan, reason)), ct);
             return;
         }
 
         var orders = (await _orders.ListByPlanAsync(plan.Id)).ToList();
-        if (await StopLinesAsync(plan, orders, TradeOrderErrorCodes.Halted, reason, ctx, ct)) await FinalizeAsync(plan, orders, ctx, ct);
+        if (await StopLinesAsync(plan, orders, TradeOrderErrorCodes.Halted, reason, ctx, ct)) await FinalizeAsync(plan, orders, ctx, ct, reason);
+    }
+
+    /// <summary>Заметка неначатого плана, ждущего открытия ворот (задача 67, #11).</summary>
+    internal const string WaitingNotePrefix = "ждёт: исполнение сейчас закрыто — ";
+
+    private static string? NoteOf(string? summaryJson)
+    {
+        if (string.IsNullOrWhiteSpace(summaryJson)) return null;
+        try
+        {
+            return JsonSerializer.Deserialize<TradePlanSummary>(summaryJson, Json)?.ExecutionNote;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 
     /// <summary>Снимает активные заявки и закрывает незавершённые строки кодом <paramref name="code"/>. false — что-то снять не удалось (повтор на следующем тике).</summary>

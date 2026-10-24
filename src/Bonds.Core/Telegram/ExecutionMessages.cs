@@ -71,6 +71,11 @@ public static class ExecutionMessages
     public static string PlanNotStarted(TradePlan plan, string reason) =>
         Limit($"⚠ План #{plan.Id} не передан на исполнение: {BotFormat.HtmlTruncated(reason, MaxReason)}");
 
+    /// <summary>Задача 67 (#11): подтверждённый план ждёт — исполнение закрыто (пауза, режим, ключ); исполнится, если откроется до срока.</summary>
+    public static string PlanWaiting(TradePlan plan, string reason) =>
+        Limit($"⏸ План #{plan.Id} ждёт: исполнение сейчас закрыто — {BotFormat.HtmlTruncated(reason, MaxReason)}. " +
+              $"Если исполнение откроется (например, /resume) до {BotFormat.Html(TradingHours.ToMoscow(plan.ExpiresAt).ToString("dd.MM HH:mm", System.Globalization.CultureInfo.InvariantCulture))} МСК, план исполнится; иначе срок истечёт.");
+
     public const string ExecutionEnabled = "🟢 Исполнение включено: подтверждённые планы будут отправляться брокеру (T-Invest, Freedom — при проверенном торговом ключе) лимитными заявками. Остановить — /stop.";
 
     /// <summary>«Исполнение включено» + (если ворота ещё закрыты, например сервер выключен) — почему заявки пока не отправляются.</summary>
