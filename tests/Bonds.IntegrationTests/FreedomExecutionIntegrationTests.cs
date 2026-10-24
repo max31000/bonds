@@ -269,6 +269,28 @@ public class FreedomExecutionIntegrationTests
     }
 
     [Fact]
+    public async Task ExecutionSettings_And_Plans_ReportGatesPerBroker()
+    {
+        var s = await SeedAsync();
+        await SaveTradeKeyAsync(s);
+
+        var state = await s.Client.GetFromJsonAsync<JsonElement>("/api/settings/execution");
+        var brokers = state.GetProperty("brokers");
+        brokers.GetProperty("freedom").GetProperty("tradeCredentialOk").GetBoolean().Should().BeTrue("проверенный freedom_trade");
+        brokers.GetProperty("tinvest").GetProperty("tradeCredentialOk").GetBoolean().Should().BeFalse("tinvest_trade нет");
+        brokers.GetProperty("freedom").GetProperty("live").GetBoolean().Should().BeFalse();
+        brokers.GetProperty("tinvest").GetProperty("live").GetBoolean().Should().BeFalse();
+        state.GetProperty("tradeCredentialOk").GetBoolean().Should().BeTrue("включить режим можно и с одним ключом Freedom");
+        var reasons = state.GetProperty("reasons").EnumerateArray().Select(r => r.GetString()!).ToList();
+        reasons.Should().Contain(r => r.StartsWith("T-Invest: ")).And.Contain(r => r.StartsWith("Freedom: "));
+
+        var plans = await s.Client.GetFromJsonAsync<JsonElement>("/api/plans");
+        plans.GetProperty("dryRun").GetBoolean().Should().BeTrue();
+        plans.GetProperty("brokers").GetProperty("tinvest").GetBoolean().Should().BeFalse();
+        plans.GetProperty("brokers").GetProperty("freedom").GetBoolean().Should().BeFalse();
+    }
+
+    [Fact]
     public async Task IsBrokerOrderLinked_ByBrokerAndId_ExceptSelf()
     {
         var s = await SeedAsync();

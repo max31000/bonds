@@ -167,7 +167,18 @@ export const handlers = [
     }),
   ),
   http.get('*/api/settings/execution', () =>
-    HttpResponse.json({ mode: 'observe', globalEnabled: false, tradeCredentialOk: false, paused: false, live: false, reasons: ['Режим наблюдения (observe)'] }),
+    HttpResponse.json({
+      mode: 'observe',
+      globalEnabled: false,
+      tradeCredentialOk: false,
+      paused: false,
+      live: false,
+      reasons: ['T-Invest: Режим наблюдения (observe)', 'Freedom: Режим наблюдения (observe)'],
+      brokers: {
+        tinvest: { live: false, tradeCredentialOk: false, reasons: ['Режим наблюдения (observe)'] },
+        freedom: { live: false, tradeCredentialOk: false, reasons: ['Режим наблюдения (observe)'] },
+      },
+    }),
   ),
   http.get('*/api/settings', () =>
     HttpResponse.json({

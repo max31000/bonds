@@ -42,6 +42,34 @@ describe('ExecutionModeSection (задача 65)', () => {
     expect(await screen.findByTestId('execution-active-orders')).toHaveTextContent('Есть активные заявки у брокера: 1');
   });
 
+  it('ворота показываются по брокерам отдельно: T-Invest и Freedom', async () => {
+    server.use(
+      http.get('*/api/settings/execution', () =>
+        HttpResponse.json(
+          observe({
+            mode: 'live',
+            live: true,
+            reasons: ['T-Invest: Нет проверенного торгового токена tinvest_trade'],
+            brokers: {
+              tinvest: { live: false, tradeCredentialOk: false, reasons: ['Нет проверенного торгового токена tinvest_trade'] },
+              freedom: { live: true, tradeCredentialOk: true, reasons: [] },
+            },
+          }),
+        ),
+      ),
+    );
+    renderSection();
+
+    const tinvest = await screen.findByTestId('execution-broker-tinvest');
+    expect(tinvest).toHaveTextContent('T-Invest');
+    expect(tinvest).toHaveTextContent('заявки не отправляются');
+    expect(tinvest).toHaveTextContent('нет проверенного торгового ключа');
+    const freedom = screen.getByTestId('execution-broker-freedom');
+    expect(freedom).toHaveTextContent('Freedom');
+    expect(freedom).toHaveTextContent('заявки отправляются');
+    expect(freedom).not.toHaveTextContent('нет проверенного');
+  });
+
   it('без проверенного торгового токена включить нельзя', async () => {
     server.use(http.get('*/api/settings/execution', () => HttpResponse.json(observe({ tradeCredentialOk: false }))));
     renderSection();

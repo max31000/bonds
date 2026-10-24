@@ -84,13 +84,24 @@ public sealed record PlansResponseDto
 {
     public required IReadOnlyList<PlanDto> Items { get; init; }
 
-    /// <summary>Режим наблюдения пользователя: true — сделки не отправляются (ворота исполнения закрыты, задача 65).</summary>
+    /// <summary>Режим наблюдения пользователя: true — сделки не отправляются НИ одному брокеру (ворота исполнения закрыты, задачи 65/66).</summary>
     public required bool DryRun { get; init; }
+
+    /// <summary>Ворота по брокерам (задача 66): true — заявки этого брокера отправляются.</summary>
+    public required PlansBrokerLiveDto Brokers { get; init; }
 
     /// <summary>Сколько заявок пользователя активно у брокера (<c>New</c>/<c>Submitted</c>/<c>PartiallyFilled</c>) — НЕЗАВИСИМО от ворот и режима (баннер «Есть активные заявки у брокера»).</summary>
     public int ActiveOrders { get; init; }
 
     public required string Disclaimer { get; init; }
+}
+
+/// <summary>Открыты ли ворота исполнения брокера.</summary>
+public sealed record PlansBrokerLiveDto
+{
+    [System.Text.Json.Serialization.JsonPropertyName("tinvest")]
+    public required bool TInvest { get; init; }
+    public required bool Freedom { get; init; }
 }
 
 /// <summary>Ответ на создание плана / предпросмотр: <see cref="Plan"/> = null, если правило плана не дало; причины — в <see cref="Notes"/>.</summary>

@@ -23,7 +23,7 @@ public static class CredentialProviders
         new CredentialProviderDescriptor(
             TInvestTrade, "T-Invest (торговля)", CredentialCategory.Broker,
             new[] { new CredentialField("token", "Торговый токен", IsSecret: true, IsMaskSource: true) },
-            Unlocks: "исполнение сделок, фаза 3",
+            Unlocks: "исполнение подтверждённых планов T-Invest (выключено по умолчанию)",
             Experimental: true),
         new CredentialProviderDescriptor(
             Freedom, "Freedom (Tradernet)", CredentialCategory.Broker,
@@ -40,7 +40,7 @@ public static class CredentialProviders
                 new CredentialField("publicKey", "Публичный ключ (API key) с правом торговли", IsSecret: true, IsMaskSource: true),
                 new CredentialField("privateKey", "Секретный ключ (Secret key)", IsSecret: true, IsMaskSource: false),
             },
-            Unlocks: "исполнение подтверждённых планов Freedom, фаза 3. Проверяется, что ключ от того же счёта, что ключ на чтение; торговое право проверится на первой заявке",
+            Unlocks: "исполнение подтверждённых вручную планов Freedom (выключено по умолчанию). Проверяется, что ключ от того же счёта, что ключ на чтение; торговое право проверится на первой заявке",
             Experimental: true),
         new CredentialProviderDescriptor(
             ClaudeCode, "Claude Code", CredentialCategory.Ai,

@@ -10,7 +10,8 @@ namespace Bonds.Api.Endpoints;
 /// <summary>
 /// Режим исполнения пользователя (задача 65). Эндпоинты брокера не вызывают.
 /// <list type="bullet">
-/// <item><c>GET /api/settings/execution</c> — режим, все четыре условия ворот и итог (<c>live</c>) с причинами.</item>
+/// <item><c>GET /api/settings/execution</c> — режим, условия ворот и итог (<c>live</c>) с причинами; задача 66 — ворота ПО БРОКЕРУ в <c>brokers.tinvest</c> /
+/// <c>brokers.freedom</c>; верхний уровень — сводка: <c>live</c>/<c>tradeCredentialOk</c> = хотя бы у одного брокера, <c>reasons</c> — причины закрытых брокеров.</item>
 /// <item><c>PUT /api/settings/execution-mode {mode, confirmation}</c> — <c>live</c> требует проверенный торговый токен (status ok + сетевая проверка) и
 /// <c>confirmation == "LIVE"</c> (повторный ввод слова в UI); включение — сообщение в бот «Исполнение включено». <c>observe</c> — без условий.</item>
 /// <item><c>PUT /api/settings/execution-pause {paused}</c> — то же, что <c>/stop</c>/<c>/resume</c> в боте (кнопка «Остановить» в вебе).</item>
@@ -34,7 +35,7 @@ public static class ExecutionSettingsEndpoints
     private static async Task<IResult> GetExecution(ICurrentUser currentUser, IExecutionGateResolver gate, ITradeOrderRepository orders)
     {
         if (await currentUser.GetUserIdAsync() is not { } userId) return Results.NotFound();
-        return Results.Ok(ToDto(await gate.ResolveAsync(userId)) with { ActiveOrders = (await orders.ListActiveByUserAsync(userId)).Count });
+        return Results.Ok(await StateAsync(gate, userId) with { ActiveOrders = (await orders.ListActiveByUserAsync(userId)).Count });
     }
 
     private static async Task<IResult> PutMode(
@@ -58,10 +59,10 @@ public static class ExecutionSettingsEndpoints
 
         var previous = await settings.GetExecutionModeAsync(userId);
         await settings.SetExecutionModeAsync(userId, mode!);
-        var result = await gate.ResolveAsync(userId);
+        var result = await StateAsync(gate, userId);
         if (previous != mode)
             await notifier.NotifyAsync(userId, new BotMessage(mode == ExecutionModes.Live ? ExecutionMessages.Enabled(result.Reasons) : ExecutionMessages.ExecutionDisabled), ct);
-        return Results.Ok(ToDto(result));
+        return Results.Ok(result);
     }
 
     private static async Task<IResult> PutPause(ExecutionPauseRequestDto? request, ICurrentUser currentUser, IUserSettingsRepository settings, IExecutionGateResolver gate)
@@ -69,18 +70,30 @@ public static class ExecutionSettingsEndpoints
         if (await currentUser.GetUserIdAsync() is not { } userId) return Results.NotFound();
         if (request?.Paused is not { } paused) return ValidationFailure("paused: true или false.");
         await settings.SetExecutionPausedAsync(userId, paused);
-        return Results.Ok(ToDto(await gate.ResolveAsync(userId)));
+        return Results.Ok(await StateAsync(gate, userId));
     }
 
-    private static ExecutionStateDto ToDto(ExecutionGateResult g) => new()
+    /// <summary>Ворота обоих брокеров (задача 66) и сводка: открыт хотя бы один — <c>live</c>; причины — только закрытых брокеров, с префиксом брокера.</summary>
+    internal static async Task<ExecutionStateDto> StateAsync(IExecutionGateResolver gate, ulong userId)
     {
-        Mode = g.Mode,
-        GlobalEnabled = g.GlobalEnabled,
-        TradeCredentialOk = g.TradeCredentialOk,
-        Paused = g.Paused,
-        Live = g.Live,
-        Reasons = g.Reasons,
-    };
+        var tinvest = await gate.ResolveAsync(userId);
+        var freedom = await gate.ResolveForBrokerAsync(userId, Bonds.Core.Models.Brokers.Freedom);
+        var reasons = new List<string>();
+        if (!tinvest.Live) reasons.AddRange(tinvest.Reasons.Select(r => "T-Invest: " + r));
+        if (!freedom.Live) reasons.AddRange(freedom.Reasons.Select(r => "Freedom: " + r));
+        return new ExecutionStateDto
+        {
+            Mode = tinvest.Mode,
+            GlobalEnabled = tinvest.GlobalEnabled,
+            TradeCredentialOk = tinvest.TradeCredentialOk || freedom.TradeCredentialOk,
+            Paused = tinvest.Paused,
+            Live = tinvest.Live || freedom.Live,
+            Reasons = reasons,
+            Brokers = new BrokerExecutionStatesDto { TInvest = BrokerDto(tinvest), Freedom = BrokerDto(freedom) },
+        };
+    }
+
+    private static BrokerExecutionStateDto BrokerDto(ExecutionGateResult g) => new() { Live = g.Live, TradeCredentialOk = g.TradeCredentialOk, Reasons = g.Reasons };
 }
 
 public sealed record ExecutionModeRequestDto
@@ -97,7 +110,11 @@ public sealed record ExecutionPauseRequestDto
     public bool? Paused { get; init; }
 }
 
-/// <summary>Состояние ворот исполнения. <see cref="Live"/> = true только при всех условиях; иначе причины в <see cref="Reasons"/>.</summary>
+/// <summary>
+/// Состояние ворот исполнения. Общие условия (<see cref="Mode"/>, <see cref="GlobalEnabled"/>, <see cref="Paused"/>) — одни на всех брокеров; ключ и итог — по брокеру
+/// (<see cref="Brokers"/>). <see cref="Live"/> / <see cref="TradeCredentialOk"/> — хотя бы у одного брокера; <see cref="Reasons"/> — причины закрытых брокеров
+/// («T-Invest: …», «Freedom: …»).
+/// </summary>
 public sealed record ExecutionStateDto
 {
     public required string Mode { get; init; }
@@ -109,4 +126,22 @@ public sealed record ExecutionStateDto
 
     /// <summary>Активные заявки пользователя у брокера — независимо от режима и ворот (только в <c>GET</c>; в ответах PUT — 0).</summary>
     public int ActiveOrders { get; init; }
+
+    public required BrokerExecutionStatesDto Brokers { get; init; }
+}
+
+/// <summary>Ворота по брокерам (задача 66).</summary>
+public sealed record BrokerExecutionStatesDto
+{
+    [System.Text.Json.Serialization.JsonPropertyName("tinvest")]
+    public required BrokerExecutionStateDto TInvest { get; init; }
+    public required BrokerExecutionStateDto Freedom { get; init; }
+}
+
+/// <summary>Ворота одного брокера: <see cref="Live"/> — заявки этого брокера отправляются; ключ — <c>tinvest_trade</c> / <c>freedom_trade</c>.</summary>
+public sealed record BrokerExecutionStateDto
+{
+    public required bool Live { get; init; }
+    public required bool TradeCredentialOk { get; init; }
+    public required IReadOnlyList<string> Reasons { get; init; }
 }

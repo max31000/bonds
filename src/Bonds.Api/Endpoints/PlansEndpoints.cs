@@ -41,15 +41,19 @@ public static class PlansEndpoints
         string? status, int? limit, ICurrentUser currentUser, ITradePlanRepository repo, ITradeOrderRepository orders, IExecutionGateResolver gate)
     {
         if (status is not null && !PlanStatuses.All.Contains(status)) return AnalyticsSupport.ValidationError($"status: допустимо {string.Join(", ", PlanStatuses.All)}.");
-        if (await currentUser.GetUserIdAsync() is not { } userId) return Results.Ok(new PlansResponseDto { Items = [], DryRun = true, Disclaimer = Disclaimer });
+        if (await currentUser.GetUserIdAsync() is not { } userId)
+            return Results.Ok(new PlansResponseDto { Items = [], DryRun = true, Disclaimer = Disclaimer, Brokers = new PlansBrokerLiveDto { TInvest = false, Freedom = false } });
 
         var plans = await repo.ListAsync(userId, status, limit ?? 100);
         var byPlan = (await orders.ListByPlansAsync(plans.Select(p => p.Id).ToList())).ToLookup(o => o.PlanId);
-        var dryRun = (await gate.ResolveAsync(userId)).DryRun;
+        var tinvestLive = (await gate.ResolveAsync(userId)).Live;
+        var freedomLive = (await gate.ResolveForBrokerAsync(userId, Bonds.Core.Models.Brokers.Freedom)).Live;
+        var dryRun = !tinvestLive && !freedomLive;
         return Results.Ok(new PlansResponseDto
         {
             Items = plans.Select(p => ToDto(p, byPlan[p.Id].ToList())).ToList(),
             DryRun = dryRun,
+            Brokers = new PlansBrokerLiveDto { TInvest = tinvestLive, Freedom = freedomLive },
             ActiveOrders = (await orders.ListActiveByUserAsync(userId)).Count,
             Disclaimer = dryRun ? Disclaimer : LiveDisclaimer,
         });
