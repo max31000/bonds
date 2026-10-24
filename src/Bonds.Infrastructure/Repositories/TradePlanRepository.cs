@@ -21,7 +21,8 @@ public class TradePlanRepository : ITradePlanRepository
 
     private const string PlanColumns = @"
         id AS Id, user_id AS UserId, rule AS Rule, `trigger` AS `Trigger`, status AS Status, dry_run AS DryRun, created_at AS CreatedAt,
-        expires_at AS ExpiresAt, decided_at AS DecidedAt, decided_via AS DecidedVia, bot_nonce AS BotNonce, CAST(summary_json AS CHAR) AS SummaryJson";
+        expires_at AS ExpiresAt, decided_at AS DecidedAt, decided_via AS DecidedVia, bot_nonce AS BotNonce, cancel_requested AS CancelRequested,
+        CAST(summary_json AS CHAR) AS SummaryJson";
 
     private const string LineColumns = @"
         plan_id AS PlanId, line_no AS LineNo, broker AS Broker, account_id AS AccountId, instrument_key AS InstrumentKey, ticker AS Ticker,
@@ -110,17 +111,89 @@ public class TradePlanRepository : ITradePlanRepository
         return count > 0;
     }
 
-    public async Task<decimal> SumAutoApprovedRubSinceAsync(ulong userId, DateTime sinceUtc)
+    public async Task<decimal> SumAutoApprovedRubSinceAsync(ulong userId, DateTime sinceUtc, ulong? excludePlanId = null)
     {
-        // Только Submitting/Done: в dry-run AutoApproved-план НИКОГДА не исполняется (исполнителя нет), его деньги не потрачены — в суточный лимит он не входит.
-        // Внутри одного цикла раннер сам наращивает счётчик по только что сохранённым AutoApproved (PolicyRunner.CarryForward).
+        // Исполняемые/исполненные (Submitting, PartiallyDone, Done) + AutoApproved, ждущий исполнителя (dry_run = 0). AutoApproved dry-run НИКОГДА не исполняется —
+        // его деньги не потрачены, в лимит он не входит. Внутри одного цикла раннер сам наращивает счётчик (PolicyRunner.CarryForward).
         using var conn = CreateConnection();
         return await conn.ExecuteScalarAsync<decimal>(
             @"SELECT COALESCE(SUM(l.est_amount), 0)
               FROM trade_plans p JOIN trade_plan_lines l ON l.plan_id = p.id
-              WHERE p.user_id = @UserId AND p.status IN ('Submitting', 'Done') AND p.decided_at >= @Since
+              WHERE p.user_id = @UserId AND p.decided_at >= @Since
+                AND (p.status IN ('Submitting', 'PartiallyDone', 'Done') OR (p.status = 'AutoApproved' AND p.dry_run = 0))
+                AND (@Exclude IS NULL OR p.id <> @Exclude)
                 AND l.side = 'Buy' AND l.currency = 'RUB'",
-            new { UserId = userId, Since = sinceUtc });
+            new { UserId = userId, Since = sinceUtc, Exclude = excludePlanId });
+    }
+
+    public async Task<IReadOnlyList<TradePlan>> ListAutoDayPlansAsync(ulong userId, DateTime sinceUtc)
+    {
+        using var conn = CreateConnection();
+        var plans = (await conn.QueryAsync<TradePlan>(
+            $@"SELECT {PlanColumns} FROM trade_plans
+               WHERE user_id = @UserId AND decided_at >= @Since
+                 AND (status IN ('Submitting', 'PartiallyDone', 'Done', 'Failed') OR (status = 'AutoApproved' AND dry_run = 0))
+               ORDER BY id",
+            new { UserId = userId, Since = sinceUtc })).ToList();
+        return await WithLinesAsync(conn, plans);
+    }
+
+    public async Task<bool> ExtendExpiryAsync(ulong userId, ulong id, DateTime expiresAtUtc)
+    {
+        using var conn = CreateConnection();
+        var affected = await conn.ExecuteAsync(
+            "UPDATE trade_plans SET expires_at = GREATEST(expires_at, @ExpiresAt) WHERE id = @Id AND user_id = @UserId AND status = 'Approved'",
+            new { Id = id, UserId = userId, ExpiresAt = expiresAtUtc });
+        return affected > 0;
+    }
+
+    private static async Task<IReadOnlyList<TradePlan>> WithLinesAsync(MySqlConnection conn, List<TradePlan> plans)
+    {
+        if (plans.Count == 0) return plans;
+        var lines = (await conn.QueryAsync<TradePlanLine>(
+            $"SELECT {LineColumns} FROM trade_plan_lines WHERE plan_id IN @Ids ORDER BY plan_id, line_no", new { Ids = plans.Select(p => p.Id).ToArray() })).ToList();
+        var byPlan = lines.GroupBy(l => l.PlanId).ToDictionary(g => g.Key, g => g.ToList());
+        foreach (var plan in plans) plan.Lines = byPlan.TryGetValue(plan.Id, out var l) ? l : [];
+        return plans;
+    }
+
+    private const string ExecutableFilter =
+        "(status = 'Submitting' OR (status IN ('Approved', 'AutoApproved') AND dry_run = 0))";
+
+    public async Task<IReadOnlyList<ulong>> ListUserIdsWithExecutablePlansAsync()
+    {
+        using var conn = CreateConnection();
+        return (await conn.QueryAsync<ulong>($"SELECT DISTINCT user_id FROM trade_plans WHERE {ExecutableFilter}")).ToList();
+    }
+
+    public async Task<IReadOnlyList<TradePlan>> ListExecutableAsync(ulong userId)
+    {
+        using var conn = CreateConnection();
+        var plans = (await conn.QueryAsync<TradePlan>(
+            $"SELECT {PlanColumns} FROM trade_plans WHERE user_id = @UserId AND {ExecutableFilter} ORDER BY id",
+            new { UserId = userId })).ToList();
+        return await WithLinesAsync(conn, plans);
+    }
+
+    public async Task<bool> SetExecutionStatusAsync(
+        ulong userId, ulong id, IReadOnlyCollection<string> fromStatuses, string toStatus, string? summaryJson)
+    {
+        using var conn = CreateConnection();
+        var affected = await conn.ExecuteAsync(
+            @"UPDATE trade_plans SET status = @To, summary_json = COALESCE(@SummaryJson, summary_json)
+              WHERE id = @Id AND user_id = @UserId AND status IN @From",
+            new { Id = id, UserId = userId, From = fromStatuses.ToArray(), To = toStatus, SummaryJson = summaryJson });
+        return affected > 0;
+    }
+
+    public async Task<bool> RequestCancelAsync(ulong userId, ulong id)
+    {
+        using var conn = CreateConnection();
+        var affected = await conn.ExecuteAsync(
+            @"UPDATE trade_plans SET cancel_requested = 1
+              WHERE id = @Id AND user_id = @UserId AND (status = 'Submitting' OR (status IN ('Approved', 'AutoApproved') AND dry_run = 0))",
+            new { Id = id, UserId = userId });
+        return affected > 0;
     }
 
     public async Task<decimal> SumReservedBuysAsync(ulong userId, string broker, string currency, DateTime nowUtc)

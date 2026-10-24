@@ -24,4 +24,8 @@
     <ProjectReference Include="..\..\src\Bonds.Core\Bonds.Core.csproj" />
     <ProjectReference Include="..\..\src\Bonds.Infrastructure\Bonds.Infrastructure.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- Задача 65: двойник шлюза заявок — общий файл с юнит-тестами (сети в тестах нет никогда). -->
+    <Compile Include="..\Bonds.Tests\Execution\FakeOrderGateway.cs" Link="Infrastructure\FakeOrderGateway.cs" />
+  </ItemGroup>
 </Project>

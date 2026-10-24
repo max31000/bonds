@@ -2060,7 +2060,49 @@ export type PlanStatus =
   | 'Expired'
   | 'Submitting'
   | 'Done'
-  | 'Failed';
+  | 'Failed'
+  | 'PartiallyDone';
+
+/**
+ * Статус заявки исполнителя (задача 65, `trade_orders.status`) и строки плана: `Pending` — заявок не было; иначе статус последней попытки;
+ * полностью исполненная строка — `Filled`.
+ */
+export type TradeOrderStatus = 'New' | 'Submitted' | 'PartiallyFilled' | 'Filled' | 'Cancelled' | 'Rejected' | 'Failed' | 'Expired';
+export type PlanLineExecutionStatus = 'Pending' | TradeOrderStatus;
+
+/**
+ * Заявка исполнителя (одна попытка строки). ЕДИНИЦЫ: `limitPrice` — как отправлена брокеру: `priceUnit` = 'points' (облигации, ПУНКТЫ — процент номинала) или
+ * 'currency' (валюта цены за штуку); `avgFillPrice` (за штуку) и `executedCommission` — в `currency`.
+ */
+export interface PlanOrder {
+  attempt: number;
+  status: TradeOrderStatus;
+  limitPrice: number;
+  priceUnit: 'points' | 'currency';
+  lotsRequested: number;
+  lotsFilled: number;
+  avgFillPrice: number | null;
+  executedCommission: number | null;
+  currency: string;
+  errorCode: string | null;
+  errorMessage: string | null;
+  createdAt: string;
+  updatedAt: string;
+  /** Заявка активна, а снять её автоматически нельзя (ушло уведомление «снимите её в терминале брокера»). */
+  needsAttention?: boolean;
+}
+
+/** GET /api/settings/execution — ворота исполнения: `live` только при ВСЕХ условиях, иначе причины в `reasons`. */
+export interface ExecutionState {
+  mode: 'observe' | 'live';
+  globalEnabled: boolean;
+  tradeCredentialOk: boolean;
+  paused: boolean;
+  live: boolean;
+  reasons: string[];
+  /** Активные заявки у брокера — независимо от режима и ворот (только в GET; в ответах PUT — 0). */
+  activeOrders?: number;
+}
 
 export type PlanRule = 'P1_SWEEP' | 'P2_INFLOW' | 'P3B_LIQ_TO_BONDS' | 'P4_REBALANCE' | 'P5_WITHDRAW' | 'P7_FREEDOM_TOPUP' | 'MANUAL';
 
@@ -2081,6 +2123,11 @@ export interface PlanLine {
   estTax: number;
   currency: string;
   reason: string;
+  /** Исполнение строки (задача 65). */
+  executionStatus: PlanLineExecutionStatus;
+  /** Исполнено лотов по всем попыткам. */
+  filledLots: number;
+  orders: PlanOrder[];
 }
 
 export interface PlanSkip {
@@ -2122,12 +2169,16 @@ export interface Plan {
   decidedVia: string | null;
   summary: PlanSummary | null;
   lines: PlanLine[];
+  /** Есть заявка, которую исполнитель не смог снять (план при этом остаётся `Submitting`). */
+  needsAttention?: boolean;
 }
 
 export interface PlansResponse {
   items: Plan[];
-  /** Режим наблюдения: true — сделки не отправляются. */
+  /** Режим наблюдения пользователя: true — сделки не отправляются; false — исполнение включено (все ворота открыты, задача 65). */
   dryRun: boolean;
+  /** Сколько заявок пользователя активно у брокера — НЕЗАВИСИМО от режима и ворот (баннер «Есть активные заявки у брокера»). */
+  activeOrders?: number;
   disclaimer: string;
 }
 

@@ -1,5 +1,6 @@
 using Bonds.Core.Credentials;
 using Bonds.Infrastructure.Connectors.TInvest;
+using Bonds.Infrastructure.Execution;
 
 namespace Bonds.Infrastructure.Credentials;
 
@@ -48,17 +49,59 @@ public sealed class TInvestReadCredentialValidator : ICredentialValidator
 }
 
 /// <summary>
-/// <c>tinvest_trade</c>: только формальная проверка (непустой, без пробелов). Провайдер Experimental.
-/// TODO(фаза 3): сетевая проверка прав токена на торговлю — см. docs/2026-10-23-capital-automation-design.md §5.
+/// <c>tinvest_trade</c> (задача 65): СЕТЕВАЯ проверка через <see cref="ITInvestOrderGateway.ProbeAccountsAsync"/> (<c>GetAccounts</c> по введённому токену). Валиден,
+/// только если токен видит РОВНО ОДИН счёт, у него <c>ACCOUNT_ACCESS_LEVEL_FULL_ACCESS</c>, счёт открыт и совпадает с основным счётом пользователя
+/// (<c>accounts.broker_account_id</c>). В meta — только последние 4 символа счёта, уровень доступа и отметка сетевой проверки
+/// (<see cref="TradeCredentialMeta"/>; без неё ворота исполнения токен не принимают). Без контекста пользователя — невалиден (счёт не с чем сверить).
 /// </summary>
 public sealed class TInvestTradeCredentialValidator : ICredentialValidator
 {
+    private readonly ITInvestOrderGateway _gateway;
+
+    public TInvestTradeCredentialValidator(ITInvestOrderGateway gateway) => _gateway = gateway;
+
     public string ProviderId => CredentialProviders.TInvestTrade;
 
     public Task<CredentialValidationResult> ValidateAsync(IReadOnlyDictionary<string, string> fields, CancellationToken ct = default) =>
-        Task.FromResult(CredentialFieldReader.SingleToken(fields, "token") is null
-            ? CredentialValidationResult.Invalid("Токен не должен быть пустым или содержать пробелы.")
-            : CredentialValidationResult.Valid());
+        Task.FromResult(CredentialValidationResult.Invalid("Проверка торгового токена требует основного счёта пользователя."));
+
+    public async Task<CredentialValidationResult> ValidateAsync(
+        IReadOnlyDictionary<string, string> fields, CredentialValidationContext context, CancellationToken ct = default)
+    {
+        var token = CredentialFieldReader.SingleToken(fields, "token");
+        if (token is null) return CredentialValidationResult.Invalid("Токен не должен быть пустым или содержать пробелы.");
+        if (string.IsNullOrWhiteSpace(context.PrimaryTInvestBrokerAccountId))
+            return CredentialValidationResult.Invalid("Сначала подключите read-only токен: основной счёт T-Invest не определён.");
+
+        IReadOnlyList<TInvestTradeAccount> accounts;
+        try
+        {
+            accounts = await _gateway.ProbeAccountsAsync(token, ct);
+        }
+        catch (TInvestGatewayException ex)
+        {
+            return CredentialValidationResult.Invalid(ex.Code is "Unauthenticated" or "PermissionDenied"
+                ? "Токен не принят T-Invest (недействителен или отозван)."
+                : "T-Invest недоступен для проверки токена — попробуйте позже.");
+        }
+
+        return Evaluate(accounts, context.PrimaryTInvestBrokerAccountId!);
+    }
+
+    /// <summary>Правила проверки по списку счетов токена (чистая функция — закреплена тестами).</summary>
+    public static CredentialValidationResult Evaluate(IReadOnlyList<TInvestTradeAccount> accounts, string primaryBrokerAccountId)
+    {
+        if (accounts.Count == 0) return CredentialValidationResult.Invalid("Токен не видит ни одного счёта.");
+        if (accounts.Count > 1) return CredentialValidationResult.Invalid("Токен на все счета — выпустите токен на один счёт (основной).");
+        var account = accounts[0];
+        if (!account.FullAccess) return CredentialValidationResult.Invalid("Нет прав на торговлю: выпустите токен с полным доступом на основной счёт.");
+        if (!account.Open) return CredentialValidationResult.Invalid("Счёт токена закрыт.");
+        if (!string.Equals(account.Id, primaryBrokerAccountId, StringComparison.Ordinal))
+            return CredentialValidationResult.Invalid($"Токен выпущен на другой счёт (…{Last4(account.Id)}), основной счёт — …{Last4(primaryBrokerAccountId)}.");
+        return CredentialValidationResult.Valid(TradeCredentialMeta.Build(account.Id));
+    }
+
+    private static string Last4(string id) => id.Length >= 4 ? id[^4..] : id;
 }
 
 /// <summary>

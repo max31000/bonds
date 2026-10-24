@@ -14,4 +14,10 @@ public interface IUserSettingsRepository
 
     /// <summary>Ставит/снимает паузу; строка настроек создаётся при необходимости (остальные поля не меняются).</summary>
     Task SetExecutionPausedAsync(ulong userId, bool paused);
+
+    /// <summary>Режим исполнения (<c>observe</c> | <c>live</c>, задача 65): нет строки настроек или неизвестное значение — <c>observe</c>.</summary>
+    Task<string> GetExecutionModeAsync(ulong userId);
+
+    /// <summary>Ставит режим исполнения; строка настроек создаётся при необходимости. Проверки (токен, «LIVE») — на стороне вызывающего.</summary>
+    Task SetExecutionModeAsync(ulong userId, string mode);
 }

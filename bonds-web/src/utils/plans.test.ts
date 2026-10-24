@@ -21,7 +21,7 @@ describe('utils/plans (задача 63)', () => {
 
   it('подписи покрывают все правила и статусы; деньги — с кодом валюты', () => {
     expect(Object.keys(PLAN_RULE_LABEL)).toHaveLength(7);
-    expect(Object.keys(PLAN_STATUS_LABEL)).toHaveLength(9);
+    expect(Object.keys(PLAN_STATUS_LABEL)).toHaveLength(10);
     expect(formatPlanMoney(1234.5, 'USD')).toMatch(/1\s234,50\sUSD/);
     expect(formatPlanMoney(null, 'RUB')).toBe('—');
   });

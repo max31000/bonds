@@ -98,6 +98,13 @@ public class TestWebApplicationFactory : WebApplicationFactory<Program>, IAsyncL
             services.AddSingleton<FakeTelegramBotClient>();
             services.AddSingleton<Bonds.Infrastructure.Telegram.ITelegramBotClient>(sp => sp.GetRequiredService<FakeTelegramBotClient>());
 
+            // Задача 65: шлюз заявок T-Invest — только двойник (общий singleton на фабрику); реальный шлюз в тестах недоступен.
+            services.RemoveAll<Bonds.Infrastructure.Execution.ITInvestOrderGateway>();
+            services.AddSingleton<Bonds.Tests.Execution.FakeOrderGateway>();
+            services.AddSingleton<Bonds.Infrastructure.Execution.ITInvestOrderGateway>(sp => sp.GetRequiredService<Bonds.Tests.Execution.FakeOrderGateway>());
+            services.RemoveAll<Bonds.Infrastructure.Execution.IPortfolioSyncTrigger>();
+            services.AddSingleton<Bonds.Infrastructure.Execution.IPortfolioSyncTrigger, Bonds.Infrastructure.Execution.NullPortfolioSyncTrigger>();
+
             Mvv42TestAuth.UseTestSigningKey(services);
             services.RemoveAll<IOwnerAccess>();
             services.AddSingleton<IOwnerAccess, AnyTelegramIdIsOwner>();

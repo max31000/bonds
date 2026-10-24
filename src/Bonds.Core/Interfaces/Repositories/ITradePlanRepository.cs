@@ -28,10 +28,35 @@ public interface ITradePlanRepository
 
     /// <summary>
     /// Σ <c>est_amount</c> покупок планов, ИСПОЛНЯЕМЫХ с <paramref name="sinceUtc"/> (по <c>decided_at</c>), в рублях — для суточного лимита. Считаются только
-    /// <c>Submitting</c> и <c>Done</c> со строками в RUB. <c>AutoApproved</c> НЕ считается: в dry-run он никогда не исполняется (деньги не потрачены); счётчик внутри
-    /// одного цикла наращивает <c>PolicyRunner</c>. TODO фаза 3: когда появится исполнитель, учитывать AutoApproved, ожидающие исполнения.
+    /// <c>Submitting</c>, <c>PartiallyDone</c>, <c>Done</c> и (задача 65) <c>AutoApproved</c> с <c>dry_run = 0</c> — ждущий исполнителя, со строками в RUB. AutoApproved
+    /// dry-run НЕ считается: он никогда не исполняется (деньги не потрачены); счётчик внутри одного цикла наращивает <c>PolicyRunner</c>.
+    /// <paramref name="excludePlanId"/> — исключить план (исполнитель проверяет лимит для самого плана).
     /// </summary>
-    Task<decimal> SumAutoApprovedRubSinceAsync(ulong userId, DateTime sinceUtc);
+    Task<decimal> SumAutoApprovedRubSinceAsync(ulong userId, DateTime sinceUtc, ulong? excludePlanId = null);
+
+    /// <summary>
+    /// Планы (со строками), входящие в суточный лимит авто-исполнения с <paramref name="sinceUtc"/> (по <c>decided_at</c>): <c>Submitting</c>, <c>PartiallyDone</c>,
+    /// <c>Done</c>, <c>Failed</c> и <c>AutoApproved</c> с <c>dry_run = 0</c>. Суммы считает исполнитель по ФАКТУ заявок (<c>AutoDayUsage</c>), а не по оценке.
+    /// </summary>
+    Task<IReadOnlyList<TradePlan>> ListAutoDayPlansAsync(ulong userId, DateTime sinceUtc);
+
+    /// <summary>Продлевает <c>expires_at</c> подтверждённого плана (только вперёд: <c>GREATEST</c>). false — план не в <c>Approved</c>.</summary>
+    Task<bool> ExtendExpiryAsync(ulong userId, ulong id, DateTime expiresAtUtc);
+
+    /// <summary>Пользователи, у которых есть что исполнять: план в <c>Submitting</c> или <c>Approved</c>/<c>AutoApproved</c> с <c>dry_run = 0</c> (задача 65).</summary>
+    Task<IReadOnlyList<ulong>> ListUserIdsWithExecutablePlansAsync();
+
+    /// <summary>Планы пользователя для исполнителя (со строками): <c>Submitting</c> + <c>Approved</c>/<c>AutoApproved</c> с <c>dry_run = 0</c>, старые первыми.</summary>
+    Task<IReadOnlyList<TradePlan>> ListExecutableAsync(ulong userId);
+
+    /// <summary>
+    /// Атомарный переход статуса исполнения (<c>decided_at</c>/<c>decided_via</c> НЕ трогаются — кто решил, остаётся видно); <paramref name="summaryJson"/> — если задан.
+    /// false — план в другом статусе.
+    /// </summary>
+    Task<bool> SetExecutionStatusAsync(ulong userId, ulong id, IReadOnlyCollection<string> fromStatuses, string toStatus, string? summaryJson);
+
+    /// <summary>Просьба снять висящие заявки плана (<c>cancel_requested = 1</c>) — только для плана в исполнении/ожидании исполнения. false — нечего отменять.</summary>
+    Task<bool> RequestCancelAsync(ulong userId, ulong id);
 
     /// <summary>
     /// Σ <c>TradePlanSummary.ReservedBuy</c> (покупки + комиссия в валюте ПОРТФЕЛЯ) открытых, не просроченных планов, РЕЗЕРВИРУЮЩИХ деньги

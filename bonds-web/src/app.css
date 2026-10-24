@@ -406,6 +406,12 @@
   flex: none;
   color: var(--mvv-warning);
 }
+.bonds-live-banner {
+  border-color: var(--mvv-success);
+}
+.bonds-live-banner svg {
+  color: var(--mvv-success);
+}
 .bonds-plan-card {
   border-top: 1px solid var(--mvv-border);
 }

@@ -110,6 +110,7 @@ public static class DependencyInjection
         services.AddScoped<IInstrumentTradingMetaRepository>(sp => new InstrumentTradingMetaRepository(GetConnStr(sp)));
         services.AddScoped<ICapitalBasketRepository>(sp => new CapitalBasketRepository(GetConnStr(sp)));
         services.AddScoped<ITradePlanRepository>(sp => new TradePlanRepository(GetConnStr(sp)));
+        services.AddScoped<ITradeOrderRepository>(sp => new TradeOrderRepository(GetConnStr(sp)));
 
         // Migration runner
         services.AddSingleton(sp => new MigrationRunner(
@@ -267,6 +268,19 @@ public static class DependencyInjection
         services.AddScoped<Bonds.Infrastructure.Policy.PolicyInputBuilder>();
         services.AddScoped<Bonds.Infrastructure.Policy.PolicyService>();
         services.AddScoped<Bonds.Infrastructure.Policy.PolicyRunner>();
+
+        // Задача 65: исполнитель планов T-Invest. ВЫКЛЮЧЕН по умолчанию (Execution__Enabled=false, режим пользователя observe, нужен проверенный торговый токен).
+        // ITInvestOrderGateway — ЕДИНСТВЕННЫЙ путь к торговым сервисам T-Invest (архитектурный тест), торговый токен читается только внутри шлюза.
+        services.AddScoped<Bonds.Infrastructure.Execution.IExecutionGateResolver, Bonds.Infrastructure.Execution.ExecutionGateResolver>();
+        services.AddSingleton<Bonds.Infrastructure.Execution.TInvestTradeClientCache>();
+        services.AddScoped<Bonds.Infrastructure.Execution.ITInvestOrderGateway, Bonds.Infrastructure.Execution.TInvestOrderGateway>();
+        services.AddScoped<Bonds.Infrastructure.Execution.IExecutionNotifier, Bonds.Infrastructure.Telegram.TelegramExecutionNotifier>();
+        services.AddSingleton<Bonds.Infrastructure.Execution.IPortfolioSyncTrigger, Bonds.Infrastructure.Execution.PortfolioSyncTrigger>();
+        services.AddScoped<Bonds.Infrastructure.Execution.PlanExecutionEngine>();
+        // Взаимоисключение тиков между экземплярами и со сменой торгового токена: MySQL GET_LOCK на отдельном соединении.
+        services.AddSingleton<Bonds.Infrastructure.Execution.IPlanExecutorLock>(sp => new Bonds.Infrastructure.Execution.MySqlPlanExecutorLock(GetConnStr(sp)));
+        services.AddScoped<Bonds.Infrastructure.Execution.TradeTokenChangeGuard>();
+        services.AddHostedService<Bonds.Infrastructure.Execution.PlanExecutorService>();
 
         // Резолвер эффективной ставки комиссии (override → оценка из журнала →
         // дефолт) — потребляется replacement/allocation/ifSoldNow эндпоинтами.

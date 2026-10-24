@@ -19,17 +19,65 @@ public sealed class ExecutionLimitsOptions
 }
 
 /// <summary>
-/// Режим исполнения. <see cref="DryRun"/> (дефолт true) копируется в <c>trade_plans.dry_run</c>. <b>В фазе 2 план ВСЕГДА dry-run</b>:
-/// исполнителя в коде нет, поэтому значение false принудительно игнорируется (<see cref="EffectiveDryRun"/>).
+/// Исполнитель планов (раздел <c>Execution</c>, задача 65). <b>Выключен по умолчанию на трёх уровнях</b>: глобально <see cref="Enabled"/> = false
+/// (env <c>Execution__Enabled</c>), у пользователя режим <c>observe</c>, без проверенного торгового токена исполнение невозможно; плюс пауза <c>/stop</c>.
+/// Живой режим пользователя вычисляет <see cref="Bonds.Core.Execution.ExecutionGate"/> (ВСЕ четыре условия), а не это свойство.
+/// <b>Единицы:</b> доли — ДОЛИ (0.005 = 0.5%), время — <see cref="TimeSpan"/>.
 /// </summary>
 public sealed class ExecutionOptions
 {
     public const string SectionName = "Execution";
 
+    /// <summary>Глобальный выключатель (env <c>Execution__Enabled</c>). false — ни одна заявка не отправляется никому; висящие заявки исполнитель только снимает.</summary>
+    public bool Enabled { get; set; }
+
+    /// <summary>Историческое поле фазы 2 (<c>Execution:DryRun</c>), на исполнение НЕ влияет — оставлено ради совместимости конфигов.</summary>
     public bool DryRun { get; set; } = true;
 
-    /// <summary>Фаза 2: исполнения не существует, поэтому dry-run включён безусловно (даже если в конфиге указано false).</summary>
-    public bool EffectiveDryRun => true;
+    /// <summary>
+    /// Глобальная часть режима: при <see cref="Enabled"/> = false — всегда dry-run. Даже при true конкретный пользователь исполняется только в live
+    /// (см. <see cref="Bonds.Core.Execution.ExecutionGate"/>), поэтому false здесь ещё не значит «заявки отправляются».
+    /// </summary>
+    public bool EffectiveDryRun => !Enabled;
+
+    /// <summary>
+    /// Допустимое отклонение mid стакана от УТВЕРЖДЁННОГО лимита для фондов/акций, ДОЛЯ (0.002 = 0.2%, значение дизайна §5 «Жёсткие лимиты»). Симметрично (вверх и
+    /// вниз); тот же предел ограничивает перевыставление.
+    /// </summary>
+    public decimal MaxPriceDriftFraction { get; set; } = 0.002m;
+
+    /// <summary>То же для облигаций (сравнение в пунктах), ДОЛЯ (0.005 = 0.5%, дизайн §5). Симметрично.</summary>
+    public decimal MaxBondPriceDriftFraction { get; set; } = 0.005m;
+
+    /// <summary>Не исполнена за это время — отмена и перевыставление ближе к противоположной стороне стакана.</summary>
+    public TimeSpan RepriceAfter { get; set; } = TimeSpan.FromMinutes(5);
+
+    /// <summary>Максимум попыток (выставлений) одной строки, включая первую.</summary>
+    public int MaxAttempts { get; set; } = 3;
+
+    /// <summary>За столько до закрытия сессии висящие заявки снимаются, новые не отправляются.</summary>
+    public TimeSpan CancelBeforeClose { get; set; } = TimeSpan.FromMinutes(10);
+
+    /// <summary>Стакан старше этого — «несвежая котировка», строка не отправляется.</summary>
+    public TimeSpan MaxQuoteAge { get; set; } = TimeSpan.FromMinutes(2);
+
+    /// <summary>Заявка в статусе New (записана, ответ брокера не получен) дольше этого и не найдена у брокера — Failed без повторной отправки.</summary>
+    public TimeSpan UnconfirmedOrderTimeout { get; set; } = TimeSpan.FromMinutes(5);
+
+    /// <summary>Период тика исполнителя.</summary>
+    public TimeSpan TickInterval { get; set; } = TimeSpan.FromSeconds(20);
+
+    /// <summary>Порог сверки комиссии: |факт − модель| больше этого (в валюте строки) — предупреждение в бот.</summary>
+    public decimal FeeMismatchThreshold { get; set; } = 0.01m;
+
+    /// <summary>
+    /// Сколько тиков подряд откладывать итоговую сверку комиссии, если брокер прислал исполнение с комиссией 0, а модель ждёт ненулевую (комиссия у T-Invest
+    /// приходит с задержкой): каждый тик состояние перечитывается; после стольких попыток сверка идёт по тому, что есть.
+    /// </summary>
+    public int MaxFeeRechecks { get; set; } = 3;
+
+    /// <summary>Предел дрейфа для строки: облигации (цена в пунктах) — <see cref="MaxBondPriceDriftFraction"/>, остальное — <see cref="MaxPriceDriftFraction"/>.</summary>
+    public decimal DriftFor(bool isBond) => isBond ? MaxBondPriceDriftFraction : MaxPriceDriftFraction;
 }
 
 /// <summary>Окно торгов в МОСКОВСКОМ времени (Россия без перевода часов: MSK = UTC+3 круглый год). Будни, [Open, Close).</summary>

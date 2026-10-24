@@ -147,8 +147,8 @@ if [ "$DO_BACKEND" = 1 ]; then
   else
     step "Backend: restore"           dotnet restore "$SLN"
     step "Backend: build (Release)"   dotnet build "$SLN" --no-restore -c Release
-    step "Backend: unit tests"        dotnet test tests/Bonds.Tests/Bonds.Tests.csproj --no-build -c Release --verbosity normal
-    step "Backend: integration tests" bash -c "DOTNET_ENVIRONMENT=Testing dotnet test tests/Bonds.IntegrationTests/Bonds.IntegrationTests.csproj --no-build -c Release --verbosity normal"
+    step "Backend: unit tests"        dotnet test tests/Bonds.Tests/Bonds.Tests.csproj --no-build -c Release --verbosity normal --filter "Category!=Sandbox"
+    step "Backend: integration tests" bash -c "DOTNET_ENVIRONMENT=Testing dotnet test tests/Bonds.IntegrationTests/Bonds.IntegrationTests.csproj --no-build -c Release --verbosity normal --filter Category!=Sandbox"
     if [ "$RUN_FORMAT" = 1 ]; then
       step "Backend: dotnet format --verify-no-changes" dotnet format "$SLN" --verify-no-changes
     else

@@ -17,7 +17,7 @@ public static class PlanRules
     };
 }
 
-/// <summary>Статусы плана (<c>trade_plans.status</c>). Исполнение (<c>Submitting/Done/Failed</c>) — фаза 3: в этой фазе существуют только как значения модели.</summary>
+/// <summary>Статусы плана (<c>trade_plans.status</c>). Исполнение (задача 65): <c>Approved/AutoApproved</c> с <c>dry_run = 0</c> → <c>Submitting</c> → <c>Done</c> | <c>PartiallyDone</c> | <c>Failed</c>.</summary>
 public static class PlanStatuses
 {
     public const string Draft = "Draft";
@@ -30,9 +30,12 @@ public static class PlanStatuses
     public const string Done = "Done";
     public const string Failed = "Failed";
 
+    /// <summary>Исполнение завершено, часть строк исполнена (остальные отклонены/не прошли проверки/сняты).</summary>
+    public const string PartiallyDone = "PartiallyDone";
+
     public static readonly IReadOnlySet<string> All = new HashSet<string>(StringComparer.Ordinal)
     {
-        Draft, PendingApproval, AutoApproved, Approved, Rejected, Expired, Submitting, Done, Failed,
+        Draft, PendingApproval, AutoApproved, Approved, Rejected, Expired, Submitting, Done, Failed, PartiallyDone,
     };
 
     /// <summary>«Открытые» планы: ещё ждут решения или (в боевом режиме) исполнения. По ним ищутся дубликаты и считается резерв денег.</summary>
@@ -91,7 +94,7 @@ public sealed class TradePlanLine
     public decimal QuantityPieces => QuantityLots * LotSize;
 }
 
-/// <summary>План сделок (<c>trade_plans</c>). Заявки по нему брокерам НЕ отправляются — план только данные.</summary>
+/// <summary>План сделок (<c>trade_plans</c>) — данные. Исполняет его только <c>PlanExecutionEngine</c> (задача 65) и только в live-режиме при <see cref="DryRun"/> = false.</summary>
 public sealed class TradePlan
 {
     public ulong Id { get; set; }
@@ -113,6 +116,9 @@ public sealed class TradePlan
 
     /// <summary>Случайные 8 байт base64url (11 символов): зашиты в callback_data кнопок Telegram, сверяются при нажатии (задача 64). Не отдаётся в API.</summary>
     public string? BotNonce { get; set; }
+
+    /// <summary>Пользователь попросил снять висящие заявки плана (кнопка «Отменить», задача 65): исполнитель снимает их на ближайшем тике.</summary>
+    public bool CancelRequested { get; set; }
 
     /// <summary>JSON <see cref="TradePlanSummary"/> (camelCase).</summary>
     public string? SummaryJson { get; set; }

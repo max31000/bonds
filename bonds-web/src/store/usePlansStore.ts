@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { approvePlan, fetchPlans, rejectPlan } from '../api/plans';
+import { cancelPlanExecution, setExecutionPaused } from '../api/execution';
 import type { Plan, PlansResponse } from '../api/types';
 
 /** Результат решения по плану: ошибка несёт текст бэкенда (409: план уже решён или просрочен). */
@@ -14,6 +15,10 @@ interface PlansStore {
   load: () => Promise<void>;
   approve: (id: number) => Promise<PlanDecisionResult>;
   reject: (id: number) => Promise<PlanDecisionResult>;
+  /** Снять висящие заявки исполняемого плана (задача 65). */
+  cancelExecution: (id: number) => Promise<PlanDecisionResult>;
+  /** «Остановить» = пауза (/stop): исполнитель снимает висящие заявки и не отправляет новые; список перечитывается. */
+  stop: () => Promise<void>;
 }
 
 let loadSeq = 0;
@@ -46,6 +51,11 @@ export const usePlansStore = create<PlansStore>()((set, get) => ({
   },
   approve: (id) => decide(id, approvePlan, 'Не удалось подтвердить план', set, get),
   reject: (id) => decide(id, rejectPlan, 'Не удалось отклонить план', set, get),
+  cancelExecution: (id) => decide(id, cancelPlanExecution, 'Не удалось запросить отмену заявок', set, get),
+  stop: async () => {
+    await setExecutionPaused(true);
+    await get().load();
+  },
 }));
 
 async function decide(

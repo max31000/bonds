@@ -11,7 +11,17 @@ public interface ICredentialValidator
     string ProviderId { get; }
 
     Task<CredentialValidationResult> ValidateAsync(IReadOnlyDictionary<string, string> fields, CancellationToken ct = default);
+
+    /// <summary>
+    /// Проверка с контекстом пользователя (задача 65: торговому токену нужно сверить счёт с основным счётом пользователя). По умолчанию контекст не нужен —
+    /// вызывается проверка без него. <c>PUT /api/credentials/{provider}</c> всегда вызывает ЭТУ перегрузку.
+    /// </summary>
+    Task<CredentialValidationResult> ValidateAsync(IReadOnlyDictionary<string, string> fields, CredentialValidationContext context, CancellationToken ct = default) =>
+        ValidateAsync(fields, ct);
 }
+
+/// <summary>Контекст проверки секрета: пользователь и Id брокерского счёта его ОСНОВНОГО счёта T-Invest (<c>accounts.broker_account_id</c>, null — не привязан).</summary>
+public sealed record CredentialValidationContext(ulong UserId, string? PrimaryTInvestBrokerAccountId);
 
 /// <summary>
 /// Результат валидации. <see cref="MetaJson"/> — НЕсекретные данные для UI (тариф, scope), сохраняются в
