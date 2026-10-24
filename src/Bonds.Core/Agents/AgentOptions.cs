@@ -42,7 +42,8 @@ public sealed class AgentOptions
 
     /// <summary>
     /// Разрешить встроенные WebSearch/WebFetch исследовательским задачам (разбор события, ежемесячный обзор). По умолчанию ВЫКЛ.: веб-инструменты в одной сессии с
-    /// данными портфеля — канал утечки (инъекция в найденной странице может попросить «открыть» адрес с данными в запросе).
+    /// данными портфеля — канал утечки (инъекция в найденной странице может попросить «открыть» адрес с данными в запросе). НЕ рекомендуется включать, пока агент
+    /// не вынесен в отдельный контейнер-воркер; при включении API пишет предупреждение на старте (<c>AgentStartupHostedService</c>).
     /// </summary>
     public bool AllowWebResearch { get; set; }
 
@@ -63,6 +64,36 @@ public sealed class AgentOptions
 
     /// <summary>Сколько байт stdout/stderr процесса читается (защита памяти от бесконечного вывода).</summary>
     public int MaxOutputBytes { get; set; } = 4 * 1024 * 1024;
+
+    /// <summary>
+    /// Запускать CLI под непривилегированным пользователем через <c>setpriv</c> (ревью M1): <c>setpriv --reuid --regid --clear-groups --no-new-privs
+    /// --inh-caps=-all --bounding-set=-all -- claude …</c>. null — по ОС: Linux (контейнер) — да, Windows/macOS (локальная разработка) — нет.
+    /// API при этом остаётся root: процесс агента не может читать <c>/proc/1/environ</c> (строка подключения, токен бота) и ключи DataProtection (0700 root).
+    /// </summary>
+    public bool? UseSetpriv { get; set; }
+
+    /// <summary>Итоговое решение по <see cref="UseSetpriv"/>.</summary>
+    public bool ShouldUseSetpriv => UseSetpriv ?? OperatingSystem.IsLinux();
+
+    /// <summary>Путь к <c>setpriv</c> (util-linux; в образе aspnet:8.0 есть — <c>/usr/bin/setpriv</c>).</summary>
+    public string SetprivPath { get; set; } = "/usr/bin/setpriv";
+
+    /// <summary>uid пользователя <c>agent</c> из Dockerfile (без home, nologin).</summary>
+    public int RunAsUid { get; set; } = 10001;
+
+    /// <summary>gid группы <c>agent</c> из Dockerfile.</summary>
+    public int RunAsGid { get; set; } = 10001;
+
+    /// <summary>
+    /// Корень каталогов запусков: владелец root, 0711 (создаётся при старте API; агент не может перечислить чужие каталоги). Каталог запуска внутри — 0700,
+    /// владелец <see cref="RunAsUid"/>. null — Linux: <c>/var/lib/bonds-agent</c>, иначе <c>&lt;temp&gt;/bonds-agent</c>.
+    /// </summary>
+    public string? RunRoot { get; set; }
+
+    /// <summary>Итоговый корень каталогов запусков.</summary>
+    public string ResolvedRunRoot => !string.IsNullOrWhiteSpace(RunRoot)
+        ? RunRoot
+        : OperatingSystem.IsLinux() ? "/var/lib/bonds-agent" : Path.Combine(Path.GetTempPath(), "bonds-agent");
 }
 
 /// <summary>Проверка алиаса/имени модели: только безопасные символы (уходит аргументом <c>--model</c>, без оболочки, но всё равно whitelist).</summary>

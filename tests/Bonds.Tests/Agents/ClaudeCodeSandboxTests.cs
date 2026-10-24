@@ -21,7 +21,13 @@ public class ClaudeCodeSandboxTests
         var token = Environment.GetEnvironmentVariable("CLAUDE_CODE_OAUTH_TOKEN_TEST");
         if (string.IsNullOrWhiteSpace(token)) return;
 
-        var options = new AgentOptions { CliPath = Environment.GetEnvironmentVariable("CLAUDE_CLI_PATH") ?? "claude", Timeout = TimeSpan.FromMinutes(3) };
+        var options = new AgentOptions
+        {
+            CliPath = Environment.GetEnvironmentVariable("CLAUDE_CLI_PATH") ?? "claude",
+            Timeout = TimeSpan.FromMinutes(3),
+            UseSetpriv = false,
+            RunRoot = Path.Combine(Path.GetTempPath(), "bonds-agent-sandbox"),
+        };
         var runner = new ClaudeCodeAgentRunner(
             new AgentProcessExecutor(NullLogger<AgentProcessExecutor>.Instance), new OptionsMonitorStub<AgentOptions>(options), NullLogger<ClaudeCodeAgentRunner>.Instance);
 

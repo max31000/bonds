@@ -79,9 +79,10 @@ public static class ClaudeCodeCli
     /// <see cref="ProcessStartInfo"/> запуска: аргументы списком (без оболочки), окружение очищено и заполнено <see cref="BuildEnvironment"/>, рабочий каталог —
     /// временный каталог запуска (нет проектных настроек/CLAUDE.md), stdin/stdout/stderr перенаправлены.
     /// </summary>
-    public static ProcessStartInfo CreateStartInfo(string cliPath, AgentTask task, string oauthToken, string homeDir, string mcpConfigPath, string? hostPath)
+    public static ProcessStartInfo CreateStartInfo(
+        string cliPath, AgentTask task, string oauthToken, string homeDir, string mcpConfigPath, string? hostPath, SetprivLaunch? setpriv = null)
     {
-        var psi = new ProcessStartInfo(cliPath)
+        var psi = new ProcessStartInfo(setpriv?.SetprivPath ?? cliPath)
         {
             UseShellExecute = false,
             RedirectStandardInput = true,
@@ -92,12 +93,37 @@ public static class ClaudeCodeCli
             StandardOutputEncoding = System.Text.Encoding.UTF8,
             StandardErrorEncoding = System.Text.Encoding.UTF8,
         };
+        if (setpriv is not null)
+        {
+            foreach (var arg in setpriv.PrefixArguments()) psi.ArgumentList.Add(arg);
+            psi.ArgumentList.Add(cliPath);
+        }
+
         foreach (var arg in BuildArguments(task, mcpConfigPath)) psi.ArgumentList.Add(arg);
 
         // Environment изначально — копия окружения хоста: очищаем полностью.
         psi.Environment.Clear();
         foreach (var (key, value) in BuildEnvironment(oauthToken, homeDir, hostPath)) psi.Environment[key] = value;
         return psi;
+    }
+
+    /// <summary>
+    /// Запуск CLI под непривилегированным пользователем (ревью M1): <c>setpriv --reuid=U --regid=G --clear-groups --no-new-privs --inh-caps=-all --bounding-set=-all --
+    /// claude …</c>. setpriv делает <c>exec</c> (тот же pid — kill дерева по таймауту работает как прежде). Сброс bounding set — пока ещё root (CAP_SETPCAP), затем
+    /// смена uid/gid, без дополнительных групп и с <c>no_new_privs</c> (setuid-бинари не поднимут права).
+    /// </summary>
+    public sealed record SetprivLaunch(string SetprivPath, int Uid, int Gid)
+    {
+        public IReadOnlyList<string> PrefixArguments() =>
+        [
+            "--reuid=" + Uid.ToString(CultureInfo.InvariantCulture),
+            "--regid=" + Gid.ToString(CultureInfo.InvariantCulture),
+            "--clear-groups",
+            "--no-new-privs",
+            "--inh-caps=-all",
+            "--bounding-set=-all",
+            "--",
+        ];
     }
 
     /// <summary>JSON-конфиг MCP (<c>--mcp-config</c>): один HTTP-сервер bonds с bearer-токеном запуска в заголовке. Пишется в файл каталога запуска (0600).</summary>

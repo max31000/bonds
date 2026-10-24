@@ -39,7 +39,7 @@ public class ClaudeCodeAgentRunnerTests
     private static (ClaudeCodeAgentRunner Runner, CapturingExecutor Exec) Create()
     {
         var exec = new CapturingExecutor();
-        var options = new OptionsMonitorStub<AgentOptions>(new AgentOptions { CliPath = "claude" });
+        var options = new OptionsMonitorStub<AgentOptions>(new AgentOptions { CliPath = "claude", UseSetpriv = false, RunRoot = Path.Combine(Path.GetTempPath(), "bonds-agent-tests") });
         return (new ClaudeCodeAgentRunner(exec, options, NullLogger<ClaudeCodeAgentRunner>.Instance), exec);
     }
 

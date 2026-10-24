@@ -194,6 +194,7 @@ public static class DependencyInjection
         services.AddScoped<Bonds.Infrastructure.Agents.AgentScheduler>();
         services.AddSingleton<Bonds.Infrastructure.Agents.AgentWorkQueue>();
         services.AddSingleton<Bonds.Infrastructure.Agents.IAgentEventTrigger>(sp => sp.GetRequiredService<Bonds.Infrastructure.Agents.AgentWorkQueue>());
+        services.AddHostedService<Bonds.Infrastructure.Agents.AgentStartupHostedService>();
         services.AddHostedService<Bonds.Infrastructure.Agents.AgentWorkerHostedService>();
         services.AddHostedService<Bonds.Infrastructure.Agents.AgentSchedulerHostedService>();
 
@@ -319,7 +320,19 @@ public static class DependencyInjection
             {
                 var keysPath = sp.GetRequiredService<IConfiguration>()["DataProtection:KeysPath"]
                     ?? "/app/dataprotection-keys";
-                options.XmlRepository = new FileSystemXmlRepository(new DirectoryInfo(keysPath), sp.GetRequiredService<ILoggerFactory>());
+                var loggerFactory = sp.GetRequiredService<ILoggerFactory>();
+                // Задача 68 (ревью M1): каталог ключей — 0700 владельца (root в контейнере), чтобы процесс ИИ-агента (uid 10001) не прочитал ключи
+                // и не расшифровал токены из user_credentials. Сбой — предупреждение (ключи нужны API в любом случае).
+                try
+                {
+                    Bonds.Infrastructure.Agents.AgentFileSystem.EnsureOwnerOnlyDirectory(keysPath);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    loggerFactory.CreateLogger("DataProtection").LogWarning("DataProtection keys directory: cannot restrict mode to 0700 ({ErrorType})", ex.GetType().Name);
+                }
+
+                options.XmlRepository = new FileSystemXmlRepository(new DirectoryInfo(keysPath), loggerFactory);
             }));
         services.AddScoped<ITInvestTokenProvider, TInvestTokenProvider>();
 

@@ -8,7 +8,10 @@ namespace Bonds.Infrastructure.Agents.ClaudeCode;
 /// <summary>
 /// <see cref="IAgentRunner"/> через Claude Code CLI (задача 68). На каждый запуск:
 /// <list type="number">
-/// <item>временный каталог (0700) = <c>HOME</c> и рабочий каталог процесса; в нём MCP-конфиг (0600) с bearer-токеном запуска;</item>
+/// <item>каталог запуска в <see cref="AgentOptions.ResolvedRunRoot"/> (0700, владелец — uid агента) = <c>HOME</c> и рабочий каталог процесса; в нём MCP-конфиг
+/// (0600) с bearer-токеном запуска (<see cref="AgentFileSystem"/>);</item>
+/// <item>на Linux CLI запускается через <c>setpriv</c> под непривилегированным <c>agent</c> (<see cref="ClaudeCodeCli.SetprivLaunch"/>): не читает env API
+/// (<c>/proc/1/environ</c>) и ключи DataProtection;</item>
 /// <item>процесс с окружением С НУЛЯ (<see cref="ClaudeCodeCli.BuildEnvironment"/>: токен подписки только в env, без <c>ANTHROPIC_API_KEY</c> и переменных хоста,
 /// кроме <c>PATH</c>), задание — через stdin;</item>
 /// <item>таймаут — kill дерева процессов (<see cref="IAgentProcessExecutor"/>);</item>
@@ -35,17 +38,23 @@ public sealed class ClaudeCodeAgentRunner : IAgentRunner
     public async Task<AgentResult> RunAsync(AgentTask task, AgentCredentials credentials, CancellationToken ct = default)
     {
         var options = _options.CurrentValue;
-        var home = Path.Combine(Path.GetTempPath(), "bonds-agent-" + Guid.NewGuid().ToString("N"));
-        LastHomeDir = home;
+        var setpriv = options.ShouldUseSetpriv ? new ClaudeCodeCli.SetprivLaunch(options.SetprivPath, options.RunAsUid, options.RunAsGid) : null;
+        string? home = null;
+        LastHomeDir = null;
         string Redact(string text) => Redactor(text, credentials.OAuthToken, task.McpBearer);
         var started = DateTime.UtcNow;
         try
         {
-            CreatePrivateDirectory(home);
+            // Каталог запуска (HOME и cwd CLI): 0700, владелец — uid агента; MCP-конфиг с bearer — 0600 того же владельца (ревью M1).
+            var root = options.ResolvedRunRoot;
+            if (!Directory.Exists(root)) AgentFileSystem.EnsureRunRoot(root);
+            home = AgentFileSystem.CreateRunDirectory(root, setpriv?.Uid, setpriv?.Gid);
+            LastHomeDir = home;
             var mcpConfigPath = Path.Combine(home, "mcp.json");
-            await WritePrivateFileAsync(mcpConfigPath, ClaudeCodeCli.BuildMcpConfig(task.McpUrl, task.McpBearer), ct);
+            await AgentFileSystem.WritePrivateFileAsync(mcpConfigPath, ClaudeCodeCli.BuildMcpConfig(task.McpUrl, task.McpBearer), setpriv?.Uid, setpriv?.Gid, ct);
 
-            var psi = ClaudeCodeCli.CreateStartInfo(options.CliPath, task, credentials.OAuthToken, home, mcpConfigPath, Environment.GetEnvironmentVariable("PATH"));
+            var psi = ClaudeCodeCli.CreateStartInfo(
+                options.CliPath, task, credentials.OAuthToken, home, mcpConfigPath, Environment.GetEnvironmentVariable("PATH"), setpriv);
             var outcome = await _executor.RunAsync(psi, task.Prompt, task.Timeout, options.MaxOutputBytes, ct);
 
             AgentResult result;
@@ -72,9 +81,15 @@ public sealed class ClaudeCodeAgentRunner : IAgentRunner
             _logger.LogWarning("Agent run {Kind}: CLI start failed ({ErrorType})", task.Kind, ex.GetType().Name);
             return new AgentResult(string.Empty, null, -1, IsError: true, Error: "Claude Code CLI не запустился — проверьте установку на сервере");
         }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Не удалось подготовить изолированный каталог (chown/права) — без него не запускаем.
+            _logger.LogWarning("Agent run {Kind}: run directory setup failed ({ErrorType})", task.Kind, ex.GetType().Name);
+            return new AgentResult(string.Empty, null, -1, IsError: true, Error: "Не удалось подготовить изолированный каталог запуска агента");
+        }
         finally
         {
-            TryDelete(home);
+            if (home is not null) TryDelete(home);
         }
     }
 
@@ -90,21 +105,6 @@ public sealed class ClaudeCodeAgentRunner : IAgentRunner
     }
 
     private static string Shorten(string s) => s.Length <= 500 ? s : s[..500] + "…";
-
-    private static void CreatePrivateDirectory(string path)
-    {
-        if (OperatingSystem.IsWindows()) Directory.CreateDirectory(path);
-        else Directory.CreateDirectory(path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
-    }
-
-    private static async Task WritePrivateFileAsync(string path, string content, CancellationToken ct)
-    {
-        var options = new FileStreamOptions { Mode = FileMode.CreateNew, Access = FileAccess.Write };
-        if (!OperatingSystem.IsWindows()) options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
-        await using var stream = new FileStream(path, options);
-        await using var writer = new StreamWriter(stream);
-        await writer.WriteAsync(content.AsMemory(), ct);
-    }
 
     private void TryDelete(string home)
     {
