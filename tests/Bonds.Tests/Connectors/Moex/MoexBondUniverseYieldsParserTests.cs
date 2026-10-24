@@ -137,4 +137,33 @@ public class MoexBondUniverseYieldsParserTests
         entry.YieldToOfferFraction.Should().BeNull();
         entry.YieldDateType.Should().BeNull();
     }
+
+    [Fact]
+    public void Mapper_AbsurdMoexYields_BecomeNull_InsteadOfOverflowingDecimalColumns()
+    {
+        // Прод 2026-10-24: дефолтный выпуск с доходностью ~10^6 % ронял весь почасовой upsert банка
+        // (DECIMAL(12,8) / DECIMAL(10,6) — максимум 9999.99…). Неправдоподобная доля → null, остальные поля живы.
+        var row = new MoexBondMarketRow
+        {
+            Secid = "RU000TEST001", BoardId = "TQCB",
+            YieldPercent = 2_500_000m, EffectiveYieldPercent = 1_234_567m, YieldToOfferPercent = -999_999m,
+            GspreadBp = 99_999_999m, ZspreadBp = 120m, PricePercent = 5m,
+        };
+
+        var entry = BondUniverseEntryMapper.Map(row, curve: null);
+
+        entry.EffectiveYieldFraction.Should().BeNull();
+        entry.YieldToOfferFraction.Should().BeNull();
+        entry.GspreadOfficialFraction.Should().BeNull();
+        entry.ZspreadOfficialFraction.Should().Be(0.012m, "правдоподобные значения не трогаем");
+    }
+
+    [Theory]
+    [InlineData(100_000, 1000)]   // ровно предел (100 000 % = доля 1000) — сохраняется
+    [InlineData(45.5, 0.455)]
+    public void Mapper_PlausibleYield_KeptAsFraction(double percent, double expectedFraction)
+    {
+        var row = new MoexBondMarketRow { Secid = "RU000TEST002", BoardId = "TQCB", EffectiveYieldPercent = (decimal)percent };
+        BondUniverseEntryMapper.Map(row, curve: null).EffectiveYieldFraction.Should().Be((decimal)expectedFraction);
+    }
 }

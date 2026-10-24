@@ -25,13 +25,24 @@ public static class BondUniverseEntryMapper
     private const decimal PercentToFraction = 100m;
     private const decimal BasisPointsToFraction = 10_000m;
 
-    /// <summary>MOEX проценты → доля (÷100). Null → null.</summary>
-    private static decimal? PercentToFractionOrNull(decimal? percent) =>
-        percent.HasValue ? percent.Value / PercentToFraction : null;
+    /// <summary>
+    /// Предел правдоподобной доли (1000 = 100 000% годовых). Колонки банка — DECIMAL(12,8), максимум 9999.99999999;
+    /// MOEX для дефолтных/неликвидных выпусков отдаёт абсурдные доходности, и одна такая строка роняла весь
+    /// почасовой upsert снимка (прод 2026-10-24: «Out of range value for column effective_yield_fraction»).
+    /// За пределом значение бессмысленно для аналитики → null («нет данных»), а не исключение.
+    /// </summary>
+    internal const decimal MaxPlausibleFraction = 1000m;
 
-    /// <summary>MOEX базисные пункты → доля (÷10000: 35 б.п. = 0.0035). Null → null.</summary>
+    private static decimal? Plausible(decimal? fraction) =>
+        fraction is { } f && Math.Abs(f) <= MaxPlausibleFraction ? f : null;
+
+    /// <summary>MOEX проценты → доля (÷100). Null или неправдоподобное значение → null.</summary>
+    private static decimal? PercentToFractionOrNull(decimal? percent) =>
+        percent.HasValue ? Plausible(percent.Value / PercentToFraction) : null;
+
+    /// <summary>MOEX базисные пункты → доля (÷10000: 35 б.п. = 0.0035). Null или неправдоподобное значение → null.</summary>
     private static decimal? BasisPointsToFractionOrNull(decimal? bp) =>
-        bp.HasValue ? bp.Value / BasisPointsToFraction : null;
+        bp.HasValue ? Plausible(bp.Value / BasisPointsToFraction) : null;
 
     /// <summary>
     /// Маппит одну строку + опциональную кривую (для приближённого G-спреда, часть C.3). Только
@@ -41,7 +52,7 @@ public static class BondUniverseEntryMapper
     /// </summary>
     public static BondUniverseEntry Map(MoexBondMarketRow row, YieldCurveSnapshot? curve)
     {
-        var yieldFraction = row.YieldPercent.HasValue ? row.YieldPercent.Value / PercentToFraction : (decimal?)null;
+        var yieldFraction = PercentToFractionOrNull(row.YieldPercent);
         var durationYears = row.DurationDays.HasValue ? row.DurationDays.Value / DaysPerYear : (decimal?)null;
 
         decimal? gspreadApprox = null;
