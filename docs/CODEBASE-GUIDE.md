@@ -529,6 +529,29 @@ tradernet.global/tradernet-api/order-statuses). **Исполненное — Σ 
 Фронт: страница «Планы» (`/plans`, `pages/Plans.tsx`, `usePlansStore`, `components/plans/*`, баннер «Режим наблюдения: сделки не отправляются»), блок «Планы сделок» на «Капитале» (`components/capital/PlanActions.tsx`:
 «Распределить сумму…», «Вывести…», «Выйти из временной корзины»).
 
+### ИИ-агенты (задача 68) — только чтение + `propose_plan`, по умолчанию ВЫКЛЮЧЕНЫ
+
+**Инвариант:** агент не торгует, не подтверждает планы и не меняет лимиты/настройки/ключи — закреплено `AgentArchitectureTests` (скан `Bonds.Core/Agents/`,
+`Bonds.Infrastructure/Agents/`, `McpEndpoints.cs`). Единственный пишущий путь — MCP-инструмент `propose_plan` → `PolicyService.CreateManualAsync(..., PlanOrigin)` (та же валидация,
+что у ручных inflow/withdraw/exit-basket; `PendingApproval` всегда, `dry_run` — обычные ворота, `trade_plans.source = 'agent'`, обоснование — в `trigger` «ИИ-агент: …» и в `summary.notes`;
+уведомление — тот же `IPlanNotifier` с кнопками). Провайдер — `IAgentRunner` (`Bonds.Core/Agents`), реализация `ClaudeCodeAgentRunner`: `claude -p --output-format json --strict-mcp-config
+--mcp-config <файл> --tools "" --allowedTools mcp__bonds__* --permission-prompts none --max-turns N --model <алиас> --no-session-persistence` (БЕЗ `--bare`; флаги сверены с `--help` версии
+из Dockerfile, 2.1.296). Задание — через **stdin** (`--tools`/`--allowedTools`/`--mcp-config` вариадические, argv виден в `ps`). Окружение процесса собирается С НУЛЯ (`ClaudeCodeCli.BuildEnvironment`):
+`CLAUDE_CODE_OAUTH_TOKEN` (секрет `claude_code`, расшифровывается только на запуск), `HOME` = временный каталог 0700 (там же MCP-конфиг 0600 с bearer, удаляется в `finally`), `PATH`; `ANTHROPIC_API_KEY`
+не передаётся никогда. Таймаут (`Agent:Timeout`, 5 мин) — `Kill(entireProcessTree)`. Секреты вычищаются из текста ответа/ошибок (`Redactor`).
+**MCP** — `POST /internal/mcp/{runId}` (`McpEndpoints`, `AllowAnonymous`, вне cookie-авторизации): только loopback-`RemoteIpAddress` без заголовков прокси (иначе 404), `Origin` → 403,
+`Authorization: Bearer` — одноразовый токен запуска (`AgentMcpTokens`: 32 байта, хранится SHA-256, привязан к пользователю И `runId`, TTL = таймаут + 1 мин, отзывается после запуска) → 401.
+Сервер — минимальный JSON-RPC (`BondsMcpServer`: initialize/ping/tools/list/tools/call; `server/discover` CLI 2.x → -32601, клиент откатывается на initialize; версия протокола — до 2025-06-18).
+Инструменты (`BondsMcpTools`) переиспользуют точки истины (`PortfolioHoldingsBuilder`, `CapitalOverviewBuilder`, `CashOverviewBuilder`, `BrokerHoldingsBuilder`, `ReliabilityScoreProvider`, репозитории на чтение),
+единицы — как в API (ДОЛИ, валюта поля), ответ ≤ `Agent:McpMaxResponseChars`. **Запуски:** `AgentService` (ворота `AgentRunGate`: `Agent:Enabled`, секрет `claude_code` ok, `agent_settings.enabled`,
+`daily_run_limit` за сутки МСК, разборов событий ≤ 3/сутки) → строка `agent_runs` ДО процесса → раннер → итог (текст ≤ `MaxResultChars`) → `TelegramAgentNotifier` (HTML-escape, ≤ 4096).
+Очередь `AgentWorkQueue` (один потребитель `AgentWorkerHostedService`), расписание `AgentScheduler` (будни 19:00 МСК — `DailyDigest`, 1-е число — `MonthlyReview` (модель `monthly_model`, `opus`);
+окно 3 ч, раз в сутки по журналу), `EventReview` — из `SyncCycleService.RunSignalsAsync` по новым Critical (`IAgentEventTrigger`), `/ask <вопрос>` в боте (`AgentAskService`: ворота + пауза 1 мин).
+WebSearch/WebFetch — только при `Agent:AllowWebResearch=true` (по умолчанию выкл.: канал утечки данных портфеля). Миграция 042: `agent_settings`, `agent_runs`, `trade_plans.source`.
+API: `GET /api/agent`, `PUT /api/agent/settings` (включение — только с подключением, модель — `AgentModelName`, лимит 1…`MaxDailyRunLimit`). Фронт: `AgentSection` на «Настройках» (текст агента — только как
+текст), бейдж «предложен ИИ-агентом» на `PlanCard`. Тесты: двойник `FakeAgentRunner` в `TestWebApplicationFactory`; MCP-запросы с loopback — `factory.Server.SendAsync` с `RemoteIpAddress`;
+реальный CLI — `ClaudeCodeSandboxTests` (`Category=Sandbox`, env `CLAUDE_CODE_OAUTH_TOKEN_TEST`, опц. `CLAUDE_CLI_PATH`).
+
 ## Тесты
 
 **Юнит** (`tests/Bonds.Tests`, папки по доменам): без сети и без БД. HTTP-клиенты — вложенный
