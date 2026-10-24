@@ -65,7 +65,10 @@ public sealed record PolicyQuote
     /// <summary>Облигация: НКД на штуку (валюта цены); для остальных 0.</summary>
     public decimal AccruedPerPiece { get; init; }
 
-    /// <summary>Облигация без рублёвого номинала: последняя известная ЧИСТАЯ цена в рублях за штуку (из оценки портфеля или банка).</summary>
+    /// <summary>
+    /// Облигация без рублёвого номинала: последняя известная ЧИСТАЯ цена за штуку в ВАЛЮТЕ ПОРТФЕЛЯ (рубли; из оценки портфеля или банка).
+    /// <see cref="LinePricer"/> переводит её в валюту цены делением на <see cref="FxToPortfolio"/> (задача 67, #8).
+    /// </summary>
     public decimal? ReferenceCleanPricePerPiece { get; init; }
 
     public decimal FxToPortfolio { get; init; } = 1m;

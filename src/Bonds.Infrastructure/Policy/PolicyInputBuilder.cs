@@ -204,6 +204,16 @@ public sealed class PolicyInputBuilder
             if (quote is not null) quotes.Add(quote);
         }
 
+        // Задача 67 (#8): средняя цена входа облигаций T-Invest — в рублях, а налог продажи считается в валюте цены строки: для облигации с ценой не в
+        // рублях переводим по текущему курсу (оценка: налог РФ считается по курсам дат сделок — расхождение с фактом брокера возможно).
+        for (var i = 0; i < held.Holdings.Count; i++)
+        {
+            var h = held.Holdings[i];
+            var q = quotes.FirstOrDefault(x => x.Kind == PolicyAssetKind.Bond && x.FxToPortfolio is > 0m and not 1m
+                                               && BasketDriftService.KeyMatches(h.InstrumentKey, BasketDriftService.NormalizeKey(x.InstrumentKey)));
+            if (q is not null && h.AvgCostPerPiece is { } avg) held.Holdings[i] = h with { AvgCostPerPiece = avg / q.FxToPortfolio };
+        }
+
         // Деньги: свободные минус резерв под открытые планы; лимит суток по МОСКОВСКОЙ дате.
         var reserved = await _plans.SumReservedBuysAsync(userId, broker, currency, nowUtc, _options.WithdrawHoldTtl); // покупки открытых планов + удержание под вывод
         var cashHold = await _plans.GetCashHoldAsync(userId, broker, currency, nowUtc, _options.WithdrawHoldTtl);
@@ -387,7 +397,9 @@ public sealed class PolicyInputBuilder
         decimal? reference = null;
         if (isBond && held.BondPrices.TryGetValue(meta.InstrumentKey, out var prices))
         {
-            accrued = prices.AccruedPerPiece;
+            // Задача 67 (#8): НКД держания — рубли; в котировке он в ВАЛЮТЕ ЦЕНЫ (CNY-облигация: рубли ÷ курс). Ориентир чистой цены остаётся в рублях
+            // (валюта портфеля) — его переводит LinePricer.
+            accrued = prices.AccruedPerPiece / fx.Value;
             reference = prices.CleanPerPiece;
         }
 

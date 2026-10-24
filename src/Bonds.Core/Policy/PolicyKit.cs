@@ -75,9 +75,11 @@ public static class LinePricer
             {
                 clean = points / 100m * q.NominalRub.Value;
             }
-            else if (q.ReferenceCleanPricePerPiece is > 0m)
+            else if (q.ReferenceCleanPricePerPiece is > 0m && q.FxToPortfolio > 0m)
             {
-                clean = q.ReferenceCleanPricePerPiece.Value; // номинал не в рублях: сумма — оценка по последней известной цене
+                // Номинал не в рублях: сумма — оценка по последней известной цене. Ориентир — в ВАЛЮТЕ ПОРТФЕЛЯ (рубли), строка и стакан — в валюте цены:
+                // делим на курс ОДИН раз (задача 67, #8: иначе CNY-облигация при Fx = 12.5 оценивалась в 12.5 раза дороже и продавалось в 12.5 раза меньше бумаг).
+                clean = q.ReferenceCleanPricePerPiece.Value / q.FxToPortfolio;
             }
             else
             {
