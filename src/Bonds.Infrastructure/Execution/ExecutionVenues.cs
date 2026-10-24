@@ -119,10 +119,12 @@ public sealed class TInvestExecutionVenue : IExecutionVenue
     private readonly ILogger _logger;
     private readonly IInstrumentTradingMetaRepository? _meta;
     private readonly ITInvestFillHistory? _fills;
+    private readonly ITradeOrderRepository? _orders;
+    private readonly ITradePlanRepository? _plans;
 
     public TInvestExecutionVenue(
         ITInvestOrderGateway gateway, IExecutionGateResolver gate, IAccountRepository accounts, IUserCredentialRepository credentialRecords, ILogger logger,
-        IInstrumentTradingMetaRepository? meta = null, ITInvestFillHistory? fills = null)
+        IInstrumentTradingMetaRepository? meta = null, ITInvestFillHistory? fills = null, ITradeOrderRepository? orders = null, ITradePlanRepository? plans = null)
     {
         _gateway = gateway;
         _gate = gate;
@@ -131,6 +133,8 @@ public sealed class TInvestExecutionVenue : IExecutionVenue
         _logger = logger;
         _meta = meta;
         _fills = fills;
+        _orders = orders;
+        _plans = plans;
     }
 
     /// <summary>Окно сверки по журналу: сделки не раньше <c>created_at − 30 с</c> (расхождение часов).</summary>
@@ -140,6 +144,12 @@ public sealed class TInvestExecutionVenue : IExecutionVenue
     /// Задача 67 (#17): заявка у брокера не найдена — исполненные сделки ТОГО ЖЕ инструмента (uid или figi из метаданных торгов) и ТОЙ ЖЕ стороны с
     /// <c>created_at − 30 с</c> по журналу операций (клиент на чтение пользователя). Штуки → целые лоты, не больше запрошенного. Сделку по номеру заявки журнал
     /// не связывает — ручная сделка в том же инструменте в это окно тоже будет засчитана (консервативно: строка не докупит лишнего).
+    /// <para>
+    /// T-67E (minor 2): из сделок окна ВЫЧИТАЕТСЯ уже засчитанное ДРУГИМ заявкам T-Invest пользователя того же инструмента (ключ бумаги строки) и стороны,
+    /// активным в окне (<c>updated_at</c> ≥ начала окна): прежние попытки той же строки (перевыставление — снятие и новая заявка почти одновременно) и заявки
+    /// других планов. Иначе их сделки засчитались бы второй раз. Ошибка вычитания — в сторону «исполнено меньше»: заявка закрывается <c>unknown_state</c>
+    /// (строка завершается, повторной отправки нет), лишней покупки это не вызывает.
+    /// </para>
     /// </summary>
     public async Task<HistoryFill?> FillsFromHistoryAsync(
         VenueSession session, ulong userId, TradeOrder order, TradePlanLine line, DateTime nowUtc, CancellationToken ct)
@@ -154,13 +164,42 @@ public sealed class TInvestExecutionVenue : IExecutionVenue
                         && ((!string.IsNullOrWhiteSpace(meta.Uid) && string.Equals(f.InstrumentUid, meta.Uid, StringComparison.OrdinalIgnoreCase))
                             || (!string.IsNullOrWhiteSpace(meta.Figi) && string.Equals(f.Figi, meta.Figi, StringComparison.OrdinalIgnoreCase))))
             .ToList();
-        return ToHistoryFill(fills.Select(f => (f.Pieces, f.PricePerPiece)).ToList(), line.LotSize, order.LotsRequested);
+        var attributedPieces = await AttributedElsewhereLotsAsync(userId, order, line, since) * line.LotSize;
+        if (attributedPieces > 0m)
+            _logger.LogInformation("Execution: {Pieces} pc of history fills already attributed to other orders of {Key} {Side} — excluded", attributedPieces, line.InstrumentKey, line.Side);
+        return ToHistoryFill(fills.Select(f => (f.Pieces, f.PricePerPiece)).ToList(), line.LotSize, order.LotsRequested, attributedPieces);
     }
 
-    /// <summary>Штуки сделок → целые лоты (не больше <paramref name="maxLots"/>) и средняя цена штуки (по сделкам с ценой); лотов 0 — null.</summary>
-    internal static HistoryFill? ToHistoryFill(IReadOnlyList<(decimal Pieces, decimal? Price)> fills, decimal lotSize, long maxLots)
+    /// <summary>Лоты, уже засчитанные другим заявкам T-Invest пользователя того же инструмента и стороны, активным в окне (<c>updated_at</c> ≥ <paramref name="since"/>).</summary>
+    private async Task<long> AttributedElsewhereLotsAsync(ulong userId, TradeOrder order, TradePlanLine line, DateTime since)
     {
-        var pieces = fills.Sum(f => f.Pieces);
+        if (_orders is null || _plans is null) return 0;
+        var plans = new Dictionary<ulong, TradePlan?>();
+        long lots = 0;
+        foreach (var o in await _orders.ListByUserUpdatedSinceAsync(userId, Brokers.TInvest, since) ?? [])
+        {
+            if (o.Id == order.Id || o.LotsFilled <= 0) continue;
+            if (!plans.TryGetValue(o.PlanId, out var plan))
+            {
+                plan = await _plans.GetAsync(userId, o.PlanId);
+                plans[o.PlanId] = plan;
+            }
+
+            var other = plan?.Lines.FirstOrDefault(l => l.LineNo == o.LineNo);
+            if (other is not null && other.Side == line.Side && string.Equals(other.InstrumentKey, line.InstrumentKey, StringComparison.OrdinalIgnoreCase))
+                lots += o.LotsFilled;
+        }
+
+        return lots;
+    }
+
+    /// <summary>
+    /// Штуки сделок минус уже засчитанные другим заявкам (<paramref name="attributedPieces"/>) → целые лоты (не больше <paramref name="maxLots"/>) и средняя цена
+    /// штуки (по сделкам с ценой); лотов 0 — null.
+    /// </summary>
+    internal static HistoryFill? ToHistoryFill(IReadOnlyList<(decimal Pieces, decimal? Price)> fills, decimal lotSize, long maxLots, decimal attributedPieces = 0m)
+    {
+        var pieces = Math.Max(0m, fills.Sum(f => f.Pieces) - Math.Max(0m, attributedPieces));
         var lots = Math.Min(maxLots, (long)Math.Floor(pieces / lotSize));
         if (lots <= 0) return null;
         var priced = fills.Where(f => f.Price is > 0m).ToList();

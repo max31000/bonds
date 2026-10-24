@@ -220,6 +220,27 @@ public class ExecutionIntegrationTests
     }
 
     [Fact]
+    public async Task T67E_ListByUserUpdatedSince_FiltersUserBrokerAndUpdatedAt_AnyStatus()
+    {
+        var s = await SeedAsync();
+        var plan = await InsertPlanAsync(s, PlanStatuses.Submitting);
+        var repo = new TradeOrderRepository(Conn);
+        TradeOrder Row(int attempt, string status, DateTime updated, string broker = BrokerIds.TInvest) => new()
+        {
+            PlanId = plan.Id, LineNo = 1, Attempt = attempt, ClientOrderId = Guid.NewGuid().ToString("D"), Status = status, LimitPrice = 1m, PriceUnit = OrderPriceUnits.Currency,
+            LotsRequested = 1, Currency = "RUB", CreatedAt = updated, UpdatedAt = updated, Broker = broker,
+        };
+        await repo.InsertAsync(Row(1, TradeOrderStatuses.Cancelled, Noon.AddMinutes(-10)));
+        await repo.InsertAsync(Row(2, TradeOrderStatuses.Cancelled, Noon.AddMinutes(-1)));
+        await repo.InsertAsync(Row(3, TradeOrderStatuses.Filled, Noon));
+        await repo.InsertAsync(Row(4, TradeOrderStatuses.Filled, Noon, BrokerIds.Freedom));
+
+        var since = await repo.ListByUserUpdatedSinceAsync(s.UserId, BrokerIds.TInvest, Noon.AddMinutes(-2));
+        since.Select(o => o.Attempt).Should().Equal(2, 3);
+        (await repo.ListByUserUpdatedSinceAsync(s.UserId + 100_000, BrokerIds.TInvest, Noon.AddMinutes(-2))).Should().BeEmpty();
+    }
+
+    [Fact]
     public async Task Pause_StopsExecution_CancelsActiveOrder()
     {
         var s = await SeedAsync();

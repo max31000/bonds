@@ -278,6 +278,44 @@ public class PlanExecutionEngineTests
     }
 
     [Fact]
+    public async Task T67E_UnknownToBroker_HistoryFillsOfEarlierAttemptAndOtherPlan_NotCountedTwice()
+    {
+        // Minor 2: строка 10 лотов; попытка 1 исполнила 4 и снята на перевыставлении (updated_at — в окне), попытка 2 (6 лотов) — брокер её не знает.
+        // Другой план того же пользователя купил тот же фонд (3) в окне. Журнал: 4 + 2 + 3 = 9 штук. Попытке 2 принадлежат только 2.
+        var plan = AddPlan(PlanStatuses.Submitting);
+        var other = AddPlan(PlanStatuses.Done, lines: FundBuy(lots: 3));
+        Book(FundUid, 166.50m, 166.60m, Noon);
+        await _orders.InsertAsync(new TradeOrder
+        {
+            PlanId = plan.Id, LineNo = 1, Attempt = 1, ClientOrderId = Guid.NewGuid().ToString("D"), Status = TradeOrderStatuses.Cancelled, ErrorCode = TradeOrderErrorCodes.Reprice,
+            LimitPrice = 166.57m, PriceUnit = OrderPriceUnits.Currency, LotsRequested = 10, LotsFilled = 4, Currency = "RUB",
+            CreatedAt = Noon.AddMinutes(-6), UpdatedAt = Noon.AddMinutes(-1),
+        });
+        await _orders.InsertAsync(new TradeOrder
+        {
+            PlanId = plan.Id, LineNo = 1, Attempt = 2, ClientOrderId = Guid.NewGuid().ToString("D"), Status = TradeOrderStatuses.New, LimitPrice = 166.60m,
+            PriceUnit = OrderPriceUnits.Currency, LotsRequested = 6, Currency = "RUB", CreatedAt = Noon.AddMinutes(-1), UpdatedAt = Noon.AddMinutes(-1),
+        });
+        await _orders.InsertAsync(new TradeOrder
+        {
+            PlanId = other.Id, LineNo = 1, Attempt = 1, ClientOrderId = Guid.NewGuid().ToString("D"), Status = TradeOrderStatuses.Filled, LimitPrice = 166.57m,
+            PriceUnit = OrderPriceUnits.Currency, LotsRequested = 3, LotsFilled = 3, Currency = "RUB", CreatedAt = Noon.AddSeconds(-45), UpdatedAt = Noon.AddSeconds(-30),
+        });
+        _fills.Fills.Add(new BrokerFill(null, FundUid, PlanSides.Buy, 4m, 166.55m, Noon.AddSeconds(-70)));
+        _fills.Fills.Add(new BrokerFill(null, FundUid, PlanSides.Buy, 2m, 166.58m, Noon.AddSeconds(-50)));
+        _fills.Fills.Add(new BrokerFill(null, FundUid, PlanSides.Buy, 3m, 166.57m, Noon.AddSeconds(-35)));
+
+        await Engine().RunTickAsync(Noon.AddMinutes(5));
+
+        var restored = _orders.All.Single(o => o.PlanId == plan.Id && o.Attempt == 2);
+        restored.LotsFilled.Should().Be(2, "сделки попытки 1 и другого плана уже засчитаны им");
+        restored.Status.Should().Be(TradeOrderStatuses.Failed);
+        restored.ErrorCode.Should().Be(TradeOrderErrorCodes.UnknownState);
+        _plans[plan.Id].Status.Should().Be(PlanStatuses.PartiallyDone, "исполнено 6 из 10, а не «всё»");
+        _gateway.PostCount.Should().Be(0);
+    }
+
+    [Fact]
     public async Task Restart_UnknownToBroker_WaitsThenFails_WithoutResubmitting()
     {
         var plan = AddPlan(PlanStatuses.Submitting);
@@ -882,6 +920,9 @@ public sealed class InMemoryOrders : ITradeOrderRepository
 
     public Task<IReadOnlyList<TradeOrder>> ListActiveByUserAsync(ulong userId, string broker) =>
         Task.FromResult<IReadOnlyList<TradeOrder>>(All.Where(o => TradeOrderStatuses.IsActive(o.Status) && o.Broker == broker).ToList());
+
+    public Task<IReadOnlyList<TradeOrder>> ListByUserUpdatedSinceAsync(ulong userId, string broker, DateTime sinceUtc) =>
+        Task.FromResult<IReadOnlyList<TradeOrder>>(All.Where(o => o.Broker == broker && o.UpdatedAt >= sinceUtc).ToList());
 
     public Task<bool> IsBrokerOrderLinkedAsync(string broker, string brokerOrderId, ulong exceptOrderId) =>
         Task.FromResult(All.Any(o => o.Broker == broker && o.BrokerOrderId == brokerOrderId && o.Id != exceptOrderId));
