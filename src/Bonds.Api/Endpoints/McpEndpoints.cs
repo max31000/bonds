@@ -31,7 +31,7 @@ public static class McpEndpoints
 
     /// <summary>Запрос пришёл с loopback и не через прокси.</summary>
     internal static bool IsLoopbackRequest(HttpContext ctx) =>
-        ctx.Connection.RemoteIpAddress is { } ip && IPAddress.IsLoopback(ip)
+        ctx.Connection.RemoteIpAddress is { } ip && IPAddress.IsLoopback(ip.IsIPv4MappedToIPv6 ? ip.MapToIPv4() : ip)
         && !ctx.Request.Headers.ContainsKey("X-Forwarded-For") && !ctx.Request.Headers.ContainsKey("Forwarded") && !ctx.Request.Headers.ContainsKey("X-Real-IP");
 
     private static async Task<IResult> Handle(HttpContext ctx, ulong runId, AgentMcpTokens tokens, BondsMcpServer server, CancellationToken ct)
