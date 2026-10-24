@@ -20,4 +20,7 @@ public interface ITradeOrderRepository
 
     /// <summary>Активные заявки пользователя (<c>New</c>/<c>Submitted</c>/<c>PartiallyFilled</c>) по всем его планам — могут висеть у брокера.</summary>
     Task<IReadOnlyList<TradeOrder>> ListActiveByUserAsync(ulong userId);
+
+    /// <summary>То же, только заявки брокера <paramref name="broker"/> (<c>trade_orders.broker</c>, задача 66) — для смены торгового ключа этого брокера.</summary>
+    Task<IReadOnlyList<TradeOrder>> ListActiveByUserAsync(ulong userId, string broker);
 }

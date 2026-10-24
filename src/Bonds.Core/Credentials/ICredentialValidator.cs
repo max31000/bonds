@@ -20,8 +20,12 @@ public interface ICredentialValidator
         ValidateAsync(fields, ct);
 }
 
-/// <summary>Контекст проверки секрета: пользователь и Id брокерского счёта его ОСНОВНОГО счёта T-Invest (<c>accounts.broker_account_id</c>, null — не привязан).</summary>
-public sealed record CredentialValidationContext(ulong UserId, string? PrimaryTInvestBrokerAccountId);
+/// <summary>
+/// Контекст проверки секрета: пользователь и Id брокерского счёта его ОСНОВНОГО счёта T-Invest (<c>accounts.broker_account_id</c>, null — не привязан);
+/// <paramref name="FreedomReadAccountNumber"/> — номер счёта (<c>trader_systems_id</c>) из ПРОВЕРЕННОГО ключа Freedom на чтение (meta <c>accountNumber</c>, задача 66),
+/// null — ключа на чтение нет или он не в статусе ok.
+/// </summary>
+public sealed record CredentialValidationContext(ulong UserId, string? PrimaryTInvestBrokerAccountId, string? FreedomReadAccountNumber = null);
 
 /// <summary>
 /// Результат валидации. <see cref="MetaJson"/> — НЕсекретные данные для UI (тариф, scope), сохраняются в

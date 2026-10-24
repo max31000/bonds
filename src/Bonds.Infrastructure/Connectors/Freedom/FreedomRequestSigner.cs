@@ -19,7 +19,7 @@ public static class FreedomRequestSigner
 
     /// <summary>
     /// Компактный JSON параметров (<c>{"a":1}</c>, без пробелов, порядок ключей как передан; пусто → <c>{}</c>).
-    /// Значения: string, целые, bool; остальное — через ToString (InvariantCulture не нужен: используются только эти типы).
+    /// Значения: string, целые, bool, decimal (цена заявки, задача 66 — числом без хвостовых нулей: 147.70 → 147.7); прочее — исключение.
     /// </summary>
     public static string BuildBody(IReadOnlyList<KeyValuePair<string, object>>? parameters)
     {
@@ -35,6 +35,7 @@ public static class FreedomRequestSigner
                     case int i: w.WriteNumber(key, i); break;
                     case long l: w.WriteNumber(key, l); break;
                     case bool b: w.WriteBoolean(key, b); break;
+                    case decimal d: w.WriteNumber(key, Normalize(d)); break;
                     default: throw new ArgumentException($"Неподдерживаемый тип параметра {key}: {value.GetType().Name}");
                 }
             }
@@ -44,4 +45,7 @@ public static class FreedomRequestSigner
 
         return Encoding.UTF8.GetString(stream.ToArray());
     }
+
+    /// <summary>Убирает хвостовые нули масштаба decimal (147.700 → 147.7), значение не меняется.</summary>
+    private static decimal Normalize(decimal d) => d / 1.000000000000000000000000000000000m;
 }

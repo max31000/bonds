@@ -34,8 +34,10 @@ public static class ExecutionMessages
     public static string Cancelled(TradePlan plan, TradePlanLine line, string reason) =>
         Limit($"⏹ {Head(plan, line)}: заявка снята — {BotFormat.HtmlTruncated(reason, MaxReason)}");
 
-    public static string FeeMismatch(TradePlan plan, TradePlanLine line, decimal expected, decimal actual, string currency) =>
-        Limit($"ℹ {Head(plan, line)}: комиссия {BotFormat.Number(actual, 2)} {BotFormat.Html(currency)} отличается от оценки {BotFormat.Number(expected, 2)} {BotFormat.Html(currency)}");
+    /// <param name="note">Пояснение (Freedom: фактический маршрут из выписки, по которому посчитана модель), null — нет.</param>
+    public static string FeeMismatch(TradePlan plan, TradePlanLine line, decimal expected, decimal actual, string currency, string? note = null) =>
+        Limit($"ℹ {Head(plan, line)}: комиссия {BotFormat.Number(actual, 2)} {BotFormat.Html(currency)} отличается от оценки {BotFormat.Number(expected, 2)} {BotFormat.Html(currency)}" +
+              (string.IsNullOrWhiteSpace(note) ? string.Empty : $" ({BotFormat.HtmlTruncated(note, 120)})"));
 
     public static string PlanFinished(TradePlan plan, string status) => Limit(status switch
     {

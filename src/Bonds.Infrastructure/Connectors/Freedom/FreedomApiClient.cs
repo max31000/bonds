@@ -1,6 +1,4 @@
 using System.Globalization;
-using System.Net.Http.Headers;
-using System.Text;
 using System.Text.Json;
 using Bonds.Infrastructure.Connectors.Freedom.Models;
 using Microsoft.Extensions.Logging;
@@ -86,24 +84,13 @@ public sealed class FreedomApiClient : IFreedomApiClient
     private async Task<(JsonDocument Doc, FreedomCredentials Creds)> SendAsync(
         FreedomCredentials credentials, string cmd, IReadOnlyList<KeyValuePair<string, object>>? parameters, CancellationToken ct)
     {
-        var body = FreedomRequestSigner.BuildBody(parameters);
-        var timestamp = _time.GetUtcNow().ToUnixTimeSeconds();
-        using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/{cmd}")
-        {
-            Content = new StringContent(body, Encoding.UTF8, new MediaTypeHeaderValue("application/json")),
-        };
-        request.Headers.TryAddWithoutValidation("X-NtApi-PublicKey", credentials.PublicKey);
-        request.Headers.TryAddWithoutValidation("X-NtApi-Timestamp", timestamp.ToString(CultureInfo.InvariantCulture));
-        request.Headers.TryAddWithoutValidation("X-NtApi-Sig", FreedomRequestSigner.Sign(credentials.PrivateKey, body, timestamp));
-
         _logger?.LogDebug("Freedom API: {Cmd}", cmd);
         try
         {
-            using var response = await _http.SendAsync(request, ct);
-            var text = await response.Content.ReadAsStringAsync(ct);
-            if (!response.IsSuccessStatusCode)
+            var (status, text) = await FreedomSignedHttp.SendAsync(_http, _time, credentials, cmd, parameters, ct);
+            if ((int)status is < 200 or > 299)
             {
-                throw new FreedomApiException(cmd, $"HTTP {(int)response.StatusCode}");
+                throw new FreedomApiException(cmd, $"HTTP {(int)status}");
             }
 
             try

@@ -48,10 +48,10 @@ public enum GatewayErrorKind
     Transient,
 }
 
-/// <summary>Ошибка шлюза. Сообщение — без токена (только код gRPC и текст брокера, обрезанный).</summary>
-public sealed class TInvestGatewayException : Exception
+/// <summary>Ошибка торгового шлюза любого брокера (задача 66: общий тип для исполнителя). Сообщение — без секретов.</summary>
+public class ExecutionGatewayException : Exception
 {
-    public TInvestGatewayException(GatewayErrorKind kind, string code, string message) : base(message)
+    public ExecutionGatewayException(GatewayErrorKind kind, string code, string message) : base(message)
     {
         Kind = kind;
         Code = code;
@@ -59,6 +59,14 @@ public sealed class TInvestGatewayException : Exception
 
     public GatewayErrorKind Kind { get; }
     public string Code { get; }
+}
+
+/// <summary>Ошибка шлюза T-Invest. Сообщение — без токена (только код gRPC и текст брокера, обрезанный).</summary>
+public sealed class TInvestGatewayException : ExecutionGatewayException
+{
+    public TInvestGatewayException(GatewayErrorKind kind, string code, string message) : base(kind, code, message)
+    {
+    }
 }
 
 /// <summary>

@@ -17,7 +17,8 @@ namespace Bonds.Tests.Policy;
 /// <c>Bonds.Infrastructure/Execution/TInvestOrderGateway.cs</c> (реализация <see cref="ITInvestOrderGateway"/>).</item>
 /// <item>Глаголы заявок (методы шлюза) — ТОЛЬКО внутри <c>Bonds.Infrastructure/Execution/</c> (шлюз и исполнитель); бот, эндпоинты и правила снимают
 /// заявки только флагом.</item>
-/// <item>Заявки Freedom (Tradernet) — НИГДЕ (задача 66).</item>
+/// <item>Команды заявок Freedom (Tradernet: размещение, снятие, список заявок) — ТОЛЬКО в <c>Bonds.Infrastructure/Execution/FreedomOrderGateway.cs</c> (реализация
+/// <see cref="IFreedomOrderGateway"/>, задача 66); стоп-заявки Freedom — НИГДЕ. Подписанный транспорт Freedom — только у клиента на чтение и этого шлюза.</item>
 /// </list>
 /// Менять этот тест — осознанно, а не случайно.
 /// </summary>
@@ -25,6 +26,7 @@ public class NoOrderPlacementArchitectureTests
 {
     private const string GatewayFile = "Bonds.Infrastructure/Execution/TInvestOrderGateway.cs";
     private const string ExecutionDir = "Bonds.Infrastructure/Execution/";
+    private const string FreedomGatewayFile = "Bonds.Infrastructure/Execution/FreedomOrderGateway.cs";
 
     /// <summary>Торговые сервисы/методы SDK T-Invest.</summary>
     private static readonly Regex SdkOrders = new(
@@ -34,9 +36,14 @@ public class NoOrderPlacementArchitectureTests
     /// <summary>Глаголы заявок (методы шлюза и SDK).</summary>
     private static readonly Regex OrderVerbs = new(@"PostLimitOrder|CancelOrder|PostOrder", RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
-    /// <summary>Заявки Freedom (Tradernet) — запрещены везде до задачи 66.</summary>
+    /// <summary>Команды заявок Freedom (Tradernet) — только в <see cref="FreedomGatewayFile"/> (задача 66).</summary>
     private static readonly Regex FreedomOrders = new(
-        @"putTradeOrder|delTradeOrder|putStopLoss|putStopOrder|getNotifyOrderJson|cancelOrder\b",
+        @"putTradeOrder|delTradeOrder|getNotifyOrderJson|cancelOrder\b",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    /// <summary>Стоп-заявки и прочие торговые команды Freedom — запрещены везде (исполнитель — только лимитные заявки).</summary>
+    private static readonly Regex FreedomForbidden = new(
+        @"putStopLoss|putStopOrder|putTradeOrderStop|putMarketOrder|editTradeOrder|stopLoss",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     private static string RepoRoot()
@@ -87,14 +94,49 @@ public class NoOrderPlacementArchitectureTests
     }
 
     [Fact]
-    public void FreedomOrderPlacement_ForbiddenEverywhere()
+    public void FreedomOrderCommands_OnlyInFreedomOrderGateway()
     {
         var offenders = SourceLines()
-            .Where(x => FreedomOrders.IsMatch(x.Line))
+            .Where(x => x.Rel != FreedomGatewayFile && FreedomOrders.IsMatch(x.Line))
             .Select(x => $"{x.Rel}:{x.LineNo}: {FreedomOrders.Match(x.Line).Value}")
             .ToList();
 
-        offenders.Should().BeEmpty("заявки Freedom — задача 66, сейчас запрещены везде");
+        offenders.Should().BeEmpty("команды заявок Freedom вызываются только из IFreedomOrderGateway (Execution/FreedomOrderGateway.cs)");
+        SourceLines().Where(x => x.Rel == FreedomGatewayFile && x.Line.Contains("putTradeOrder", StringComparison.Ordinal)).Should().NotBeEmpty();
+    }
+
+    [Fact]
+    public void FreedomStopOrders_ForbiddenEverywhere()
+    {
+        var offenders = SourceLines()
+            .Where(x => FreedomForbidden.IsMatch(x.Line))
+            .Select(x => $"{x.Rel}:{x.LineNo}: {FreedomForbidden.Match(x.Line).Value}")
+            .ToList();
+
+        offenders.Should().BeEmpty("стоп-/рыночные заявки Freedom исполнителю запрещены");
+    }
+
+    [Fact]
+    public void FreedomSignedTransport_OnlyInReadClientAndGateway()
+    {
+        var allowed = new[] { "Bonds.Infrastructure/Connectors/Freedom/FreedomSignedHttp.cs", "Bonds.Infrastructure/Connectors/Freedom/FreedomApiClient.cs", FreedomGatewayFile };
+        var offenders = SourceLines()
+            .Where(x => !allowed.Contains(x.Rel) && x.Line.Contains("FreedomSignedHttp", StringComparison.Ordinal))
+            .Select(x => $"{x.Rel}:{x.LineNo}")
+            .ToList();
+
+        offenders.Should().BeEmpty("подписанный транспорт Freedom — только клиент на чтение и торговый шлюз");
+    }
+
+    [Fact]
+    public void FreedomGateway_HasSingleImplementation_InExecutionFolder()
+    {
+        var implementations = typeof(IFreedomOrderGateway).Assembly.GetTypes()
+            .Where(t => !t.IsInterface && !t.IsAbstract && typeof(IFreedomOrderGateway).IsAssignableFrom(t))
+            .Select(t => t.FullName)
+            .ToList();
+        implementations.Should().BeEquivalentTo(["Bonds.Infrastructure.Execution.FreedomOrderGateway"]);
+        File.Exists(Path.Combine(RepoRoot(), "src", FreedomGatewayFile)).Should().BeTrue();
     }
 
     [Fact]

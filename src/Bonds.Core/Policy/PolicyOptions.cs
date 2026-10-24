@@ -76,6 +76,12 @@ public sealed class ExecutionOptions
     /// </summary>
     public int MaxFeeRechecks { get; set; } = 3;
 
+    /// <summary>
+    /// То же для Freedom (задача 66): комиссия есть только в выписке движений денег (<c>commission_for_trades</c>) и появляется с задержкой — сверка откладывается,
+    /// пока по всем сделкам строки не придут строки комиссии, но не больше стольких тиков (45 × 20 с ≈ 15 мин); план закрывается после сверки.
+    /// </summary>
+    public int FreedomMaxFeeRechecks { get; set; } = 45;
+
     /// <summary>Предел дрейфа для строки: облигации (цена в пунктах) — <see cref="MaxBondPriceDriftFraction"/>, остальное — <see cref="MaxPriceDriftFraction"/>.</summary>
     public decimal DriftFor(bool isBond) => isBond ? MaxBondPriceDriftFraction : MaxPriceDriftFraction;
 }

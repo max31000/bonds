@@ -15,7 +15,8 @@ namespace Bonds.Api.Endpoints;
 /// <item><c>DELETE /api/credentials/{provider}</c> — 204.</item>
 /// <item><c>tinvest_trade</c> (задача 65, ревью M1): удаление или замена ДРУГИМ токеном при активных заявках у брокера — 409 (<c>type: "ActiveOrders"</c>),
 /// пока нет <c>?cancelActive=true</c>; с ним заявки сначала синхронно снимаются ТЕКУЩИМ токеном (<see cref="TradeTokenChangeGuard"/>), и только потом токен
-/// удаляется/заменяется; хоть одна не снята — 409, токен не меняется.</item>
+/// удаляется/заменяется; хоть одна не снята — 409, токен не меняется. То же для <c>freedom_trade</c> (задача 66) — только заявки Freedom; его проверка сверяет
+/// счёт с ПРОВЕРЕННЫМ ключом Freedom на чтение.</item>
 /// <item><c>GET /api/capabilities</c> — какие части функционала включены (флаг true только при status ok).</item>
 /// </list>
 /// <para>
@@ -83,14 +84,19 @@ public static class CredentialsEndpoints
 
         var primaryAccountId = await PositionsEndpoints.ResolveAccountIdAsync(currentUser, accountRepo);
         var primaryBrokerAccountId = primaryAccountId is > 0 ? (await accountRepo.GetByIdAsync(primaryAccountId.Value))?.BrokerAccountId : null;
-        var validation = await validator.ValidateAsync(fields, new CredentialValidationContext(userId, primaryBrokerAccountId), ct);
+        // Торговый ключ Freedom сверяется со счётом ПРОВЕРЕННОГО ключа на чтение (задача 66).
+        var freedomRead = descriptor.Id == CredentialProviders.FreedomTrade
+            ? (await store.ListStatusesAsync(userId)).FirstOrDefault(s => s.Provider == CredentialProviders.Freedom && s.Status == CredentialStatus.Ok)
+            : null;
+        var freedomReadAccount = FreedomTradeCredentialMeta.ReadKeyAccountNumber(freedomRead?.MetaJson);
+        var validation = await validator.ValidateAsync(fields, new CredentialValidationContext(userId, primaryBrokerAccountId, freedomReadAccount), ct);
         if (!validation.Ok)
         {
             // Ничего не сохраняем; сообщение валидатора не содержит секрет (контракт ICredentialValidator).
             return ValidationFailure(validation.Message ?? "Секрет не прошёл проверку");
         }
 
-        var previous = descriptor.Id is CredentialProviders.TInvestRead or CredentialProviders.TInvestTrade
+        var previous = descriptor.Id is CredentialProviders.TInvestRead or CredentialProviders.TInvestTrade or CredentialProviders.FreedomTrade
             ? await store.GetSecretAsync(userId, descriptor.Id)
             : null;
 
@@ -100,6 +106,13 @@ public static class CredentialsEndpoints
         {
             // Замена торгового токена ДРУГИМ: висящие заявки должны быть сняты текущим токеном, иначе их больше никто не снимет.
             var outcome = await tradeGuard.RunAsync(userId, cancelActive == true, Save, DateTime.UtcNow, ct);
+            if (!outcome.Ok) return ActiveOrdersConflict(outcome);
+        }
+        else if (descriptor.Id == CredentialProviders.FreedomTrade && previous is not null
+                 && (previous.GetValueOrDefault("publicKey") != fields["publicKey"] || previous.GetValueOrDefault("privateKey") != fields["privateKey"]))
+        {
+            // То же для торгового ключа Freedom (задача 66): снимаются только заявки Freedom, текущим ключом.
+            var outcome = await tradeGuard.RunAsync(userId, cancelActive == true, Save, DateTime.UtcNow, ct, Bonds.Core.Models.Brokers.Freedom);
             if (!outcome.Ok) return ActiveOrdersConflict(outcome);
         }
         else
@@ -123,9 +136,10 @@ public static class CredentialsEndpoints
         var descriptor = CredentialProviders.Find(provider)
             ?? throw new NotFoundException($"Неизвестный провайдер: {provider}");
         var userId = await ResolveUserIdAsync(currentUser);
-        if (descriptor.Id == CredentialProviders.TInvestTrade)
+        if (descriptor.Id is CredentialProviders.TInvestTrade or CredentialProviders.FreedomTrade)
         {
-            var outcome = await tradeGuard.RunAsync(userId, cancelActive == true, () => store.DeleteAsync(userId, descriptor.Id), DateTime.UtcNow, ct);
+            var broker = descriptor.Id == CredentialProviders.FreedomTrade ? Bonds.Core.Models.Brokers.Freedom : Bonds.Core.Models.Brokers.TInvest;
+            var outcome = await tradeGuard.RunAsync(userId, cancelActive == true, () => store.DeleteAsync(userId, descriptor.Id), DateTime.UtcNow, ct, broker);
             return outcome.Ok ? Results.NoContent() : ActiveOrdersConflict(outcome);
         }
 

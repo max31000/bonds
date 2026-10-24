@@ -79,7 +79,10 @@ public sealed class TradeOrder
     public int LineNo { get; set; }
     public int Attempt { get; set; }
 
-    /// <summary>UUID (36 символов), создаётся и записывается ДО отправки, уходит брокеру как <c>order_id</c> — идемпотентность.</summary>
+    /// <summary>
+    /// Создаётся и записывается ДО отправки — идемпотентность. T-Invest: UUID (36 символов), уходит как <c>order_id</c>. Freedom: числовой <c>user_order_id</c>
+    /// (<see cref="FreedomOrderRules.NewUserOrderId"/>), по нему заявка ищется в списке заявок брокера после рестарта.
+    /// </summary>
     public string ClientOrderId { get; set; } = string.Empty;
 
     public string? BrokerOrderId { get; set; }
@@ -110,20 +113,31 @@ public sealed class TradeOrder
 
     /// <summary>Когда строка (по последней заявке) прошла итоговую сверку комиссии и уведомление об исполнении. null — ещё нет.</summary>
     public DateTime? FeeCheckedAt { get; set; }
+
+    /// <summary>Брокер заявки (<c>trade_orders.broker</c>, задача 66): <c>tinvest</c> | <c>freedom</c>. У Freedom <see cref="ClientOrderId"/> — числовой <c>user_order_id</c>.</summary>
+    public string Broker { get; set; } = Bonds.Core.Models.Brokers.TInvest;
 }
 
 /// <summary>
 /// Ворота исполнения (задача 65) — чистая функция. Живой режим = ВСЕ четыре условия: глобальный <c>Execution__Enabled</c>, режим пользователя <c>live</c>,
 /// торговый токен <c>tinvest_trade</c> в статусе ok ПОСЛЕ сетевой проверки, нет паузы <c>/stop</c>. Любое не выполнено — dry-run, причины перечисляются.
+/// Задача 66: ворота считаются ПО БРОКЕРУ — для строк Freedom третье условие — ключ <c>freedom_trade</c> (тот же env, режим и пауза).
 /// </summary>
 public static class ExecutionGate
 {
-    public static ExecutionGateResult Evaluate(bool globalEnabled, string? userMode, bool tradeCredentialOk, bool paused)
+    /// <summary>Причина «нет торгового ключа» для T-Invest (по умолчанию).</summary>
+    public const string NoTInvestTradeCredential = "Нет проверенного торгового токена T-Invest";
+
+    /// <summary>Причина «нет торгового ключа» для Freedom (задача 66: секрет <c>freedom_trade</c>, сверенный по сети с ключом на чтение).</summary>
+    public const string NoFreedomTradeCredential = "Нет проверенного торгового ключа Freedom (freedom_trade)";
+
+    /// <param name="noCredentialReason">Текст причины при <paramref name="tradeCredentialOk"/> = false — по брокеру (<see cref="NoTInvestTradeCredential"/>, <see cref="NoFreedomTradeCredential"/>).</param>
+    public static ExecutionGateResult Evaluate(bool globalEnabled, string? userMode, bool tradeCredentialOk, bool paused, string noCredentialReason = NoTInvestTradeCredential)
     {
         var reasons = new List<string>();
         if (!globalEnabled) reasons.Add("Исполнение выключено на сервере (Execution__Enabled=false)");
         if (ExecutionModes.Normalize(userMode) != ExecutionModes.Live) reasons.Add("Режим наблюдения (observe)");
-        if (!tradeCredentialOk) reasons.Add("Нет проверенного торгового токена T-Invest");
+        if (!tradeCredentialOk) reasons.Add(noCredentialReason);
         if (paused) reasons.Add("Пауза (/stop)");
         return new ExecutionGateResult(reasons.Count == 0, globalEnabled, ExecutionModes.Normalize(userMode), tradeCredentialOk, paused, reasons);
     }

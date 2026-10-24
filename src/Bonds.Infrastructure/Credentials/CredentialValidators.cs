@@ -173,3 +173,55 @@ public sealed class FreedomCredentialValidator : ICredentialValidator
         }
     }
 }
+
+/// <summary>
+/// <c>freedom_trade</c> (задача 66): СЕТЕВАЯ проверка — <c>GetAllUserTexInfo</c> с введёнными ключами должен вернуть тот же <c>trader_systems_id</c>, что ПРОВЕРЕННЫЙ
+/// ключ на чтение (<c>freedom</c>, meta <c>accountNumber</c>). Право торговать без реальной заявки проверить нельзя — в meta честная отметка
+/// <c>tradeRight: "unverified"</c> (UI: «торговое право проверится на первой заявке»). Без ключа на чтение — невалиден (счёт не с чем сверить).
+/// Сообщения об ошибках не содержат ключей.
+/// </summary>
+public sealed class FreedomTradeCredentialValidator : ICredentialValidator
+{
+    private readonly Bonds.Infrastructure.Connectors.Freedom.IFreedomApiClient _client;
+
+    public FreedomTradeCredentialValidator(Bonds.Infrastructure.Connectors.Freedom.IFreedomApiClient client) => _client = client;
+
+    public string ProviderId => CredentialProviders.FreedomTrade;
+
+    public Task<CredentialValidationResult> ValidateAsync(IReadOnlyDictionary<string, string> fields, CancellationToken ct = default) =>
+        Task.FromResult(CredentialValidationResult.Invalid("Проверка торгового ключа Freedom требует проверенного ключа на чтение."));
+
+    public async Task<CredentialValidationResult> ValidateAsync(
+        IReadOnlyDictionary<string, string> fields, CredentialValidationContext context, CancellationToken ct = default)
+    {
+        var pub = CredentialFieldReader.SingleToken(fields, "publicKey");
+        var priv = CredentialFieldReader.SingleToken(fields, "privateKey");
+        if (pub is null || priv is null) return CredentialValidationResult.Invalid("Оба ключа должны быть заданы, без пробелов.");
+        if (string.IsNullOrWhiteSpace(context.FreedomReadAccountNumber))
+            return CredentialValidationResult.Invalid("Сначала подключите ключ Freedom на чтение: торговый ключ сверяется с его счётом.");
+
+        Bonds.Infrastructure.Connectors.Freedom.Models.FreedomUserInfo info;
+        try
+        {
+            info = await _client.GetUserInfoAsync(new Bonds.Infrastructure.Connectors.Freedom.FreedomCredentials(pub, priv), ct);
+        }
+        catch (Bonds.Infrastructure.Connectors.Freedom.FreedomApiException)
+        {
+            return CredentialValidationResult.Invalid("Freedom не принял торговые ключи. Проверьте публичный и секретный ключ.");
+        }
+
+        return Evaluate(info.AccountNumber, info.TariffId, context.FreedomReadAccountNumber!);
+    }
+
+    /// <summary>Правило сверки счёта (чистая функция — закреплена тестами): тот же <c>trader_systems_id</c>, что у ключа на чтение.</summary>
+    public static CredentialValidationResult Evaluate(string? tradeAccountNumber, int tariffId, string readAccountNumber)
+    {
+        var trade = tradeAccountNumber?.Trim();
+        if (string.IsNullOrEmpty(trade)) return CredentialValidationResult.Invalid("Freedom не вернул номер счёта для торгового ключа.");
+        if (!string.Equals(trade, readAccountNumber.Trim(), StringComparison.Ordinal))
+            return CredentialValidationResult.Invalid($"Торговый ключ от другого счёта (…{Last4(trade)}), ключ на чтение — от счёта …{Last4(readAccountNumber.Trim())}.");
+        return CredentialValidationResult.Valid(FreedomTradeCredentialMeta.Build(trade, tariffId));
+    }
+
+    private static string Last4(string id) => id.Length >= 4 ? id[^4..] : id;
+}
