@@ -235,7 +235,7 @@ public sealed record PolicyInput
 
     /// <summary>
     /// Задача 67 (#3): действует удержание денег под вывод (<see cref="WithdrawHold"/>: открыт план P5/выхода из корзины с <see cref="TradePlanSummary.CashHold"/>
-    /// либо не прошло <see cref="PolicyOptions.WithdrawHoldTtl"/> рабочих дней с его исполнения, и владелец не отметил «деньги выведены»). P1 при нём не паркует кэш.
+    /// либо не прошло <see cref="PolicyOptions.WithdrawHoldTtl"/> рабочих дней с его исполнения, и владелец не отметил «деньги выведены»). P1 при нём паркует только остаток (решение владельца, T-67D).
     /// Сумма удержания уже вычтена из <see cref="FreeCash"/> (входит в <see cref="ReservedCash"/>).
     /// </summary>
     public bool CashHoldActive { get; init; }

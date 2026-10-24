@@ -71,14 +71,28 @@ public class AuditWaveATests
     // ─── #3 удержание денег под вывод ──────────────────────────────────────────────────────
 
     [Fact]
-    public void T67_P1_CashHoldActive_ParksNothing()
+    public void T67_P1_CashHoldActive_AllFreeCashHeld_ParksNothing()
     {
-        var input = Input([Liquidity()], [], 40_000m, [Tmon, Tsav]) with { CashHoldActive = true };
+        // Свободно 40 000, удержано 100 000: FreeCash уже за вычетом удержания (= 0) — парковать нечего, причина говорит про вывод.
+        var input = Input([Liquidity()], [], 0m, [Tmon, Tsav]) with { CashHoldActive = true };
 
         var outcome = SweepRule.Evaluate(input);
 
         outcome.Plan.Should().BeNull();
         outcome.Notes.Should().Contain(n => n.Contains("вывод"));
+    }
+
+    [Fact]
+    public void T67D_P1_CashHoldActive_ParksOnlyTheRemainder()
+    {
+        // Решение владельца (T-67D): удержание НЕ блокирует P1. Вывод 30 000 при свободных 40 000 — FreeCash уже за вычетом удержания (10 000):
+        // P1 паркует только остаток (не больше 10 000) и больше нуля, раз лоты помещаются.
+        var input = Input([Liquidity()], [], 40_000m - 30_000m, [Tmon, Tsav]) with { CashHoldActive = true, ReservedCash = 30_000m };
+
+        var plan = SweepRule.Evaluate(input).Plan;
+
+        plan.Should().NotBeNull();
+        plan!.Summary.ReservedBuy.Should().BeGreaterThan(0m).And.BeLessThanOrEqualTo(10_000m);
     }
 
     [Fact]

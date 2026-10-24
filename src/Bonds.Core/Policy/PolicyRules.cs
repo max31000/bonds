@@ -32,10 +32,12 @@ public static class SweepRule
         if (basket.FillRule == BasketFillRules.Hold) return PolicyOutcome.None("P1: корзина «liquidity» в режиме hold");
         // Задача 67 (#7): устаревшие данные или неполная оценка ликвидности/свободных денег — решение «выше цели или нет» и сама сумма ненадёжны.
         if (PolicyDataGate.LiquidityProblem(input) is { } p1Data) return PolicyOutcome.None($"P1: {p1Data} — кэш не паркуется");
-        // Задача 67 (#3): открыт план вывода (или не прошло WithdrawHoldTtl с его исполнения) — деньги ждут ручного вывода в банк, парковать нельзя.
-        if (input.CashHoldActive)
-            return PolicyOutcome.None("P1: деньги удержаны под вывод (открыт план вывода или он исполнен недавно) — не паркуются; снять удержание: /withdrawn или «Деньги выведены»");
-        if (input.FreeCash <= 0m) return PolicyOutcome.None("P1: свободных рублей нет");
+        // Задача 67 (#3) + решение владельца (T-67D): удержание под вывод НЕ блокирует P1. Сумма удержания уже вычтена из FreeCash (PolicyInputBuilder:
+        // FreeCash = свободные − SumReservedBuysAsync, куда входит удержание), поэтому P1 паркует только остаток сверх удержанных денег.
+        if (input.FreeCash <= 0m)
+            return PolicyOutcome.None(input.CashHoldActive
+                ? "P1: свободные рубли удержаны под вывод (открыт план вывода или он исполнен недавно) — парковать нечего; снять удержание: /withdrawn или «Деньги выведены»"
+                : "P1: свободных рублей нет");
 
         // Корзина уже выше цели (Above/HardAbove): парковать в неё дальше нельзя — кэш остаётся свободным (его разберёт P2/P3b/P4 или владелец).
         if (input.RowByCode(PolicyNames.Liquidity) is { State: BasketState.Above or BasketState.HardAbove } liquidityRow)

@@ -820,9 +820,9 @@ public class PlansEndpointTests
         using (var scope = factory.Services.CreateScope())
             await scope.ServiceProvider.GetRequiredService<PolicyRunner>().RunForUserAsync(userId, now.AddMinutes(1), new PolicyRunResult());
 
-        var p1 = (await PlansOfAsync(userId)).Where(p => p.Rule == PlanRules.P1Sweep).ToList();
-        foreach (var plan in p1)
-            JsonSerializer.Deserialize<TradePlanSummary>(plan.SummaryJson!, WebJson)!.ReservedBuy.Should().BeLessThanOrEqualTo(10_000m);
+        // Решение владельца (T-67D): удержание не блокирует P1 — он паркует только остаток (40 000 − 30 000), и лоты фондов в него помещаются.
+        var p1 = (await PlansOfAsync(userId)).Single(p => p.Rule == PlanRules.P1Sweep);
+        JsonSerializer.Deserialize<TradePlanSummary>(p1.SummaryJson!, WebJson)!.ReservedBuy.Should().BeGreaterThan(0m).And.BeLessThanOrEqualTo(10_000m);
     }
 
     [Fact]

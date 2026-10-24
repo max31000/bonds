@@ -367,7 +367,7 @@ instrument|asset_class); таблица `target_allocations` **удалена** 
 `AutoApproved` без `decided_via = auto` не исполняется); Freedom в авто не бывает. `PUT /api/baskets[/{id}]`, ВКЛЮЧАЮЩИЙ (false → true) `autoBuy/autoSell` не у `liquidity`, → 422 (унаследованное true проходит как есть). (2) **Резерв** `SumReservedBuysAsync`
 включает живой `Approved` (`dry_run = 0`). (3) **Удержание под вывод:** `summary.cashHold` (валюта портфеля) — P5: запрошенное − нехватка, выход из корзины: чистая выручка; действует, пока план
 открыт (до `expires_at`, Submitting — всегда) и `Policy:WithdrawHoldTtl` (3) рабочих дня от `expires_at` исполненного плана (`WithdrawHold.IsActive`), входит в `SumReservedBuysAsync`; при нём
-P1 не паркует (`PolicyInput.CashHoldActive`). Снять — `/withdrawn` в боте или «Деньги выведены» на «Планах» (`POST /api/plans/cash-hold/release`, миграция 039 `cash_hold_released_at`).
+P1 паркует только остаток сверх удержания (FreeCash уже за вычетом; `PolicyInput.CashHoldActive` — лишь для причины «удержаны под вывод», T-67D). Снять — `/withdrawn` в боте или «Деньги выведены» на «Планах» (`POST /api/plans/cash-hold/release`, миграция 039 `cash_hold_released_at`).
 P5, целиком покрытый свободными деньгами, — план «только удержание» (A2, см. ниже). (4) **Живой план в боте:** первой строкой жирное «⚠️ РЕАЛЬНЫЕ ЗАЯВКИ» + `executionNote`; в `/plans` у живых
 планов только ссылка «Детали»; «Подтвердить» в сообщении плана — шаг 1 (nonce меняется `RotateNonceAsync`, показ реальных заявок, кнопки `p:{id}:s:{nonce}` «Отправить заявки» / «Отклонить»),
 шаг 2 «Отправить заявки» поглощает nonce и подтверждает. (5) **Неполные/устаревшие данные** (`PolicyDataGate`): `PolicyInput.DataIncomplete`/`IncompleteBaskets` (коды строк дрейфа позиций без
