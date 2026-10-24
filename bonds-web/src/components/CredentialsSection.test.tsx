@@ -193,4 +193,25 @@ describe('CredentialsSection', () => {
     expect(screen.getByTestId('credential-freedom-input-publicKey')).toBeInTheDocument();
     expect(screen.getByTestId('credential-freedom-input-privateKey')).toBeInTheDocument();
   });
+
+  it('freedom_trade card says the trade right is verified on the first order', async () => {
+    server.use(
+      http.get('*/api/credentials', () =>
+        HttpResponse.json([
+          missing({
+            provider: 'freedom_trade',
+            title: 'Freedom (торговля)',
+            experimental: true,
+            fields: [
+              { name: 'publicKey', title: 'Публичный ключ', isSecret: true },
+              { name: 'privateKey', title: 'Секретный ключ', isSecret: true },
+            ],
+          }),
+        ]),
+      ),
+    );
+    renderSection();
+    expect(await screen.findByText(/Торговое право проверится на первой заявке/)).toBeInTheDocument();
+    expect(screen.getByText(/\.ITS исполнитель не отправляет никогда/)).toBeInTheDocument();
+  });
 });

@@ -1196,6 +1196,8 @@ export interface Capabilities {
   tinvestRead: boolean;
   tinvestTrade: boolean;
   freedom: boolean;
+  /** Торговый ключ Freedom (задача 66) проверен. */
+  freedomTrade?: boolean;
   aiAgents: boolean;
 }
 
