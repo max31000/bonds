@@ -177,7 +177,7 @@ public class MigrationIdempotencyTests : IAsyncLifetime
             @"SELECT DELETE_RULE FROM information_schema.REFERENTIAL_CONSTRAINTS
               WHERE CONSTRAINT_SCHEMA = DATABASE() AND CONSTRAINT_NAME = 'fk_trade_orders_plan_restrict'");
         rule.Should().Be("RESTRICT");
-        (await conn.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM _migrations")).Should().Be(41);
+        (await conn.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM _migrations")).Should().Be(42);
     }
 
     [Fact]

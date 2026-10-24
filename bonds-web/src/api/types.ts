@@ -2185,6 +2185,8 @@ export interface Plan {
   expiresAt: string;
   decidedAt: string | null;
   decidedVia: string | null;
+  /** Задача 68: кто предложил план — `agent` (ИИ-агент; решение всё равно за пользователем), иначе null/нет поля. */
+  source?: string | null;
   summary: PlanSummary | null;
   lines: PlanLine[];
   /** Есть заявка, которую исполнитель не смог снять (план при этом остаётся `Submitting`). */
@@ -2222,4 +2224,46 @@ export interface PlanWithdrawBody {
   fraction?: number;
   portfolio?: CapitalPortfolioId;
   includeBaskets?: string[];
+}
+
+// ─── Задача 68: ИИ-агент ──────────────────────────────────────────────────────────────
+
+export type AgentTaskKind = 'DailyDigest' | 'EventReview' | 'MonthlyReview' | 'OnDemand';
+
+/** Запуск агента (`agent_runs`). `resultText` — НЕДОВЕРЕННЫЙ текст модели: рендерить только как текст. `costUsd` — USD (оценка CLI). */
+export interface AgentRun {
+  id: number;
+  kind: AgentTaskKind | string;
+  model: string | null;
+  question: string | null;
+  started: string;
+  finished: string | null;
+  exitCode: number | null;
+  costUsd: number | null;
+  tokens: number | null;
+  resultText: string | null;
+  error: string | null;
+}
+
+/** GET /api/agent — настройки, доступность и история. */
+export interface AgentState {
+  enabled: boolean;
+  model: string;
+  monthlyModel: string;
+  dailyRunLimit: number;
+  maxDailyRunLimit: number;
+  /** Подключение Claude Code проверено. */
+  credentialOk: boolean;
+  serverEnabled: boolean;
+  runsToday: number;
+  runs: AgentRun[];
+  disclaimer: string;
+}
+
+/** PUT /api/agent/settings. */
+export interface AgentSettingsRequest {
+  enabled: boolean;
+  model: string;
+  monthlyModel: string;
+  dailyRunLimit: number;
 }

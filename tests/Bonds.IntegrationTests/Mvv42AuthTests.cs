@@ -55,12 +55,29 @@ public class Mvv42AuthTests
     }
 
     [Fact]
-    public void OnlyHealth_IsAnonymous()
+    public void OnlyHealth_AndAgentMcp_AreAnonymous()
     {
         var endpoints = Endpoints();
 
         endpoints.Should().HaveCountGreaterThan(30, "the whole API surface must be enumerated");
-        endpoints.Where(e => e.Anonymous).Select(e => e.Path).Should().BeEquivalentTo(["/health"]);
+        // Task 68: the agent's MCP endpoint is outside cookie auth by design — it has its own loopback check + per-run bearer (McpEndpoints).
+        endpoints.Where(e => e.Anonymous).Select(e => e.Path).Distinct().Should().BeEquivalentTo(["/health", "/internal/mcp/1"]);
+    }
+
+    [Theory]
+    [InlineData("POST")]
+    [InlineData("GET")]
+    [InlineData("DELETE")]
+    public async Task AgentMcp_FromNonLoopback_Returns404_EvenWithoutDatabase(string method)
+    {
+        // TestServer requests carry no loopback RemoteIpAddress — exactly like traffic from nginx / the docker network.
+        var request = new HttpRequestMessage(new HttpMethod(method), "/internal/mcp/1");
+        if (method == "POST") request.Content = JsonContent.Create(new { jsonrpc = "2.0", id = 1, method = "tools/list" });
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", "anything");
+
+        var response = await _factory.CreateClient().SendAsync(request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
 
     [Fact]
