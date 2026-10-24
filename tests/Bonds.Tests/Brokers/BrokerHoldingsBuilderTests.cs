@@ -126,6 +126,34 @@ public class BrokerHoldingsBuilderTests
     }
 
     [Fact]
+    public async Task T67_OtherBrokersValue_SyncOlderThan26h_IsIncomplete()
+    {
+        // Задача 67 (#14): последний синк Freedom 2026-10-23 10:00 UTC; через 27 ч сводка капитала помечает оценку неполной (через 2 ч — нет).
+        Rate("USD", 80m);
+        _accounts.Setup(a => a.GetByUserIdAsync(1)).ReturnsAsync(new[] { new Account { Id = Acc, UserId = 1, Broker = "freedom" } });
+        Holdings([Pos("A.US", "USD", 1m, 1m, 10m, 10m)]);
+        var synced = new DateTime(2026, 10, 23, 10, 0, 0, DateTimeKind.Utc);
+
+        (await Create().GetOtherBrokersValueAsync(1, AsOf, nowUtc: synced.AddHours(2))).DataIncomplete.Should().BeFalse();
+        (await Create().GetOtherBrokersValueAsync(1, AsOf, nowUtc: synced.AddHours(27))).DataIncomplete.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task T67_FreedomBond_MarksValuationIncomplete_ShortKeepsNegativeValue()
+    {
+        Rate("USD", 80m);
+        var bond = Pos("XS123.US", "USD", 2m, 100m, 101m, 202m);
+        bond.AssetClass = BrokerAssetClass.Bond;
+        Holdings([Pos("LUV.US", "USD", -3m, 40m, 41m, -123m), bond]);
+
+        var h = await Create().BuildAsync(Acc, AsOf);
+
+        h.DataIncomplete.Should().BeTrue("облигации Freedom — оценка неполная");
+        h.Positions.Single(p => p.Position.Ticker == "LUV.US").MarketValueRub.Should().Be(-123m * 80m, "шорт — отрицательная стоимость");
+        h.TotalValueRub.Should().Be((-123m + 202m) * 80m);
+    }
+
+    [Fact]
     public async Task OtherBrokersValue_SumsOnlyNonTInvestAccounts()
     {
         Rate("USD", 80m);
@@ -136,7 +164,7 @@ public class BrokerHoldingsBuilderTests
         });
         Holdings([Pos("A.US", "USD", 1m, 1m, 10m, 10m)]);
 
-        var (value, incomplete) = await Create().GetOtherBrokersValueAsync(1, AsOf);
+        var (value, incomplete) = await Create().GetOtherBrokersValueAsync(1, AsOf, nowUtc: new DateTime(2026, 10, 23, 11, 0, 0, DateTimeKind.Utc));
 
         value.Should().Be(800m);
         incomplete.Should().BeFalse();

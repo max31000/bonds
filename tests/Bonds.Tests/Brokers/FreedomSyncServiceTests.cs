@@ -109,6 +109,20 @@ public class FreedomSyncServiceTests
     }
 
     [Fact]
+    public async Task T67_Sync_ShortPosition_IsStored_NotDropped()
+    {
+        // Задача 67 (#14): шорт (qty < 0) хранится с отрицательным количеством и стоимостью; закрытая (0) — нет.
+        SetupPortfolio(new FreedomPortfolio(
+            [new FreedomCashBalance("USD", 500m)],
+            [new FreedomPosition("TSLA.US", "Tesla", -2m, "USD", 250m, 240m, -480m), new FreedomPosition("ZERO.US", "Closed", 0m, "USD", 1m, 1m, 0m)]));
+
+        await Create().SyncAllAsync();
+
+        var shortPos = _positions.Items.Single();
+        (shortPos.Ticker, shortPos.Quantity, shortPos.MarketValue).Should().Be(("TSLA.US", -2m, -480m));
+    }
+
+    [Fact]
     public async Task Sync_LegacyRurBalance_IsStoredAsRub()
     {
         SetupPortfolio(new FreedomPortfolio([new FreedomCashBalance("RUR", 1500m)], []));

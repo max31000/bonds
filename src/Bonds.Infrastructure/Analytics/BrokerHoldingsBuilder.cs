@@ -40,6 +40,9 @@ public sealed class BrokerHoldingsBuilder
     private const string Rub = "RUB";
     private const string Usd = "USD";
 
+    /// <summary>Синк брокера старше этого — оценка в сводке капитала «неполная» (задача 67, #14; = дефолт <c>Policy:MaxSyncAge</c>).</summary>
+    public static readonly TimeSpan MaxSyncAge = TimeSpan.FromHours(26);
+
     private readonly IBrokerPositionRepository _positions;
     private readonly IBrokerCashRepository _cash;
     private readonly IBrokerOperationRepository _operations;
@@ -75,6 +78,8 @@ public sealed class BrokerHoldingsBuilder
             var pnl = marketValue - cost;
             var rate = await RateAsync(p.Currency, asOf, ct);
             if (rate is null) incomplete = true;
+            // Задача 67 (#14): облигации Freedom оцениваются брокерской стоимостью без НКД и без нашей проверки цены — оценка неполная.
+            if (string.Equals(p.AssetClass, BrokerAssetClass.Bond, StringComparison.OrdinalIgnoreCase)) incomplete = true;
 
             valuedPositions.Add(new BrokerPositionValued(
                 p,
@@ -105,9 +110,14 @@ public sealed class BrokerHoldingsBuilder
             incomplete);
     }
 
-    /// <summary>Стоимость всех не-T-Invest счетов пользователя, РУБЛИ, для сводки портфеля. 0 при их отсутствии.</summary>
-    public async Task<(decimal ValueRub, bool DataIncomplete)> GetOtherBrokersValueAsync(ulong userId, DateOnly asOf, CancellationToken ct = default)
+    /// <summary>
+    /// Стоимость всех не-T-Invest счетов пользователя, РУБЛИ, для сводки портфеля. 0 при их отсутствии. <c>DataIncomplete</c> — нет курса, облигации или
+    /// последний синк счёта старше <see cref="MaxSyncAge"/> (задача 67, #14: <c>capitalTotalRub</c> не выдаёт устаревшую оценку за актуальную).
+    /// </summary>
+    public async Task<(decimal ValueRub, bool DataIncomplete)> GetOtherBrokersValueAsync(
+        ulong userId, DateOnly asOf, CancellationToken ct = default, DateTime? nowUtc = null)
     {
+        var now = nowUtc ?? DateTime.UtcNow;
         var accounts = (await _accounts.GetByUserIdAsync(userId)).Where(a => a.Broker != Brokers.TInvest).ToList();
         var total = 0m;
         var incomplete = false;
@@ -116,6 +126,7 @@ public sealed class BrokerHoldingsBuilder
             var holdings = await BuildAsync(account.Id, asOf, ct);
             total += holdings.TotalValueRub;
             incomplete |= holdings.DataIncomplete;
+            if (holdings.Positions.Count + holdings.Cash.Count > 0 && (holdings.SyncedAtUtc is not { } synced || now - synced > MaxSyncAge)) incomplete = true;
         }
 
         return (total, incomplete);

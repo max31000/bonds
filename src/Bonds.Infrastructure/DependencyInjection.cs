@@ -372,5 +372,9 @@ public static class DependencyInjection
             client.BaseAddress = new Uri("https://api.telegram.org");
             client.Timeout = TimeSpan.FromSeconds(45);
         }).RemoveAllLoggers();
+
+        // Второй рубеж (как до задачи 67): категории логгеров HttpClient telegram-bot* — не ниже Warning (если логгер вернут чьей-то регистрацией).
+        services.Configure<Microsoft.Extensions.Logging.LoggerFilterOptions>(o =>
+            o.Rules.Add(new Microsoft.Extensions.Logging.LoggerFilterRule(null, "System.Net.Http.HttpClient.telegram-bot", Microsoft.Extensions.Logging.LogLevel.Warning, null)));
     }
 }

@@ -8,7 +8,7 @@ namespace Bonds.Core.Currencies;
 public sealed record TrackedCurrencySource(string Iso, string Name, string? MoexSecid, string? CbrId);
 
 /// <summary>
-/// Валюты, чья история курса ведётся всегда (по умолчанию USD, EUR, GBP). Идентификаторы сверены с живым MOEX ISS и cbr.ru 2026-10-23:
+/// Валюты, чья история курса ведётся всегда (по умолчанию USD, EUR, GBP, KZT — задача 67). Идентификаторы сверены с живым MOEX ISS и cbr.ru 2026-10-23:
 /// <list type="bullet">
 /// <item><c>USD000UTSTOM</c> (CETS) — торгуется, CLOSE ≈ 80–86 ₽.</item>
 /// <item><c>EUR_RUB__TOM</c> и <c>GBPRUB_TOM</c> на CETS существуют, но сделок НЕТ (CLOSE = 0, NUMTRADES = 0 за весь период, торги евро
@@ -23,6 +23,8 @@ public static class TrackedCurrencies
         new TrackedCurrencySource("USD", "Доллар США", "USD000UTSTOM", "R01235"),
         new TrackedCurrencySource("EUR", "Евро", null, "R01239"),
         new TrackedCurrencySource("GBP", "Фунт стерлингов", null, "R01035"),
+        // Задача 67 (#14): тенге — деньги и бумаги Freedom (Казахстан). Источник — ЦБ R01335 (котируется за 100 тенге; клиент ЦБ берёт VunitRate = рубли за 1).
+        new TrackedCurrencySource("KZT", "Казахстанский тенге", null, "R01335"),
     };
 
     public static TrackedCurrencySource? Find(string? iso) =>

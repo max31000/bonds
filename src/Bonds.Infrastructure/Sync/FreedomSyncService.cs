@@ -223,7 +223,9 @@ public sealed class FreedomSyncService
                 continue;
             }
 
-            if (p.Quantity <= 0m) continue; // закрытая позиция: по тикеру не держим
+            // Закрытая позиция (0) не хранится. Задача 67 (#14): шорт (qty < 0) — хранится как есть (отрицательное количество и стоимость), а не выбрасывается:
+            // иначе капитал завышен на сумму обязательства. Продажи правил берут только qty > 0.
+            if (p.Quantity == 0m) continue;
 
             await _positions.UpsertAsync(new BrokerPosition
             {

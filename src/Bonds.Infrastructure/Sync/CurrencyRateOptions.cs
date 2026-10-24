@@ -9,5 +9,5 @@ public sealed class CurrencyRateOptions
     /// ISO-коды валют, чья история курса ведётся ВСЕГДА (даже без позиции в T-Invest): нужна для оценки брокерских позиций в рублях.
     /// Источники — <see cref="Bonds.Core.Currencies.TrackedCurrencies"/>; неизвестный код пропускается.
     /// </summary>
-    public string[] AlwaysTrackedCurrencies { get; set; } = ["USD", "EUR", "GBP"];
+    public string[] AlwaysTrackedCurrencies { get; set; } = ["USD", "EUR", "GBP", "KZT"];
 }

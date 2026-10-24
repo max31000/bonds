@@ -172,6 +172,24 @@ public class CurrencyRateRefresherTests
     }
 
     [Fact]
+    public async Task T67_Kzt_IsAlwaysTracked_ViaCbrR01335()
+    {
+        // Задача 67 (#14): тенге (деньги/бумаги Freedom) — всегда отслеживается, источник ЦБ R01335 (за 100 тенге; клиент ЦБ отдаёт рубли за 1).
+        new CurrencyRateOptions().AlwaysTrackedCurrencies.Should().Contain("KZT");
+        Bonds.Core.Currencies.TrackedCurrencies.Find("KZT").Should().Be(new Bonds.Core.Currencies.TrackedCurrencySource("KZT", "Казахстанский тенге", null, "R01335"));
+
+        _currencies.Setup(c => c.GetAllAsync()).ReturnsAsync(new List<Currency> { new() { Id = 8, Figi = "FX:KZT", IsoCode = "KZT" } });
+        _market.Setup(m => m.GetLastRateDateAsync(8, It.IsAny<CancellationToken>())).ReturnsAsync((DateOnly?)null);
+        _cbr.Setup(c => c.GetRatesAsync("R01335", It.IsAny<DateOnly>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([new CbrRatePoint(Today.AddDays(-1), 0.1612m)]);
+
+        await Create("KZT").RefreshIfDueAsync(Today);
+
+        _market.Verify(m => m.UpsertRatesAsync(8, It.Is<IReadOnlyList<CurrencyRatePoint>>(l => l.Single().CloseRub == 0.1612m), It.IsAny<CancellationToken>()), Times.Once);
+        _moex.Verify(m => m.GetCurrencyHistoryAsync(It.IsAny<string>(), It.IsAny<DateOnly>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
     public async Task Refresh_Eur_UsesCbrOnly_AndNeverCallsMoex()
     {
         // EUR на CETS не торгуется (EUR_RUB__TOM: CLOSE = 0) - источник только ЦБ; MOEX с выведенным EURRUB_TOM не опрашивается.

@@ -205,7 +205,7 @@ public sealed class CapitalOverviewBuilder
 
         var positions = new List<CapitalPosition>();
         var incompleteKeys = new List<string>();
-        foreach (var v in holdings.Positions.Where(v => v.Position.Quantity > 0m))
+        foreach (var v in holdings.Positions.Where(v => v.Position.Quantity != 0m)) // задача 67 (#14): шорт (qty < 0) входит с отрицательной стоимостью
         {
             var usd = ToUsd(v.Position.Currency, v.MarketValue, v.MarketValueRub);
             if (usd is null)
