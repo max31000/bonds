@@ -48,7 +48,9 @@ public static class PlansEndpoints
         var dryRun = (await gate.ResolveAsync(userId)).DryRun;
         return Results.Ok(new PlansResponseDto
         {
-            Items = plans.Select(p => ToDto(p, byPlan[p.Id].ToList())).ToList(), DryRun = dryRun, Disclaimer = dryRun ? Disclaimer : LiveDisclaimer,
+            Items = plans.Select(p => ToDto(p, byPlan[p.Id].ToList())).ToList(),
+            DryRun = dryRun,
+            Disclaimer = dryRun ? Disclaimer : LiveDisclaimer,
         });
     }
 
@@ -190,30 +192,40 @@ public static class PlansEndpoints
         var state = LineExecutionState.From(l, orders);
         return new PlanLineDto
         {
-        LineNo = l.LineNo,
-        Broker = l.Broker,
-        AccountId = l.AccountId,
-        InstrumentKey = l.InstrumentKey,
-        Ticker = l.Ticker,
-        Side = l.Side,
-        QuantityLots = l.QuantityLots,
-        LotSize = l.LotSize,
-        QuantityPieces = l.QuantityPieces,
-        LimitPrice = l.LimitPrice,
-        LimitPricePoints = l.LimitPricePoints,
-        EstAmount = l.EstAmount,
-        EstFee = l.EstFee,
-        EstTax = l.EstTax,
-        Currency = l.Currency,
-        Reason = l.Reason,
-        ExecutionStatus = state.Status,
-        FilledLots = state.FilledLots,
-        Orders = orders.Select(o => new PlanOrderDto
-        {
-            Attempt = o.Attempt, Status = o.Status, LimitPrice = o.LimitPrice, PriceUnit = o.PriceUnit, LotsRequested = o.LotsRequested, LotsFilled = o.LotsFilled,
-            AvgFillPrice = o.AvgFillPrice, ExecutedCommission = o.ExecutedCommission, Currency = o.Currency, ErrorCode = o.ErrorCode, ErrorMessage = o.ErrorMessage,
-            CreatedAt = Utc(o.CreatedAt), UpdatedAt = Utc(o.UpdatedAt),
-        }).ToList(),
+            LineNo = l.LineNo,
+            Broker = l.Broker,
+            AccountId = l.AccountId,
+            InstrumentKey = l.InstrumentKey,
+            Ticker = l.Ticker,
+            Side = l.Side,
+            QuantityLots = l.QuantityLots,
+            LotSize = l.LotSize,
+            QuantityPieces = l.QuantityPieces,
+            LimitPrice = l.LimitPrice,
+            LimitPricePoints = l.LimitPricePoints,
+            EstAmount = l.EstAmount,
+            EstFee = l.EstFee,
+            EstTax = l.EstTax,
+            Currency = l.Currency,
+            Reason = l.Reason,
+            ExecutionStatus = state.Status,
+            FilledLots = state.FilledLots,
+            Orders = orders.Select(o => new PlanOrderDto
+            {
+                Attempt = o.Attempt,
+                Status = o.Status,
+                LimitPrice = o.LimitPrice,
+                PriceUnit = o.PriceUnit,
+                LotsRequested = o.LotsRequested,
+                LotsFilled = o.LotsFilled,
+                AvgFillPrice = o.AvgFillPrice,
+                ExecutedCommission = o.ExecutedCommission,
+                Currency = o.Currency,
+                ErrorCode = o.ErrorCode,
+                ErrorMessage = o.ErrorMessage,
+                CreatedAt = Utc(o.CreatedAt),
+                UpdatedAt = Utc(o.UpdatedAt),
+            }).ToList(),
         };
     }
 

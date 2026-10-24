@@ -49,6 +49,11 @@ public static class ExecutionMessages
 
     public const string ExecutionEnabled = "🟢 Исполнение включено: подтверждённые планы будут отправляться брокеру T-Invest лимитными заявками. Остановить — /stop.";
 
+    /// <summary>«Исполнение включено» + (если ворота ещё закрыты, например сервер выключен) — почему заявки пока не отправляются.</summary>
+    public static string Enabled(IReadOnlyList<string> pendingReasons) => pendingReasons.Count == 0
+        ? ExecutionEnabled
+        : Limit(ExecutionEnabled + "\n⚠ Пока заявки не отправляются: " +BotFormat.HtmlTruncated(string.Join("; ", pendingReasons), MaxReason));
+
     public const string ExecutionDisabled = "⚪ Режим наблюдения: заявки не отправляются.";
 
     private static InlineKeyboard? CancelKeyboard(TradePlan plan) =>

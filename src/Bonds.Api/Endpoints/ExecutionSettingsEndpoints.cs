@@ -58,7 +58,7 @@ public static class ExecutionSettingsEndpoints
         await settings.SetExecutionModeAsync(userId, mode!);
         var result = await gate.ResolveAsync(userId);
         if (previous != mode)
-            await notifier.NotifyAsync(userId, new BotMessage(mode == ExecutionModes.Live ? ExecutionMessages.ExecutionEnabled : ExecutionMessages.ExecutionDisabled), ct);
+            await notifier.NotifyAsync(userId, new BotMessage(mode == ExecutionModes.Live ? ExecutionMessages.Enabled(result.Reasons) : ExecutionMessages.ExecutionDisabled), ct);
         return Results.Ok(ToDto(result));
     }
 
