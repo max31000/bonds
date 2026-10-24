@@ -1,4 +1,4 @@
-import type { PlanLine, PlanRule, PlanStatus } from '../api/types';
+import type { Plan, PlanLine, PlanLineExecutionStatus, PlanOrder, PlanRule, PlanStatus } from '../api/types';
 import { formatMoney } from './format';
 
 /**
@@ -23,9 +23,10 @@ export const PLAN_STATUS_LABEL: Record<PlanStatus, string> = {
   Approved: 'Подтверждён',
   Rejected: 'Отклонён',
   Expired: 'Истёк',
-  Submitting: 'Отправляется',
+  Submitting: 'Исполняется',
   Done: 'Исполнен',
-  Failed: 'Ошибка',
+  Failed: 'Не исполнен',
+  PartiallyDone: 'Исполнен частично',
 };
 
 export const PLAN_STATUS_COLOR: Record<PlanStatus, string> = {
@@ -38,7 +39,38 @@ export const PLAN_STATUS_COLOR: Record<PlanStatus, string> = {
   Submitting: 'blue',
   Done: 'green',
   Failed: 'red',
+  PartiallyDone: 'orange',
 };
+
+/** Статус строки/заявки исполнителя для человека (задача 65). */
+export const LINE_EXECUTION_LABEL: Record<PlanLineExecutionStatus, string> = {
+  Pending: 'Не отправлена',
+  New: 'Отправляется',
+  Submitted: 'Выставлена',
+  PartiallyFilled: 'Исполнена частично',
+  Filled: 'Исполнена',
+  Cancelled: 'Снята',
+  Rejected: 'Отклонена брокером',
+  Failed: 'Не отправлена (проверка)',
+  Expired: 'Не исполнена (попытки исчерпаны)',
+};
+
+export const LINE_EXECUTION_COLOR: Record<PlanLineExecutionStatus, string> = {
+  Pending: 'gray',
+  New: 'blue',
+  Submitted: 'blue',
+  PartiallyFilled: 'orange',
+  Filled: 'green',
+  Cancelled: 'gray',
+  Rejected: 'red',
+  Failed: 'red',
+  Expired: 'gray',
+};
+
+/** Можно попросить снять висящие заявки (план исполняется или ждёт исполнителя). */
+export function isCancellableExecution(plan: Pick<Plan, 'status' | 'dryRun'>): boolean {
+  return plan.status === 'Submitting' || (!plan.dryRun && (plan.status === 'Approved' || plan.status === 'AutoApproved'));
+}
 
 /** Планы, по которым ещё можно принять решение. */
 export function isDecidable(status: PlanStatus): boolean {
@@ -54,6 +86,14 @@ export function formatPlanMoney(value: number | null | undefined, currency: stri
 export function formatQuantity(line: Pick<PlanLine, 'quantityLots' | 'lotSize' | 'quantityPieces'>): string {
   const lots = `${line.quantityLots} лот.`;
   return line.lotSize === 1 ? lots : `${lots} (${line.quantityPieces} шт.)`;
+}
+
+/** Цена заявки исполнителя: облигации — в пунктах («92,7 п.»), остальное — в валюте цены за штуку. */
+export function formatOrderPrice(order: Pick<PlanOrder, 'limitPrice' | 'priceUnit' | 'currency'>): string {
+  if (order.priceUnit === 'points') {
+    return `${new Intl.NumberFormat('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 4 }).format(order.limitPrice)} п.`;
+  }
+  return formatMoney(order.limitPrice, order.currency, 2);
 }
 
 /** Лимитная цена: облигации — «99,95 п. (999,50 RUB)», остальные — цена за штуку в валюте цены. */

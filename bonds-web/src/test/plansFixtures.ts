@@ -18,6 +18,9 @@ export const tmonLine: PlanLine = {
   estTax: 0,
   currency: 'RUB',
   reason: 'P1 парковка кэша: доля 50%',
+  executionStatus: 'Pending',
+  filledLots: 0,
+  orders: [],
 };
 
 /** Облигация: цена в ПУНКТАХ, рубли — чистая цена за штуку. */
@@ -38,6 +41,9 @@ export const bondLine: PlanLine = {
   estTax: 0,
   currency: 'RUB',
   reason: 'P2_INFLOW «Облигации»: кандидат Эмитент, после налога 12,00% годовых',
+  executionStatus: 'Pending',
+  filledLots: 0,
+  orders: [],
 };
 
 export const sellLine: PlanLine = {
@@ -57,6 +63,9 @@ export const sellLine: PlanLine = {
   estTax: 28.02,
   currency: 'RUB',
   reason: 'P5 вывод: тир 0, налог ≈ 1,3% выручки',
+  executionStatus: 'Pending',
+  filledLots: 0,
+  orders: [],
 };
 
 const summary: PlanSummary = {
@@ -145,3 +154,59 @@ export const stalePlan: Plan = {
 };
 
 export const plansResponse = (items: Plan[]): PlansResponse => ({ items, dryRun: true, disclaimer: 'Режим наблюдения: сделки не отправляются. Оценка, не рекомендация.' });
+
+/** Задача 65: исполняемый план (dryRun = false) — строка частично исполнена второй попыткой. Даты — относительно «сегодня». */
+const nowIso = () => new Date().toISOString();
+export const executingPlan = (): Plan => ({
+  ...sweepPlan,
+  id: 21,
+  status: 'Submitting',
+  dryRun: false,
+  createdAt: nowIso(),
+  expiresAt: new Date(Date.now() + 30 * 60_000).toISOString(),
+  decidedAt: nowIso(),
+  decidedVia: 'web',
+  summary: { ...summary, executionNote: 'исполняется' },
+  lines: [
+    {
+      ...tmonLine,
+      executionStatus: 'PartiallyFilled',
+      filledLots: 10,
+      orders: [
+        {
+          attempt: 1, status: 'Cancelled', limitPrice: 166.58, priceUnit: 'currency', lotsRequested: 26, lotsFilled: 4, avgFillPrice: 166.58, executedCommission: 0,
+          currency: 'RUB', errorCode: 'reprice', errorMessage: 'перевыставление', createdAt: nowIso(), updatedAt: nowIso(),
+        },
+        {
+          attempt: 2, status: 'PartiallyFilled', limitPrice: 166.6, priceUnit: 'currency', lotsRequested: 22, lotsFilled: 6, avgFillPrice: 166.6, executedCommission: 0,
+          currency: 'RUB', errorCode: null, errorMessage: null, createdAt: nowIso(), updatedAt: nowIso(),
+        },
+      ],
+    },
+  ],
+});
+
+export const failedBondPlan = (): Plan => ({
+  ...executingPlan(),
+  id: 22,
+  status: 'Failed',
+  lines: [
+    {
+      ...bondLine,
+      executionStatus: 'Failed',
+      filledLots: 0,
+      orders: [
+        {
+          attempt: 1, status: 'Failed', limitPrice: 99.95, priceUnit: 'points', lotsRequested: 1, lotsFilled: 0, avgFillPrice: null, executedCommission: null,
+          currency: 'RUB', errorCode: 'stale_quote', errorMessage: 'Нет свежей котировки (стакан пуст или устарел)', createdAt: nowIso(), updatedAt: nowIso(),
+        },
+      ],
+    },
+  ],
+});
+
+export const livePlansResponse = (items: Plan[]): PlansResponse => ({
+  items,
+  dryRun: false,
+  disclaimer: 'Исполнение включено: подтверждённые планы отправляются брокеру лимитными заявками. Оценка, не рекомендация.',
+});

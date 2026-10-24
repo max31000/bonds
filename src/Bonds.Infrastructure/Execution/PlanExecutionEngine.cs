@@ -113,6 +113,14 @@ public sealed class PlanExecutionEngine
         return result;
     }
 
+    /// <summary>Тик для одного пользователя (тот же путь, что в <see cref="RunTickAsync"/>; используется тестами на общей БД).</summary>
+    public async Task<ExecutionTickResult> RunForUserAsync(ulong userId, DateTime nowUtc, CancellationToken ct = default)
+    {
+        var result = new ExecutionTickResult();
+        await RunForUserAsync(userId, nowUtc, result, ct);
+        return result;
+    }
+
     private async Task RunForUserAsync(ulong userId, DateTime nowUtc, ExecutionTickResult result, CancellationToken ct)
     {
         var plans = await _plans.ListExecutableAsync(userId);

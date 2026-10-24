@@ -12,10 +12,11 @@ export const PLANS_DISCLAIMER =
 
 /**
  * Страница «Планы» (задача 63): планы сделок от правил (парковка денег, распределение пополнения, перелив ликвидности, ребаланс, вывод, доливка Freedom).
- * РЕЖИМ НАБЛЮДЕНИЯ: «Подтвердить» помечает план «не исполнен: dry-run», заявки брокерам не отправляются. Здесь только показ и решения; расчёт — на бэкенде.
+ * По умолчанию РЕЖИМ НАБЛЮДЕНИЯ: «Подтвердить» помечает план «не исполнен: dry-run». В живом режиме (задача 65, все ворота открыты на сервере) подтверждённый план
+ * исполняет сервер: на карточке — статусы заявок по строкам и «Отменить заявки», в баннере — «Остановить» (пауза). Расчёт и исполнение — только на бэкенде.
  */
 export function Plans() {
-  const { data, isLoading, error, decidingId, load, approve, reject } = usePlansStore();
+  const { data, isLoading, error, decidingId, load, approve, reject, cancelExecution, stop } = usePlansStore();
 
   useEffect(() => {
     void load();
@@ -27,7 +28,7 @@ export function Plans() {
 
   return (
     <Page title="Планы" description="Какие сделки сервис рассчитал как кандидаты по правилам: оценка по ценам стакана, не рекомендация" width="wide" data-testid="plans-page">
-      <DryRunBanner />
+      <DryRunBanner live={data?.dryRun === false} onStop={stop} />
       {isLoading && !data && (
         <Section>
           <Skeleton height={120} />
@@ -50,14 +51,14 @@ export function Plans() {
       {waiting.length > 0 && (
         <Section title="Ждут решения" padding="none" data-testid="plans-waiting">
           {waiting.map((plan) => (
-            <PlanCard key={plan.id} plan={plan} busy={decidingId === plan.id} onApprove={approve} onReject={reject} />
+            <PlanCard key={plan.id} plan={plan} busy={decidingId === plan.id} onApprove={approve} onReject={reject} onCancelExecution={cancelExecution} />
           ))}
         </Section>
       )}
       {history.length > 0 && (
         <Section title="История" padding="none" data-testid="plans-history">
           {history.map((plan) => (
-            <PlanCard key={plan.id} plan={plan} busy={false} onApprove={approve} onReject={reject} />
+            <PlanCard key={plan.id} plan={plan} busy={decidingId === plan.id} onApprove={approve} onReject={reject} onCancelExecution={cancelExecution} />
           ))}
         </Section>
       )}

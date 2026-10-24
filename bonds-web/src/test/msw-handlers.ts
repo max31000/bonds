@@ -166,6 +166,9 @@ export const handlers = [
       lastRunErrors: [],
     }),
   ),
+  http.get('*/api/settings/execution', () =>
+    HttpResponse.json({ mode: 'observe', globalEnabled: false, tradeCredentialOk: false, paused: false, live: false, reasons: ['Режим наблюдения (observe)'] }),
+  ),
   http.get('*/api/settings', () =>
     HttpResponse.json({
       baseCurrency: 'RUB',

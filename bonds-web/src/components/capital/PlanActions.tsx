@@ -18,7 +18,7 @@ function ResultView({ result, onClose }: { result: PlanResult; onClose: () => vo
     <Stack gap="xs" data-testid="plan-action-result">
       {result.plan ? (
         <Alert color="green" title="План создан" data-testid="plan-action-created">
-          «{result.plan.trigger}» — {result.plan.lines.length} стр., ждёт вашего решения на странице «Планы». Режим наблюдения: сделки не отправляются.
+          «{result.plan.trigger}» — {result.plan.lines.length} стр., ждёт вашего решения на странице «Планы». {result.plan.dryRun ? 'Режим наблюдения: сделки не отправляются.' : 'Исполнение включено: после подтверждения заявки отправит сервер.'}
           {result.plan.summary && result.plan.summary.requestedNet != null && (
             <Text size="sm" mt="xs">
               К выводу после налога и комиссии: {formatPlanMoney(result.plan.summary.netToWithdraw, result.plan.summary.currency)}
@@ -117,7 +117,7 @@ export function PlanActions({ portfolios, freedom }: { portfolios: CapitalPortfo
   return (
     <Section
       title="Планы сделок"
-      description="Режим наблюдения: планы строятся и ждут решения, сделки не отправляются"
+      description="Планы строятся и ждут решения; без включённого исполнения сделки не отправляются"
       data-testid="capital-plan-actions"
       actions={
         <Group gap="xs">
