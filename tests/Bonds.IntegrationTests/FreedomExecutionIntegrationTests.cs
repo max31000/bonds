@@ -269,6 +269,19 @@ public class FreedomExecutionIntegrationTests
     }
 
     [Fact]
+    public async Task IsBrokerOrderLinked_ByBrokerAndId_ExceptSelf()
+    {
+        var s = await SeedAsync();
+        var (_, order) = await LiveFreedomOrderAsync(s);
+        var repo = new TradeOrderRepository(Conn);
+
+        (await repo.IsBrokerOrderLinkedAsync(BrokerIds.Freedom, order.BrokerOrderId!, 0)).Should().BeTrue();
+        (await repo.IsBrokerOrderLinkedAsync(BrokerIds.Freedom, order.BrokerOrderId!, order.Id)).Should().BeFalse("своя строка не считается");
+        (await repo.IsBrokerOrderLinkedAsync(BrokerIds.TInvest, order.BrokerOrderId!, 0)).Should().BeFalse("другой брокер");
+        (await repo.IsBrokerOrderLinkedAsync(BrokerIds.Freedom, "1", 0)).Should().BeFalse();
+    }
+
+    [Fact]
     public async Task DeleteTradeKey_WithActiveFreedomOrder_409_ThenCancelActive_CancelsThenDeletes()
     {
         var s = await SeedAsync();

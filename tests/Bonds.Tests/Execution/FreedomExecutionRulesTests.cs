@@ -77,20 +77,71 @@ public class FreedomExecutionRulesTests
     public void UserOrderIdMatches_ExactOrPrefixed(string? broker, string ours, bool match) =>
         FreedomOrderRules.UserOrderIdMatches(broker, ours).Should().Be(match);
 
+    /// <summary>Официальный список кодов tradernet.global/tradernet-api/order-statuses; leaves = -1 — поля leaves_qty нет.</summary>
     [Theory]
-    [InlineData(3, 5, 5, TradeOrderStatuses.Filled)]
-    [InlineData(4, 5, 0, TradeOrderStatuses.Cancelled)]
-    [InlineData(4, 5, 2, TradeOrderStatuses.Cancelled)]
-    [InlineData(7, 5, 0, TradeOrderStatuses.Rejected)]
-    [InlineData(2, 5, 2, TradeOrderStatuses.PartiallyFilled)]
-    [InlineData(10, 5, 0, TradeOrderStatuses.Submitted)]
-    [InlineData(1, 5, 0, TradeOrderStatuses.Submitted)]
-    [InlineData(6, 5, 0, TradeOrderStatuses.Submitted)]
-    [InlineData(99, 5, 0, TradeOrderStatuses.Submitted)]
-    [InlineData(10, 5, 3, TradeOrderStatuses.PartiallyFilled)]
-    [InlineData(99, 5, 5, TradeOrderStatuses.Filled)]
-    public void StatusMap_IsConservative_UnknownCodesStayActive(int stat, long requested, long executed, string expected) =>
-        FreedomOrderStatusMap.Resolve(stat, requested, executed).Should().Be(expected);
+    // окончательно исполнена
+    [InlineData(21, 5, 0, TradeOrderStatuses.Filled, 5)]
+    [InlineData(21, 5, -1, TradeOrderStatuses.Filled, 5)]
+    // снята/истекла, возможно частичное исполнение: исполнено = q − leaves_qty
+    [InlineData(31, 5, 5, TradeOrderStatuses.Cancelled, 0)]
+    [InlineData(30, 5, 3, TradeOrderStatuses.Cancelled, 2)]
+    [InlineData(71, 5, 5, TradeOrderStatuses.Cancelled, 0)]
+    [InlineData(72, 5, 1, TradeOrderStatuses.Cancelled, 4)]
+    [InlineData(72, 5, 0, TradeOrderStatuses.Filled, 5)]
+    [InlineData(31, 5, -1, TradeOrderStatuses.Cancelled, 0)]
+    // отклонена / ошибка отправки: ничего не исполнено, если leaves_qty не говорит иного
+    [InlineData(0, 5, 5, TradeOrderStatuses.Rejected, 0)]
+    [InlineData(70, 5, 5, TradeOrderStatuses.Rejected, 0)]
+    [InlineData(74, 5, -1, TradeOrderStatuses.Rejected, 0)]
+    [InlineData(70, 5, 2, TradeOrderStatuses.Cancelled, 3)]
+    // активна
+    [InlineData(1, 5, 5, TradeOrderStatuses.Submitted, 0)]
+    [InlineData(2, 5, 5, TradeOrderStatuses.Submitted, 0)]
+    [InlineData(10, 5, 5, TradeOrderStatuses.Submitted, 0)]
+    [InlineData(11, 5, -1, TradeOrderStatuses.Submitted, 0)]
+    [InlineData(75, 5, 5, TradeOrderStatuses.Submitted, 0)]
+    [InlineData(10, 5, 2, TradeOrderStatuses.PartiallyFilled, 3)]
+    [InlineData(10, 5, 0, TradeOrderStatuses.PartiallyFilled, 5)]
+    // частично исполнена и активна
+    [InlineData(12, 5, 4, TradeOrderStatuses.PartiallyFilled, 1)]
+    [InlineData(20, 5, 2, TradeOrderStatuses.PartiallyFilled, 3)]
+    public void StatusMap_OfficialCodes(int stat, long requested, int leaves, string expected, long executed)
+    {
+        var r = FreedomOrderStatusMap.Resolve(stat, requested, leaves < 0 ? null : leaves);
+        r.Status.Should().Be(expected);
+        r.Executed.Should().Be(executed);
+        r.KnownCode.Should().BeTrue();
+    }
+
+    [Theory]
+    [InlineData(3)] // старые «догадки» 3/4/7/2/6 — не из официального списка
+    [InlineData(4)]
+    [InlineData(7)]
+    [InlineData(6)]
+    [InlineData(99)]
+    [InlineData(null)]
+    public void StatusMap_UnknownCode_IsActive_NeverFinal(int? stat)
+    {
+        FreedomOrderStatusMap.Resolve(stat, 5, 5).Should().Be(new FreedomOrderResolution(TradeOrderStatuses.Submitted, 0, false));
+        // Даже «всё исполнено» по leaves_qty не делает заявку окончательной без официального кода.
+        var full = FreedomOrderStatusMap.Resolve(stat, 5, 0);
+        full.Status.Should().Be(TradeOrderStatuses.PartiallyFilled);
+        full.Executed.Should().Be(5);
+        full.KnownCode.Should().BeFalse();
+        TradeOrderStatuses.IsActive(full.Status).Should().BeTrue();
+    }
+
+    [Fact]
+    public void StatusMap_EveryOfficialCodeIsClassified()
+    {
+        int[] official = [0, 1, 2, 10, 11, 12, 20, 21, 30, 31, 70, 71, 72, 74, 75];
+        official.Should().OnlyContain(c => FreedomOrderStatusMap.IsKnown(c));
+        FreedomOrderStatusMap.Classify(21).Should().Be(FreedomStatClass.Filled);
+        new[] { 30, 31, 71, 72 }.Should().OnlyContain(c => FreedomOrderStatusMap.Classify(c) == FreedomStatClass.Closed);
+        new[] { 0, 70, 74 }.Should().OnlyContain(c => FreedomOrderStatusMap.Classify(c) == FreedomStatClass.Rejected);
+        new[] { 1, 2, 10, 11, 75 }.Should().OnlyContain(c => FreedomOrderStatusMap.Classify(c) == FreedomStatClass.Active);
+        new[] { 12, 20 }.Should().OnlyContain(c => FreedomOrderStatusMap.Classify(c) == FreedomStatClass.ActivePartial);
+    }
 
     [Fact]
     public void CommissionComment_ParsesTradeAndActualRoute()

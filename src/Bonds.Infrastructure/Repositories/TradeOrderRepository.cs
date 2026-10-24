@@ -85,6 +85,14 @@ public class TradeOrderRepository : ITradeOrderRepository
             new { UserId = userId, Broker = broker })).ToList();
     }
 
+    public async Task<bool> IsBrokerOrderLinkedAsync(string broker, string brokerOrderId, ulong exceptOrderId)
+    {
+        using var conn = CreateConnection();
+        return await conn.ExecuteScalarAsync<int>(
+            "SELECT COUNT(*) FROM trade_orders WHERE broker = @Broker AND broker_order_id = @BrokerOrderId AND id <> @Except",
+            new { Broker = broker, BrokerOrderId = brokerOrderId, Except = exceptOrderId }) > 0;
+    }
+
     public async Task<IReadOnlyList<TradeOrder>> ListByPlansAsync(IReadOnlyCollection<ulong> planIds)
     {
         if (planIds.Count == 0) return [];

@@ -9,6 +9,7 @@ using Bonds.Infrastructure.Connectors.Freedom;
 using Bonds.Infrastructure.Execution;
 using FluentAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Moq;
 using Xunit;
 
@@ -58,7 +59,9 @@ public class FreedomOrderGatewayTests
             .ReturnsAsync(ExecutionGate.Evaluate(true, gateOpen ? ExecutionModes.Live : ExecutionModes.Observe, true, false, ExecutionGate.NoFreedomTradeCredential));
 
         var client = new FreedomApiClient(factory.Object);
-        return (new FreedomOrderGateway(store.Object, gate.Object, client, factory.Object, TimeProvider.System, NullLogger<FreedomOrderGateway>.Instance), handler);
+        return (new FreedomOrderGateway(
+            store.Object, gate.Object, client, factory.Object, TimeProvider.System, NullLogger<FreedomOrderGateway>.Instance,
+            Options.Create(new FreedomOptions { OrderTimeUtcOffsetHours = 3 })), handler);
     }
 
     private static FreedomLimitOrder Order(string ticker = "VUAA.EU", string side = PlanSides.Buy, long qty = 3, decimal price = 147.70m, string id = "1234567890") =>
@@ -76,7 +79,8 @@ public class FreedomOrderGatewayTests
         handler.Requests[0].Body.Should().Be(
             "{\"instr_name\":\"VUAA.EU\",\"action_id\":1,\"order_type_id\":2,\"qty\":3,\"limit_price\":147.7,\"expiration_id\":1,\"user_order_id\":1234567890}");
         state.BrokerOrderId.Should().Be("900000001");
-        state.Status.Should().Be(TradeOrderStatuses.Submitted, "stat 10 — активна");
+        state.ClientOrderId.Should().Be("1234567890", "эхо «api:1234567890» — наш номер");
+        state.Status.Should().Be(TradeOrderStatuses.Submitted, "stat 10 — активен");
         state.LotsRequested.Should().Be(3);
         state.LotsExecuted.Should().Be(0);
         state.Currency.Should().Be("USD");
@@ -227,8 +231,26 @@ public class FreedomOrderGatewayTests
         (await act.Should().ThrowAsync<FreedomGatewayException>()).Which.Kind.Should().Be(GatewayErrorKind.Transient);
     }
 
+    [Theory]
+    [InlineData("{\"user_order_id\":\"1234567890\"}")]
+    [InlineData("{\"user_order_id\":\"api:1234567890\"}")]
+    [InlineData("{\"user_order_id\":\"api:1792763201\"}")] // авто-id брокера — заявка всё равно привязана по order_id
+    [InlineData("{\"user_order_id\":null}")]
+    public async Task Post_EchoedUserOrderId_AnyForm_OrderLinkedByOrderId(string orderJson)
+    {
+        var body = "{\"order_id\":900000007,\"order\":" + orderJson[..^1] + ",\"order_id\":900000007,\"stat\":10,\"q\":3,\"leaves_qty\":3,\"instr\":\"VUAA.EU\",\"oper\":1,\"p\":147.7}}";
+        var (gateway, _) = Create((_, _) => Json(body));
+
+        var state = await gateway.PostLimitOrderAsync(UserId, Order());
+
+        state.BrokerOrderId.Should().Be("900000007");
+        state.ClientOrderId.Should().Be("1234567890");
+        state.Status.Should().Be(TradeOrderStatuses.Submitted);
+        state.LotsExecuted.Should().Be(0);
+    }
+
     [Fact]
-    public async Task Orders_ParsedFromSyntheticFixture()
+    public async Task Orders_ParsedFromSyntheticFixture_LiveShapeWithoutResultWrapper()
     {
         var (gateway, handler) = Create((_, _) => Json(Fixture("getNotifyOrderJson")));
 
@@ -236,13 +258,56 @@ public class FreedomOrderGatewayTests
 
         handler.Requests[0].Path.Should().Be("/api/getNotifyOrderJson");
         handler.Requests[0].Body.Should().Be("{\"active_only\":0}");
-        orders.Should().HaveCount(3);
-        orders[0].Should().Match<GatewayOrderState>(o => o.BrokerOrderId == "900000001" && o.Status == TradeOrderStatuses.Submitted && o.ClientOrderId == "1234567890");
-        orders[1].Status.Should().Be(TradeOrderStatuses.Filled);
+        orders.Should().HaveCount(5);
+
+        orders[0].Should().Match<GatewayOrderState>(o => o.BrokerOrderId == "900000001" && o.Status == TradeOrderStatuses.Submitted && o.ClientOrderId == null);
+        orders[0].Ticker.Should().Be("VUAA.EU");
+        orders[0].Side.Should().Be(PlanSides.Buy);
+        orders[0].LimitPrice.Should().Be(147.7m);
+        orders[0].LotsRequested.Should().Be(3);
+        orders[0].PlacedAtUtc.Should().Be(new DateTime(2026, 10, 23, 14, 4, 15, 120, DateTimeKind.Utc), "локальное время брокера − 3 ч");
+        orders[0].PlacedAtUtc!.Value.Kind.Should().Be(DateTimeKind.Utc);
+
+        orders[1].Status.Should().Be(TradeOrderStatuses.Filled, "stat 21 — исполнен");
         orders[1].LotsExecuted.Should().Be(2);
         orders[1].AvgFillPrice.Should().Be(54.05m);
-        orders[2].Status.Should().Be(TradeOrderStatuses.Rejected);
+
+        orders[2].Status.Should().Be(TradeOrderStatuses.Rejected, "stat 70 — отклонен");
+        orders[2].Side.Should().Be(PlanSides.Sell);
         orders[2].Message.Should().Be("Not enough funds");
+
+        orders[3].Status.Should().Be(TradeOrderStatuses.Cancelled, "stat 30 — частично отменен");
+        orders[3].LotsExecuted.Should().Be(2, "q 5 − leaves_qty 3");
+
+        orders[4].Status.Should().Be(TradeOrderStatuses.PartiallyFilled, "stat 99 неизвестен — активна, даже при leaves_qty = 0");
+        TradeOrderStatuses.IsActive(orders[4].Status).Should().BeTrue();
+    }
+
+    [Fact]
+    public void Orders_ResultWrapperAndSingleObject_AreAccepted_UnknownStatReported()
+    {
+        const string wrapped = "{\"result\":{\"orders\":{\"key\":\"X\",\"order\":{\"id\":900000009,\"stat\":42,\"instr\":\"SPYM.US\",\"oper\":3,\"p\":\"54.1\",\"q\":\"2\",\"leaves_qty\":\"2\",\"date\":\"2026-10-23 17:04:15\"}}}}";
+        var unknown = new List<(string Id, string? Stat)>();
+        using var doc = JsonDocument.Parse(wrapped);
+
+        var orders = FreedomOrderGateway.ParseOrders(doc.RootElement, TimeSpan.FromHours(3), (id, stat) => unknown.Add((id, stat)));
+
+        orders.Should().ContainSingle();
+        orders[0].Status.Should().Be(TradeOrderStatuses.Submitted);
+        orders[0].Side.Should().Be(PlanSides.Sell);
+        orders[0].LimitPrice.Should().Be(54.1m);
+        orders[0].PlacedAtUtc.Should().Be(new DateTime(2026, 10, 23, 14, 4, 15, DateTimeKind.Utc));
+        unknown.Should().ContainSingle().Which.Should().Be(("900000009", "42"));
+    }
+
+    [Theory]
+    [InlineData(2)] // маржинальная покупка — не наша сторона
+    [InlineData(4)]
+    [InlineData(9)]
+    public void Orders_MarginOrUnknownOper_HasNoSide(int oper)
+    {
+        using var doc = JsonDocument.Parse("{\"orders\":{\"order\":[{\"id\":1,\"stat\":10,\"oper\":" + oper + ",\"q\":1,\"leaves_qty\":1}]}}");
+        FreedomOrderGateway.ParseOrders(doc.RootElement, TimeSpan.Zero).Single().Side.Should().BeNull();
     }
 
     [Fact]

@@ -8,6 +8,7 @@ using Bonds.Core.Models;
 using Bonds.Infrastructure.Connectors.Freedom;
 using Bonds.Infrastructure.Connectors.Freedom.Models;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace Bonds.Infrastructure.Execution;
 
@@ -37,12 +38,14 @@ public sealed class FreedomOrderGateway : IFreedomOrderGateway
     private readonly HttpClient _http;
     private readonly TimeProvider _time;
     private readonly ILogger<FreedomOrderGateway> _logger;
+    private readonly TimeSpan _orderTimeOffset;
     private readonly Dictionary<ulong, FreedomCredentials> _scopeKeys = new();
 
     public FreedomOrderGateway(
         IUserCredentialStore credentials, IExecutionGateResolver gate, IFreedomApiClient client, IHttpClientFactory httpClientFactory, TimeProvider time,
-        ILogger<FreedomOrderGateway> logger)
+        ILogger<FreedomOrderGateway> logger, IOptions<FreedomOptions>? options = null)
     {
+        _orderTimeOffset = TimeSpan.FromHours((options?.Value ?? new FreedomOptions()).OrderTimeUtcOffsetHours);
         _credentials = credentials;
         _gate = gate;
         _client = client;
@@ -176,18 +179,27 @@ public sealed class FreedomOrderGateway : IFreedomOrderGateway
         if (string.IsNullOrWhiteSpace(brokerId))
             throw new FreedomGatewayException(GatewayErrorKind.Transient, "no_order_id", "Freedom: в ответе на заявку нет order_id — исход неизвестен, будет сверка");
 
-        var state = Obj(root, "order") is { } o ? ParseOrder(o) : null;
+        var state = Obj(root, "order") is { } o ? ParseOrder(o, _orderTimeOffset, WarnUnknownStat) : null;
+
+        // Эхо user_order_id в ответе: наш номер как есть или «api:N». Иное (авто-id брокера — брокер не принял наш) — не ошибка: заявка привязана по order_id ответа.
+        var echoed = state?.ClientOrderId;
+        if (!string.IsNullOrWhiteSpace(echoed) && !FreedomOrderRules.UserOrderIdMatches(echoed, order.UserOrderId))
+            _logger.LogWarning("Freedom putTradeOrder: broker echoed another user_order_id for {UserOrderId} — order linked by order_id {BrokerOrderId}", order.UserOrderId, brokerId);
+
         return state is null
             ? new GatewayOrderState(brokerId, order.UserOrderId, TradeOrderStatuses.Submitted, order.Quantity, 0, null, null, null, null)
-            : state with { BrokerOrderId = brokerId, ClientOrderId = state.ClientOrderId ?? order.UserOrderId };
+            : state with { BrokerOrderId = brokerId, ClientOrderId = order.UserOrderId };
     }
+
+    private void WarnUnknownStat(string brokerOrderId, string? stat) =>
+        _logger.LogWarning("Freedom order {BrokerOrderId}: unknown stat {Stat} — treated as active (never final)", brokerOrderId, stat ?? "null");
 
     public async Task<IReadOnlyList<GatewayOrderState>> GetOrdersAsync(ulong userId, bool activeOnly, CancellationToken ct = default)
     {
         var keys = await KeysForAsync(userId);
         using var doc = await SendOrderCommandAsync(keys, OrdersCommand, [new("active_only", activeOnly ? 1 : 0)], ct);
         ThrowIfBrokerError(doc.RootElement, OrdersCommand, keys);
-        return ParseOrders(doc.RootElement);
+        return ParseOrders(doc.RootElement, _orderTimeOffset, WarnUnknownStat);
     }
 
     public async Task CancelOrderAsync(ulong userId, string brokerOrderId, CancellationToken ct = default)
@@ -253,8 +265,12 @@ public sealed class FreedomOrderGateway : IFreedomOrderGateway
 
     // ─── Разбор заявок ────────────────────────────────────────────────────────────────────
 
-    /// <summary>Список заявок: <c>result.orders.order</c> (массив или один объект), допускаются <c>orders.order</c> и <c>orders</c>-массив в корне.</summary>
-    internal static IReadOnlyList<GatewayOrderState> ParseOrders(JsonElement root)
+    /// <summary>
+    /// Список заявок. Живой ответ (через SDK <c>cmd</c>) — <c>{orders: {key, order: [...]}}</c> без обёртки <c>result</c>; допускаются и <c>result.orders.order</c>,
+    /// <c>order</c> одним объектом и <c>orders</c>-массив. <paramref name="offset"/> — смещение локального времени брокера от UTC; <paramref name="onUnknownStat"/> —
+    /// вызывается для кода <c>stat</c> вне официального списка (заявка остаётся активной).
+    /// </summary>
+    internal static IReadOnlyList<GatewayOrderState> ParseOrders(JsonElement root, TimeSpan offset, Action<string, string?>? onUnknownStat = null)
     {
         var holder = Obj(root, "result") ?? root;
         if (!holder.TryGetProperty("orders", out var orders)) return [];
@@ -269,28 +285,40 @@ public sealed class FreedomOrderGateway : IFreedomOrderGateway
             },
             _ => [],
         };
-        return items.Where(e => e.ValueKind == JsonValueKind.Object).Select(ParseOrder).Where(s => s is not null).Select(s => s!).ToList();
+        return items.Where(e => e.ValueKind == JsonValueKind.Object).Select(e => ParseOrder(e, offset, onUnknownStat)).Where(s => s is not null).Select(s => s!).ToList();
     }
 
     /// <summary>
-    /// Заявка Tradernet → <see cref="GatewayOrderState"/>. Id брокера — <c>order_id</c>, иначе <c>id</c>; исполнено = <c>q − leaves_qty</c> (штуки = лоты, лот 1);
-    /// статус — <see cref="FreedomOrderStatusMap.Resolve"/> (консервативно). Средняя цена штуки — по <c>trades_json</c>, если он есть; комиссии в заявке нет (null —
-    /// берётся из выписки движений денег при сверке). null — у записи нет id.
+    /// Заявка Tradernet → <see cref="GatewayOrderState"/>. Id брокера — <c>order_id</c>, иначе <c>id</c>; статус и исполнено (<c>q − leaves_qty</c>, штуки = лоты, лот 1) —
+    /// <see cref="FreedomOrderStatusMap.Resolve"/> по официальным кодам. Средняя цена штуки — по <c>trades_json</c>, если он есть; комиссии в заявке нет (null —
+    /// берётся из выписки движений денег при сверке). Реквизиты для сверки без id: <c>instr</c>, <c>oper</c> (1 → Buy, 3 → Sell; маржинальные 2/4 и прочее — null),
+    /// <c>p</c> (валюта бумаги за штуку), <c>date</c> (локальное время брокера: ISO <c>2026-10-23T16:46:41.883</c> или <c>2026-10-23 17:04:15</c>) → UTC = date −
+    /// <paramref name="offset"/>. <c>user_order_id</c> — как есть (в списке заявок брокер отдаёт null). null — у записи нет id.
     /// </summary>
-    internal static GatewayOrderState? ParseOrder(JsonElement e)
+    internal static GatewayOrderState? ParseOrder(JsonElement e, TimeSpan offset, Action<string, string?>? onUnknownStat = null)
     {
         var id = Str(e, "order_id") ?? Str(e, "id");
         if (string.IsNullOrWhiteSpace(id)) return null;
-        var stat = Dec(e, "stat") is { } s ? (int?)(int)s : null;
+        var statRaw = Dec(e, "stat");
+        var stat = statRaw is { } s && s == decimal.Truncate(s) && s is >= int.MinValue and <= int.MaxValue ? (int?)(int)s : null;
         var q = (long)Math.Floor(Dec(e, "q") ?? 0m);
-        var leaves = Dec(e, "leaves_qty");
-        long executed = leaves is { } l ? Math.Max(0, q - (long)Math.Ceiling(l)) : stat == FreedomOrderStatusMap.Filled ? q : 0;
-        var status = FreedomOrderStatusMap.Resolve(stat, q, executed);
+        var resolution = FreedomOrderStatusMap.Resolve(stat, q, Dec(e, "leaves_qty"));
+        if (!resolution.KnownCode) onUnknownStat?.Invoke(id.Trim(), statRaw?.ToString(CultureInfo.InvariantCulture));
+        var status = resolution.Status;
+        var executed = resolution.Executed;
         var error = Str(e, "error");
         var message = string.IsNullOrWhiteSpace(error) ? (status == TradeOrderStatuses.Rejected ? "Брокер отклонил заявку" : null) : Trim(error.Trim());
+        var oper = Dec(e, "oper");
+        var side = oper == FreedomOrderRules.BuyActionId ? Bonds.Core.Policy.PlanSides.Buy : oper == FreedomOrderRules.SellActionId ? Bonds.Core.Policy.PlanSides.Sell : null;
+        DateTime? placedUtc = Str(e, "date") is { } raw
+            && DateTime.TryParse(raw, CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces, out var local)
+            && local.Kind == DateTimeKind.Unspecified
+                ? DateTime.SpecifyKind(local - offset, DateTimeKind.Utc)
+                : null;
         return new GatewayOrderState(
             id.Trim(), Str(e, "user_order_id"), status, q, executed, executed > 0 ? AvgFromTrades(e) : null, null,
-            BrokerAssetClassifier.NormalizeCurrency(Str(e, "cur")), message);
+            BrokerAssetClassifier.NormalizeCurrency(Str(e, "cur")), message,
+            Ticker: Str(e, "instr")?.Trim().ToUpperInvariant(), Side: side, LimitPrice: Dec(e, "p"), PlacedAtUtc: placedUtc);
     }
 
     /// <summary>Средняя цена штуки по сделкам заявки (<c>trades_json</c> — строка с JSON-массивом <c>{p, q}</c>); нет или не разобралось — null.</summary>

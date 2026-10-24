@@ -8,6 +8,11 @@ public sealed record TInvestTradeAccount(string Id, bool FullAccess, bool Open);
 /// <see cref="AvgFillPrice"/> — средняя цена исполнения ОДНОЙ штуки в <see cref="Currency"/> (MoneyValue брокера), <see cref="ExecutedCommission"/> — комиссия заявки;
 /// <see cref="ExecutedAmount"/> — ИТОГОВАЯ исполненная сумма заявки в валюте (без комиссии), если брокер её отдаёт (<c>OrderState</c>), иначе null. Есть сумма —
 /// исполнитель считает цену штуки сам: сумма / (лоты × лотность) (<see cref="Bonds.Core.Execution.FillPrice"/>).
+/// <para>
+/// Реквизиты заявки (задача 66, только Freedom — для сверки заявки без id брокера после потерянного ответа): <see cref="Ticker"/> (<c>instr</c>, верхний регистр),
+/// <see cref="Side"/> (<c>PlanSides</c> по <c>oper</c>: 1 — Buy, 3 — Sell, прочее — null), <see cref="LimitPrice"/> (<c>p</c>, валюта бумаги за штуку),
+/// <see cref="PlacedAtUtc"/> (<c>date</c> брокера, переведённая в UTC по <c>Freedom:OrderTimeUtcOffsetHours</c>). T-Invest их не заполняет.
+/// </para>
 /// </summary>
 public sealed record GatewayOrderState(
     string BrokerOrderId,
@@ -19,7 +24,11 @@ public sealed record GatewayOrderState(
     decimal? ExecutedCommission,
     string? Currency,
     string? Message,
-    decimal? ExecutedAmount = null);
+    decimal? ExecutedAmount = null,
+    string? Ticker = null,
+    string? Side = null,
+    decimal? LimitPrice = null,
+    DateTime? PlacedAtUtc = null);
 
 /// <summary>Статус торгов бумагой (<c>GetTradingStatus</c>).</summary>
 public sealed record GatewayTradingStatus(bool NormalTrading, bool LimitOrderAvailable, bool ApiTradeAvailable);

@@ -78,8 +78,11 @@ public interface IExecutionVenue
 
     Task<GatewayOrderState> PostAsync(VenueSession session, ulong userId, TradePlanLine line, string instrumentId, TradeOrder order, CancellationToken ct);
 
-    /// <summary>Состояние заявки у брокера; <paramref name="searchActive"/> — заявка ещё <c>New</c> (ответа не было): искать и в списке активных. null — брокер не знает.</summary>
-    Task<GatewayOrderState?> StateAsync(VenueSession session, ulong userId, TradeOrder order, bool searchActive, CancellationToken ct);
+    /// <summary>
+    /// Состояние заявки у брокера; <paramref name="searchActive"/> — заявка ещё <c>New</c> (ответа не было): искать и в списке активных. <paramref name="line"/> — строка плана
+    /// заявки (Freedom: реквизиты для сверки заявки без id брокера; null — такую заявку не найти). null — брокер не знает (или не удалось однозначно опознать).
+    /// </summary>
+    Task<GatewayOrderState?> StateAsync(VenueSession session, ulong userId, TradeOrder order, TradePlanLine? line, bool searchActive, CancellationToken ct);
 
     Task CancelAsync(VenueSession session, ulong userId, TradeOrder order, CancellationToken ct);
 
@@ -184,7 +187,7 @@ public sealed class TInvestExecutionVenue : IExecutionVenue
         _gateway.PostLimitOrderAsync(
             userId, new GatewayLimitOrder(session.BrokerAccountId, instrumentId, line.Side, order.LotsRequested, order.LimitPrice, order.PriceUnit, order.ClientOrderId), ct);
 
-    public async Task<GatewayOrderState?> StateAsync(VenueSession session, ulong userId, TradeOrder order, bool searchActive, CancellationToken ct)
+    public async Task<GatewayOrderState?> StateAsync(VenueSession session, ulong userId, TradeOrder order, TradePlanLine? line, bool searchActive, CancellationToken ct)
     {
         var state = await _gateway.GetOrderStateAsync(userId, session.BrokerAccountId, order.ClientOrderId, ct);
         if (state is null && searchActive)
@@ -360,18 +363,60 @@ public sealed class FreedomExecutionVenue : IExecutionVenue
     public Task<GatewayOrderState> PostAsync(VenueSession session, ulong userId, TradePlanLine line, string instrumentId, TradeOrder order, CancellationToken ct) =>
         _gateway.PostLimitOrderAsync(userId, new FreedomLimitOrder(instrumentId, line.Side, order.LotsRequested, order.LimitPrice, order.ClientOrderId), ct);
 
-    public async Task<GatewayOrderState?> StateAsync(VenueSession session, ulong userId, TradeOrder order, bool searchActive, CancellationToken ct)
+    /// <summary>Окно сверки заявки без id брокера: время размещения у брокера — в пределах ±окна от <c>trade_orders.created_at</c>.</summary>
+    public static readonly TimeSpan ReconcileWindow = TimeSpan.FromMinutes(2);
+
+    /// <summary>
+    /// Заявка известна по id брокера — ищется в списке ВСЕХ заявок брокера (<see cref="IFreedomOrderGateway.GetOrdersAsync"/>, activeOnly = false) по id. Ответа на размещение не было (<c>New</c> без id) — см. <see cref="Candidates"/>:
+    /// <c>user_order_id</c> в списке заявок брокер НЕ отдаёт (null), поэтому заявка опознаётся по реквизитам; кандидаты, уже привязанные к другой строке <c>trade_orders</c>,
+    /// исключаются. Не опознана однозначно — null (движок по таймауту ставит <c>unknown_state</c>, повторно НЕ отправляет).
+    /// </summary>
+    public async Task<GatewayOrderState?> StateAsync(VenueSession session, ulong userId, TradeOrder order, TradePlanLine? line, bool searchActive, CancellationToken ct)
     {
-        var found = Find(await _gateway.GetOrdersAsync(userId, activeOnly: false, ct), order);
-        if (found is null) found = Find(await _gateway.GetOrdersAsync(userId, activeOnly: true, ct), order);
-        return found;
+        var orders = await _gateway.GetOrdersAsync(userId, activeOnly: false, ct);
+        if (!string.IsNullOrEmpty(order.BrokerOrderId))
+            return orders.FirstOrDefault(o => string.Equals(o.BrokerOrderId, order.BrokerOrderId, StringComparison.Ordinal));
+        if (line is null || InstrumentIdOf(line) is not { } ticker) return null;
+
+        // Шаг цены — из котировки (min_step); нет — сравнение цены точное (строже — безопаснее).
+        var step = (await _gateway.GetQuoteAsync(userId, ticker, ct)).MinStep;
+        var candidates = Candidates(orders, order, ticker, line.Side, step);
+        var unlinked = new List<GatewayOrderState>();
+        foreach (var c in candidates)
+            if (!await _orders.IsBrokerOrderLinkedAsync(Brokers.Freedom, c.BrokerOrderId, order.Id)) unlinked.Add(c);
+
+        if (unlinked.Count == 1)
+        {
+            _logger.LogInformation("Execution: Freedom order {ClientOrderId} reconciled to broker order {BrokerOrderId} by attributes", order.ClientOrderId, unlinked[0].BrokerOrderId);
+            return unlinked[0];
+        }
+
+        if (unlinked.Count > 1)
+            _logger.LogWarning("Execution: Freedom order {ClientOrderId} is ambiguous ({Count} matching broker orders) — not adopted", order.ClientOrderId, unlinked.Count);
+        return null;
     }
 
-    /// <summary>По id брокера, если он уже известен; иначе — по НАШЕМУ <c>user_order_id</c> (ответа на размещение не было).</summary>
-    internal static GatewayOrderState? Find(IReadOnlyList<GatewayOrderState> orders, TradeOrder order) =>
-        !string.IsNullOrEmpty(order.BrokerOrderId)
-            ? orders.FirstOrDefault(o => string.Equals(o.BrokerOrderId, order.BrokerOrderId, StringComparison.Ordinal))
-            : orders.FirstOrDefault(o => FreedomOrderRules.UserOrderIdMatches(o.ClientOrderId, order.ClientOrderId));
+    private static string? InstrumentIdOf(TradePlanLine line) =>
+        FreedomOrderRules.IsTradableTicker(line.Ticker) ? line.Ticker.Trim().ToUpperInvariant() : null;
+
+    /// <summary>
+    /// Кандидаты для заявки без id брокера (чистая функция): тот же тикер (<c>instr</c>), та же сторона (<c>oper</c> 1/3), то же количество (<c>q</c>), лимит (<c>p</c>) в пределах
+    /// половины шага <paramref name="step"/> (нет шага — точно), время размещения у брокера в окне ±<see cref="ReconcileWindow"/> от <c>created_at</c> строки (нет времени — не
+    /// кандидат); заявка с непустым <c>user_order_id</c>, не совпадающим с нашим, — не наша. Привязку к другим строкам проверяет вызывающий.
+    /// </summary>
+    internal static IReadOnlyList<GatewayOrderState> Candidates(
+        IReadOnlyList<GatewayOrderState> orders, TradeOrder order, string ticker, string side, decimal? step)
+    {
+        var tolerance = step is > 0m ? step.Value / 2m : 0m;
+        return orders.Where(o =>
+                string.Equals(o.Ticker, ticker, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(o.Side, side, StringComparison.Ordinal)
+                && o.LotsRequested == order.LotsRequested
+                && o.LimitPrice is { } p && Math.Abs(p - order.LimitPrice) <= tolerance
+                && o.PlacedAtUtc is { } at && at >= order.CreatedAt - ReconcileWindow && at <= order.CreatedAt + ReconcileWindow
+                && (string.IsNullOrWhiteSpace(o.ClientOrderId) || FreedomOrderRules.UserOrderIdMatches(o.ClientOrderId, order.ClientOrderId)))
+            .ToList();
+    }
 
     public Task CancelAsync(VenueSession session, ulong userId, TradeOrder order, CancellationToken ct)
     {

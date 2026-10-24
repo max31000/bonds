@@ -324,10 +324,11 @@ public class FreedomPlanExecutionTests
     // ─── Идемпотентность по user_order_id ─────────────────────────────────────────────────
 
     [Fact]
-    public async Task ResponseLost_OrderReconciledByUserOrderId_NeverResubmitted()
+    public async Task ResponseLost_OrderReconciledByAttributes_NeverResubmitted()
     {
         var plan = AddPlan(Noon);
         Quote("VUAA.EU", 147.65m, 147.75m);
+        _freedom.Clock = () => Noon.AddSeconds(1); // брокер принял заявку через секунду после записи строки
         _freedom.LoseResponse = true;
 
         await Engine().RunTickAsync(Noon);
@@ -337,7 +338,8 @@ public class FreedomPlanExecutionTests
         order.Status.Should().Be(TradeOrderStatuses.New, "исход неизвестен — только сверка");
         order.BrokerOrderId.Should().BeNull();
 
-        // «Рестарт»: новый движок, тот же репозиторий. Заявка находится у брокера по user_order_id.
+        // «Рестарт»: новый движок, тот же репозиторий. В списке заявок брокера user_order_id = null — заявка опознаётся по тикеру, стороне, количеству, лимиту и времени.
+        _freedom.Orders.Values.Should().OnlyContain(o => o.ClientOrderId == null);
         _freedom.LoseResponse = false;
         await Engine().RunTickAsync(Noon.AddSeconds(20));
 
@@ -345,6 +347,32 @@ public class FreedomPlanExecutionTests
         order = OrdersOf(plan).Single();
         order.Status.Should().Be(TradeOrderStatuses.Submitted);
         order.BrokerOrderId.Should().NotBeNullOrEmpty();
+    }
+
+    [Fact]
+    public async Task ResponseLost_TwoIdenticalBrokerOrders_Ambiguous_UnknownStateAfterTimeout_NeverResubmitted()
+    {
+        var plan = AddPlan(Noon);
+        Quote("VUAA.EU", 147.65m, 147.75m);
+        _freedom.Clock = () => Noon.AddSeconds(1);
+        _freedom.LoseResponse = true;
+        await Engine().RunTickAsync(Noon);
+        _freedom.LoseResponse = false;
+
+        // Такая же заявка, выставленная вручную в терминале в ту же минуту, — какая из двух наша, не понять.
+        var ours = _freedom.Orders.Values.Single();
+        _freedom.Orders["900000777"] = ours with { BrokerOrderId = "900000777", PlacedAtUtc = Noon.AddSeconds(40) };
+
+        await Engine().RunTickAsync(Noon.AddSeconds(20));
+        OrdersOf(plan).Single().Status.Should().Be(TradeOrderStatuses.New, "не опознана — ждём, не присваиваем");
+
+        await Engine().RunTickAsync(Noon.Add(_options.UnconfirmedOrderTimeout).AddMinutes(1));
+
+        _freedom.PostCount.Should().Be(1, "повторной отправки нет никогда");
+        var order = OrdersOf(plan).Single();
+        order.Status.Should().Be(TradeOrderStatuses.Failed);
+        order.ErrorCode.Should().Be(TradeOrderErrorCodes.UnknownState);
+        order.BrokerOrderId.Should().BeNull();
     }
 
     [Fact]

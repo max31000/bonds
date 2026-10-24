@@ -89,38 +89,109 @@ public static class FreedomOrderRules
     }
 }
 
+/// <summary>Класс кода статуса заявки Tradernet (<c>stat</c>).</summary>
+public enum FreedomStatClass
+{
+    /// <summary>Код не из официального списка (или его нет) — считается активной, исполнитель логирует предупреждение.</summary>
+    Unknown,
+
+    /// <summary>Активна, ничего не исполнено (1 получен, 2 в процессе отмены, 10 активен, 11 отправлен, 75 ошибка отмены).</summary>
+    Active,
+
+    /// <summary>Частично исполнена и ещё активна (12 частично заполнен, 20 частично исполнен).</summary>
+    ActivePartial,
+
+    /// <summary>Исполнена полностью (21) — окончательный.</summary>
+    Filled,
+
+    /// <summary>Снята/истекла, возможно частичное исполнение (30, 31, 71, 72) — окончательный; исполнено = <c>q − leaves_qty</c>.</summary>
+    Closed,
+
+    /// <summary>Отклонена/ошибка отправки (0 проигнорирован, 70 отклонен, 74 ошибка отправки) — окончательный; исполнено — только если так говорит <c>leaves_qty</c>.</summary>
+    Rejected,
+}
+
+/// <summary>Итог разбора статуса заявки Freedom: статус исполнителя, исполненные ШТУКИ (= лоты, лот 1) и признак, что код официальный.</summary>
+public sealed record FreedomOrderResolution(string Status, long Executed, bool KnownCode);
+
 /// <summary>
-/// Статусы заявки Tradernet (<c>stat</c>) → <see cref="TradeOrderStatuses"/>. <b>Консервативно:</b> окончательными считаются только хорошо известные коды
-/// (3 исполнена, 4 снята, 7 отклонена); 2 — частично исполнена; ЛЮБОЙ другой код (1 принята, 10 активна, 6 отменяется и неизвестные) — <c>Submitted</c>, т.е.
-/// «может исполняться»: исполнитель продолжит сверку и снятие, но не перевыставит строку, пока брокер не подтвердит окончательный статус. Ошибка в сторону
-/// «активна» безопасна (лишняя сверка), в сторону «окончательна» — нет (новая попытка при живой старой).
+/// Статусы заявки Tradernet (<c>stat</c>, официальный список tradernet.global/tradernet-api/order-statuses) → <see cref="TradeOrderStatuses"/>.
+/// <list type="bullet">
+/// <item>21 исполнен — <c>Filled</c>.</item>
+/// <item>30 частично отменен, 31 отменен, 71 истек, 72 частично исполнен и истек — <c>Cancelled</c> (снята не нами: движок перевыставит остаток или закроет строку),
+/// исполнено = <c>q − leaves_qty</c>; всё исполнено — <c>Filled</c>.</item>
+/// <item>0 проигнорирован, 70 отклонен, 74 ошибка отправки — <c>Rejected</c> (ничего не исполнено), если только <c>leaves_qty</c> не показывает исполнение — тогда
+/// <c>Cancelled</c> (окончательно, исполненное учитывается).</item>
+/// <item>1 получен, 2 в процессе отмены, 10 активен, 11 отправлен, 75 ошибка отмены — <c>Submitted</c> (с исполнением — <c>PartiallyFilled</c>).</item>
+/// <item>12 частично заполнен, 20 частично исполнен — <c>PartiallyFilled</c>.</item>
+/// <item><b>Неизвестный код или его нет — активна, НИКОГДА не окончательна</b> (даже при <c>leaves_qty = 0</c>): исполнитель продолжит сверку и снятие, но не
+/// перевыставит строку, пока брокер не покажет официальный окончательный код. Ошибка в сторону «активна» безопасна (лишняя сверка), в сторону «окончательна» — нет.</item>
+/// </list>
 /// </summary>
 public static class FreedomOrderStatusMap
 {
-    public const int PartiallyFilled = 2;
-    public const int Filled = 3;
-    public const int Cancelled = 4;
-    public const int Rejected = 7;
+    public const int Ignored = 0;
+    public const int Received = 1;
+    public const int Cancelling = 2;
+    public const int Active = 10;
+    public const int Sent = 11;
+    public const int PartiallyPlaced = 12;
+    public const int PartiallyFilled = 20;
+    public const int Filled = 21;
+    public const int PartiallyCancelled = 30;
+    public const int Cancelled = 31;
+    public const int Rejected = 70;
+    public const int Expired = 71;
+    public const int PartiallyFilledExpired = 72;
+    public const int SendError = 74;
+    public const int CancelError = 75;
 
-    public static string Map(int? stat) => stat switch
+    public static FreedomStatClass Classify(int? stat) => stat switch
     {
-        Filled => TradeOrderStatuses.Filled,
-        Cancelled => TradeOrderStatuses.Cancelled,
-        Rejected => TradeOrderStatuses.Rejected,
-        PartiallyFilled => TradeOrderStatuses.PartiallyFilled,
-        _ => TradeOrderStatuses.Submitted,
+        Filled => FreedomStatClass.Filled,
+        PartiallyCancelled or Cancelled or Expired or PartiallyFilledExpired => FreedomStatClass.Closed,
+        Ignored or Rejected or SendError => FreedomStatClass.Rejected,
+        Received or Cancelling or Active or Sent or CancelError => FreedomStatClass.Active,
+        PartiallyPlaced or PartiallyFilled => FreedomStatClass.ActivePartial,
+        _ => FreedomStatClass.Unknown,
     };
 
+    public static bool IsKnown(int? stat) => Classify(stat) != FreedomStatClass.Unknown;
+
     /// <summary>
-    /// Статус с учётом исполненного количества: <c>leaves_qty = 0</c> при полном исполнении — Filled даже при незнакомом коде; активная заявка с исполнением —
-    /// PartiallyFilled. Штуки = лоты (у Freedom лот = 1).
+    /// Статус и исполненное по <c>stat</c>, запрошенным <paramref name="requested"/> (<c>q</c>) и остатку <paramref name="leaves"/> (<c>leaves_qty</c>; null — поля нет).
+    /// Исполнено = <c>q − leaves_qty</c> (не меньше 0); у 21 без <c>leaves_qty</c> — всё. Штуки = лоты (у Freedom лот = 1).
     /// </summary>
-    public static string Resolve(int? stat, long requested, long executed)
+    public static FreedomOrderResolution Resolve(int? stat, long requested, decimal? leaves)
     {
-        var mapped = Map(stat);
-        if (requested > 0 && executed >= requested) return TradeOrderStatuses.Filled;
-        if (mapped == TradeOrderStatuses.Submitted && executed > 0) return TradeOrderStatuses.PartiallyFilled;
-        return mapped;
+        var cls = Classify(stat);
+        long FromLeaves() => leaves is { } l ? Math.Clamp(requested - (long)Math.Ceiling(l), 0, Math.Max(0, requested)) : 0;
+        var known = cls != FreedomStatClass.Unknown;
+        switch (cls)
+        {
+            case FreedomStatClass.Filled:
+                return new(TradeOrderStatuses.Filled, requested, true);
+            case FreedomStatClass.Closed:
+            {
+                var executed = FromLeaves();
+                return new(requested > 0 && executed >= requested ? TradeOrderStatuses.Filled : TradeOrderStatuses.Cancelled, executed, true);
+            }
+            case FreedomStatClass.Rejected:
+            {
+                var executed = FromLeaves();
+                return executed > 0
+                    ? new(executed >= requested ? TradeOrderStatuses.Filled : TradeOrderStatuses.Cancelled, executed, true)
+                    : new(TradeOrderStatuses.Rejected, 0, true);
+            }
+            case FreedomStatClass.ActivePartial:
+                return new(TradeOrderStatuses.PartiallyFilled, FromLeaves(), true);
+            default:
+            {
+                // Active и Unknown: активна; исполнение (если есть) — PartiallyFilled, но НЕ Filled — окончательность только по официальному коду.
+                var executed = FromLeaves();
+                return new(executed > 0 ? TradeOrderStatuses.PartiallyFilled : TradeOrderStatuses.Submitted, executed, known);
+            }
+        }
     }
 }
 

@@ -136,10 +136,10 @@ public sealed class TradeTokenChangeGuard
             var label = line?.Ticker ?? $"план #{order.PlanId}, строка {order.LineNo}";
             if (order.Status == TradeOrderStatuses.New && string.IsNullOrEmpty(order.BrokerOrderId) && broker != Brokers.TInvest)
             {
-                // Freedom: ответа на размещение не было — сначала узнать id брокера по user_order_id (снять можно только по нему).
+                // Freedom: ответа на размещение не было — сначала опознать заявку у брокера по реквизитам (снять можно только по id брокера).
                 try
                 {
-                    if (await venue.StateAsync(session, userId, order, true, ct) is { } found) OrderStateMapping.Apply(order, found, line?.LotSize ?? 1m, nowUtc);
+                    if (await venue.StateAsync(session, userId, order, line, true, ct) is { } found) OrderStateMapping.Apply(order, found, line?.LotSize ?? 1m, nowUtc);
                 }
                 catch (ExecutionGatewayException ex)
                 {
@@ -166,7 +166,7 @@ public sealed class TradeTokenChangeGuard
             GatewayOrderState? state;
             try
             {
-                state = await venue.StateAsync(session, userId, order, false, ct);
+                state = await venue.StateAsync(session, userId, order, line, false, ct);
             }
             catch (ExecutionGatewayException ex)
             {

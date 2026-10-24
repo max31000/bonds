@@ -617,7 +617,7 @@ public sealed class PlanExecutionEngine
         GatewayOrderState? state;
         try
         {
-            state = await venue.StateAsync(session, ctx.UserId, order, order.Status == TradeOrderStatuses.New, ct);
+            state = await venue.StateAsync(session, ctx.UserId, order, line, order.Status == TradeOrderStatuses.New, ct);
         }
         catch (ExecutionGatewayException ex)
         {
@@ -694,7 +694,7 @@ public sealed class PlanExecutionEngine
 
         try
         {
-            if (await venue.StateAsync(session, ctx.UserId, order, false, ct) is { } state)
+            if (await venue.StateAsync(session, ctx.UserId, order, line, false, ct) is { } state)
                 OrderStateMapping.Apply(order, state, line.LotSize, ctx.NowUtc);
         }
         catch (ExecutionGatewayException ex) when (ex.Kind == GatewayErrorKind.Transient)

@@ -33,6 +33,9 @@ public sealed class FakeFreedomOrderGateway : IFreedomOrderGateway
     /// <summary>Отправка «доходит» до брокера, но ответ теряется (исключение Transient ПОСЛЕ регистрации заявки).</summary>
     public bool LoseResponse { get; set; }
 
+    /// <summary>Время размещения у «брокера» (UTC) — для сверки по реквизитам; по умолчанию — системное.</summary>
+    public Func<DateTime> Clock { get; set; } = () => DateTime.UtcNow;
+
     public int PostCount
     {
         get { lock (_lock) return Posted.Count; }
@@ -48,7 +51,14 @@ public sealed class FakeFreedomOrderGateway : IFreedomOrderGateway
             Posted.Add((userId, order));
             var state = OnPost?.Invoke(order)
                 ?? new GatewayOrderState((_nextId++).ToString(), order.UserOrderId, TradeOrderStatuses.Submitted, order.Quantity, 0, null, null, "USD", null);
-            Orders[state.BrokerOrderId] = state;
+            state = state with
+            {
+                Ticker = state.Ticker ?? order.Ticker.ToUpperInvariant(), Side = state.Side ?? order.Side, LimitPrice = state.LimitPrice ?? order.LimitPrice,
+                PlacedAtUtc = state.PlacedAtUtc ?? Clock(),
+            };
+
+            // Как у живого брокера: в списке заявок (getNotifyOrderJson) user_order_id = null, эхо — только в ответе на размещение.
+            Orders[state.BrokerOrderId] = state with { ClientOrderId = null };
             if (LoseResponse) throw new FreedomGatewayException(GatewayErrorKind.Transient, "timeout", "Freedom: таймаут");
             return Task.FromResult(state);
         }

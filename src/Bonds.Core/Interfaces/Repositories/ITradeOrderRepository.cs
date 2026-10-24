@@ -23,4 +23,10 @@ public interface ITradeOrderRepository
 
     /// <summary>То же, только заявки брокера <paramref name="broker"/> (<c>trade_orders.broker</c>, задача 66) — для смены торгового ключа этого брокера.</summary>
     Task<IReadOnlyList<TradeOrder>> ListActiveByUserAsync(ulong userId, string broker);
+
+    /// <summary>
+    /// id заявки брокера <paramref name="brokerOrderId"/> уже привязан к строке <c>trade_orders</c> этого брокера, кроме <paramref name="exceptOrderId"/> (задача 66: сверка заявки
+    /// Freedom без id не должна «присвоить» заявку другой строки).
+    /// </summary>
+    Task<bool> IsBrokerOrderLinkedAsync(string broker, string brokerOrderId, ulong exceptOrderId);
 }

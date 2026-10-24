@@ -9,6 +9,13 @@ public sealed class FreedomOptions
     public string BaseUrl { get; set; } = "https://tradernet.global";
 
     public int TimeoutSeconds { get; set; } = 30;
+
+    /// <summary>
+    /// Смещение часового пояса меток времени заявок Tradernet (поле <c>date</c> списка заявок — локальное время БЕЗ пояса) от UTC, ЧАСЫ: UTC = date − смещение.
+    /// По умолчанию 3 (МСК) — НЕ подтверждено на живом счёте (проверка — боевой прогон владельца, см. CODEBASE-GUIDE). Неверное смещение безопасно: сверка заявки без id
+    /// брокера ищет её в окне ±2 мин от записи <c>trade_orders</c>, промах окна → <c>unknown_state</c> (без повторной отправки), а не чужая заявка.
+    /// </summary>
+    public double OrderTimeUtcOffsetHours { get; set; } = 3;
 }
 
 /// <summary>

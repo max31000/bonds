@@ -1,53 +1,76 @@
 {
- "result": {
-  "orders": {
-   "key": "SYNTHETIC",
-   "order": [
-    {
-     "id": 900000001,
-     "date": "2026-10-23 17:04:15",
-     "stat": 10,
-     "stat_orig": 10,
-     "instr": "VUAA.EU",
-     "oper": 1,
-     "type": 2,
-     "cur": "USD",
-     "p": 147.7,
-     "q": 3,
-     "leaves_qty": 3,
-     "exp": 1,
-     "user_order_id": "1234567890",
-     "trades_json": "[]",
-     "error": ""
-    },
-    {
-     "id": 900000002,
-     "date": "2026-10-23 17:10:00",
-     "stat": 3,
-     "instr": "SPYM.US",
-     "oper": 1,
-     "type": 2,
-     "cur": "USD",
-     "p": 54.1,
-     "q": 2,
-     "leaves_qty": 0,
-     "exp": 1,
-     "user_order_id": "api:1792764255",
-     "trades_json": "[{\"p\": 54.0, \"q\": 1}, {\"p\": 54.1, \"q\": 1}]"
-    },
-    {
-     "id": 900000003,
-     "stat": 7,
-     "instr": "XB0T.EU",
-     "oper": 3,
-     "cur": "USD",
-     "p": 19.9,
-     "q": 1,
-     "leaves_qty": 1,
-     "user_order_id": "1111111111",
-     "error": "Not enough funds"
-    }
-   ]
-  }
+ "orders": {
+  "key": "SYNTHETIC",
+  "order": [
+   {
+    "id": 900000001,
+    "date": "2026-10-23T17:04:15.120",
+    "stat": 10,
+    "stat_orig": 10,
+    "instr": "VUAA.EU",
+    "oper": 1,
+    "type": 2,
+    "cur": "USD",
+    "p": 147.7,
+    "q": 3,
+    "leaves_qty": 3,
+    "exp": 1,
+    "user_order_id": null,
+    "trades_json": "[]",
+    "error": ""
+   },
+   {
+    "id": 900000002,
+    "date": "2026-10-23T17:10:00.000",
+    "stat": 21,
+    "instr": "SPYM.US",
+    "oper": 1,
+    "type": 2,
+    "cur": "USD",
+    "p": 54.1,
+    "q": 2,
+    "leaves_qty": 0,
+    "exp": 1,
+    "user_order_id": null,
+    "trades_json": "[{\"p\": 54.0, \"q\": 1}, {\"p\": 54.1, \"q\": 1}]"
+   },
+   {
+    "id": 900000003,
+    "date": "2026-10-23T17:11:30.500",
+    "stat": 70,
+    "instr": "XB0T.EU",
+    "oper": 3,
+    "cur": "USD",
+    "p": 19.9,
+    "q": 1,
+    "leaves_qty": 1,
+    "user_order_id": null,
+    "error": "Not enough funds"
+   },
+   {
+    "id": 900000004,
+    "date": "2026-10-23T17:20:00.000",
+    "stat": 30,
+    "instr": "VUAA.EU",
+    "oper": 3,
+    "cur": "USD",
+    "p": 148.1,
+    "q": 5,
+    "leaves_qty": 3,
+    "user_order_id": null
+   },
+   {
+    "id": 900000005,
+    "date": "2026-10-23T17:25:00.000",
+    "stat": 99,
+    "instr": "VUAA.EU",
+    "oper": 1,
+    "cur": "USD",
+    "p": 147.5,
+    "q": 2,
+    "leaves_qty": 0,
+    "user_order_id": null
+   }
+  ]
  }
 }
