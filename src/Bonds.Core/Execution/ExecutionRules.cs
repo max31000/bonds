@@ -67,8 +67,11 @@ public static class OrderPricing
     /// </summary>
     public static decimal RequiredMoney(TradePlanLine line, decimal brokerPrice, long lots) => Scaled(line, line.EstAmount + line.EstFee, brokerPrice, lots);
 
-    /// <summary>Сумма заявки без комиссии (<c>est_amount</c> пропорционально лотам, масштаб вверх при цене выше утверждённой) — для лимита авто на заявку, в валюте строки.</summary>
-    public static decimal OrderAmount(TradePlanLine line, decimal brokerPrice, long lots) => Scaled(line, line.EstAmount, brokerPrice, lots);
+    /// <summary>
+    /// Сумма заявки С КОМИССИЕЙ (<c>est_amount + est_fee</c> пропорционально лотам, масштаб вверх при цене выше утверждённой) — для лимита авто на заявку, в валюте
+    /// строки (авто — только рублёвые строки, т.е. рубли). Комиссия включена так же, как в <see cref="PolicyKit.DecideStatus"/> и суточной сумме (T-67D).
+    /// </summary>
+    public static decimal OrderAmount(TradePlanLine line, decimal brokerPrice, long lots) => Scaled(line, line.EstAmount + line.EstFee, brokerPrice, lots);
 
     private static decimal Scaled(TradePlanLine line, decimal amount, decimal brokerPrice, long lots)
     {
@@ -125,7 +128,7 @@ public sealed record PreflightInput
     /// <summary>Только для <c>AutoApproved</c>: лимит ОДНОЙ заявки, рубли (<see cref="ExecutionLimitsOptions.AutoPerOrderRub"/>). null — план не авто.</summary>
     public decimal? AutoPerOrderRub { get; init; }
 
-    /// <summary>Сумма этой заявки по её цене (оценка строки пропорционально лотам, масштабированная вверх при цене выше утверждённой), в валюте строки, без комиссии.</summary>
+    /// <summary>Сумма этой заявки по её цене С КОМИССИЕЙ (<see cref="OrderPricing.OrderAmount"/>), в валюте строки (для авто — рубли).</summary>
     public decimal OrderAmount { get; init; }
 
     public bool Paused { get; init; }
@@ -179,7 +182,7 @@ public static class PreflightChecks
             if (i.AvailableMoney is null || i.AvailableMoney.Value < i.RequiredMoney)
                 return new(InsufficientFunds, string.Create(CultureInfo.InvariantCulture, $"Не хватает денег: нужно {i.RequiredMoney:0.##}, свободно {(i.AvailableMoney ?? 0m):0.##}"));
             if (i.AutoPerOrderRub is { } cap && i.OrderAmount > cap)
-                return new(AutoOrderLimit, string.Create(CultureInfo.InvariantCulture, $"Лимит авто-исполнения на заявку: {i.OrderAmount:0.##} ₽ больше {cap:0.##} ₽"));
+                return new(AutoOrderLimit, string.Create(CultureInfo.InvariantCulture, $"Лимит авто-исполнения на заявку: {i.OrderAmount:0.##} ₽ с комиссией больше {cap:0.##} ₽"));
             if (i.AutoUsedTodayRub is { } used && used + i.AutoPlanBuysRub > i.AutoPerDayRub)
                 return new(AutoDayLimit, string.Create(CultureInfo.InvariantCulture, $"Суточный лимит авто-исполнения: уже {used:0.##} ₽ + план {i.AutoPlanBuysRub:0.##} ₽ больше {i.AutoPerDayRub:0.##} ₽"));
         }
@@ -304,8 +307,10 @@ public static class AutoExecutionWhitelist
                 return $"авто-исполнение — только T-Invest ({line.Ticker})";
             if (!string.Equals(line.Currency.Trim(), "RUB", StringComparison.OrdinalIgnoreCase)) return $"авто-исполнение — только рубли ({line.Ticker})";
             if (OrderPricing.IsPointsPriced(line)) return $"облигации исполняются только после подтверждения ({line.Ticker})";
-            if (line.EstAmount > autoPerOrderRub)
-                return string.Create(CultureInfo.InvariantCulture, $"заявка {line.Ticker} на {line.EstAmount:0.##} ₽ больше лимита авто {autoPerOrderRub:0.##} ₽");
+            // T-67D: с комиссией — как PolicyKit.DecideStatus (строка рублёвая, проверено выше, поэтому est_amount + est_fee — рубли).
+            var withFee = line.EstAmount + line.EstFee;
+            if (withFee > autoPerOrderRub)
+                return string.Create(CultureInfo.InvariantCulture, $"заявка {line.Ticker} на {withFee:0.##} ₽ с комиссией больше лимита авто {autoPerOrderRub:0.##} ₽");
             if (!AutoWhitelist.IsLiquidityMember(baskets, line.InstrumentKey, line.Ticker))
                 return $"бумага {line.Ticker} не входит в корзину с авто-покупкой «{AutoWhitelist.BasketCode}»";
 

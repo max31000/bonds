@@ -410,6 +410,38 @@ public class PlanExecutionEngineTests
     }
 
     [Fact]
+    public async Task T67D_AutoApproved_PerOrderCap_IncludesCommission_AtStart()
+    {
+        // Решение владельца (T-67D): лимит авто на заявку — С КОМИССИЕЙ (как PolicyKit.DecideStatus и суточная сумма). 24 950 + 15 комиссии = 24 965 > 24 960.
+        _limits.AutoPerOrderRub = 24_960m;
+        AddPlan(PlanStatuses.AutoApproved, DecidedVia.Auto, FundBuy(price: 2_495m, fee: 15m));
+        Book(FundUid, 2_494.9m, 2_495.1m, Noon);
+
+        await Engine().RunTickAsync(Noon);
+
+        _gateway.PostCount.Should().Be(0);
+        _notifier.Texts.Should().Contain(t => t.Contains("больше лимита авто"));
+    }
+
+    [Fact]
+    public async Task T67D_AutoApproved_PerOrderCap_Preflight_IncludesCommission()
+    {
+        // Оценка с комиссией 24 950 + 25 = 24 975 ≤ 24 980 — первая попытка уходит. Перевыставление ближе к ask: сумма без комиссии (≤ 24 965) лимит ещё
+        // проходит, а с комиссией (> 24 980) — нет: предполётная проверка отклоняет заявку (auto_order_limit).
+        _limits.AutoPerOrderRub = 24_980m;
+        AddPlan(PlanStatuses.AutoApproved, DecidedVia.Auto, FundBuy(price: 2_495m, fee: 25m));
+        Book(FundUid, 2_495.5m, 2_496.5m, Noon);
+        await Engine().RunTickAsync(Noon);
+        _gateway.PostCount.Should().Be(1);
+
+        Book(FundUid, 2_495.5m, 2_496.5m, Noon.AddMinutes(5));
+        await Engine().RunTickAsync(Noon.AddMinutes(5));
+
+        _gateway.PostCount.Should().Be(1);
+        _orders.All.OrderBy(o => o.Attempt).Last().ErrorCode.Should().Be(PreflightChecks.AutoOrderLimit);
+    }
+
+    [Fact]
     public async Task AutoApproved_PerOrderCap_AtOrderPrice_Preflight()
     {
         // Оценка 24 950 ≤ 25 000 проходит при старте, но цена заявки выше утверждённой (перевыставление) → сумма заявки > 25 000 → не отправляется.
