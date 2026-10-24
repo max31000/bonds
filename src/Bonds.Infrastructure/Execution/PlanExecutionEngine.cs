@@ -30,6 +30,17 @@ public sealed class ExecutionTickResult
 /// снимаются), строки брокера с открытыми — исполняются. Freedom — только планы, подтверждённые ВРУЧНУЮ (<c>Approved</c>, не <c>auto</c>).
 /// </para>
 /// <para>
+/// <b>Часы смешанного плана.</b> План стартует, только когда для КАЖДОЙ его строки с открытыми воротами брокера сессия открыта и до закрытия больше
+/// <c>CancelBeforeClose</c>, — то есть в ПЕРЕСЕЧЕНИИ окон рынков строк (по умолчанию, МСК, с <c>CancelBeforeClose</c> = 10 мин: T-Invest MOEX 10:00–18:40 и
+/// Freedom .EU 11:00–18:30 → 11:00–18:20; T-Invest MOEX и Freedom .US 17:30–23:00 → 17:30–18:30). Пересечения нет (план подтверждён поздно) — план ждёт до
+/// <c>expires_at</c> и истекает. Строки брокера с закрытыми воротами в пересечение не входят. После старта каждая строка сверяет часы своего рынка сама (вне
+/// сессии висящая заявка снимается, новая не отправляется).
+/// </para>
+/// <para>
+/// <b>Параметры сопровождения — по брокеру</b> (<see cref="IExecutionVenue.Limits"/>): T-Invest — <c>MaxAttempts</c>/<c>RepriceAfter</c>/<c>MaxFeeRechecks</c>,
+/// Freedom — <c>FreedomMaxAttempts</c> (2)/<c>FreedomRepriceAfter</c> (10 мин)/<c>FreedomMaxFeeRechecks</c> (90 тиков): у Freedom фикс $1.2 за каждую заявку с исполнением.
+/// </para>
+/// <para>
 /// <b>Ворота.</b> Для каждого пользователя с исполнимыми планами сначала <see cref="IExecutionGateResolver"/> (env <c>Execution__Enabled</c>, режим <c>live</c>, проверенный
 /// торговый токен, нет паузы) и сверка торгового токена у брокера (ровно один счёт, полный доступ, = основной счёт). Не прошло — заявки НЕ отправляются: висящие
 /// снимаются, неначатые строки — <c>Failed</c> с причиной, планы закрываются. Ворота перепроверяются ещё раз перед каждой отправкой (и внутри шлюза).
@@ -39,8 +50,9 @@ public sealed class ExecutionTickResult
 /// следующая строка начинается, только когда предыдущая завершена. Перед отправкой — <see cref="PreflightChecks"/>; не прошло — строка <c>Failed</c> с причиной.
 /// </para>
 /// <para>
-/// <b>Идемпотентность.</b> <c>client_order_id</c> (UUID) записывается в <c>trade_orders</c> ДО отправки брокеру и уходит брокеру как <c>order_id</c>. Заявка в статусе
-/// <c>New</c> (ответ не получен, рестарт) только сверяется (<c>GetOrderState</c>, затем <c>GetOrders</c>); не нашлась за <c>UnconfirmedOrderTimeout</c> — <c>Failed</c>
+/// <b>Идемпотентность.</b> <c>client_order_id</c> записывается в <c>trade_orders</c> ДО отправки брокеру (T-Invest — UUID, уходит как <c>order_id</c>; Freedom —
+/// числовой <c>user_order_id</c>). Заявка в статусе <c>New</c> (ответ не получен, рестарт) только сверяется (T-Invest — <c>GetOrderState</c>, затем <c>GetOrders</c>;
+/// Freedom — список заявок по <c>userOrderId</c>, затем по реквизитам с уведомлением в бот); не нашлась за <c>UnconfirmedOrderTimeout</c> — <c>Failed</c>
 /// «проверьте вручную», повторно НЕ отправляется никогда.
 /// </para>
 /// <para>
@@ -49,6 +61,8 @@ public sealed class ExecutionTickResult
 /// Исполнение строки — сверка комиссии с моделью (<see cref="FeeReconciliation"/>), уведомление; план завершён — итог Done/PartiallyDone/Failed и синк портфеля.
 /// Комиссия 0 сразу после исполнения при ненулевой модельной (брокер присылает её с задержкой) — сверка и уведомление откладываются до
 /// <c>Execution:MaxFeeRechecks</c> тиков с перечитыванием состояния (<c>trade_orders.fee_rechecks</c>/<c>fee_checked_at</c>); план закрывается после сверки.
+/// Freedom: окно исчерпано, а комиссия по всем сделкам так и не пришла — строка закрывается с пометкой «комиссия не сверена», БЕЗ сравнения со сметой.
+/// Комиссия в другой валюте, чем строка (Freedom: USD при сделке в EUR) — со сметой не сравнивается (информационное уведомление), курс не применяется.
 /// </para>
 /// <para>
 /// <b>Вне часов торгов</b> подтверждённый план ждёт в <c>Approved</c>/<c>AutoApproved</c> (не стартует), пока сессия не откроется и до <c>expires_at</c>
@@ -128,6 +142,10 @@ public sealed class PlanExecutionEngine
     }
 
     private IExecutionVenue? VenueOf(string broker) => _venues.GetValueOrDefault(ExecutionText.NormalizeBroker(broker));
+
+    /// <summary>Попытки/перевыставление/сверка комиссии брокера строки (неизвестный брокер — общие значения).</summary>
+    private VenueLimits LimitsOf(TradePlanLine line) =>
+        VenueOf(line.Broker)?.Limits(Opt) ?? new VenueLimits(Opt.MaxAttempts, Opt.RepriceAfter, Opt.MaxFeeRechecks);
 
     private static IReadOnlyList<string> BrokersOf(TradePlan plan) =>
         plan.Lines.Select(l => ExecutionText.NormalizeBroker(l.Broker)).Distinct(StringComparer.Ordinal).ToList();
@@ -342,6 +360,7 @@ public sealed class PlanExecutionEngine
     {
         var state = LineState(line, orders);
         var closing = IsClosingWindow(line, meta, ctx.NowUtc);
+        var limits = LimitsOf(line);
 
         if (state.Active is { } active)
         {
@@ -357,7 +376,7 @@ public sealed class PlanExecutionEngine
                     return true;
                 case TradeOrderStatuses.Cancelled:
                     // Снята не нами (например, брокером в конце дня): закрытие — окончательно, иначе — перевыставление, пока есть попытки.
-                    if (!await ClassifyExternalCancelAsync(active, closing, ctx)) { await OnLineTerminalAsync(plan, line, orders, active.ErrorMessage ?? "заявка снята", ctx, ct); return true; }
+                    if (!await ClassifyExternalCancelAsync(active, closing, limits, ctx)) { await OnLineTerminalAsync(plan, line, orders, active.ErrorMessage ?? "заявка снята", ctx, ct); return true; }
                     break;
                 default:
                     if (closing)
@@ -373,16 +392,16 @@ public sealed class PlanExecutionEngine
                         break;
                     }
 
-                    if (ctx.NowUtc - active.CreatedAt < Opt.RepriceAfter) return false;
+                    if (ctx.NowUtc - active.CreatedAt < limits.RepriceAfter) return false;
 
-                    var last = active.Attempt >= Opt.MaxAttempts;
+                    var last = active.Attempt >= limits.MaxAttempts;
                     if (await CancelAsync(
                             active, line, last ? TradeOrderStatuses.Expired : TradeOrderStatuses.Cancelled, last ? TradeOrderErrorCodes.Expired : TradeOrderErrorCodes.Reprice,
                             last ? "не исполнена за отведённые попытки" : "перевыставление", ctx, ct) != CancelOutcome.Done)
                         return false;
                     if (last && active.Status != TradeOrderStatuses.Filled)
                     {
-                        await OnLineTerminalAsync(plan, line, orders, $"не исполнена за {Opt.MaxAttempts} попытки — остаток снят", ctx, ct);
+                        await OnLineTerminalAsync(plan, line, orders, $"не исполнена за {limits.MaxAttempts} попытки — остаток снят", ctx, ct);
                         return true;
                     }
 
@@ -406,7 +425,8 @@ public sealed class PlanExecutionEngine
         var state = LineState(line, orders);
         if (state.RemainingLots == 0) return true;
         var attempt = (state.Last?.Attempt ?? 0) + 1;
-        if (attempt > Opt.MaxAttempts)
+        var limits = LimitsOf(line);
+        if (attempt > limits.MaxAttempts)
         {
             await RecordFailureAsync(plan, line, orders, attempt, TradeOrderStatuses.Expired, TradeOrderErrorCodes.Expired, "исчерпаны попытки", ctx, ct);
             return true;
@@ -464,7 +484,7 @@ public sealed class PlanExecutionEngine
         var isBond = OrderPricing.IsPointsPriced(line);
         var approved = OrderPricing.ApprovedLimit(line);
         var drift = Opt.DriftFor(isBond);
-        var price = OrderPricing.PriceForAttempt(line.Side, approved, market.Bid, market.Ask, step.Value, drift, attempt, Opt.MaxAttempts, state.Last?.LimitPrice);
+        var price = OrderPricing.PriceForAttempt(line.Side, approved, market.Bid, market.Ask, step.Value, drift, attempt, limits.MaxAttempts, state.Last?.LimitPrice);
         var lots = state.RemainingLots;
 
         // AutoApproved: суточный лимит по ФАКТУ — исполненное других планов дня (лоты × средняя цена) + оценка ещё не исполненного, плюс этот план так же.
@@ -639,15 +659,23 @@ public sealed class PlanExecutionEngine
             return RefreshOutcome.Updated;
         }
 
+        var adopted = state.MatchedByAttributes && string.IsNullOrEmpty(order.BrokerOrderId);
         OrderStateMapping.Apply(order, state, line.LotSize, ctx.NowUtc);
         await _orders.UpdateAsync(order);
+        if (adopted)
+        {
+            // Опознана не по номеру, а по реквизитам — пусть пользователь убедится в терминале, что это заявка сервиса, а не ручная.
+            await _notifier.NotifyAsync(
+                ctx.UserId, new BotMessage(ExecutionMessages.OrderAdoptedByAttributes(line.Ticker, order.LotsRequested, order.LimitPrice, order.Currency)), ct);
+        }
+
         return RefreshOutcome.Updated;
     }
 
     /// <summary>Снятие брокером без нашей команды. true — строка продолжается перевыставлением; false — окончательно.</summary>
-    private async Task<bool> ClassifyExternalCancelAsync(TradeOrder order, bool closing, Ctx ctx)
+    private async Task<bool> ClassifyExternalCancelAsync(TradeOrder order, bool closing, VenueLimits limits, Ctx ctx)
     {
-        if (!closing && order.Attempt < Opt.MaxAttempts && order.ErrorCode is null or TradeOrderErrorCodes.Reprice)
+        if (!closing && order.Attempt < limits.MaxAttempts && order.ErrorCode is null or TradeOrderErrorCodes.Reprice)
         {
             order.ErrorCode = TradeOrderErrorCodes.Reprice;
             order.ErrorMessage ??= "снята брокером — перевыставление";
@@ -793,8 +821,8 @@ public sealed class PlanExecutionEngine
             var commission = lineOrders.Sum(o => o.ExecutedCommission ?? 0m);
 
             // Комиссия ещё не пришла: T-Invest — 0 сразу после исполнения при ненулевой модельной; Freedom — нет строк комиссии по всем сделкам. Откладываем сверку и
-            // уведомление (перечитаем на следующих тиках), не больше MaxFeeRechecks (Freedom — FreedomMaxFeeRechecks).
-            var maxRechecks = venue?.MaxFeeRechecks(Opt) ?? Opt.MaxFeeRechecks;
+            // уведомление (перечитаем на следующих тиках), не больше MaxFeeRechecks брокера (Freedom — FreedomMaxFeeRechecks).
+            var maxRechecks = LimitsOf(line).MaxFeeRechecks;
             var feeMissing = venue is { FeesFromStatement: true }
                 ? fees is not { Complete: true }
                 : commission == 0m && FeeReconciliation.IsMismatch(line, filled, 0m, Opt.FeeMismatchThreshold);
@@ -812,16 +840,40 @@ public sealed class PlanExecutionEngine
                 await _orders.UpdateAsync(lastOrder);
             }
 
+            // Окно сверки исчерпано, а выписка так и не дала комиссию по всем сделкам (Freedom) — «комиссия не сверена», сравнения со сметой нет (ложное расхождение).
+            var notReconciled = venue is { FeesFromStatement: true } && fees is not { Complete: true };
+
+            // Валюта комиссии: у Freedom обычно USD даже для сделки в EUR. Одна валюта, совпадающая с валютой строки, — сверка со сметой; иначе — без сравнения.
+            var feeCurrencies = lineOrders.Where(o => o.LotsFilled > 0 && o.ExecutedCommission is not null)
+                .Select(o => NormalizeCurrency(o.EffectiveCommissionCurrency)).Distinct(StringComparer.Ordinal).ToList();
+            var commissionCurrency = feeCurrencies.Count == 1 ? feeCurrencies[0] : feeCurrencies.Count == 0 ? currency : TradeOrder.MixedCommissionCurrency;
+            var sameCurrency = string.Equals(commissionCurrency, currency, StringComparison.Ordinal);
+
             var weighted = lineOrders.Where(o => o.LotsFilled > 0 && o.AvgFillPrice is not null).ToList();
             decimal? avg = weighted.Count == 0 ? null : weighted.Sum(o => o.AvgFillPrice!.Value * o.LotsFilled) / weighted.Sum(o => o.LotsFilled);
-            await _notifier.NotifyAsync(ctx.UserId, new BotMessage(ExecutionMessages.Filled(plan, line, filled, avg, commission, currency)), ct);
+            await _notifier.NotifyAsync(
+                ctx.UserId, new BotMessage(ExecutionMessages.Filled(plan, line, filled, avg, commission, currency, commissionCurrency, notReconciled)), ct);
 
-            // Модель: Freedom — по ФАКТИЧЕСКОМУ маршруту из выписки (FreedomFeeModel), иначе — оценка плана (est_fee × доля исполненного).
-            var expected = fees?.ExpectedFee ?? FeeReconciliation.ExpectedFee(line, filled);
-            if (Math.Abs(commission - expected) > Opt.FeeMismatchThreshold)
+            if (notReconciled)
             {
-                _logger.LogWarning("Execution: fee mismatch on plan {PlanId} line {LineNo}: expected {Expected}, actual {Actual}", plan.Id, line.LineNo, expected, commission);
-                await _notifier.NotifyAsync(ctx.UserId, new BotMessage(ExecutionMessages.FeeMismatch(plan, line, expected, commission, currency, fees?.Note)), ct);
+                _logger.LogWarning("Execution: fee of plan {PlanId} line {LineNo} not reconciled — statement incomplete after {Rechecks} rechecks", plan.Id, line.LineNo, maxRechecks);
+            }
+            else if (!sameCurrency)
+            {
+                _logger.LogInformation(
+                    "Execution: fee of plan {PlanId} line {LineNo} is in {FeeCurrency}, line in {Currency} — not compared", plan.Id, line.LineNo, commissionCurrency, currency);
+                await _notifier.NotifyAsync(
+                    ctx.UserId, new BotMessage(ExecutionMessages.FeeNotCompared(plan, line, commission, commissionCurrency, currency, fees?.Note)), ct);
+            }
+            else
+            {
+                // Модель: Freedom — по ФАКТИЧЕСКОМУ маршруту из выписки (FreedomFeeModel), иначе — оценка плана (est_fee × доля исполненного).
+                var expected = fees?.ExpectedFee ?? FeeReconciliation.ExpectedFee(line, filled);
+                if (Math.Abs(commission - expected) > Opt.FeeMismatchThreshold)
+                {
+                    _logger.LogWarning("Execution: fee mismatch on plan {PlanId} line {LineNo}: expected {Expected}, actual {Actual}", plan.Id, line.LineNo, expected, commission);
+                    await _notifier.NotifyAsync(ctx.UserId, new BotMessage(ExecutionMessages.FeeMismatch(plan, line, expected, commission, currency, fees?.Note)), ct);
+                }
             }
         }
 

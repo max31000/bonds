@@ -3,6 +3,7 @@ using Bonds.Core.Interfaces.Repositories;
 using Bonds.Core.Models;
 using Bonds.Core.Policy;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace Bonds.Infrastructure.Execution;
 
@@ -46,7 +47,9 @@ public sealed record TokenChangeOutcome(bool Ok, string? Error, int ActiveOrders
 /// <c>GetOrderState</c>; планы этих заявок получают <c>cancel_requested</c> (исполнитель закроет остальные строки). Хоть одна не снята — 409, токен не меняется.</item>
 /// </list>
 /// Задача 66: то же для торгового ключа Freedom (<c>freedom_trade</c>) — параметр <c>broker</c>; учитываются и снимаются ТОЛЬКО заявки этого брокера
-/// (<c>trade_orders.broker</c>), снятие — через его шлюз (<see cref="IExecutionVenue"/>).
+/// (<c>trade_orders.broker</c>), снятие — через его шлюз (<see cref="IExecutionVenue"/>). Заявка Freedom в статусе <c>New</c> (ответа на размещение не было), которую
+/// брокер ещё не показал и которой меньше <c>Execution:UnconfirmedOrderTimeout</c>, — 409 «заявка ещё не сверена» (а не <c>Failed</c>): она могла дойти до брокера, и
+/// без текущего ключа снять её будет нечем.
 /// Scoped.
 /// </summary>
 public sealed class TradeTokenChangeGuard
@@ -59,12 +62,17 @@ public sealed class TradeTokenChangeGuard
     private readonly IPlanExecutorLock _lock;
     private readonly ILogger<TradeTokenChangeGuard> _logger;
     private readonly Dictionary<string, IExecutionVenue> _venues = new(StringComparer.OrdinalIgnoreCase);
+    private readonly IOptionsMonitor<ExecutionOptions>? _options;
+
+    /// <summary>Сколько ждать сверки заявки без ответа брокера (<c>Execution:UnconfirmedOrderTimeout</c>).</summary>
+    private TimeSpan UnconfirmedTimeout => _options?.CurrentValue.UnconfirmedOrderTimeout ?? new ExecutionOptions().UnconfirmedOrderTimeout;
 
     public TradeTokenChangeGuard(
         ITradeOrderRepository orders, ITradePlanRepository plans, IAccountRepository accounts, ITInvestOrderGateway gateway, IPlanExecutorLock executorLock,
         ILogger<TradeTokenChangeGuard> logger, IExecutionGateResolver gate, IUserCredentialRepository credentialRecords,
-        IFreedomOrderGateway? freedomGateway = null)
+        IFreedomOrderGateway? freedomGateway = null, IOptionsMonitor<ExecutionOptions>? options = null)
     {
+        _options = options;
         _orders = orders;
         _plans = plans;
         _accounts = accounts;
@@ -137,15 +145,25 @@ public sealed class TradeTokenChangeGuard
             if (order.Status == TradeOrderStatuses.New && string.IsNullOrEmpty(order.BrokerOrderId) && broker != Brokers.TInvest)
             {
                 // Freedom: ответа на размещение не было — сначала опознать заявку у брокера по реквизитам (снять можно только по id брокера).
+                GatewayOrderState? found;
                 try
                 {
-                    if (await venue.StateAsync(session, userId, order, line, true, ct) is { } found) OrderStateMapping.Apply(order, found, line?.LotSize ?? 1m, nowUtc);
+                    found = await venue.StateAsync(session, userId, order, line, true, ct);
                 }
                 catch (ExecutionGatewayException ex)
                 {
                     errors.Add($"{label}: {venue.Title} недоступен ({ex.Code})");
                     continue;
                 }
+
+                if (found is null && nowUtc - order.CreatedAt < UnconfirmedTimeout)
+                {
+                    // Заявка могла дойти до брокера, но ещё не опознана: закрыть её как «не дошла» нельзя — после смены ключа снять её будет нечем.
+                    errors.Add($"{label}: заявка ещё не сверена с брокером — повторите смену ключа через несколько минут");
+                    continue;
+                }
+
+                if (found is not null) OrderStateMapping.Apply(order, found, line?.LotSize ?? 1m, nowUtc);
             }
 
             try

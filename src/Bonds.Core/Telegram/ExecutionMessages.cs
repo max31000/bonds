@@ -23,10 +23,28 @@ public static class ExecutionMessages
               (order.Attempt > 1 ? $" (попытка {order.Attempt})" : string.Empty)),
         CancelKeyboard(plan));
 
-    public static string Filled(TradePlan plan, TradePlanLine line, long lots, decimal? avgPrice, decimal commission, string currency) =>
+    /// <param name="currency">Валюта цены строки.</param>
+    /// <param name="commissionCurrency">Валюта комиссии (null — как <paramref name="currency"/>; у Freedom обычно USD даже для сделки в EUR).</param>
+    /// <param name="feeNotReconciled">Комиссия не пришла в выписке за окно сверки — сумма может быть неполной.</param>
+    public static string Filled(
+        TradePlan plan, TradePlanLine line, long lots, decimal? avgPrice, decimal commission, string currency, string? commissionCurrency = null, bool feeNotReconciled = false) =>
         Limit($"✅ {Head(plan, line)}: исполнено {lots} лот(ов)" +
               (avgPrice is { } p ? $", средняя цена {BotFormat.Price(p)} {BotFormat.Html(currency)}" : string.Empty) +
-              $", комиссия {BotFormat.Number(commission, 2)} {BotFormat.Html(currency)}");
+              $", комиссия {BotFormat.Number(commission, 2)} {BotFormat.Html(commissionCurrency ?? currency)}" +
+              (feeNotReconciled ? " (комиссия не сверена — в выписке брокера пришла не по всем сделкам)" : string.Empty));
+
+    /// <summary>Информационное: комиссия в другой валюте, чем строка — со сметой (в валюте строки) не сравнивается, курс не применяется.</summary>
+    public static string FeeNotCompared(TradePlan plan, TradePlanLine line, decimal actual, string commissionCurrency, string lineCurrency, string? note = null) =>
+        Limit($"ℹ {Head(plan, line)}: комиссия {BotFormat.Number(actual, 2)} {BotFormat.Html(commissionCurrency)} — в другой валюте, чем сделка ({BotFormat.Html(lineCurrency)}), " +
+              "со сметой не сравнивалась" + (string.IsNullOrWhiteSpace(note) ? string.Empty : $" ({BotFormat.HtmlTruncated(note, 120)})"));
+
+    /// <summary>
+    /// Заявка без ответа брокера опознана НЕ по нашему номеру, а по реквизитам (тикер, сторона, количество, цена, время) — исполнитель продолжит её вести; пользователь
+    /// проверяет в терминале, что это действительно заявка сервиса.
+    /// </summary>
+    public static string OrderAdoptedByAttributes(string ticker, long lots, decimal price, string currency) =>
+        Limit($"🔎 Заявка {BotFormat.HtmlTruncated(ticker, 32)} ×{lots} по {BotFormat.Price(price)} {BotFormat.Html(currency)}: ответ брокера потерян, заявка найдена у брокера " +
+              "по реквизитам (номер заявки не совпал) — проверьте в терминале, что это заявка сервиса");
 
     public static string Failed(TradePlan plan, TradePlanLine line, string reason) =>
         Limit($"⚠ {Head(plan, line)}: не исполнено — {BotFormat.HtmlTruncated(reason, MaxReason)}");

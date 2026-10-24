@@ -165,6 +165,7 @@ public static class CredentialsEndpoints
             ["tinvestRead"] = false,
             ["tinvestTrade"] = false,
             ["freedom"] = false,
+            ["freedomTrade"] = false,
             ["aiAgents"] = false,
         };
         foreach (var p in CredentialProviders.All)

@@ -229,6 +229,7 @@ public static class PlansEndpoints
                 LotsFilled = o.LotsFilled,
                 AvgFillPrice = o.AvgFillPrice,
                 ExecutedCommission = o.ExecutedCommission,
+                CommissionCurrency = o.EffectiveCommissionCurrency,
                 Currency = o.Currency,
                 ErrorCode = o.ErrorCode,
                 ErrorMessage = o.ErrorMessage,

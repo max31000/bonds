@@ -33,8 +33,22 @@ public sealed class FakeFreedomOrderGateway : IFreedomOrderGateway
     /// <summary>Отправка «доходит» до брокера, но ответ теряется (исключение Transient ПОСЛЕ регистрации заявки).</summary>
     public bool LoseResponse { get; set; }
 
-    /// <summary>Время размещения у «брокера» (UTC) — для сверки по реквизитам; по умолчанию — системное.</summary>
-    public Func<DateTime> Clock { get; set; } = () => DateTime.UtcNow;
+    /// <summary>
+    /// «Сейчас» у брокера (UTC) — тест выставляет его равным моменту тика исполнителя (детерминированно, без системных часов). Время размещения заявок, сделок,
+    /// движений денег и котировок без явной метки — <see cref="Clock"/>.
+    /// </summary>
+    public DateTime Now { get; set; } = new(2026, 10, 23, 9, 0, 0, DateTimeKind.Utc);
+
+    /// <summary>Время размещения у «брокера» (UTC) — для сверки по реквизитам; по умолчанию — <see cref="Now"/>.</summary>
+    public Func<DateTime> Clock { get; set; }
+
+    /// <summary>
+    /// Что брокер показывает в <c>userOrderId</c> списка заявок для нашей заявки: по умолчанию <c>api:N</c> (наш номер в форме API); тест может вернуть авто-id брокера
+    /// (<c>api:&lt;unix-секунда&gt;</c>) или null — тогда заявка опознаётся только по реквизитам.
+    /// </summary>
+    public Func<FreedomLimitOrder, string?> ListedUserOrderId { get; set; } = o => FreedomOrderRules.ApiPrefix + o.UserOrderId;
+
+    public FakeFreedomOrderGateway() => Clock = () => Now;
 
     public int PostCount
     {
@@ -57,8 +71,8 @@ public sealed class FakeFreedomOrderGateway : IFreedomOrderGateway
                 PlacedAtUtc = state.PlacedAtUtc ?? Clock(),
             };
 
-            // Как у живого брокера: в списке заявок (getNotifyOrderJson) user_order_id = null, эхо — только в ответе на размещение.
-            Orders[state.BrokerOrderId] = state with { ClientOrderId = null };
+            // В списке заявок (getNotifyOrderJson) — userOrderId в форме, которую задаёт тест (по умолчанию api:N).
+            Orders[state.BrokerOrderId] = state with { ClientOrderId = ListedUserOrderId(order) };
             if (LoseResponse) throw new FreedomGatewayException(GatewayErrorKind.Transient, "timeout", "Freedom: таймаут");
             return Task.FromResult(state);
         }
@@ -91,19 +105,25 @@ public sealed class FakeFreedomOrderGateway : IFreedomOrderGateway
         lock (_lock)
         {
             var s = Orders[brokerOrderId];
-            Orders[brokerOrderId] = s with { Status = qty >= s.LotsRequested ? TradeOrderStatuses.Filled : TradeOrderStatuses.PartiallyFilled, LotsExecuted = qty };
-            Trades.Add(new FreedomTrade(tradeId, brokerOrderId, DateTime.UtcNow, "X", FreedomTradeSide.Buy, qty, price, qty * price, "USD", commission ?? 0m, "USD"));
+            Orders[brokerOrderId] = s with
+            {
+                Status = qty >= s.LotsRequested ? TradeOrderStatuses.Filled : TradeOrderStatuses.PartiallyFilled, LotsExecuted = qty, AvgFillPrice = price,
+            };
+            Trades.Add(new FreedomTrade(tradeId, brokerOrderId, Clock(), "X", FreedomTradeSide.Buy, qty, price, qty * price, s.Currency ?? "USD", commission ?? 0m, "USD"));
             if (commission is { } fee) AddCommission(tradeId, fee, market, type);
         }
     }
 
     public void AddCommission(string tradeId, decimal fee, string market = "europe", string type = "funds") =>
         CashFlows.Add(new FreedomCashFlow(
-            "cf-" + tradeId, "commission_for_trades", DateTime.UtcNow, "USD", -fee,
+            "cf-" + tradeId, "commission_for_trades", Clock(), "USD", -fee,
             $"(Trade {tradeId} buy X.EU ) Рынок: {market}, тип бумаги: {type}, валюта комиссии: USD, тариф Standard, валюта сделки: USD."));
 
+    /// <summary>Котировка; без явной метки времени — свежая на момент запроса (<see cref="Clock"/>), без <c>MarketOpen</c> — рынок открыт. Иное тест задаёт явно.</summary>
     public Task<FreedomMarketQuote> GetQuoteAsync(ulong userId, string ticker, CancellationToken ct = default) =>
-        Task.FromResult(Quotes.TryGetValue(ticker, out var q) ? q : new FreedomMarketQuote(null, null, null, null));
+        Task.FromResult(Quotes.TryGetValue(ticker, out var q)
+            ? q with { QuoteTimeUtc = q.QuoteTimeUtc ?? Clock(), MarketOpen = q.MarketOpen ?? true }
+            : new FreedomMarketQuote(null, null, null, null));
 
     public Task<FreedomAccountSnapshot> GetAccountSnapshotAsync(ulong userId, CancellationToken ct = default) =>
         Task.FromResult(new FreedomAccountSnapshot(

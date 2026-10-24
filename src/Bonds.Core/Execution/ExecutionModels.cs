@@ -69,8 +69,9 @@ public static class OrderPriceUnits
 
 /// <summary>
 /// Заявка исполнителя (<c>trade_orders</c>) — одна попытка отправки строки плана. <b>Единицы:</b> <see cref="LimitPrice"/> — в единицах брокера
-/// (<see cref="PriceUnit"/>: облигации — пункты, иначе валюта за штуку); лоты — целые; <see cref="AvgFillPrice"/> и <see cref="ExecutedCommission"/> — в
-/// <see cref="Currency"/> (средняя цена ОДНОЙ штуки и комиссия всей заявки, как отдаёт брокер).
+/// (<see cref="PriceUnit"/>: облигации — пункты, иначе валюта за штуку); лоты — целые; <see cref="AvgFillPrice"/> — в <see cref="Currency"/> (средняя цена ОДНОЙ
+/// штуки); <see cref="ExecutedCommission"/> — комиссия всей заявки в <see cref="CommissionCurrency"/> (null — в <see cref="Currency"/>; у Freedom комиссия обычно в USD
+/// даже для сделки в EUR — НЕ пересчитывается).
 /// </summary>
 public sealed class TradeOrder
 {
@@ -96,6 +97,19 @@ public sealed class TradeOrder
     public long LotsFilled { get; set; }
     public decimal? AvgFillPrice { get; set; }
     public decimal? ExecutedCommission { get; set; }
+
+    /// <summary>
+    /// Валюта <see cref="ExecutedCommission"/> (ISO, верхний регистр); null — та же, что <see cref="Currency"/> (T-Invest и все заявки до задачи 66).
+    /// <see cref="MixedCommissionCurrency"/> — у сделок заявки комиссии в разных валютах (сумма разнородна, со сметой не сравнивается).
+    /// </summary>
+    public string? CommissionCurrency { get; set; }
+
+    /// <summary>Отметка «комиссии заявки в разных валютах».</summary>
+    public const string MixedCommissionCurrency = "MIXED";
+
+    /// <summary>Фактическая валюта комиссии: <see cref="CommissionCurrency"/> или, если не задана, <see cref="Currency"/>.</summary>
+    public string EffectiveCommissionCurrency => string.IsNullOrWhiteSpace(CommissionCurrency) ? Currency : CommissionCurrency;
+
     public string Currency { get; set; } = string.Empty;
     public string? ErrorCode { get; set; }
     public string? ErrorMessage { get; set; }

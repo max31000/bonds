@@ -43,6 +43,12 @@ public sealed record VenueMarket(
 public sealed record VenueFees(bool Complete, decimal? ExpectedFee, string? Note);
 
 /// <summary>
+/// Параметры сопровождения заявок брокера (из <see cref="ExecutionOptions"/>): попытки, ожидание до перевыставления, тики отложенной сверки комиссии.
+/// T-Invest — общие <c>MaxAttempts</c>/<c>RepriceAfter</c>/<c>MaxFeeRechecks</c>; Freedom — свои (<c>FreedomMaxAttempts</c>/<c>FreedomRepriceAfter</c>/<c>FreedomMaxFeeRechecks</c>).
+/// </summary>
+public sealed record VenueLimits(int MaxAttempts, TimeSpan RepriceAfter, int MaxFeeRechecks);
+
+/// <summary>
 /// Брокер для исполнителя (задача 66): одна реализация на брокера поверх его ЕДИНСТВЕННОГО торгового шлюза (<see cref="ITInvestOrderGateway"/>, <see cref="IFreedomOrderGateway"/>).
 /// Общая логика (порядок строк, предполётные проверки, идемпотентность, перевыставление, снятие перед закрытием, итоги) — в <see cref="PlanExecutionEngine"/>.
 /// </summary>
@@ -89,7 +95,8 @@ public interface IExecutionVenue
     /// <summary>Перечитывает комиссию (и цену исполнения) исполненных заявок строки — меняет <paramref name="lineOrders"/>; вызывающий сохраняет.</summary>
     Task<VenueFees> RefreshFeesAsync(VenueSession session, ulong userId, TradePlanLine line, IReadOnlyList<TradeOrder> lineOrders, DateTime nowUtc, CancellationToken ct);
 
-    int MaxFeeRechecks(ExecutionOptions options);
+    /// <summary>Попытки, ожидание перевыставления и окно отложенной сверки комиссии этого брокера.</summary>
+    VenueLimits Limits(ExecutionOptions options);
 }
 
 /// <summary>T-Invest — поведение задачи 65 без изменений (вынесено из движка).</summary>
@@ -114,7 +121,7 @@ public sealed class TInvestExecutionVenue : IExecutionVenue
     public string Broker => Brokers.TInvest;
     public string Title => "T-Invest";
     public bool FeesFromStatement => false;
-    public int MaxFeeRechecks(ExecutionOptions options) => options.MaxFeeRechecks;
+    public VenueLimits Limits(ExecutionOptions options) => new(options.MaxAttempts, options.RepriceAfter, options.MaxFeeRechecks);
 
     private async Task<Account?> PrimaryAsync(ulong userId) =>
         (await _accounts.GetByUserIdAndBrokerAsync(userId, Brokers.TInvest)).OrderBy(a => a.Id).FirstOrDefault();
@@ -230,14 +237,15 @@ public sealed class TInvestExecutionVenue : IExecutionVenue
 /// его <c>trader_systems_id</c> = счёт Freedom пользователя (привязан синком по ключу на чтение). Отказы ДО сети: <c>.ITS</c> и любой тикер, кроме <c>.US</c>/<c>.EU</c>;
 /// лотность ≠ 1; облигационные цены (пункты); план, подтверждённый автоматически (Freedom исполняется только после РУЧНОГО подтверждения, <c>FreedomAutoUsd = 0</c>).
 /// <para>
-/// Цены — валюта бумаги за штуку (<c>limit_price</c>), сетка — <c>min_step</c> из торговых метаданных. Котировка Freedom без метки времени — моментом котировки
-/// считается момент запроса (часы торгов проверяются отдельно). Деньги: остаток валюты из портфеля МИНУС все активные заявки Freedom пользователя в этой валюте
-/// (брокер может не вычитать заблокированное — консервативно, продажи тоже вычитаются).
+/// Цены — валюта бумаги за штуку (<c>limit_price</c>), сетка — <c>min_step</c> из торговых метаданных. Свежесть котировки — по меткам брокера
+/// (<see cref="FreedomMarketQuote.QuoteTimeUtc"/>: <c>ltt</c>/<c>bbt</c>/<c>bat</c>, МСК) против <c>Execution:MaxQuoteAge</c>; «обычные торги» — <c>marketStatus = OPEN</c> бумаги.
+/// Деньги: остаток валюты из портфеля МИНУС все активные заявки Freedom пользователя в этой валюте (брокер может не вычитать заблокированное — консервативно,
+/// продажи тоже вычитаются).
 /// </para>
 /// <para>
-/// Идемпотентность: <c>client_order_id</c> = числовой <c>user_order_id</c>; ответа нет — заявка ищется в списке заявок брокера по id брокера, иначе по <c>user_order_id</c>.
-/// Комиссия — из выписки: сделки заявки (<c>getTradesHistory</c>, связь по <c>order_id</c>) → строки <c>commission_for_trades</c> «(Trade N …)» → факт и маршрут →
-/// <see cref="FreedomFeeReconciliation"/> по фактическому маршруту.
+/// Идемпотентность: <c>client_order_id</c> = числовой <c>user_order_id</c> (9 цифр, 7xxxxxxxx — вне диапазона авто-id брокера <c>api:&lt;unix-секунда&gt;</c>); ответа нет —
+/// см. <see cref="StateAsync"/>. Комиссия — из выписки: сделки заявки (<c>getTradesHistory</c>, связь по <c>order_id</c>) → строки <c>commission_for_trades</c> «(Trade N …)»
+/// → факт, ВАЛЮТА комиссии и маршрут → <see cref="FreedomFeeReconciliation"/> по фактическому маршруту.
 /// </para>
 /// </summary>
 public sealed class FreedomExecutionVenue : IExecutionVenue
@@ -267,7 +275,7 @@ public sealed class FreedomExecutionVenue : IExecutionVenue
     public string Broker => Brokers.Freedom;
     public string Title => "Freedom";
     public bool FeesFromStatement => true;
-    public int MaxFeeRechecks(ExecutionOptions options) => options.FreedomMaxFeeRechecks;
+    public VenueLimits Limits(ExecutionOptions options) => new(options.FreedomMaxAttempts, options.FreedomRepriceAfter, options.FreedomMaxFeeRechecks);
 
     private async Task<Account?> AccountAsync(ulong userId) =>
         (await _accounts.GetByUserIdAndBrokerAsync(userId, Brokers.Freedom)).OrderBy(a => a.Id).FirstOrDefault();
@@ -354,8 +362,9 @@ public sealed class FreedomExecutionVenue : IExecutionVenue
             money = cash - reserved;
         }
 
+        // Момент котировки — метка брокера (ltt/bbt/bat), не момент запроса; обычные торги — marketStatus бумаги = OPEN (нет поля — не подтверждено → preflight откажет).
         return new VenueMarket(
-            bid, ask, bid is not null && ask is not null ? nowUtc : null, bid is not null && ask is not null ? true : null, true,
+            bid, ask, quote.QuoteTimeUtc, quote.MarketOpen == true, true,
             meta.ApiTradeAvailable && FreedomOrderRules.IsTradableTicker(instrumentId),
             money, snapshot.PiecesByTicker.TryGetValue(instrumentId, out var pieces) ? pieces : null);
     }
@@ -363,32 +372,52 @@ public sealed class FreedomExecutionVenue : IExecutionVenue
     public Task<GatewayOrderState> PostAsync(VenueSession session, ulong userId, TradePlanLine line, string instrumentId, TradeOrder order, CancellationToken ct) =>
         _gateway.PostLimitOrderAsync(userId, new FreedomLimitOrder(instrumentId, line.Side, order.LotsRequested, order.LimitPrice, order.ClientOrderId), ct);
 
-    /// <summary>Окно сверки заявки без id брокера: время размещения у брокера — в пределах ±окна от <c>trade_orders.created_at</c>.</summary>
-    public static readonly TimeSpan ReconcileWindow = TimeSpan.FromMinutes(2);
+    /// <summary>Окно сверки по реквизитам: размещение у брокера не раньше <c>created_at − 30 с</c> (расхождение часов) …</summary>
+    public static readonly TimeSpan ReconcileWindowBefore = TimeSpan.FromSeconds(30);
+
+    /// <summary>… и не позже <c>created_at + 2 мин</c> (запрос уходит сразу после записи строки).</summary>
+    public static readonly TimeSpan ReconcileWindowAfter = TimeSpan.FromMinutes(2);
 
     /// <summary>
-    /// Заявка известна по id брокера — ищется в списке ВСЕХ заявок брокера (<see cref="IFreedomOrderGateway.GetOrdersAsync"/>, activeOnly = false) по id. Ответа на размещение не было (<c>New</c> без id) — см. <see cref="Candidates"/>:
-    /// <c>user_order_id</c> в списке заявок брокер НЕ отдаёт (null), поэтому заявка опознаётся по реквизитам; кандидаты, уже привязанные к другой строке <c>trade_orders</c>,
-    /// исключаются. Не опознана однозначно — null (движок по таймауту ставит <c>unknown_state</c>, повторно НЕ отправляет).
+    /// Заявка известна по id брокера — ищется в списке ВСЕХ заявок брокера (<see cref="IFreedomOrderGateway.GetOrdersAsync"/>, activeOnly = false) по id. Ответа на размещение не
+    /// было (<c>New</c> без id):
+    /// <list type="number">
+    /// <item>точное совпадение номера: <c>userOrderId</c> = <c>N</c> или <c>api:N</c> (<see cref="FreedomOrderRules.UserOrderIdMatches"/>) — ровно одна непривязанная заявка;</item>
+    /// <item>иначе — по реквизитам (<see cref="Candidates"/>), только среди заявок с пустым <c>userOrderId</c> или в форме API (ручные заявки терминала/приложения —
+    /// <c>i-6:ios:…</c> — исключены, как и заявки с ДРУГИМ нашим номером); результат помечается <see cref="GatewayOrderState.MatchedByAttributes"/> — исполнитель шлёт
+    /// уведомление в бот.</item>
+    /// </list>
+    /// Кандидаты, уже привязанные к другой строке <c>trade_orders</c>, исключаются. Не опознана однозначно — null (движок по таймауту ставит <c>unknown_state</c>,
+    /// повторно НЕ отправляет).
     /// </summary>
     public async Task<GatewayOrderState?> StateAsync(VenueSession session, ulong userId, TradeOrder order, TradePlanLine? line, bool searchActive, CancellationToken ct)
     {
         var orders = await _gateway.GetOrdersAsync(userId, activeOnly: false, ct);
         if (!string.IsNullOrEmpty(order.BrokerOrderId))
             return orders.FirstOrDefault(o => string.Equals(o.BrokerOrderId, order.BrokerOrderId, StringComparison.Ordinal));
+
+        var exact = await UnlinkedAsync(orders.Where(o => FreedomOrderRules.UserOrderIdMatches(o.ClientOrderId, order.ClientOrderId)), order);
+        if (exact.Count == 1)
+        {
+            _logger.LogInformation("Execution: Freedom order {ClientOrderId} reconciled to broker order {BrokerOrderId} by userOrderId", order.ClientOrderId, exact[0].BrokerOrderId);
+            return exact[0];
+        }
+
+        if (exact.Count > 1)
+        {
+            _logger.LogWarning("Execution: Freedom order {ClientOrderId} is ambiguous ({Count} broker orders with our userOrderId) — not adopted", order.ClientOrderId, exact.Count);
+            return null;
+        }
+
         if (line is null || InstrumentIdOf(line) is not { } ticker) return null;
 
         // Шаг цены — из котировки (min_step); нет — сравнение цены точное (строже — безопаснее).
         var step = (await _gateway.GetQuoteAsync(userId, ticker, ct)).MinStep;
-        var candidates = Candidates(orders, order, ticker, line.Side, step);
-        var unlinked = new List<GatewayOrderState>();
-        foreach (var c in candidates)
-            if (!await _orders.IsBrokerOrderLinkedAsync(Brokers.Freedom, c.BrokerOrderId, order.Id)) unlinked.Add(c);
-
+        var unlinked = await UnlinkedAsync(Candidates(orders, order, ticker, line.Side, step), order);
         if (unlinked.Count == 1)
         {
-            _logger.LogInformation("Execution: Freedom order {ClientOrderId} reconciled to broker order {BrokerOrderId} by attributes", order.ClientOrderId, unlinked[0].BrokerOrderId);
-            return unlinked[0];
+            _logger.LogWarning("Execution: Freedom order {ClientOrderId} adopted broker order {BrokerOrderId} BY ATTRIBUTES", order.ClientOrderId, unlinked[0].BrokerOrderId);
+            return unlinked[0] with { MatchedByAttributes = true };
         }
 
         if (unlinked.Count > 1)
@@ -396,25 +425,34 @@ public sealed class FreedomExecutionVenue : IExecutionVenue
         return null;
     }
 
+    private async Task<List<GatewayOrderState>> UnlinkedAsync(IEnumerable<GatewayOrderState> candidates, TradeOrder order)
+    {
+        var result = new List<GatewayOrderState>();
+        foreach (var c in candidates)
+            if (!await _orders.IsBrokerOrderLinkedAsync(Brokers.Freedom, c.BrokerOrderId, order.Id)) result.Add(c);
+        return result;
+    }
+
     private static string? InstrumentIdOf(TradePlanLine line) =>
         FreedomOrderRules.IsTradableTicker(line.Ticker) ? line.Ticker.Trim().ToUpperInvariant() : null;
 
     /// <summary>
-    /// Кандидаты для заявки без id брокера (чистая функция): тот же тикер (<c>instr</c>), та же сторона (<c>oper</c> 1/3), то же количество (<c>q</c>), лимит (<c>p</c>) в пределах
-    /// половины шага <paramref name="step"/> (нет шага — точно), время размещения у брокера в окне ±<see cref="ReconcileWindow"/> от <c>created_at</c> строки (нет времени — не
-    /// кандидат); заявка с непустым <c>user_order_id</c>, не совпадающим с нашим, — не наша. Привязку к другим строкам проверяет вызывающий.
+    /// Кандидаты по реквизитам для заявки без id брокера (чистая функция): <c>userOrderId</c> пуст или в форме API и не чужой наш номер
+    /// (<see cref="FreedomOrderRules.MayBeOursByAttributes"/>); тот же тикер (<c>instr</c>), та же сторона (<c>oper</c> 1/3), то же количество (<c>q</c>), лимит (<c>p</c>)
+    /// в пределах половины шага <paramref name="step"/> (нет шага — точно), время размещения у брокера в окне [<c>created_at</c> − <see cref="ReconcileWindowBefore"/>,
+    /// <c>created_at</c> + <see cref="ReconcileWindowAfter"/>] (нет времени — не кандидат). Привязку к другим строкам проверяет вызывающий.
     /// </summary>
     internal static IReadOnlyList<GatewayOrderState> Candidates(
         IReadOnlyList<GatewayOrderState> orders, TradeOrder order, string ticker, string side, decimal? step)
     {
         var tolerance = step is > 0m ? step.Value / 2m : 0m;
         return orders.Where(o =>
-                string.Equals(o.Ticker, ticker, StringComparison.OrdinalIgnoreCase)
+                FreedomOrderRules.MayBeOursByAttributes(o.ClientOrderId, order.ClientOrderId)
+                && string.Equals(o.Ticker, ticker, StringComparison.OrdinalIgnoreCase)
                 && string.Equals(o.Side, side, StringComparison.Ordinal)
                 && o.LotsRequested == order.LotsRequested
                 && o.LimitPrice is { } p && Math.Abs(p - order.LimitPrice) <= tolerance
-                && o.PlacedAtUtc is { } at && at >= order.CreatedAt - ReconcileWindow && at <= order.CreatedAt + ReconcileWindow
-                && (string.IsNullOrWhiteSpace(o.ClientOrderId) || FreedomOrderRules.UserOrderIdMatches(o.ClientOrderId, order.ClientOrderId)))
+                && o.PlacedAtUtc is { } at && at >= order.CreatedAt - ReconcileWindowBefore && at <= order.CreatedAt + ReconcileWindowAfter)
             .ToList();
     }
 
@@ -468,13 +506,22 @@ public sealed class FreedomExecutionVenue : IExecutionVenue
                 continue;
             }
 
+            // Сверка исполненного с историей сделок (по order_id): история показала больше, чем список заявок, — берём историю (лоты = штуки, лот 1).
             var qty = orderTrades.Sum(t => t.Quantity);
+            var historyLots = (long)Math.Floor(qty);
+            if (historyLots != order.LotsFilled)
+            {
+                _logger.LogWarning(
+                    "Execution: Freedom order {BrokerOrderId}: filled {Filled} by order list, {History} by trades history", order.BrokerOrderId, order.LotsFilled, historyLots);
+                if (historyLots > order.LotsFilled && historyLots <= order.LotsRequested) order.LotsFilled = historyLots;
+            }
+
             if (qty > 0m) order.AvgFillPrice = orderTrades.Sum(t => t.Price * t.Quantity) / qty;
-            var currencyOk = true;
+            var feeCurrencies = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var items = orderTrades.Select(t =>
             {
                 var has = commissions.TryGetValue(t.Id, out var c);
-                if (has && !string.Equals(c.Currency, order.Currency, StringComparison.OrdinalIgnoreCase)) currencyOk = false;
+                if (has) feeCurrencies.Add(c.Currency);
                 return new FreedomFilledTrade(t.Id, t.Quantity, t.Amount, has ? c.Fee : null, has ? c.Comment.Route : null);
             }).ToList();
             foreach (var t in orderTrades)
@@ -487,9 +534,13 @@ public sealed class FreedomExecutionVenue : IExecutionVenue
                 continue;
             }
 
+            // Валюта комиссии — своя (у Freedom обычно USD даже для сделки в EUR): хранится отдельно (commission_currency), в валюту строки НЕ пересчитывается.
+            // Несколько валют комиссии у одной заявки — валюта не задана (сумма разнородна): движок не сравнивает её с моделью.
             order.ExecutedCommission = check.ActualFee;
+            order.CommissionCurrency = feeCurrencies.Count == 1 ? feeCurrencies.First() : TradeOrder.MixedCommissionCurrency;
             order.UpdatedAt = nowUtc;
-            expectedTotal = currencyOk && check.ExpectedFee is { } e && expectedTotal is { } acc ? acc + e : null;
+            var sameCurrency = feeCurrencies.Count == 1 && string.Equals(feeCurrencies.First(), order.Currency, StringComparison.OrdinalIgnoreCase);
+            expectedTotal = sameCurrency && check.ExpectedFee is { } e && expectedTotal is { } acc ? acc + e : null;
         }
 
         var note = routes.Count == 0 ? null : "маршрут " + string.Join(", ", routes);

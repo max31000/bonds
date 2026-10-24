@@ -208,7 +208,7 @@ export const handlers = [
   // Задача 58: «Подключения» — по умолчанию ничего не подключено; сценарии переопределяются через server.use.
   http.get('*/api/credentials', () => HttpResponse.json([])),
   http.get('*/api/capabilities', () =>
-    HttpResponse.json({ tinvestRead: false, tinvestTrade: false, freedom: false, aiAgents: false }),
+    HttpResponse.json({ tinvestRead: false, tinvestTrade: false, freedom: false, freedomTrade: false, aiAgents: false }),
   ),
   // Задача 53: фонды и общий баланс — по умолчанию «фондов нет» / нулевой баланс; сценарии переопределяются через server.use.
   http.get('*/api/funds', () =>

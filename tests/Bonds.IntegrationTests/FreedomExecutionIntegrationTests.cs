@@ -107,7 +107,7 @@ public class FreedomExecutionIntegrationTests
 
     private (PlanExecutionEngine Engine, FakeFreedomOrderGateway Freedom) NewEngine(IServiceScope scope, bool enabled, Seed s)
     {
-        var freedom = new FakeFreedomOrderGateway { Account = new FreedomTradeAccountInfo(s.Number, 1431) };
+        var freedom = new FakeFreedomOrderGateway { Account = new FreedomTradeAccountInfo(s.Number, 1431), Now = Noon }; // «сейчас» брокера = момент тика
         freedom.Quotes["VUAA.EU"] = new FreedomMarketQuote(147.65m, 147.75m, 0.01m, "USD");
         var monitor = Mock.Of<IOptionsMonitor<ExecutionOptions>>(m => m.CurrentValue == new ExecutionOptions { Enabled = enabled });
         var sp = scope.ServiceProvider;

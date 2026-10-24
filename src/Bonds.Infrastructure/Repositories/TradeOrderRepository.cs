@@ -19,7 +19,7 @@ public class TradeOrderRepository : ITradeOrderRepository
         status AS Status, limit_price AS LimitPrice, price_unit AS PriceUnit, lots_requested AS LotsRequested, lots_filled AS LotsFilled,
         avg_fill_price AS AvgFillPrice, executed_commission AS ExecutedCommission, currency AS Currency, error_code AS ErrorCode,
         error_message AS ErrorMessage, created_at AS CreatedAt, updated_at AS UpdatedAt, halt_alerted_at AS HaltAlertedAt, fee_rechecks AS FeeRechecks,
-        fee_checked_at AS FeeCheckedAt, broker AS Broker";
+        fee_checked_at AS FeeCheckedAt, broker AS Broker, commission_currency AS CommissionCurrency";
 
     private static string? Truncate(string? value, int max) => value is null || value.Length <= max ? value : value[..max];
 
@@ -28,9 +28,9 @@ public class TradeOrderRepository : ITradeOrderRepository
         using var conn = CreateConnection();
         return await conn.ExecuteScalarAsync<ulong>(
             @"INSERT INTO trade_orders (plan_id, line_no, attempt, client_order_id, broker_order_id, status, limit_price, price_unit, lots_requested, lots_filled,
-                                        avg_fill_price, executed_commission, currency, error_code, error_message, created_at, updated_at, broker)
+                                        avg_fill_price, executed_commission, currency, error_code, error_message, created_at, updated_at, broker, commission_currency)
               VALUES (@PlanId, @LineNo, @Attempt, @ClientOrderId, @BrokerOrderId, @Status, @LimitPrice, @PriceUnit, @LotsRequested, @LotsFilled,
-                      @AvgFillPrice, @ExecutedCommission, @Currency, @ErrorCode, @ErrorMessage, @CreatedAt, @UpdatedAt, @Broker);
+                      @AvgFillPrice, @ExecutedCommission, @Currency, @ErrorCode, @ErrorMessage, @CreatedAt, @UpdatedAt, @Broker, @CommissionCurrency);
               SELECT LAST_INSERT_ID();",
             new
             {
@@ -38,6 +38,7 @@ public class TradeOrderRepository : ITradeOrderRepository
                 order.LotsRequested, order.LotsFilled, order.AvgFillPrice, order.ExecutedCommission, order.Currency,
                 ErrorCode = Truncate(order.ErrorCode, 64), ErrorMessage = Truncate(order.ErrorMessage, 500), order.CreatedAt, order.UpdatedAt,
                 Broker = string.IsNullOrWhiteSpace(order.Broker) ? Bonds.Core.Models.Brokers.TInvest : order.Broker,
+                CommissionCurrency = Truncate(order.CommissionCurrency, 8),
             });
     }
 
@@ -48,13 +49,13 @@ public class TradeOrderRepository : ITradeOrderRepository
             @"UPDATE trade_orders
               SET broker_order_id = @BrokerOrderId, status = @Status, lots_filled = @LotsFilled, avg_fill_price = @AvgFillPrice,
                   executed_commission = @ExecutedCommission, error_code = @ErrorCode, error_message = @ErrorMessage, updated_at = @UpdatedAt,
-                  halt_alerted_at = @HaltAlertedAt, fee_rechecks = @FeeRechecks, fee_checked_at = @FeeCheckedAt
+                  halt_alerted_at = @HaltAlertedAt, fee_rechecks = @FeeRechecks, fee_checked_at = @FeeCheckedAt, commission_currency = @CommissionCurrency
               WHERE id = @Id",
             new
             {
                 order.Id, order.BrokerOrderId, order.Status, order.LotsFilled, order.AvgFillPrice, order.ExecutedCommission,
                 ErrorCode = Truncate(order.ErrorCode, 64), ErrorMessage = Truncate(order.ErrorMessage, 500), order.UpdatedAt,
-                order.HaltAlertedAt, order.FeeRechecks, order.FeeCheckedAt,
+                order.HaltAlertedAt, order.FeeRechecks, order.FeeCheckedAt, CommissionCurrency = Truncate(order.CommissionCurrency, 8),
             });
     }
 

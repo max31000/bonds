@@ -91,6 +91,22 @@ describe('Plans — исполнение (задача 65)', () => {
     expect(screen.getByTestId('plan-22-status')).toHaveTextContent('Не исполнен');
   });
 
+  it('комиссия в своей валюте: сделка в EUR, комиссия Freedom в USD — показана в USD', async () => {
+    const plan = executingPlan();
+    const base = plan.lines[0].orders[1];
+    const eur: Plan = {
+      ...plan,
+      id: 25,
+      lines: [{ ...plan.lines[0], orders: [{ ...base, currency: 'EUR', avgFillPrice: 38.32, executedCommission: 1.2, commissionCurrency: 'USD' }] }],
+    };
+    server.use(http.get('*/api/plans', () => HttpResponse.json(livePlansResponse([eur]))));
+    renderPlans();
+
+    const exec = await screen.findByTestId('plan-25-line-1-exec');
+    expect(exec).toHaveTextContent(/средняя 38,32\sEUR/);
+    expect(exec).toHaveTextContent(/комиссия 1,20\sUSD/);
+  });
+
   it('активные заявки у брокера — баннер даже в режиме наблюдения', async () => {
     server.use(http.get('*/api/plans', () => HttpResponse.json({ ...plansResponse([executingPlan()]), activeOrders: 2 })));
     renderPlans();

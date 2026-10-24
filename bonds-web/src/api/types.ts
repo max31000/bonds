@@ -1196,8 +1196,8 @@ export interface Capabilities {
   tinvestRead: boolean;
   tinvestTrade: boolean;
   freedom: boolean;
-  /** Торговый ключ Freedom (задача 66) проверен. */
-  freedomTrade?: boolean;
+  /** Торговый ключ Freedom (задача 66) проверен; бэкенд отдаёт ключ всегда. */
+  freedomTrade: boolean;
   aiAgents: boolean;
 }
 
@@ -2074,7 +2074,8 @@ export type PlanLineExecutionStatus = 'Pending' | TradeOrderStatus;
 
 /**
  * Заявка исполнителя (одна попытка строки). ЕДИНИЦЫ: `limitPrice` — как отправлена брокеру: `priceUnit` = 'points' (облигации, ПУНКТЫ — процент номинала) или
- * 'currency' (валюта цены за штуку); `avgFillPrice` (за штуку) и `executedCommission` — в `currency`.
+ * 'currency' (валюта цены за штуку); `avgFillPrice` (за штуку) — в `currency`; `executedCommission` — в `commissionCurrency` (Freedom: обычно USD даже для
+ * сделки в EUR, не пересчитывается; нет поля — в `currency`).
  */
 export interface PlanOrder {
   attempt: number;
@@ -2085,6 +2086,8 @@ export interface PlanOrder {
   lotsFilled: number;
   avgFillPrice: number | null;
   executedCommission: number | null;
+  /** Валюта комиссии (ISO); отсутствует у старых ответов — тогда `currency`. */
+  commissionCurrency?: string;
   currency: string;
   errorCode: string | null;
   errorMessage: string | null;

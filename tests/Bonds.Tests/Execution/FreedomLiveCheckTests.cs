@@ -18,8 +18,9 @@ namespace Bonds.Tests.Execution;
 /// <summary>
 /// Задача 66, ОПЦИОНАЛЬНАЯ боевая проверка Freedom — запускает ВЛАДЕЛЕЦ (агенты и CI — никогда; исключена фильтром <c>Category!=Sandbox</c>). Сервис здесь заявок НЕ выставляет:
 /// владелец сам ставит ОДНУ лимитную заявку в терминале Freedom (1 шт., лимит далеко от рынка), тест на РЕАЛЬНОМ <see cref="FreedomOrderGateway"/> находит её в списке заявок,
-/// показывает разбор (stat → статус, oper, p, q, date → UTC), проверяет сверку заявки без id брокера (как после потерянного ответа: по реквизитам и окну времени — это и
-/// проверка <c>Freedom:OrderTimeUtcOffsetHours</c>) и, при <c>FREEDOM_LIVE_CANCEL=1</c>, снимает её через шлюз и перечитывает статус.
+/// показывает разбор (stat → статус, oper, p, q, date → UTC, userOrderId), проверяет смещение пояса (<c>Freedom:OrderTimeUtcOffsetHours</c>: date − смещение ≈ момент
+/// выставления), что РУЧНАЯ заявка (userOrderId не пуст и не в форме api) НЕ усыновляется сверкой по реквизитам, и, при <c>FREEDOM_LIVE_CANCEL=1</c>, снимает её через шлюз и
+/// перечитывает статус.
 /// <para>
 /// Env: <c>FREEDOM_TRADE_PUBLIC_KEY</c>, <c>FREEDOM_TRADE_PRIVATE_KEY</c> (ключ с правом торговли), <c>FREEDOM_LIVE_ORDER_ID</c> (номер заявки из терминала),
 /// опционально <c>FREEDOM_LIVE_PLACED_AT_UTC</c> (момент выставления, ISO UTC; по умолчанию — «сейчас», тогда запускать в пределах 2 мин после выставления),
@@ -93,12 +94,18 @@ public class FreedomLiveCheckTests
             gateway, gate.Object, Mock.Of<IAccountRepository>(), Mock.Of<IUserCredentialRepository>(), orders, NullLogger.Instance);
         var session = new VenueSession { Broker = BrokerIds.Freedom, BrokerAccountId = "live-check" };
 
+        // Смещение пояса: date заявки (МСК) − смещение должно совпасть с моментом выставления (окно сверки по реквизитам — [−30 с, +2 мин]).
+        mine.PlacedAtUtc.Should().NotBeNull("date заявки должна разбираться");
+        (mine.PlacedAtUtc!.Value - placedAt).Duration().Should().BeLessThan(
+            FreedomExecutionVenue.ReconcileWindowAfter, "date − смещение пояса = момент выставления; иначе смещение неверно");
+
+        // Ручная заявка терминала/приложения (userOrderId вида «i-6:ios:…», «web:…») НЕ должна усыновляться сервисом по реквизитам; пустой/api — должна.
+        var mayAdopt = FreedomOrderRules.MayBeOursByAttributes(mine.ClientOrderId, row.ClientOrderId);
         var reconciled = await venue.StateAsync(session, UserId, row, line, true, CancellationToken.None);
-        _out.WriteLine(reconciled is null
-            ? $"сверка без id: НЕ опознана (окно ±{FreedomExecutionVenue.ReconcileWindow.TotalMinutes} мин от {placedAt:O}; проверьте смещение пояса или наличие похожих заявок)"
-            : $"сверка без id: опознана как {reconciled.BrokerOrderId}");
-        reconciled?.BrokerOrderId.Should().Be(orderId, "опознана должна быть именно эта заявка");
-        reconciled.Should().NotBeNull("сверка по реквизитам и времени должна опознать заявку — иначе смещение пояса неверно");
+        _out.WriteLine($"userOrderId {mine.ClientOrderId ?? "null"}: по правилам {(mayAdopt ? "может быть нашей" : "чужая (ручная)")}, сверка без id — " +
+                       (reconciled is null ? "НЕ опознана" : $"опознана как {reconciled.BrokerOrderId} (по реквизитам: {reconciled.MatchedByAttributes})"));
+        if (mayAdopt) reconciled?.BrokerOrderId.Should().Be(orderId, "опознана должна быть именно эта заявка");
+        else reconciled.Should().BeNull("ручная заявка не должна усыновляться исполнителем");
 
         if (Environment.GetEnvironmentVariable("FREEDOM_LIVE_CANCEL") != "1")
         {
