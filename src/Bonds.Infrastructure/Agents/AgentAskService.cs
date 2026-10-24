@@ -30,7 +30,12 @@ public sealed class AgentAskService
 
         var gate = await _service.EvaluateGateAsync(userId, AgentTaskKind.OnDemand);
         if (!gate.Allowed) return "🤖 " + gate.Reason;
-        if (!_queue.TryMarkAsk(userId)) return "🤖 Не так часто: следующий вопрос — через минуту.";
-        return _queue.TryEnqueue(new AgentWorkItem(userId, AgentTaskKind.OnDemand, trimmed)) ? AgentMessages.AskAccepted : AgentMessages.AskQueueFull;
+        if (_queue.IsPending(userId, AgentTaskKind.OnDemand)) return AgentMessages.AskAlreadyQueued;
+        if (!_queue.TryMarkAsk(userId, out var markedAt)) return "🤖 Не так часто: следующий вопрос — через минуту.";
+        if (_queue.TryEnqueue(new AgentWorkItem(userId, AgentTaskKind.OnDemand, trimmed))) return AgentMessages.AskAccepted;
+
+        // Очередь не приняла (переполнена или вопрос уже ждёт) — пауза не «сгорает» (ревью MINOR 8).
+        _queue.ReleaseAsk(userId, markedAt);
+        return _queue.IsPending(userId, AgentTaskKind.OnDemand) ? AgentMessages.AskAlreadyQueued : AgentMessages.AskQueueFull;
     }
 }

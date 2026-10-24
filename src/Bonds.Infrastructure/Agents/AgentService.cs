@@ -6,10 +6,13 @@ using Microsoft.Extensions.Options;
 
 namespace Bonds.Infrastructure.Agents;
 
-/// <summary>Итог попытки запуска: <see cref="SkipReason"/> — почему не запущен (ворота), иначе строка журнала и результат.</summary>
+/// <summary>
+/// Итог попытки запуска: <see cref="SkipReason"/> — почему процесс не запущен (ворота; при недоступном токене <see cref="Run"/> — запись журнала с ошибкой),
+/// иначе строка журнала и результат.
+/// </summary>
 public sealed record AgentRunOutcome(string? SkipReason, AgentRun? Run, AgentResult? Result)
 {
-    public bool Started => Run is not null;
+    public bool Started => Run is not null && SkipReason is null;
 }
 
 /// <summary>Доставка итога запуска пользователю (реализация — Telegram; HTML-escape внутри). Не бросает исключений.</summary>
@@ -32,6 +35,8 @@ public sealed class NullAgentNotifier : IAgentNotifier
 public sealed class AgentService
 {
     public const string McpPath = "/internal/mcp";
+
+    public const string CredentialUnavailable = "Токен Claude Code недоступен — введите его заново в «Подключениях»";
 
     private readonly IAgentRunner _runner;
     private readonly IUserCredentialStore _credentials;
@@ -72,6 +77,8 @@ public sealed class AgentService
         var now = _time.GetUtcNow().UtcDateTime;
         var dayStart = AgentRunGate.MoscowDayStartUtc(now);
         var settings = await _settings.GetAsync(userId);
+        // Лимит пользователя не выше серверного предела (ревью MINOR 3): предел могли понизить после сохранения настроек.
+        settings = settings with { DailyRunLimit = Math.Clamp(settings.DailyRunLimit, 1, Math.Max(1, options.MaxDailyRunLimit)) };
         var capability = await _credentials.HasValidAsync(userId, CredentialProviders.ClaudeCode);
         var runsToday = settings.Enabled && capability ? await _runs.CountStartedSinceAsync(userId, dayStart) : 0;
         var reviewsToday = kind == AgentTaskKind.EventReview && settings.Enabled && capability
@@ -90,16 +97,28 @@ public sealed class AgentService
         }
 
         var secret = await _credentials.GetSecretAsync(userId, CredentialProviders.ClaudeCode);
-        if (secret is null || !secret.TryGetValue("oauthToken", out var token) || string.IsNullOrWhiteSpace(token))
-        {
-            _logger.LogWarning("Agent run {Kind} for user {UserId} skipped: credential unavailable", kind, userId);
-            return new AgentRunOutcome("Токен Claude Code недоступен — введите его заново в «Подключениях»", null, null);
-        }
-
         var options = _options.CurrentValue;
         var settings = await _settings.GetAsync(userId);
         var model = settings.ModelFor(kind);
         if (!AgentModelName.IsValid(model)) model = kind == AgentTaskKind.MonthlyReview ? AgentSettings.DefaultMonthlyModel : AgentSettings.DefaultModel;
+
+        if (secret is null || !secret.TryGetValue("oauthToken", out var token) || string.IsNullOrWhiteSpace(token))
+        {
+            // Ревью MINOR 7: подключение «проверено», но секрет не расшифровался (сменились ключи DataProtection и т.п.). Пишем в журнал завершённый запуск
+            // с ошибкой — расписание (не чаще раза в сутки на вид по журналу) не повторяет его каждую минуту, а пользователь видит причину в истории и в боте.
+            // Такой запуск входит в суточный лимит.
+            _logger.LogWarning("Agent run {Kind} for user {UserId} skipped: credential unavailable", kind, userId);
+            var now = _time.GetUtcNow().UtcDateTime;
+            var skipped = new AgentRun { UserId = userId, Kind = kind.ToString(), Model = model, Question = question, Started = now };
+            skipped.Id = await _runs.InsertStartedAsync(skipped);
+            var failure = new AgentResult(string.Empty, null, -1, IsError: true, Error: CredentialUnavailable);
+            await _runs.FinishAsync(skipped.Id, now, failure.ExitCode, null, null, null, failure.Error);
+            skipped.Finished = now;
+            skipped.ExitCode = failure.ExitCode;
+            skipped.Error = failure.Error;
+            await _notifier.NotifyAsync(userId, kind, question, failure, ct);
+            return new AgentRunOutcome(CredentialUnavailable, skipped, failure);
+        }
 
         var run = new AgentRun
         {
@@ -112,7 +131,7 @@ public sealed class AgentService
         run.Id = await _runs.InsertStartedAsync(run);
 
         // Bearer MCP живёт не дольше запуска (+ запас на завершение) и отзывается сразу по окончании.
-        var bearer = _tokens.Issue(userId, run.Id, options.Timeout + TimeSpan.FromMinutes(1));
+        var bearer = _tokens.Issue(userId, run.Id, options.Timeout + TimeSpan.FromMinutes(1), kind);
         AgentResult result;
         try
         {

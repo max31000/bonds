@@ -320,31 +320,37 @@ public sealed partial class BondsMcpTools
     private async Task<object> ProposePlanAsync(ulong userId, ulong runId, JsonElement args, CancellationToken ct)
     {
         if (args.ValueKind != JsonValueKind.Object) throw new McpToolInputException("Нужны аргументы kind и rationale");
-        string? Str(string key) => args.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
-        decimal? Num(string key) => args.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.Number && v.TryGetDecimal(out var d) ? d : null;
-
-        var rationale = Str("rationale")?.Trim();
+        var rationale = (args.TryGetProperty("rationale", out var r) && r.ValueKind == JsonValueKind.String ? r.GetString() : null)?.Trim();
         if (string.IsNullOrWhiteSpace(rationale)) throw new McpToolInputException("rationale обязателен: объясните, зачем план");
         if (rationale.Length > 1000) rationale = rationale[..1000];
 
-        // Не больше AgentOptions.MaxProposalsPerRun планов за запуск: инъекция в данных не должна заваливать пользователя планами.
+        // Только разбор события и вопрос пользователя (вид — из bearer запуска): дайджест и ежемесячный обзор планов не предлагают.
         var tokens = Get<AgentMcpTokens>();
-        if (!tokens.CanPropose(runId, _options.CurrentValue.MaxProposalsPerRun))
+        if (!AgentMcpTokens.KindMayPropose(tokens.KindOf(runId)))
+            throw new McpToolInputException("propose_plan недоступен в этой задаче: дайджест и ежемесячный обзор — только чтение");
+
+        // Не больше AgentOptions.MaxProposalsPerRun планов за запуск (атомарная бронь слота; не создан — слот возвращается): инъекция в данных не должна
+        // заваливать пользователя планами, в том числе параллельными вызовами.
+        if (!tokens.TryReserveProposal(runId, _options.CurrentValue.MaxProposalsPerRun))
             throw new McpToolInputException("В этом запуске план уже предложен — больше нельзя");
 
-        var portfolio = Str("portfolio");
-        var (rule, parameters) = Str("kind") switch
+        TradePlan? plan;
+        PolicyOutcome outcome;
+        try
         {
-            "inflow" => (PlanRules.P2Inflow, new PlanParams(Amount: RequirePositive(Num("amount"), "amount"), Portfolio: portfolio)),
-            "withdraw" => (PlanRules.P5Withdraw, new PlanParams(Amount: Num("amount"), Fraction: Num("fraction"), Portfolio: portfolio)),
-            "exit_basket" => (PlanRules.Manual, new PlanParams(Code: RequireCode(Str("basketCode")))),
-            _ => throw new McpToolInputException("kind должен быть inflow, withdraw или exit_basket"),
-        };
+            (plan, outcome) = await CreateProposedPlanAsync(userId, args, rationale, ct);
+        }
+        catch
+        {
+            tokens.ReleaseProposal(runId);
+            throw;
+        }
 
-        var now = _time.GetUtcNow().UtcDateTime;
-        var (plan, outcome) = await Get<PolicyService>().CreateManualAsync(userId, rule, parameters, now, ct, new PlanOrigin(PlanSources.Agent, rationale));
-        if (plan is null) return new { created = false, notes = outcome.Notes };
-        tokens.RecordProposal(runId);
+        if (plan is null)
+        {
+            tokens.ReleaseProposal(runId);
+            return new { created = false, notes = outcome.Notes };
+        }
 
         // Тот же путь подтверждения, что у любого плана: уведомление с кнопками в бот; решение — только пользователь.
         if (_sp.GetService(typeof(IPlanNotifier)) is IPlanNotifier notifier) await notifier.NotifyPlanCreatedAsync(plan, ct);
@@ -356,6 +362,25 @@ public sealed partial class BondsMcpTools
             dryRun = plan.DryRun,
             note = "План сохранён и ждёт решения пользователя. Агент не может его подтвердить или исполнить.",
         };
+    }
+
+    /// <summary>Разбор аргументов и создание плана через <see cref="PolicyService.CreateManualAsync"/> (та же валидация, что у ручного плана).</summary>
+    private async Task<(TradePlan? Plan, PolicyOutcome Outcome)> CreateProposedPlanAsync(ulong userId, JsonElement args, string rationale, CancellationToken ct)
+    {
+        string? Str(string key) => args.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+        decimal? Num(string key) => args.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.Number && v.TryGetDecimal(out var d) ? d : null;
+
+        var portfolio = Str("portfolio");
+        var (rule, parameters) = Str("kind") switch
+        {
+            "inflow" => (PlanRules.P2Inflow, new PlanParams(Amount: RequirePositive(Num("amount"), "amount"), Portfolio: portfolio)),
+            "withdraw" => (PlanRules.P5Withdraw, new PlanParams(Amount: Num("amount"), Fraction: Num("fraction"), Portfolio: portfolio)),
+            "exit_basket" => (PlanRules.Manual, new PlanParams(Code: RequireCode(Str("basketCode")))),
+            _ => throw new McpToolInputException("kind должен быть inflow, withdraw или exit_basket"),
+        };
+
+        var now = _time.GetUtcNow().UtcDateTime;
+        return await Get<PolicyService>().CreateManualAsync(userId, rule, parameters, now, ct, new PlanOrigin(PlanSources.Agent, rationale));
     }
 
     private static decimal RequirePositive(decimal? value, string name) =>

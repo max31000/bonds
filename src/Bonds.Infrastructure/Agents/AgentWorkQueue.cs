@@ -19,20 +19,29 @@ public interface IAgentEventTrigger
 
 /// <summary>
 /// Очередь запусков агента (задача 68, singleton): ограниченный канал, один потребитель (<see cref="AgentWorkerHostedService"/>) — запуски одного процесса
-/// идут по одному (лимиты в сутки считаются без гонок). Плановые и событийные задания дедуплицируются по (пользователь, вид), пока не завершатся.
-/// Переполнение — задание отбрасывается (<see cref="TryEnqueue"/> = false). Ворота проверяются при запуске (<see cref="AgentService.RunAsync"/>).
+/// идут по одному (лимиты в сутки считаются без гонок). Справедливость между пользователями (ревью MINOR 8): у пользователя не больше ОДНОГО ждущего задания
+/// каждого вида, включая <c>/ask</c> (второй вопрос, пока первый в очереди, отклоняется); новые Critical-события, пока разбор ещё в очереди, ДОПИСЫВАЮТСЯ
+/// в него (не теряются и не плодят запуски). Переполнение — задание отбрасывается (<see cref="TryEnqueue"/> = false). Ворота — при запуске (<see cref="AgentService.RunAsync"/>).
 /// </summary>
 public sealed class AgentWorkQueue : IAgentEventTrigger
 {
     private const int Capacity = 32;
+
+    /// <summary>Сколько событий держится в одном разборе (больше — отбрасываются самые новые).</summary>
+    public const int MaxEventSubjects = 10;
+
     private readonly Channel<AgentWorkItem> _channel = Channel.CreateBounded<AgentWorkItem>(new BoundedChannelOptions(Capacity)
     {
-        FullMode = BoundedChannelFullMode.DropWrite,
+        // Wait (а не DropWrite): при DropWrite TryWrite ВСЕГДА возвращает true и молча выбрасывает задание — переполнение не было бы видно, а отметка
+        // «ждёт» выброшенного задания оставалась навсегда (вид задачи пользователя блокировался до рестарта). С Wait неблокирующий TryWrite возвращает false.
+        FullMode = BoundedChannelFullMode.Wait,
         SingleReader = true,
     });
 
     private readonly ConcurrentDictionary<(ulong, AgentTaskKind), byte> _pending = new();
     private readonly ConcurrentDictionary<ulong, DateTime> _lastAsk = new();
+    private readonly Dictionary<ulong, List<string>> _eventSubjects = new();
+    private readonly object _eventLock = new();
     private readonly TimeProvider _time;
     private readonly IOptionsMonitor<AgentOptions> _options;
 
@@ -44,27 +53,48 @@ public sealed class AgentWorkQueue : IAgentEventTrigger
 
     public ChannelReader<AgentWorkItem> Reader => _channel.Reader;
 
+    /// <summary>Ждёт ли (или идёт) задание этого вида у пользователя. Разбор событий перестаёт «ждать», как только взят в работу (<see cref="Begin"/>).</summary>
     public bool IsPending(ulong userId, AgentTaskKind kind) => _pending.ContainsKey((userId, kind));
 
-    /// <summary>В очередь. Неинтерактивные виды — не более одного ждущего/идущего на пользователя.</summary>
+    /// <summary>В очередь: не более одного ждущего задания каждого вида на пользователя (иначе false), переполнение канала — false.</summary>
     public bool TryEnqueue(AgentWorkItem item)
     {
-        var dedup = item.Kind != AgentTaskKind.OnDemand;
-        if (dedup && !_pending.TryAdd((item.UserId, item.Kind), 0)) return false;
+        if (!_pending.TryAdd((item.UserId, item.Kind), 0)) return false;
         if (_channel.Writer.TryWrite(item)) return true;
-        if (dedup) _pending.TryRemove((item.UserId, item.Kind), out _);
+        _pending.TryRemove((item.UserId, item.Kind), out _);
         return false;
     }
 
-    /// <summary>Задание обработано (успешно или нет) — снимает отметку дедупликации.</summary>
-    public void Completed(AgentWorkItem item) => _pending.TryRemove((item.UserId, item.Kind), out _);
+    /// <summary>
+    /// Потребитель берёт задание в работу. Для разбора событий — собирает накопленные события в описание и снимает отметку «ждёт»: события, пришедшие во
+    /// время запуска, встанут следующим разбором (их ограничивает <see cref="AgentOptions.EventReviewMaxPerDay"/>).
+    /// </summary>
+    public AgentWorkItem Begin(AgentWorkItem item)
+    {
+        if (item.Kind != AgentTaskKind.EventReview) return item;
+        lock (_eventLock)
+        {
+            _eventSubjects.Remove(item.UserId, out var subjects);
+            _pending.TryRemove((item.UserId, item.Kind), out _);
+            var details = subjects is { Count: > 0 } ? string.Join("\n", subjects.Select(x => "• " + x)) : item.Question;
+            return item with { Question = details };
+        }
+    }
+
+    /// <summary>Задание обработано (успешно или нет) — снимает отметку «ждёт» (разбор событий снял её уже в <see cref="Begin"/>).</summary>
+    public void Completed(AgentWorkItem item)
+    {
+        if (item.Kind != AgentTaskKind.EventReview) _pending.TryRemove((item.UserId, item.Kind), out _);
+    }
 
     /// <summary>
-    /// Пауза <c>/ask</c>: true — можно (отметка времени ставится сразу), false — с прошлого вопроса прошло меньше <see cref="AgentOptions.AskCooldown"/>.
+    /// Пауза <c>/ask</c>: true — можно (отметка времени <paramref name="markedAt"/> ставится сразу), false — с прошлого вопроса прошло меньше
+    /// <see cref="AgentOptions.AskCooldown"/>. Если вопрос в итоге не принят очередью — <see cref="ReleaseAsk"/> (пауза не «сгорает»).
     /// </summary>
-    public bool TryMarkAsk(ulong userId)
+    public bool TryMarkAsk(ulong userId, out DateTime markedAt)
     {
         var now = _time.GetUtcNow().UtcDateTime;
+        markedAt = now;
         var cooldown = _options.CurrentValue.AskCooldown;
         while (true)
         {
@@ -80,10 +110,31 @@ public sealed class AgentWorkQueue : IAgentEventTrigger
         }
     }
 
+    /// <summary>Снимает отметку <see cref="TryMarkAsk"/>, если она всё ещё та же (вопрос не принят очередью).</summary>
+    public void ReleaseAsk(ulong userId, DateTime markedAt) => _lastAsk.TryRemove(new KeyValuePair<ulong, DateTime>(userId, markedAt));
+
     public void CriticalSignalsDetected(ulong userId, IReadOnlyList<string> subjects)
     {
-        var details = string.Join("\n", subjects.Take(10).Select(s => "• " + (s.Length > 300 ? s[..300] : s)));
-        TryEnqueue(new AgentWorkItem(userId, AgentTaskKind.EventReview, details));
+        lock (_eventLock)
+        {
+            if (!_eventSubjects.TryGetValue(userId, out var list)) _eventSubjects[userId] = list = [];
+            foreach (var subject in subjects)
+            {
+                if (list.Count >= MaxEventSubjects) break;
+                var trimmed = subject.Length > 300 ? subject[..300] : subject;
+                if (!list.Contains(trimmed, StringComparer.Ordinal)) list.Add(trimmed);
+            }
+
+            // Разбор уже ждёт — события дописаны в него; иначе новое задание (описание соберёт Begin). Под той же блокировкой, что и Begin:
+            // событие либо попадёт в уже взятый разбор, либо поставит новый — не потеряется и не даст пустого разбора.
+            TryEnqueue(new AgentWorkItem(userId, AgentTaskKind.EventReview));
+        }
+    }
+
+    /// <summary>Накопленные события пользователя для следующего разбора (для тестов).</summary>
+    internal IReadOnlyList<string> PendingEventSubjects(ulong userId)
+    {
+        lock (_eventLock) return _eventSubjects.TryGetValue(userId, out var list) ? list.ToList() : [];
     }
 }
 
@@ -107,8 +158,9 @@ public sealed class AgentWorkerHostedService : BackgroundService
         {
             try
             {
+                var work = _queue.Begin(item);
                 await using var scope = _scopeFactory.CreateAsyncScope();
-                await scope.ServiceProvider.GetRequiredService<AgentService>().RunAsync(item.UserId, item.Kind, item.Question, stoppingToken);
+                await scope.ServiceProvider.GetRequiredService<AgentService>().RunAsync(work.UserId, work.Kind, work.Question, stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {

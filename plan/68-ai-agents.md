@@ -29,7 +29,9 @@
    - Или stdio-сервер — отдельный бинарь в образе.
    - Инструменты:
      - `portfolio`, `baskets`, `plans`, `signals`, `cashflow_next_90d`, `bond_card(isin)`, `scorecard(isin)`, `freedom_holdings`, `cash`;
-     - `propose_plan(rule=MANUAL, lines[], rationale)`: валидация через `PolicyService`, статус всегда `PendingApproval`, `source=agent`.
+     - `propose_plan(kind=inflow|withdraw|exit_basket, amount|fraction|basketCode, rationale)`: валидация через `PolicyService.CreateManualAsync`, статус всегда `PendingApproval`, `source=agent`.
+      Доступен **только** задачам `EventReview` и `OnDemand` (вид задачи хранится в bearer запуска); `DailyDigest` и `MonthlyReview` получают ошибку инструмента.
+      Не больше `Agent:MaxProposalsPerRun` (1) планов за запуск — атомарная бронь слота, при ошибке валидации слот возвращается.
 3. **Задачи агента** (`AgentTaskKind`) по расписанию и событиям:
    - `DailyDigest` (будни 19:00 МСК): что изменилось, события, планы — кратко в бот;
    - `EventReview`: новое Critical-событие (оферта, дефолт эмитента, просадка) — разбор и, если уместно, `propose_plan`;
@@ -73,3 +75,13 @@
 - **UI:**
   - раздел «Агент»: включение, модель, лимит запусков в сутки, история запусков;
   - результат — текст: в вебе экранируется, в боте отправляется как HTML-escape.
+
+## Ревью (2026-10-25) — исправления
+
+- **Изоляция процесса:** CLI под пользователем `agent` (uid/gid 10001) через `setpriv` (`--clear-groups --no-new-privs --inh-caps=-all --bounding-set=-all`), API пока root.
+  Каталоги запусков — `/var/lib/bonds-agent` (root 0711; при старте создаётся и чистится от `run-*`), каталог запуска 0700 и MCP-конфиг 0600 — владелец 10001. Ключи DataProtection — 0700 root.
+- **Dockerfile:** базовые образы по `@sha256`; в финальном образе — только нативный `claude` (без Node.js); сборка падает без нужных флагов в `claude --help`; PR-сборка образа без push в `deploy.yml`.
+- **MCP:** кроме `RemoteIpAddress` — loopback и `LocalIpAddress`; заголовки прокси → 404.
+- **Лимиты и очередь:** суточный лимит пользователя сжимается до `Agent:MaxDailyRunLimit`; не больше одного ждущего `/ask` на пользователя, события дописываются в ждущий разбор;
+  отказ очереди не тратит паузу `/ask`; недоступный токен — запись запуска с ошибкой (расписание не повторяет каждую минуту).
+- **AllowWebResearch** — по умолчанию выкл., не рекомендуется до отдельного контейнера-воркера; при включении — предупреждение в логе на старте.

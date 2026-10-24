@@ -1,11 +1,12 @@
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
+using Bonds.Core.Agents;
 
 namespace Bonds.Infrastructure.Agents.Mcp;
 
-/// <summary>Кому выдан bearer MCP: пользователь и запуск агента, срок — UTC.</summary>
-public sealed record AgentMcpGrant(ulong UserId, ulong RunId, DateTime ExpiresAtUtc);
+/// <summary>Кому выдан bearer MCP: пользователь, запуск агента и его вид (от вида зависит доступ к <c>propose_plan</c>), срок — UTC.</summary>
+public sealed record AgentMcpGrant(ulong UserId, ulong RunId, AgentTaskKind Kind, DateTime ExpiresAtUtc);
 
 /// <summary>
 /// Одноразовые bearer-токены MCP-сервера bonds (задача 68; singleton, только память процесса). Токен — 32 случайных байта (base64url), выдаётся на ОДИН запуск
@@ -19,13 +20,23 @@ public sealed class AgentMcpTokens
 
     public AgentMcpTokens(TimeProvider time) => _time = time;
 
-    public string Issue(ulong userId, ulong runId, TimeSpan ttl)
+    public string Issue(ulong userId, ulong runId, TimeSpan ttl, AgentTaskKind kind)
     {
         PurgeExpired();
         var token = Base64Url(RandomNumberGenerator.GetBytes(32));
-        _grants[Hash(token)] = new AgentMcpGrant(userId, runId, _time.GetUtcNow().UtcDateTime.Add(ttl));
+        var grant = new AgentMcpGrant(userId, runId, kind, _time.GetUtcNow().UtcDateTime.Add(ttl));
+        _grants[Hash(token)] = grant;
+        _runKinds[runId] = kind;
         return token;
     }
+
+    private readonly ConcurrentDictionary<ulong, AgentTaskKind> _runKinds = new();
+
+    /// <summary>Вид задачи действующего запуска (из выданного ему bearer) или null — запуск неизвестен/завершён.</summary>
+    public AgentTaskKind? KindOf(ulong runId) => _runKinds.TryGetValue(runId, out var kind) ? kind : null;
+
+    /// <summary>Виды задач, которым разрешён <c>propose_plan</c> (ревью MINOR 2): разбор события и вопрос пользователя. Дайджест и ежемесячный обзор — только чтение.</summary>
+    public static bool KindMayPropose(AgentTaskKind? kind) => kind is AgentTaskKind.EventReview or AgentTaskKind.OnDemand;
 
     /// <summary>Действующий токен ЭТОГО запуска → пользователь. Чужой запуск, истёкший, отозванный или неизвестный токен — null.</summary>
     public ulong? Validate(string? token, ulong runId)
@@ -44,23 +55,56 @@ public sealed class AgentMcpTokens
 
     public void Revoke(string token)
     {
-        if (_grants.TryRemove(Hash(token), out var grant)) _proposals.TryRemove(grant.RunId, out _);
+        if (_grants.TryRemove(Hash(token), out var grant)) ForgetRun(grant.RunId);
     }
 
     private readonly ConcurrentDictionary<ulong, int> _proposals = new();
 
-    /// <summary>Можно ли запуску ещё предложить план (<c>propose_plan</c>): созданных меньше <paramref name="max"/>. Неудачные попытки (ошибка валидации) не считаются.</summary>
-    public bool CanPropose(ulong runId, int max) => _proposals.GetValueOrDefault(runId) < max;
+    /// <summary>
+    /// Атомарно занимает слот <c>propose_plan</c> запуска (CAS, ревью MINOR 1): true — занят (слотов было меньше <paramref name="max"/>), false — лимит исчерпан.
+    /// Параллельные вызовы одного запуска не превысят <paramref name="max"/>. Если план в итоге не создан (валидация, ошибка) — <see cref="ReleaseProposal"/>.
+    /// </summary>
+    public bool TryReserveProposal(ulong runId, int max)
+    {
+        while (true)
+        {
+            if (_proposals.TryGetValue(runId, out var current))
+            {
+                if (current >= max) return false;
+                if (_proposals.TryUpdate(runId, current + 1, current)) return true;
+            }
+            else
+            {
+                if (max <= 0) return false;
+                if (_proposals.TryAdd(runId, 1)) return true;
+            }
+        }
+    }
 
-    /// <summary>Запуск создал план.</summary>
-    public void RecordProposal(ulong runId) => _proposals.AddOrUpdate(runId, 1, (_, n) => n + 1);
+    /// <summary>Возвращает слот, занятый <see cref="TryReserveProposal"/>, если план не создан.</summary>
+    public void ReleaseProposal(ulong runId)
+    {
+        while (_proposals.TryGetValue(runId, out var current) && current > 0)
+        {
+            if (_proposals.TryUpdate(runId, current - 1, current)) return;
+        }
+    }
+
+    /// <summary>Сколько слотов занято сейчас (для тестов).</summary>
+    public int ReservedProposals(ulong runId) => _proposals.GetValueOrDefault(runId);
+
+    private void ForgetRun(ulong runId)
+    {
+        _proposals.TryRemove(runId, out _);
+        _runKinds.TryRemove(runId, out _);
+    }
 
     private void PurgeExpired()
     {
         var now = _time.GetUtcNow().UtcDateTime;
         foreach (var (key, grant) in _grants)
         {
-            if (grant.ExpiresAtUtc <= now && _grants.TryRemove(key, out _)) _proposals.TryRemove(grant.RunId, out _);
+            if (grant.ExpiresAtUtc <= now && _grants.TryRemove(key, out _)) ForgetRun(grant.RunId);
         }
     }
 

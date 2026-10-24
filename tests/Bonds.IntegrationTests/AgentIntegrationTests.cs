@@ -82,9 +82,13 @@ public class AgentIntegrationTests
     private async Task EnableAgentAsync(ulong userId, int limit = 5) =>
         await new AgentSettingsRepository(Conn).UpsertAsync(userId, new AgentSettings(true, "sonnet", "opus", limit));
 
-    /// <summary>MCP-запрос «как от процесса агента»: RemoteIpAddress = loopback (HttpClient TestServer его не ставит).</summary>
+    /// <summary>
+    /// MCP-запрос «как от процесса агента»: RemoteIpAddress и LocalIpAddress = loopback (HttpClient TestServer их не ставит). <paramref name="localIp"/> —
+    /// подменить локальный адрес (соединение на внешний интерфейс), <paramref name="headers"/> — дополнительные заголовки (прокси).
+    /// </summary>
     private static async Task<(int Status, JsonElement? Body)> McpAsync(
-        WebApplicationFactory<Program> factory, ulong runId, string? bearer, object payload, bool loopback = true, string? origin = null)
+        WebApplicationFactory<Program> factory, ulong runId, string? bearer, object payload, bool loopback = true, string? origin = null,
+        IPAddress? localIp = null, Dictionary<string, string>? headers = null)
     {
         var json = JsonSerializer.SerializeToUtf8Bytes(payload);
         var ctx = await factory.Server.SendAsync(c =>
@@ -97,7 +101,14 @@ public class AgentIntegrationTests
             if (origin is not null) c.Request.Headers.Origin = origin;
             c.Request.Body = new MemoryStream(json);
             c.Request.ContentLength = json.Length;
-            if (loopback) c.Connection.RemoteIpAddress = IPAddress.Loopback;
+            if (loopback)
+            {
+                c.Connection.RemoteIpAddress = IPAddress.Loopback;
+                c.Connection.LocalIpAddress = IPAddress.Loopback;
+            }
+
+            if (localIp is not null) c.Connection.LocalIpAddress = localIp;
+            foreach (var (name, value) in headers ?? []) c.Request.Headers[name] = value;
         });
 
         var text = await new StreamReader(ctx.Response.Body, Encoding.UTF8).ReadToEndAsync();
@@ -116,9 +127,9 @@ public class AgentIntegrationTests
     {
         var factory = NewFactory();
         var tokens = factory.Services.GetRequiredService<AgentMcpTokens>();
-        var good = tokens.Issue(userId: 1, runId: 501, TimeSpan.FromMinutes(5));
-        var expired = tokens.Issue(userId: 1, runId: 502, TimeSpan.FromMilliseconds(-1));
-        var otherUser = tokens.Issue(userId: 2, runId: 503, TimeSpan.FromMinutes(5));
+        var good = tokens.Issue(userId: 1, runId: 501, TimeSpan.FromMinutes(5), AgentTaskKind.DailyDigest);
+        var expired = tokens.Issue(userId: 1, runId: 502, TimeSpan.FromMilliseconds(-1), AgentTaskKind.DailyDigest);
+        var otherUser = tokens.Issue(userId: 2, runId: 503, TimeSpan.FromMinutes(5), AgentTaskKind.DailyDigest);
         var ping = new { jsonrpc = "2.0", id = 1, method = "ping" };
 
         (await McpAsync(factory, 501, good, ping)).Status.Should().Be(200);
@@ -138,10 +149,45 @@ public class AgentIntegrationTests
     }
 
     [Fact]
+    public async Task Mcp_LoopbackWithProxyHeaders_OrNonLoopbackLocalAddress_404()
+    {
+        var factory = NewFactory();
+        var tokens = factory.Services.GetRequiredService<AgentMcpTokens>();
+        var good = tokens.Issue(userId: 1, runId: 511, TimeSpan.FromMinutes(5), AgentTaskKind.DailyDigest);
+        var ping = new { jsonrpc = "2.0", id = 1, method = "ping" };
+
+        (await McpAsync(factory, 511, good, ping)).Status.Should().Be(200, "контроль: настоящий loopback → loopback");
+        (await McpAsync(factory, 511, good, ping, headers: new() { ["X-Forwarded-For"] = "203.0.113.7" })).Status.Should().Be(404);
+        (await McpAsync(factory, 511, good, ping, headers: new() { ["X-Real-IP"] = "203.0.113.7" })).Status.Should().Be(404);
+        (await McpAsync(factory, 511, good, ping, headers: new() { ["Forwarded"] = "for=203.0.113.7" })).Status.Should().Be(404);
+        (await McpAsync(factory, 511, good, ping, localIp: IPAddress.Parse("172.18.0.5")))
+            .Status.Should().Be(404, "удалённый адрес loopback, но соединение пришло на внешний интерфейс контейнера");
+        (await McpAsync(factory, 511, good, ping, localIp: IPAddress.Parse("::ffff:127.0.0.1"))).Status.Should().Be(200, "IPv4-mapped loopback — тоже loopback");
+    }
+
+    [Theory]
+    [InlineData("127.0.0.1", "127.0.0.1", null, true)]
+    [InlineData("::1", "::1", null, true)]
+    [InlineData("127.0.0.1", "10.0.0.2", null, false)]
+    [InlineData("127.0.0.1", null, null, false)]
+    [InlineData("10.0.0.3", "127.0.0.1", null, false)]
+    [InlineData("127.0.0.1", "127.0.0.1", "X-Forwarded-For", false)]
+    [InlineData("127.0.0.1", "127.0.0.1", "X-Real-IP", false)]
+    public void Mcp_IsLoopbackRequest_RequiresLoopbackRemoteAndLocal_NoProxyHeaders(string remote, string? local, string? header, bool expected)
+    {
+        var ctx = new Microsoft.AspNetCore.Http.DefaultHttpContext();
+        ctx.Connection.RemoteIpAddress = IPAddress.Parse(remote);
+        ctx.Connection.LocalIpAddress = local is null ? null : IPAddress.Parse(local);
+        if (header is not null) ctx.Request.Headers[header] = "198.51.100.1";
+
+        Bonds.Api.Endpoints.McpEndpoints.IsLoopbackRequest(ctx).Should().Be(expected);
+    }
+
+    [Fact]
     public async Task Mcp_InitializeAndToolsList_Work_NotificationIs202()
     {
         var factory = NewFactory();
-        var bearer = factory.Services.GetRequiredService<AgentMcpTokens>().Issue(1, 601, TimeSpan.FromMinutes(5));
+        var bearer = factory.Services.GetRequiredService<AgentMcpTokens>().Issue(1, 601, TimeSpan.FromMinutes(5), AgentTaskKind.DailyDigest);
 
         var (status, init) = await McpAsync(factory, 601, bearer,
             new { jsonrpc = "2.0", id = 1, method = "initialize", @params = new { protocolVersion = "2025-06-18", capabilities = new { }, clientInfo = new { name = "t", version = "1" } } });
@@ -169,8 +215,8 @@ public class AgentIntegrationTests
         });
 
         var tokens = factory.Services.GetRequiredService<AgentMcpTokens>();
-        var bearerA = tokens.Issue(userA, 701, TimeSpan.FromMinutes(5));
-        var bearerB = tokens.Issue(userB, 702, TimeSpan.FromMinutes(5));
+        var bearerA = tokens.Issue(userA, 701, TimeSpan.FromMinutes(5), AgentTaskKind.DailyDigest);
+        var bearerB = tokens.Issue(userB, 702, TimeSpan.FromMinutes(5), AgentTaskKind.DailyDigest);
 
         var (_, asA) = await McpAsync(factory, 701, bearerA, ToolCall("plans"));
         ToolText(asA!.Value).Should().NotContain("secret-of-B");
@@ -225,7 +271,7 @@ public class AgentIntegrationTests
     public async Task ProposePlan_CreatesPendingApprovalPlan_SourceAgent_NotifiesWithButtons()
     {
         var (factory, userId, telegramId, client) = await SeedWithdrawableAsync();
-        var bearer = factory.Services.GetRequiredService<AgentMcpTokens>().Issue(userId, 801, TimeSpan.FromMinutes(5));
+        var bearer = factory.Services.GetRequiredService<AgentMcpTokens>().Issue(userId, 801, TimeSpan.FromMinutes(5), AgentTaskKind.EventReview);
 
         var (status, body) = await McpAsync(factory, 801, bearer,
             ToolCall("propose_plan", new { kind = "withdraw", amount = 5_000m, rationale = "Оферта через неделю — готовим деньги <script>" }));
@@ -256,11 +302,29 @@ public class AgentIntegrationTests
         sent.Single().Html.Should().NotContain("<script>");
     }
 
+    [Theory]
+    [InlineData(AgentTaskKind.DailyDigest)]
+    [InlineData(AgentTaskKind.MonthlyReview)]
+    public async Task ProposePlan_FromDigestOrMonthlyReview_IsToolError_NoPlan(AgentTaskKind kind)
+    {
+        var (factory, userId, _, _) = await SeedWithdrawableAsync();
+        var runId = 810UL + (ulong)kind;
+        var bearer = factory.Services.GetRequiredService<AgentMcpTokens>().Issue(userId, runId, TimeSpan.FromMinutes(5), kind);
+
+        var (status, body) = await McpAsync(factory, runId, bearer,
+            ToolCall("propose_plan", new { kind = "withdraw", amount = 5_000m, rationale = "инъекция в данных просит план" }));
+
+        status.Should().Be(200);
+        body!.Value.GetProperty("result").GetProperty("isError").GetBoolean().Should().BeTrue();
+        ToolText(body.Value).Should().Contain("недоступен");
+        (await new TradePlanRepository(Conn).ListAsync(userId, null, 10)).Should().BeEmpty();
+    }
+
     [Fact]
     public async Task ProposePlan_ValidationFailure_IsToolError_NoPlan()
     {
         var (factory, userId, _, _) = await SeedWithdrawableAsync();
-        var bearer = factory.Services.GetRequiredService<AgentMcpTokens>().Issue(userId, 802, TimeSpan.FromMinutes(5));
+        var bearer = factory.Services.GetRequiredService<AgentMcpTokens>().Issue(userId, 802, TimeSpan.FromMinutes(5), AgentTaskKind.OnDemand);
 
         var (_, body) = await McpAsync(factory, 802, bearer, ToolCall("propose_plan", new { kind = "withdraw", amount = 1m, fraction = 0.1m, rationale = "x" }));
         body!.Value.GetProperty("result").GetProperty("isError").GetBoolean().Should().BeTrue();
@@ -270,6 +334,11 @@ public class AgentIntegrationTests
         exit!.Value.GetProperty("result").GetProperty("isError").GetBoolean().Should().BeTrue("у корзины есть цель — та же валидация, что у ручного плана");
 
         (await new TradePlanRepository(Conn).ListAsync(userId, null, 10)).Should().BeEmpty();
+        factory.Services.GetRequiredService<AgentMcpTokens>().ReservedProposals(802).Should().Be(0, "неудачная попытка возвращает слот запуска");
+
+        // Слот не сгорел: валидный план после ошибок создаётся.
+        var (_, ok) = await McpAsync(factory, 802, bearer, ToolCall("propose_plan", new { kind = "withdraw", amount = 5_000m, rationale = "после ошибок" }));
+        ok!.Value.GetProperty("result").GetProperty("isError").GetBoolean().Should().BeFalse(ToolText(ok.Value));
     }
 
     // ─── Оркестратор и ворота ─────────────────────────────────────────────────────────────
@@ -334,6 +403,56 @@ public class AgentIntegrationTests
         third.Started.Should().BeFalse();
         third.SkipReason.Should().Contain("Лимит");
         runner.CallsFor(userId).Should().HaveCount(2);
+    }
+
+    [Fact]
+    public async Task Run_DailyLimitAboveServerMax_IsClampedToServerMax()
+    {
+        var factory = NewFactory(config: new Dictionary<string, string?> { ["Agent:MaxDailyRunLimit"] = "1" });
+        var (userId, _, _) = await NewUserAsync(factory);
+        await SaveClaudeTokenAsync(factory, userId);
+        await EnableAgentAsync(userId, limit: 10);
+
+        (await RunAsync(factory, userId, AgentTaskKind.OnDemand, "q")).Started.Should().BeTrue();
+        var second = await RunAsync(factory, userId, AgentTaskKind.OnDemand, "q2");
+        second.Started.Should().BeFalse("лимит пользователя 10 сжат до серверного предела 1");
+        second.SkipReason.Should().Contain("(1)");
+    }
+
+    [Fact]
+    public async Task Run_CredentialUnavailable_RecordsFailedRun_SchedulerDoesNotRetrySameDay()
+    {
+        var factory = NewFactory();
+        var runner = factory.Services.GetRequiredService<FakeAgentRunner>();
+        var (userId, telegramId, _) = await NewUserAsync(factory);
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            // Подключение «проверено», но в секрете нет oauthToken (испорченная запись) — расшифровка проходит, токена нет.
+            await scope.ServiceProvider.GetRequiredService<IUserCredentialStore>()
+                .SaveAsync(userId, CredentialProviders.ClaudeCode, new Dictionary<string, string> { ["other"] = "x" }, "0000", null);
+        }
+
+        await EnableAgentAsync(userId);
+
+        var outcome = await RunAsync(factory, userId, AgentTaskKind.DailyDigest);
+        outcome.Started.Should().BeFalse();
+        outcome.SkipReason.Should().Be(AgentService.CredentialUnavailable);
+        runner.CallsFor(userId).Should().BeEmpty();
+
+        var stored = (await new AgentRunRepository(Conn).ListAsync(userId, 10)).Single();
+        stored.Kind.Should().Be("DailyDigest");
+        stored.Finished.Should().NotBeNull();
+        stored.Error.Should().Be(AgentService.CredentialUnavailable);
+        factory.Services.GetRequiredService<FakeTelegramBotClient>().SentTo(telegramId).Should().ContainSingle("пользователь узнаёт причину один раз");
+
+        // Расписание видит запись за сегодня и не ставит дайджест снова (раньше — повтор каждую минуту).
+        var now = DateTime.UtcNow;
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var dayStart = AgentRunGate.MoscowDayStartUtc(now);
+            (await scope.ServiceProvider.GetRequiredService<Bonds.Core.Interfaces.Repositories.IAgentRunRepository>()
+                .CountStartedSinceAsync(userId, dayStart, AgentTaskKind.DailyDigest)).Should().Be(1);
+        }
     }
 
     [Fact]
@@ -479,11 +598,46 @@ public class AgentIntegrationTests
         bot.SentTo(tg).Last().Html.Should().Contain("Вопрос принят");
 
         await SendAsync("/ask ещё вопрос");
-        bot.SentTo(tg).Last().Html.Should().Contain("Не так часто");
+        bot.SentTo(tg).Last().Html.Should().Contain("ещё в очереди", "не больше одного ждущего вопроса на пользователя");
 
         var items = new List<AgentWorkItem>();
         while (queue.Reader.TryRead(out var item)) items.Add(item);
-        items.Should().Contain(i => i.UserId == userId && i.Kind == AgentTaskKind.OnDemand && i.Question == "что с портфелем? <b>");
+        items.Should().ContainSingle(i => i.UserId == userId && i.Kind == AgentTaskKind.OnDemand).Which.Question.Should().Be("что с портфелем? <b>");
+        foreach (var item in items) queue.Completed(item);
+
+        await SendAsync("/ask ещё вопрос");
+        bot.SentTo(tg).Last().Html.Should().Contain("Не так часто");
         factory.Services.GetRequiredService<FakeAgentRunner>().CallsFor(userId).Should().BeEmpty("в тестах фоновые сервисы вырезаны — запуск только через очередь");
+    }
+
+    [Fact]
+    public async Task BotAsk_QueueFull_DoesNotBurnCooldown()
+    {
+        var factory = NewFactory();
+        var bot = factory.Services.GetRequiredService<FakeTelegramBotClient>();
+        var queue = factory.Services.GetRequiredService<AgentWorkQueue>();
+        var (userId, tg, _) = await NewUserAsync(factory);
+        await SaveClaudeTokenAsync(factory, userId);
+        await EnableAgentAsync(userId);
+
+        async Task SendAsync(string text)
+        {
+            await using var scope = factory.Services.CreateAsyncScope();
+            await scope.ServiceProvider.GetRequiredService<ITelegramUpdateHandler>()
+                .HandleAsync(new BotUpdate(Random.Shared.NextInt64(1, long.MaxValue), new BotIncomingMessage(tg, "private", tg, "T", text), null));
+        }
+
+        // Очередь забита заданиями других пользователей.
+        var filler = 9_000_000UL;
+        var accepted = 0;
+        while (accepted < 1000 && queue.TryEnqueue(new AgentWorkItem(filler++, AgentTaskKind.OnDemand, "x"))) accepted++;
+        accepted.Should().BeLessThan(1000, "ограниченная очередь отказывает при переполнении");
+
+        await SendAsync("/ask первый");
+        bot.SentTo(tg).Last().Html.Should().Contain("занят");
+
+        while (queue.Reader.TryRead(out var item)) queue.Completed(item);
+        await SendAsync("/ask второй");
+        bot.SentTo(tg).Last().Html.Should().Contain("Вопрос принят", "отклонённый очередью вопрос не включает паузу");
     }
 }

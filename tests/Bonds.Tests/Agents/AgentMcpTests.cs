@@ -17,8 +17,8 @@ public class AgentMcpTokensTests
     {
         var time = new ManualTimeProvider(Now);
         var tokens = new AgentMcpTokens(time);
-        var a = tokens.Issue(userId: 1, runId: 10, TimeSpan.FromMinutes(5));
-        var b = tokens.Issue(userId: 2, runId: 20, TimeSpan.FromMinutes(5));
+        var a = tokens.Issue(userId: 1, runId: 10, TimeSpan.FromMinutes(5), AgentTaskKind.DailyDigest);
+        var b = tokens.Issue(userId: 2, runId: 20, TimeSpan.FromMinutes(5), AgentTaskKind.DailyDigest);
 
         a.Should().NotBe(b);
         a.Length.Should().BeGreaterThanOrEqualTo(43, "32 случайных байта в base64url");
@@ -34,8 +34,8 @@ public class AgentMcpTokensTests
     {
         var time = new ManualTimeProvider(Now);
         var tokens = new AgentMcpTokens(time);
-        var t = tokens.Issue(1, 10, TimeSpan.FromMinutes(5));
-        var r = tokens.Issue(1, 11, TimeSpan.FromMinutes(5));
+        var t = tokens.Issue(1, 10, TimeSpan.FromMinutes(5), AgentTaskKind.DailyDigest);
+        var r = tokens.Issue(1, 11, TimeSpan.FromMinutes(5), AgentTaskKind.DailyDigest);
 
         tokens.Revoke(r);
         tokens.Validate(r, 11).Should().BeNull();

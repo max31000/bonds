@@ -14,6 +14,7 @@ public static class AgentMessages
     public const string AskUsage = "/ask вопрос — например: /ask какие оферты у меня в ближайший месяц?";
     public const string AskAccepted = "🤖 Вопрос принят — ответ придёт отдельным сообщением (обычно в течение нескольких минут).";
     public const string AskQueueFull = "🤖 Агент сейчас занят — попробуйте позже.";
+    public const string AskAlreadyQueued = "🤖 Предыдущий вопрос ещё в очереди — дождитесь ответа.";
     public const string Footer = "Оценка ИИ-агента, не инвестиционная рекомендация. Агент не отправляет заявки.";
 
     public static string Title(AgentTaskKind kind) => kind switch

@@ -8,7 +8,7 @@ namespace Bonds.Api.Endpoints;
 /// MCP-сервер bonds для процесса ИИ-агента (задача 68): <c>POST /internal/mcp/{runId}</c> (streamable HTTP, ответ — один JSON). Вне cookie-авторизации пользователей
 /// (<c>AllowAnonymous</c>) — своя защита:
 /// <list type="number">
-/// <item>только loopback: <c>RemoteIpAddress</c> 127.0.0.1/::1 и нет заголовков прокси (<c>X-Forwarded-For</c>/<c>Forwarded</c>), иначе 404 — снаружи (nginx, docker-сеть)
+/// <item>только loopback: <c>RemoteIpAddress</c> и <c>LocalIpAddress</c> 127.0.0.1/::1 и нет заголовков прокси (<c>X-Forwarded-For</c>/<c>Forwarded</c>), иначе 404 — снаружи (nginx, docker-сеть)
 /// эндпоинта «нет»; nginx его и не проксирует (только <c>/bonds/api/</c>);</item>
 /// <item><c>Origin</c> в запросе — 403 (защита от DNS-rebinding из браузера, требование спецификации MCP);</item>
 /// <item><c>Authorization: Bearer</c> — одноразовый токен запуска (<see cref="AgentMcpTokens"/>), привязанный к пользователю и <c>runId</c>: нет, неверный, истёкший,
@@ -29,10 +29,16 @@ public static class McpEndpoints
             .AllowAnonymous().ExcludeFromDescription();
     }
 
-    /// <summary>Запрос пришёл с loopback и не через прокси.</summary>
-    internal static bool IsLoopbackRequest(HttpContext ctx) =>
-        ctx.Connection.RemoteIpAddress is { } ip && IPAddress.IsLoopback(ip.IsIPv4MappedToIPv6 ? ip.MapToIPv4() : ip)
+    /// <summary>
+    /// Запрос пришёл с loopback НА loopback и не через прокси: <c>RemoteIpAddress</c> и <c>LocalIpAddress</c> — 127.0.0.1/::1 (в т.ч. IPv4-mapped), нет
+    /// <c>X-Forwarded-For</c>/<c>Forwarded</c>/<c>X-Real-IP</c>. Проверка локального адреса (ревью MINOR 4) отсекает соединения на внешний интерфейс контейнера
+    /// (docker-сеть, проброшенный порт), даже если удалённый адрес почему-либо выглядит loopback (userland-proxy, NAT).
+    /// </summary>
+    public static bool IsLoopbackRequest(HttpContext ctx) =>
+        IsLoopback(ctx.Connection.RemoteIpAddress) && IsLoopback(ctx.Connection.LocalIpAddress)
         && !ctx.Request.Headers.ContainsKey("X-Forwarded-For") && !ctx.Request.Headers.ContainsKey("Forwarded") && !ctx.Request.Headers.ContainsKey("X-Real-IP");
+
+    private static bool IsLoopback(IPAddress? ip) => ip is not null && IPAddress.IsLoopback(ip.IsIPv4MappedToIPv6 ? ip.MapToIPv4() : ip);
 
     private static async Task<IResult> Handle(HttpContext ctx, ulong runId, AgentMcpTokens tokens, BondsMcpServer server, CancellationToken ct)
     {
