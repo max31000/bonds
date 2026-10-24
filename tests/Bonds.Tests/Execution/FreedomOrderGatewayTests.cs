@@ -16,7 +16,7 @@ using Xunit;
 namespace Bonds.Tests.Execution;
 
 /// <summary>
-/// Задача 66: <see cref="FreedomOrderGateway"/> на фейковом HTTP (фикстуры <c>putTradeOrder.json</c>, <c>putTradeOrder_error.json</c>, синтетический список заявок) —
+/// Задача 66: <see cref="FreedomOrderGateway"/> на фейковом HTTP (фикстуры <c>putTradeOrder.json</c>, <c>putTradeOrder_error.json</c>, список заявок в форме живого ответа) —
 /// тело заявки, белый список action_id (2/4 не уходят никогда), .ITS и закрытые ворота — без сети, разбор ошибки брокера и классификация «исход неизвестен».
 /// </summary>
 public class FreedomOrderGatewayTests
@@ -42,6 +42,14 @@ public class FreedomOrderGatewayTests
     private static HttpResponseMessage Json(string body, HttpStatusCode code = HttpStatusCode.OK) =>
         new(code) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
 
+    /// <summary>Фиксированные часы шлюза: 2026-10-23 14:05 UTC (17:05 МСК).</summary>
+    private static readonly DateTime FixedNowUtc = new(2026, 10, 23, 14, 5, 0, DateTimeKind.Utc);
+
+    private sealed class FixedTime(DateTime utc) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => new(utc);
+    }
+
     private static (FreedomOrderGateway Gateway, FakeHandler Handler) Create(
         Func<HttpRequestMessage, string, HttpResponseMessage> respond, bool gateOpen = true, bool keyPresent = true)
     {
@@ -60,11 +68,11 @@ public class FreedomOrderGatewayTests
 
         var client = new FreedomApiClient(factory.Object);
         return (new FreedomOrderGateway(
-            store.Object, gate.Object, client, factory.Object, TimeProvider.System, NullLogger<FreedomOrderGateway>.Instance,
+            store.Object, gate.Object, client, factory.Object, new FixedTime(FixedNowUtc), NullLogger<FreedomOrderGateway>.Instance,
             Options.Create(new FreedomOptions { OrderTimeUtcOffsetHours = 3 })), handler);
     }
 
-    private static FreedomLimitOrder Order(string ticker = "VUAA.EU", string side = PlanSides.Buy, long qty = 3, decimal price = 147.70m, string id = "1234567890") =>
+    private static FreedomLimitOrder Order(string ticker = "VUAA.EU", string side = PlanSides.Buy, long qty = 3, decimal price = 147.70m, string id = "712345678") =>
         new(ticker, side, qty, price, id);
 
     [Fact]
@@ -77,9 +85,9 @@ public class FreedomOrderGatewayTests
         handler.Requests.Should().ContainSingle();
         handler.Requests[0].Path.Should().Be("/api/putTradeOrder");
         handler.Requests[0].Body.Should().Be(
-            "{\"instr_name\":\"VUAA.EU\",\"action_id\":1,\"order_type_id\":2,\"qty\":3,\"limit_price\":147.7,\"expiration_id\":1,\"user_order_id\":1234567890}");
+            "{\"instr_name\":\"VUAA.EU\",\"action_id\":1,\"order_type_id\":2,\"qty\":3,\"limit_price\":147.7,\"expiration_id\":1,\"user_order_id\":712345678}");
         state.BrokerOrderId.Should().Be("900000001");
-        state.ClientOrderId.Should().Be("1234567890", "эхо «api:1234567890» — наш номер");
+        state.ClientOrderId.Should().Be("712345678", "эхо «api:712345678» — наш номер");
         state.Status.Should().Be(TradeOrderStatuses.Submitted, "stat 10 — активен");
         state.LotsRequested.Should().Be(3);
         state.LotsExecuted.Should().Be(0);
@@ -128,7 +136,7 @@ public class FreedomOrderGatewayTests
     {
         foreach (var side in new[] { PlanSides.Buy, PlanSides.Sell })
         {
-            var p = FreedomOrderGateway.BuildPutParams(Order(side: side), 1234567890);
+            var p = FreedomOrderGateway.BuildPutParams(Order(side: side), 712345678);
             var action = (int)p.Single(x => x.Key == "action_id").Value;
             FreedomOrderRules.AllowedActionIds.Should().Contain(action);
             p.Single(x => x.Key == "order_type_id").Value.Should().Be(2);
@@ -160,8 +168,8 @@ public class FreedomOrderGatewayTests
     }
 
     [Theory]
-    [InlineData(0, 147.7, "1234567890")]
-    [InlineData(1, 0, "1234567890")]
+    [InlineData(0, 147.7, "712345678")]
+    [InlineData(1, 0, "712345678")]
     [InlineData(1, 147.7, "api:1")]
     [InlineData(1, 147.7, "123")]
     public async Task InvalidOrder_RejectedBeforeNetwork(long qty, double price, string id)
@@ -232,8 +240,8 @@ public class FreedomOrderGatewayTests
     }
 
     [Theory]
-    [InlineData("{\"user_order_id\":\"1234567890\"}")]
-    [InlineData("{\"user_order_id\":\"api:1234567890\"}")]
+    [InlineData("{\"user_order_id\":\"712345678\"}")]
+    [InlineData("{\"user_order_id\":\"api:712345678\"}")]
     [InlineData("{\"user_order_id\":\"api:1792763201\"}")] // авто-id брокера — заявка всё равно привязана по order_id
     [InlineData("{\"user_order_id\":null}")]
     public async Task Post_EchoedUserOrderId_AnyForm_OrderLinkedByOrderId(string orderJson)
@@ -244,13 +252,17 @@ public class FreedomOrderGatewayTests
         var state = await gateway.PostLimitOrderAsync(UserId, Order());
 
         state.BrokerOrderId.Should().Be("900000007");
-        state.ClientOrderId.Should().Be("1234567890");
+        state.ClientOrderId.Should().Be("712345678");
         state.Status.Should().Be(TradeOrderStatuses.Submitted);
         state.LotsExecuted.Should().Be(0);
     }
 
+    /// <summary>
+    /// Фикстура — структура ЖИВОГО ответа (обезличена): обёртка <c>result</c>, <c>order_id</c> = <c>id</c>, номер клиента <c>userOrderId</c> (camelCase: <c>api:N</c> у API-заявок,
+    /// <c>i-6:ios:…</c> у ручной из приложения), сделки — массив <c>trade[]</c>, у окончательных кодов <c>leaves_qty = 0</c> (FIX).
+    /// </summary>
     [Fact]
-    public async Task Orders_ParsedFromSyntheticFixture_LiveShapeWithoutResultWrapper()
+    public async Task Orders_ParsedFromLiveShapeFixture()
     {
         var (gateway, handler) = Create((_, _) => Json(Fixture("getNotifyOrderJson")));
 
@@ -258,37 +270,77 @@ public class FreedomOrderGatewayTests
 
         handler.Requests[0].Path.Should().Be("/api/getNotifyOrderJson");
         handler.Requests[0].Body.Should().Be("{\"active_only\":0}");
-        orders.Should().HaveCount(5);
+        orders.Should().HaveCount(7);
 
-        orders[0].Should().Match<GatewayOrderState>(o => o.BrokerOrderId == "900000001" && o.Status == TradeOrderStatuses.Submitted && o.ClientOrderId == null);
+        orders[0].Should().Match<GatewayOrderState>(o => o.BrokerOrderId == "900000001" && o.Status == TradeOrderStatuses.Submitted && o.ClientOrderId == "api:712345678");
         orders[0].Ticker.Should().Be("VUAA.EU");
         orders[0].Side.Should().Be(PlanSides.Buy);
-        orders[0].LimitPrice.Should().Be(147.7m);
-        orders[0].LotsRequested.Should().Be(3);
-        orders[0].PlacedAtUtc.Should().Be(new DateTime(2026, 10, 23, 14, 4, 15, 120, DateTimeKind.Utc), "локальное время брокера − 3 ч");
+        orders[0].LimitPrice.Should().Be(141.3m);
+        orders[0].LotsRequested.Should().Be(4);
+        orders[0].LotsExecuted.Should().Be(0, "активная без массива trade — запасной вариант q − leaves_qty = 0");
+        orders[0].PlacedAtUtc.Should().Be(new DateTime(2026, 10, 23, 14, 6, 21, 120, DateTimeKind.Utc), "МСК − 3 ч");
         orders[0].PlacedAtUtc!.Value.Kind.Should().Be(DateTimeKind.Utc);
 
         orders[1].Status.Should().Be(TradeOrderStatuses.Filled, "stat 21 — исполнен");
+        orders[1].ClientOrderId.Should().Be("api:1792763201", "авто-id брокера — unix-секунда запроса");
         orders[1].LotsExecuted.Should().Be(2);
-        orders[1].AvgFillPrice.Should().Be(54.05m);
+        orders[1].AvgFillPrice.Should().Be(54.05m, "VWAP по trade[]");
 
-        orders[2].Status.Should().Be(TradeOrderStatuses.Rejected, "stat 70 — отклонен");
+        orders[2].Status.Should().Be(TradeOrderStatuses.Rejected, "stat 70 — отклонен, leaves_qty = 0 не значит «исполнено»");
+        orders[2].LotsExecuted.Should().Be(0);
         orders[2].Side.Should().Be(PlanSides.Sell);
         orders[2].Message.Should().Be("Not enough funds");
 
         orders[3].Status.Should().Be(TradeOrderStatuses.Cancelled, "stat 30 — частично отменен");
-        orders[3].LotsExecuted.Should().Be(2, "q 5 − leaves_qty 3");
+        orders[3].LotsExecuted.Should().Be(2, "Σ trade[].q, а не q − leaves_qty (= 5)");
+        orders[3].AvgFillPrice.Should().Be(148.12m);
 
-        orders[4].Status.Should().Be(TradeOrderStatuses.PartiallyFilled, "stat 99 неизвестен — активна, даже при leaves_qty = 0");
-        TradeOrderStatuses.IsActive(orders[4].Status).Should().BeTrue();
+        orders[4].Status.Should().Be(TradeOrderStatuses.Cancelled, "stat 31 — отменен");
+        orders[4].LotsExecuted.Should().Be(0, "leaves_qty = 0 и trade[] пуст — ничего не исполнено");
+
+        orders[5].Status.Should().Be(TradeOrderStatuses.Submitted, "stat 99 неизвестен — активна, даже при leaves_qty = 0");
+        TradeOrderStatuses.IsActive(orders[5].Status).Should().BeTrue();
+
+        orders[6].ClientOrderId.Should().Be("i-6:ios:terminal_exchange_currency", "ручная заявка из приложения");
+        orders[6].Status.Should().Be(TradeOrderStatuses.Filled);
+    }
+
+    [Theory]
+    [InlineData("{\"id\":1,\"stat\":31,\"q\":5,\"leaves_qty\":0,\"trade\":[]}", TradeOrderStatuses.Cancelled, 0)]
+    [InlineData("{\"id\":1,\"stat\":31,\"q\":5,\"leaves_qty\":0}", TradeOrderStatuses.Cancelled, 0)]
+    [InlineData("{\"id\":1,\"stat\":31,\"q\":5,\"leaves_qty\":0,\"trade\":[{\"id\":7,\"p\":10.5,\"q\":2,\"v\":21}]}", TradeOrderStatuses.Cancelled, 2)]
+    [InlineData("{\"id\":1,\"stat\":31,\"q\":5,\"leaves_qty\":0,\"trade\":{\"id\":7,\"p\":10.5,\"q\":3}}", TradeOrderStatuses.Cancelled, 3)]
+    [InlineData("{\"id\":1,\"stat\":70,\"q\":5,\"leaves_qty\":0,\"trade\":[]}", TradeOrderStatuses.Rejected, 0)]
+    [InlineData("{\"id\":1,\"stat\":10,\"q\":5,\"leaves_qty\":3}", TradeOrderStatuses.PartiallyFilled, 2)]
+    [InlineData("{\"id\":1,\"stat\":10,\"q\":5,\"leaves_qty\":3,\"trade\":[{\"p\":10,\"q\":1}]}", TradeOrderStatuses.PartiallyFilled, 1)]
+    public void Order_ExecutedFromTrades_NeverFromLeavesForFinalCodes(string json, string status, long executed)
+    {
+        using var doc = JsonDocument.Parse(json);
+        var o = FreedomOrderGateway.ParseOrder(doc.RootElement, TimeSpan.FromHours(3))!;
+        o.Status.Should().Be(status);
+        o.LotsExecuted.Should().Be(executed);
     }
 
     [Fact]
-    public void Orders_ResultWrapperAndSingleObject_AreAccepted_UnknownStatReported()
+    public void Order_UserOrderId_CamelCaseFirst_SnakeCaseFallback()
     {
-        const string wrapped = "{\"result\":{\"orders\":{\"key\":\"X\",\"order\":{\"id\":900000009,\"stat\":42,\"instr\":\"SPYM.US\",\"oper\":3,\"p\":\"54.1\",\"q\":\"2\",\"leaves_qty\":\"2\",\"date\":\"2026-10-23 17:04:15\"}}}}";
+        static string? Id(string json)
+        {
+            using var doc = JsonDocument.Parse(json);
+            return FreedomOrderGateway.ParseOrder(doc.RootElement, TimeSpan.Zero)!.ClientOrderId;
+        }
+
+        Id("{\"id\":1,\"userOrderId\":\"api:712345678\",\"user_order_id\":\"x\"}").Should().Be("api:712345678");
+        Id("{\"id\":1,\"user_order_id\":\"api:712345678\"}").Should().Be("api:712345678");
+        Id("{\"id\":1,\"userOrderId\":\"\"}").Should().BeNull();
+    }
+
+    [Fact]
+    public void Orders_WithoutResultWrapperAndSingleObject_AreAccepted_UnknownStatReported()
+    {
+        const string bare = "{\"orders\":{\"key\":\"X\",\"order\":{\"id\":900000009,\"stat\":42,\"instr\":\"SPYM.US\",\"oper\":3,\"p\":\"54.1\",\"q\":\"2\",\"leaves_qty\":\"2\",\"date\":\"2026-10-23 17:04:15\"}}}";
         var unknown = new List<(string Id, string? Stat)>();
-        using var doc = JsonDocument.Parse(wrapped);
+        using var doc = JsonDocument.Parse(bare);
 
         var orders = FreedomOrderGateway.ParseOrders(doc.RootElement, TimeSpan.FromHours(3), (id, stat) => unknown.Add((id, stat)));
 
@@ -298,6 +350,63 @@ public class FreedomOrderGatewayTests
         orders[0].LimitPrice.Should().Be(54.1m);
         orders[0].PlacedAtUtc.Should().Be(new DateTime(2026, 10, 23, 14, 4, 15, DateTimeKind.Utc));
         unknown.Should().ContainSingle().Which.Should().Be(("900000009", "42"));
+    }
+
+    [Theory]
+    [InlineData("{\"errMsg\":\"Too many requests\"}")]
+    [InlineData("{\"error\":\"Rate limit exceeded, try again later\"}")]
+    public async Task RateLimitText_IsTransient_ForOrdersAndPost(string body)
+    {
+        var (gateway, _) = Create((_, _) => Json(body));
+        var list = () => gateway.GetOrdersAsync(UserId, activeOnly: false);
+        (await list.Should().ThrowAsync<FreedomGatewayException>()).Which.Kind.Should().Be(GatewayErrorKind.Transient);
+        var post = () => gateway.PostLimitOrderAsync(UserId, Order());
+        (await post.Should().ThrowAsync<FreedomGatewayException>()).Which.Kind.Should().Be(GatewayErrorKind.Transient, "исход размещения неизвестен — только сверка");
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.TooManyRequests)]
+    [InlineData(HttpStatusCode.RequestTimeout)]
+    [InlineData(HttpStatusCode.ServiceUnavailable)]
+    public async Task AccountCheck_429_408_5xx_IsTransient(HttpStatusCode code)
+    {
+        var (gateway, _) = Create((_, _) => Json("{}", code));
+        var act = () => gateway.GetAccountInfoAsync(UserId);
+        (await act.Should().ThrowAsync<FreedomGatewayException>()).Which.Kind.Should().Be(GatewayErrorKind.Transient, "ключ не должен инвалидироваться");
+    }
+
+    [Fact]
+    public async Task AccountCheck_TooManyRequestsText_IsTransient()
+    {
+        var (gateway, _) = Create((_, _) => Json("{\"errMsg\":\"Too many requests\"}"));
+        var act = () => gateway.GetAccountInfoAsync(UserId);
+        (await act.Should().ThrowAsync<FreedomGatewayException>()).Which.Kind.Should().Be(GatewayErrorKind.Transient);
+    }
+
+    [Fact]
+    public async Task Quote_TimeFromBrokerStamps_MskToUtc_AndMarketStatus()
+    {
+        // Фиксированные часы шлюза: 14:05 UTC = 17:05 МСК. ltt 16:59:58, bbt 17:00:11, bat 17:00:09 МСК → берётся самая поздняя (bbt) = 14:00:11 UTC.
+        var (gateway, _) = Create((_, _) => Json(Fixture("getStockQuotesJson")));
+        var q = await gateway.GetQuoteAsync(UserId, "VUAA.EU");
+        q.QuoteTimeUtc.Should().Be(new DateTime(2026, 10, 23, 14, 0, 11, DateTimeKind.Utc));
+        q.MarketOpen.Should().BeTrue();
+
+        var noStamps = await gateway.GetQuoteAsync(UserId, "LUV.US");
+        noStamps.QuoteTimeUtc.Should().BeNull("меток нет — котировка несвежая (preflight откажет)");
+        noStamps.MarketOpen.Should().BeNull();
+    }
+
+    [Fact]
+    public void QuoteTime_IgnoresFutureAndStaleStamps_TakesLatest()
+    {
+        var now = new DateTime(2026, 10, 24, 13, 35, 57, DateTimeKind.Utc);
+        var q = new Bonds.Infrastructure.Connectors.Freedom.Models.FreedomQuote(
+            "BTC/USD", 1m, 2m, 1m, "USD", 1m,
+            LastTradeLocal: new DateTime(2026, 10, 24, 16, 35, 57), // МСК = now
+            BidTimeLocal: new DateTime(2023, 7, 6, 3, 30, 1), // застывшая (как у живого счёта)
+            AskTimeLocal: new DateTime(2026, 10, 24, 18, 0, 0)); // «будущее» — отброшена
+        FreedomOrderGateway.QuoteTimeUtc(q, TimeSpan.FromHours(3), now).Should().Be(now);
     }
 
     [Theory]

@@ -57,35 +57,57 @@ public static class FreedomOrderRules
         : IsTradableTicker(ticker) ? null
         : $"тикер {ticker} не торгуется исполнителем (только .US/.EU)";
 
-    /// <summary>Нижняя граница <c>user_order_id</c> (10 цифр — не путается с авто-id брокера вида <c>api:…</c> по форме и не начинается с нуля).</summary>
-    public const long MinUserOrderId = 1_000_000_000L;
+    /// <summary>
+    /// Нижняя граница <c>user_order_id</c>: 9 цифр с фиксированной первой цифрой 7 — [700 000 000, 800 000 000). Авто-id брокера для заявок через API — <c>api:&lt;unix-секунда
+    /// запроса&gt;</c> (живой счёт: <c>api:1792763201</c> ≈ 1.79·10⁹, растёт со временем); наш диапазон соответствует unix-секундам 1992 года, поэтому с авто-id брокера
+    /// НЕ пересекается никогда (ни сейчас, ни в будущем). Тип параметра у SDK — int, держим число &lt; 10⁹.
+    /// </summary>
+    public const long MinUserOrderId = 700_000_000L;
 
-    /// <summary>Верхняя граница (исключительно): <c>user_order_id</c> держим в int32 — тип поля у брокера не документирован, авто-id брокера ~1.79·10⁹.</summary>
-    public const long MaxUserOrderIdExclusive = int.MaxValue;
+    /// <summary>Верхняя граница (исключительно) — см. <see cref="MinUserOrderId"/>.</summary>
+    public const long MaxUserOrderIdExclusive = 800_000_000L;
 
     /// <summary>
     /// Новый <c>user_order_id</c> — случайное число в [<see cref="MinUserOrderId"/>, <see cref="MaxUserOrderIdExclusive"/>) (криптографический ГСЧ). Записывается в
     /// <c>trade_orders.client_order_id</c> ДО отправки (UNIQUE — совпадение даст исключение вставки, и заявка не уйдёт).
     /// </summary>
     public static string NewUserOrderId() =>
-        RandomNumberGenerator.GetInt32((int)MinUserOrderId, int.MaxValue).ToString(CultureInfo.InvariantCulture);
+        RandomNumberGenerator.GetInt32((int)MinUserOrderId, (int)MaxUserOrderIdExclusive).ToString(CultureInfo.InvariantCulture);
 
-    /// <summary><c>user_order_id</c> корректен: только цифры, в допустимом диапазоне.</summary>
+    /// <summary><c>user_order_id</c> корректен: только цифры, в допустимом диапазоне (наш).</summary>
     public static bool IsValidUserOrderId(string? id) =>
         id is not null && id.All(char.IsAsciiDigit) && long.TryParse(id, NumberStyles.None, CultureInfo.InvariantCulture, out var n)
         && n >= MinUserOrderId && n < MaxUserOrderIdExclusive;
 
+    /// <summary>Префикс <c>userOrderId</c> заявок, поданных через API (<c>api:N</c>).</summary>
+    public const string ApiPrefix = "api:";
+
     /// <summary>
-    /// Эхо <c>user_order_id</c> в ОТВЕТЕ на размещение соответствует нашему: точное совпадение (<c>N</c>) либо форма <c>префикс:число</c> (<c>api:N</c> — так брокер показывает
-    /// и свой авто-id, когда номер не передан). В списке заявок брокер отдаёт null — там заявка опознаётся по реквизитам. Пусто — не совпадает никогда.
+    /// Поле <c>userOrderId</c> заявки брокера (список заявок брокера, camelCase; в ответе на размещение — также <c>user_order_id</c>) соответствует нашему номеру: ровно
+    /// <c>N</c> или <c>api:N</c>. Любая другая форма (<c>i-6:ios:terminal_exchange_currency</c> — ручная заявка из приложения/терминала, <c>api:&lt;другое&gt;</c>) — не совпадает.
+    /// Пусто — не совпадает никогда.
     /// </summary>
     public static bool UserOrderIdMatches(string? brokerValue, string ours)
     {
         if (string.IsNullOrWhiteSpace(brokerValue) || string.IsNullOrWhiteSpace(ours)) return false;
         var v = brokerValue.Trim();
-        if (string.Equals(v, ours, StringComparison.Ordinal)) return true;
-        var colon = v.LastIndexOf(':');
-        return colon >= 0 && string.Equals(v[(colon + 1)..], ours, StringComparison.Ordinal);
+        var o = ours.Trim();
+        return string.Equals(v, o, StringComparison.Ordinal)
+               || (v.StartsWith(ApiPrefix, StringComparison.OrdinalIgnoreCase) && string.Equals(v[ApiPrefix.Length..], o, StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// Заявка брокера МОЖЕТ быть нашей при сверке по реквизитам: <c>userOrderId</c> пуст или в форме API (<c>api:N</c>/просто число), причём N — не другой НАШ номер (наш
+    /// диапазон <see cref="MinUserOrderId"/>…, отличный от <paramref name="ours"/>, — это другая строка <c>trade_orders</c>). Любой иной формат (ручные заявки терминала/приложения:
+    /// <c>i-6:ios:…</c>, <c>web:…</c>) — чужая, НИКОГДА не усыновляется.
+    /// </summary>
+    public static bool MayBeOursByAttributes(string? brokerValue, string ours)
+    {
+        if (string.IsNullOrWhiteSpace(brokerValue)) return true;
+        var v = brokerValue.Trim();
+        var digits = v.StartsWith(ApiPrefix, StringComparison.OrdinalIgnoreCase) ? v[ApiPrefix.Length..] : v;
+        if (digits.Length == 0 || !digits.All(char.IsAsciiDigit)) return false;
+        return !IsValidUserOrderId(digits) || string.Equals(digits, ours?.Trim(), StringComparison.Ordinal);
     }
 }
 
@@ -104,10 +126,10 @@ public enum FreedomStatClass
     /// <summary>Исполнена полностью (21) — окончательный.</summary>
     Filled,
 
-    /// <summary>Снята/истекла, возможно частичное исполнение (30, 31, 71, 72) — окончательный; исполнено = <c>q − leaves_qty</c>.</summary>
+    /// <summary>Снята/истекла, возможно частичное исполнение (30, 31, 71, 72) — окончательный; исполнено = Σ <c>trade[].q</c> (НЕ <c>q − leaves_qty</c>).</summary>
     Closed,
 
-    /// <summary>Отклонена/ошибка отправки (0 проигнорирован, 70 отклонен, 74 ошибка отправки) — окончательный; исполнено — только если так говорит <c>leaves_qty</c>.</summary>
+    /// <summary>Отклонена/ошибка отправки (0 проигнорирован, 70 отклонен, 74 ошибка отправки) — окончательный; исполнено — только по сделкам <c>trade[]</c>.</summary>
     Rejected,
 }
 
@@ -116,16 +138,19 @@ public sealed record FreedomOrderResolution(string Status, long Executed, bool K
 
 /// <summary>
 /// Статусы заявки Tradernet (<c>stat</c>, официальный список tradernet.global/tradernet-api/order-statuses) → <see cref="TradeOrderStatuses"/>.
+/// <b>Исполненное количество</b> — Σ <c>q</c> сделок заявки (<c>trade[]</c> в списке заявок брокера). <c>leaves_qty</c> для окончательных кодов НЕ используется:
+/// по семантике FIX у снятой заявки остаток = 0 (живой счёт: <c>leaves_qty = 0</c> и у исполненных, и у снятых), и <c>q − leaves_qty</c> выдал бы ложное «исполнено всё».
 /// <list type="bullet">
-/// <item>21 исполнен — <c>Filled</c>.</item>
+/// <item>21 исполнен — <c>Filled</c>, исполнено = <c>q</c> (код окончательный и однозначный).</item>
 /// <item>30 частично отменен, 31 отменен, 71 истек, 72 частично исполнен и истек — <c>Cancelled</c> (снята не нами: движок перевыставит остаток или закроет строку),
-/// исполнено = <c>q − leaves_qty</c>; всё исполнено — <c>Filled</c>.</item>
-/// <item>0 проигнорирован, 70 отклонен, 74 ошибка отправки — <c>Rejected</c> (ничего не исполнено), если только <c>leaves_qty</c> не показывает исполнение — тогда
-/// <c>Cancelled</c> (окончательно, исполненное учитывается).</item>
+/// исполнено = Σ <c>trade[].q</c> (нет сделок — 0); сделки покрыли всё — <c>Filled</c>.</item>
+/// <item>0 проигнорирован, 70 отклонен, 74 ошибка отправки — <c>Rejected</c>, исполнено 0; если сделки всё же есть — <c>Cancelled</c> с их количеством (окончательно,
+/// исполненное учитывается). «Rejected → Filled по <c>leaves_qty</c>» больше нет.</item>
 /// <item>1 получен, 2 в процессе отмены, 10 активен, 11 отправлен, 75 ошибка отмены — <c>Submitted</c> (с исполнением — <c>PartiallyFilled</c>).</item>
 /// <item>12 частично заполнен, 20 частично исполнен — <c>PartiallyFilled</c>.</item>
-/// <item><b>Неизвестный код или его нет — активна, НИКОГДА не окончательна</b> (даже при <c>leaves_qty = 0</c>): исполнитель продолжит сверку и снятие, но не
-/// перевыставит строку, пока брокер не покажет официальный окончательный код. Ошибка в сторону «активна» безопасна (лишняя сверка), в сторону «окончательна» — нет.</item>
+/// <item>Активные коды: исполнено по сделкам; ТОЛЬКО если массива <c>trade</c> в ответе нет вовсе — запасной вариант <c>q − leaves_qty</c>.</item>
+/// <item><b>Неизвестный код или его нет — активна, НИКОГДА не окончательна</b>: исполнитель продолжит сверку и снятие, но не перевыставит строку, пока брокер не покажет
+/// официальный окончательный код. Ошибка в сторону «активна» безопасна (лишняя сверка), в сторону «окончательна» — нет.</item>
 /// </list>
 /// </summary>
 public static class FreedomOrderStatusMap
@@ -159,36 +184,33 @@ public static class FreedomOrderStatusMap
     public static bool IsKnown(int? stat) => Classify(stat) != FreedomStatClass.Unknown;
 
     /// <summary>
-    /// Статус и исполненное по <c>stat</c>, запрошенным <paramref name="requested"/> (<c>q</c>) и остатку <paramref name="leaves"/> (<c>leaves_qty</c>; null — поля нет).
-    /// Исполнено = <c>q − leaves_qty</c> (не меньше 0); у 21 без <c>leaves_qty</c> — всё. Штуки = лоты (у Freedom лот = 1).
+    /// Статус и исполненное по <c>stat</c>, запрошенным <paramref name="requested"/> (<c>q</c>), остатку <paramref name="leaves"/> (<c>leaves_qty</c>; null — поля нет) и
+    /// Σ <c>trade[].q</c> <paramref name="tradedQty"/> (null — массива <c>trade</c> в ответе нет; пустой массив — 0). Штуки = лоты (у Freedom лот = 1); дробные — вниз.
     /// </summary>
-    public static FreedomOrderResolution Resolve(int? stat, long requested, decimal? leaves)
+    public static FreedomOrderResolution Resolve(int? stat, long requested, decimal? leaves, decimal? tradedQty)
     {
         var cls = Classify(stat);
-        long FromLeaves() => leaves is { } l ? Math.Clamp(requested - (long)Math.Ceiling(l), 0, Math.Max(0, requested)) : 0;
+        var max = Math.Max(0, requested);
+        long Clamp(decimal n) => Math.Clamp((long)Math.Floor(n), 0, max);
+        var traded = tradedQty is { } t ? Clamp(t) : 0;
+
+        // Только для активных кодов и только без массива trade: q − leaves_qty.
+        long ActiveExecuted() => tradedQty is not null ? traded : leaves is { } l ? Math.Clamp(requested - (long)Math.Ceiling(l), 0, max) : 0;
         var known = cls != FreedomStatClass.Unknown;
         switch (cls)
         {
             case FreedomStatClass.Filled:
                 return new(TradeOrderStatuses.Filled, requested, true);
             case FreedomStatClass.Closed:
-            {
-                var executed = FromLeaves();
-                return new(requested > 0 && executed >= requested ? TradeOrderStatuses.Filled : TradeOrderStatuses.Cancelled, executed, true);
-            }
+                return new(requested > 0 && traded >= requested ? TradeOrderStatuses.Filled : TradeOrderStatuses.Cancelled, traded, true);
             case FreedomStatClass.Rejected:
-            {
-                var executed = FromLeaves();
-                return executed > 0
-                    ? new(executed >= requested ? TradeOrderStatuses.Filled : TradeOrderStatuses.Cancelled, executed, true)
-                    : new(TradeOrderStatuses.Rejected, 0, true);
-            }
+                return traded > 0 ? new(TradeOrderStatuses.Cancelled, traded, true) : new(TradeOrderStatuses.Rejected, 0, true);
             case FreedomStatClass.ActivePartial:
-                return new(TradeOrderStatuses.PartiallyFilled, FromLeaves(), true);
+                return new(TradeOrderStatuses.PartiallyFilled, ActiveExecuted(), true);
             default:
             {
                 // Active и Unknown: активна; исполнение (если есть) — PartiallyFilled, но НЕ Filled — окончательность только по официальному коду.
-                var executed = FromLeaves();
+                var executed = ActiveExecuted();
                 return new(executed > 0 ? TradeOrderStatuses.PartiallyFilled : TradeOrderStatuses.Submitted, executed, known);
             }
         }

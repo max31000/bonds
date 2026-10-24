@@ -28,14 +28,23 @@ public sealed record FreedomPortfolio(
     IReadOnlyList<FreedomCashBalance> Cash,
     IReadOnlyList<FreedomPosition> Positions);
 
-/// <summary>Котировка (<c>result.q[]</c>). Цены — в валюте <see cref="Currency"/> (<c>x_curr</c>); null, если стакан пуст.</summary>
+/// <summary>
+/// Котировка (<c>result.q[]</c>). Цены — в валюте <see cref="Currency"/> (<c>x_curr</c>); null, если стакан пуст.
+/// Метки времени — как у брокера, МСК БЕЗ пояса (<see cref="DateTimeKind.Unspecified"/>; проверено на живом счёте: <c>ltt</c> BTC/USD = текущее UTC + 3 ч):
+/// <see cref="LastTradeLocal"/> — <c>ltt</c> (последняя сделка), <see cref="BidTimeLocal"/>/<see cref="AskTimeLocal"/> — <c>bbt</c>/<c>bat</c> (лучшие цены; у части бумаг
+/// застывшие — например, 2023 год у валют). <see cref="MarketStatus"/> — <c>marketStatus</c> бумаги (<c>OPEN</c>/<c>CLOSE</c>/…).
+/// </summary>
 public sealed record FreedomQuote(
     string Ticker,
     decimal? Bid,
     decimal? Ask,
     decimal? Last,
     string? Currency,
-    decimal? MinStep);
+    decimal? MinStep,
+    DateTime? LastTradeLocal = null,
+    DateTime? BidTimeLocal = null,
+    DateTime? AskTimeLocal = null,
+    string? MarketStatus = null);
 
 public enum FreedomTradeSide
 {

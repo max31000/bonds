@@ -71,6 +71,34 @@ public class FreedomTradeCredentialTests
         result.Message.Should().NotContain("pub-TEST-1");
     }
 
+    [Theory]
+    [InlineData("HTTP 429", null)]
+    [InlineData("HTTP 408", null)]
+    [InlineData("HTTP 503", null)]
+    [InlineData("Too many requests", null)]
+    [InlineData("сетевая ошибка", "net")]
+    public async Task TransientBrokerFailure_NotReportedAsBadKey(string message, string? inner)
+    {
+        var client = new Mock<IFreedomApiClient>();
+        client.Setup(c => c.GetUserInfoAsync(It.IsAny<FreedomCredentials>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new FreedomApiException("GetAllUserTexInfo", message, inner is null ? null : new HttpRequestException("boom")));
+
+        var trade = await new FreedomTradeCredentialValidator(client.Object).ValidateAsync(Keys, new CredentialValidationContext(UserId, null, "100001"));
+        var read = await new FreedomCredentialValidator(client.Object).ValidateAsync(Keys);
+
+        foreach (var r in new[] { trade, read })
+        {
+            r.Ok.Should().BeFalse("не проверен — не сохраняем");
+            r.Message.Should().Contain("временно недоступен").And.NotContain("не принял");
+        }
+    }
+
+    [Theory]
+    [InlineData("HTTP 401")]
+    [InlineData("Invalid signature")]
+    public void FreedomApiException_DefiniteRefusal_IsNotTransient(string message) =>
+        new FreedomApiException("GetAllUserTexInfo", message).IsTransient.Should().BeFalse();
+
     [Fact]
     public async Task ContextFreeOverload_AlwaysInvalid() =>
         (await Validator(() => new FreedomUserInfo("100001", 1431, "Standard")).ValidateAsync(Keys)).Ok.Should().BeFalse();

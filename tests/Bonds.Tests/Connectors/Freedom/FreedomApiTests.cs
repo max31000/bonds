@@ -199,7 +199,10 @@ public class FreedomApiTests
     public void ParseQuotes_Fixture()
     {
         var q = FreedomParser.ParseQuotes(Root("getStockQuotesJson")).Single(x => x.Ticker == "VUAA.EU");
-        q.Should().Be(new FreedomQuote("VUAA.EU", 148.12m, 148.18m, 148.18m, "USD", 0.02m));
+        q.Should().Be(new FreedomQuote(
+            "VUAA.EU", 148.12m, 148.18m, 148.18m, "USD", 0.02m,
+            new DateTime(2026, 10, 23, 16, 59, 58), new DateTime(2026, 10, 23, 17, 0, 11), new DateTime(2026, 10, 23, 17, 0, 9), "OPEN"));
+        q.LastTradeLocal!.Value.Kind.Should().Be(DateTimeKind.Unspecified, "метки брокера — МСК без пояса, перевод в UTC — в шлюзе");
     }
 
     [Fact]

@@ -54,60 +54,82 @@ public class FreedomExecutionRulesTests
     }
 
     [Fact]
-    public void UserOrderId_IsNumeric_InRange_AndUnique()
+    public void UserOrderId_NineDigitsPrefix7_OutsideBrokerUnixSecondRange()
     {
         var ids = Enumerable.Range(0, 500).Select(_ => FreedomOrderRules.NewUserOrderId()).ToList();
         ids.Should().OnlyContain(id => FreedomOrderRules.IsValidUserOrderId(id));
-        ids.Should().OnlyContain(id => id.Length == 10);
+        ids.Should().OnlyContain(id => id.Length == 9 && id[0] == '7');
         ids.Distinct().Count().Should().BeGreaterThan(495);
-        FreedomOrderRules.IsValidUserOrderId("api:1792764255").Should().BeFalse();
-        FreedomOrderRules.IsValidUserOrderId("999999999").Should().BeFalse();
-        FreedomOrderRules.IsValidUserOrderId("2147483647").Should().BeFalse();
-        FreedomOrderRules.IsValidUserOrderId("-1234567890").Should().BeFalse();
+
+        // Авто-id брокера — unix-секунда запроса (api:1792763201 — октябрь 2026): наш диапазон — 1992 год, пересечения нет и не будет.
+        var nowUnix = new DateTimeOffset(2026, 10, 23, 0, 0, 0, TimeSpan.Zero).ToUnixTimeSeconds();
+        FreedomOrderRules.MaxUserOrderIdExclusive.Should().BeLessThan(nowUnix);
+        FreedomOrderRules.IsValidUserOrderId("1792763201").Should().BeFalse();
+        FreedomOrderRules.IsValidUserOrderId("api:712345678").Should().BeFalse();
+        FreedomOrderRules.IsValidUserOrderId("699999999").Should().BeFalse();
+        FreedomOrderRules.IsValidUserOrderId("800000000").Should().BeFalse();
+        FreedomOrderRules.IsValidUserOrderId("-712345678").Should().BeFalse();
     }
 
     [Theory]
-    [InlineData("1234567890", "1234567890", true)]
-    [InlineData("api:1234567890", "1234567890", true)]
-    [InlineData(" 1234567890 ", "1234567890", true)]
-    [InlineData("api:1792764255", "1234567890", false)]
-    [InlineData("11234567890", "1234567890", false)]
-    [InlineData("", "1234567890", false)]
-    [InlineData(null, "1234567890", false)]
-    public void UserOrderIdMatches_ExactOrPrefixed(string? broker, string ours, bool match) =>
+    [InlineData("712345678", "712345678", true)]
+    [InlineData("api:712345678", "712345678", true)]
+    [InlineData(" api:712345678 ", "712345678", true)]
+    [InlineData("web:712345678", "712345678", false)] // только N и api:N
+    [InlineData("i-6:ios:712345678", "712345678", false)]
+    [InlineData("api:1792764255", "712345678", false)]
+    [InlineData("7123456789", "712345678", false)]
+    [InlineData("", "712345678", false)]
+    [InlineData(null, "712345678", false)]
+    public void UserOrderIdMatches_ExactOrApiPrefixed(string? broker, string ours, bool match) =>
         FreedomOrderRules.UserOrderIdMatches(broker, ours).Should().Be(match);
 
-    /// <summary>Официальный список кодов tradernet.global/tradernet-api/order-statuses; leaves = -1 — поля leaves_qty нет.</summary>
+    [Theory]
+    [InlineData(null, true)]
+    [InlineData("", true)]
+    [InlineData("api:1792763201", true)] // авто-id брокера (наш номер не принят) — может быть нашей
+    [InlineData("api:712345678", true)] // наш
+    [InlineData("api:798765432", false)] // другой НАШ номер — другая строка trade_orders
+    [InlineData("i-6:ios:terminal_exchange_currency", false)] // ручная заявка из приложения
+    [InlineData("web:terminal", false)]
+    [InlineData("api:", false)]
+    public void MayBeOursByAttributes_OnlyEmptyOrApiForm(string? broker, bool may) =>
+        FreedomOrderRules.MayBeOursByAttributes(broker, "712345678").Should().Be(may);
+
+    /// <summary>Официальный список кодов tradernet.global/tradernet-api/order-statuses; leaves/traded = -1 — поля нет (traded — массива <c>trade</c>).</summary>
     [Theory]
     // окончательно исполнена
-    [InlineData(21, 5, 0, TradeOrderStatuses.Filled, 5)]
-    [InlineData(21, 5, -1, TradeOrderStatuses.Filled, 5)]
-    // снята/истекла, возможно частичное исполнение: исполнено = q − leaves_qty
-    [InlineData(31, 5, 5, TradeOrderStatuses.Cancelled, 0)]
-    [InlineData(30, 5, 3, TradeOrderStatuses.Cancelled, 2)]
-    [InlineData(71, 5, 5, TradeOrderStatuses.Cancelled, 0)]
-    [InlineData(72, 5, 1, TradeOrderStatuses.Cancelled, 4)]
-    [InlineData(72, 5, 0, TradeOrderStatuses.Filled, 5)]
-    [InlineData(31, 5, -1, TradeOrderStatuses.Cancelled, 0)]
-    // отклонена / ошибка отправки: ничего не исполнено, если leaves_qty не говорит иного
-    [InlineData(0, 5, 5, TradeOrderStatuses.Rejected, 0)]
-    [InlineData(70, 5, 5, TradeOrderStatuses.Rejected, 0)]
-    [InlineData(74, 5, -1, TradeOrderStatuses.Rejected, 0)]
-    [InlineData(70, 5, 2, TradeOrderStatuses.Cancelled, 3)]
-    // активна
-    [InlineData(1, 5, 5, TradeOrderStatuses.Submitted, 0)]
-    [InlineData(2, 5, 5, TradeOrderStatuses.Submitted, 0)]
-    [InlineData(10, 5, 5, TradeOrderStatuses.Submitted, 0)]
-    [InlineData(11, 5, -1, TradeOrderStatuses.Submitted, 0)]
-    [InlineData(75, 5, 5, TradeOrderStatuses.Submitted, 0)]
-    [InlineData(10, 5, 2, TradeOrderStatuses.PartiallyFilled, 3)]
-    [InlineData(10, 5, 0, TradeOrderStatuses.PartiallyFilled, 5)]
+    [InlineData(21, 5, 0, 5, TradeOrderStatuses.Filled, 5)]
+    [InlineData(21, 5, -1, -1, TradeOrderStatuses.Filled, 5)]
+    // снята/истекла: исполнено = Σ trade[].q, leaves_qty НЕ используется (у снятой по FIX он 0)
+    [InlineData(31, 5, 0, 0, TradeOrderStatuses.Cancelled, 0)]
+    [InlineData(31, 5, 0, -1, TradeOrderStatuses.Cancelled, 0)]
+    [InlineData(31, 5, 0, 2, TradeOrderStatuses.Cancelled, 2)]
+    [InlineData(30, 5, 3, 2, TradeOrderStatuses.Cancelled, 2)]
+    [InlineData(71, 5, 0, 0, TradeOrderStatuses.Cancelled, 0)]
+    [InlineData(72, 5, 0, 4, TradeOrderStatuses.Cancelled, 4)]
+    [InlineData(72, 5, 0, 5, TradeOrderStatuses.Filled, 5)]
+    // отклонена / ошибка отправки: исполнено только по сделкам
+    [InlineData(0, 5, 0, 0, TradeOrderStatuses.Rejected, 0)]
+    [InlineData(70, 5, 0, -1, TradeOrderStatuses.Rejected, 0)]
+    [InlineData(74, 5, 0, 0, TradeOrderStatuses.Rejected, 0)]
+    [InlineData(70, 5, 2, 0, TradeOrderStatuses.Rejected, 0)]
+    [InlineData(70, 5, 0, 3, TradeOrderStatuses.Cancelled, 3)]
+    // активна: по сделкам; leaves — только без массива trade
+    [InlineData(1, 5, 5, 0, TradeOrderStatuses.Submitted, 0)]
+    [InlineData(2, 5, 5, 0, TradeOrderStatuses.Submitted, 0)]
+    [InlineData(10, 5, 5, 0, TradeOrderStatuses.Submitted, 0)]
+    [InlineData(11, 5, -1, -1, TradeOrderStatuses.Submitted, 0)]
+    [InlineData(75, 5, 5, 0, TradeOrderStatuses.Submitted, 0)]
+    [InlineData(10, 5, 2, -1, TradeOrderStatuses.PartiallyFilled, 3)]
+    [InlineData(10, 5, 2, 1, TradeOrderStatuses.PartiallyFilled, 1)]
+    [InlineData(10, 5, 0, 0, TradeOrderStatuses.Submitted, 0)]
     // частично исполнена и активна
-    [InlineData(12, 5, 4, TradeOrderStatuses.PartiallyFilled, 1)]
-    [InlineData(20, 5, 2, TradeOrderStatuses.PartiallyFilled, 3)]
-    public void StatusMap_OfficialCodes(int stat, long requested, int leaves, string expected, long executed)
+    [InlineData(12, 5, 4, 1, TradeOrderStatuses.PartiallyFilled, 1)]
+    [InlineData(20, 5, 2, -1, TradeOrderStatuses.PartiallyFilled, 3)]
+    public void StatusMap_OfficialCodes(int stat, long requested, int leaves, int traded, string expected, long executed)
     {
-        var r = FreedomOrderStatusMap.Resolve(stat, requested, leaves < 0 ? null : leaves);
+        var r = FreedomOrderStatusMap.Resolve(stat, requested, leaves < 0 ? null : leaves, traded < 0 ? null : traded);
         r.Status.Should().Be(expected);
         r.Executed.Should().Be(executed);
         r.KnownCode.Should().BeTrue();
@@ -122,9 +144,9 @@ public class FreedomExecutionRulesTests
     [InlineData(null)]
     public void StatusMap_UnknownCode_IsActive_NeverFinal(int? stat)
     {
-        FreedomOrderStatusMap.Resolve(stat, 5, 5).Should().Be(new FreedomOrderResolution(TradeOrderStatuses.Submitted, 0, false));
-        // Даже «всё исполнено» по leaves_qty не делает заявку окончательной без официального кода.
-        var full = FreedomOrderStatusMap.Resolve(stat, 5, 0);
+        FreedomOrderStatusMap.Resolve(stat, 5, 5, 0).Should().Be(new FreedomOrderResolution(TradeOrderStatuses.Submitted, 0, false));
+        // Даже «всё исполнено» по сделкам не делает заявку окончательной без официального кода.
+        var full = FreedomOrderStatusMap.Resolve(stat, 5, 0, 5);
         full.Status.Should().Be(TradeOrderStatuses.PartiallyFilled);
         full.Executed.Should().Be(5);
         full.KnownCode.Should().BeFalse();

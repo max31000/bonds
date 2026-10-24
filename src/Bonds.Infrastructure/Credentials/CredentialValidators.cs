@@ -6,6 +6,9 @@ namespace Bonds.Infrastructure.Credentials;
 
 internal static class CredentialFieldReader
 {
+    /// <summary>Временный сбой Freedom при проверке ключа (сеть, 5xx, 408, 429, «too many requests») — ключ не объявляется плохим.</summary>
+    internal const string FreedomUnavailableMessageText = "Freedom временно недоступен (сеть или лимит запросов) — ключ не проверен, повторите через минуту.";
+
     /// <summary>Значение поля либо null, если его нет/пусто/содержит пробельные символы внутри.</summary>
     public static string? SingleToken(IReadOnlyDictionary<string, string> fields, string name)
     {
@@ -166,6 +169,11 @@ public sealed class FreedomCredentialValidator : ICredentialValidator
             });
             return CredentialValidationResult.Valid(meta, brokerAccountId: info.AccountNumber);
         }
+        catch (Bonds.Infrastructure.Connectors.Freedom.FreedomApiException ex) when (ex.IsTransient)
+        {
+            // Сеть/5xx/408/429/«too many requests» — ключ не проверен, но и не плохой: не сохраняем, просим повторить.
+            return CredentialValidationResult.Invalid(CredentialFieldReader.FreedomUnavailableMessageText);
+        }
         catch (Bonds.Infrastructure.Connectors.Freedom.FreedomApiException)
         {
             // Текст брокера не пробрасываем: безопасное фиксированное сообщение.
@@ -204,6 +212,10 @@ public sealed class FreedomTradeCredentialValidator : ICredentialValidator
         try
         {
             info = await _client.GetUserInfoAsync(new Bonds.Infrastructure.Connectors.Freedom.FreedomCredentials(pub, priv), ct);
+        }
+        catch (Bonds.Infrastructure.Connectors.Freedom.FreedomApiException ex) when (ex.IsTransient)
+        {
+            return CredentialValidationResult.Invalid(CredentialFieldReader.FreedomUnavailableMessageText);
         }
         catch (Bonds.Infrastructure.Connectors.Freedom.FreedomApiException)
         {

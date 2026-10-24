@@ -86,7 +86,29 @@ public sealed class FreedomOrderGateway : IFreedomOrderGateway
         var q = quotes.FirstOrDefault(x => string.Equals(x.Ticker, ticker, StringComparison.OrdinalIgnoreCase));
         return q is null
             ? new FreedomMarketQuote(null, null, null, null)
-            : new FreedomMarketQuote(q.Bid is > 0m ? q.Bid : null, q.Ask is > 0m ? q.Ask : null, q.MinStep, BrokerAssetClassifier.NormalizeCurrency(q.Currency));
+            : new FreedomMarketQuote(
+                q.Bid is > 0m ? q.Bid : null, q.Ask is > 0m ? q.Ask : null, q.MinStep, BrokerAssetClassifier.NormalizeCurrency(q.Currency),
+                QuoteTimeUtc(q, _orderTimeOffset, _time.GetUtcNow().UtcDateTime),
+                q.MarketStatus is null ? null : string.Equals(q.MarketStatus.Trim(), "OPEN", StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// Момент котировки (UTC) для <c>Execution:MaxQuoteAge</c>: самая поздняя из <c>ltt</c>/<c>bbt</c>/<c>bat</c> (МСК без пояса − <paramref name="offset"/>), отбрасывая
+    /// метки позже <paramref name="nowUtc"/> + 1 мин (мусор/расхождение часов). Нет ни одной — null (preflight: «несвежая котировка»). Застывшие <c>bbt</c>/<c>bat</c>
+    /// (у валют — 2023 год) на результат не влияют — берётся максимум.
+    /// </summary>
+    internal static DateTime? QuoteTimeUtc(FreedomQuote q, TimeSpan offset, DateTime nowUtc)
+    {
+        DateTime? best = null;
+        foreach (var local in new[] { q.LastTradeLocal, q.BidTimeLocal, q.AskTimeLocal })
+        {
+            if (local is not { } l) continue;
+            var utc = DateTime.SpecifyKind(l - offset, DateTimeKind.Utc);
+            if (utc > nowUtc.AddMinutes(1)) continue;
+            if (best is null || utc > best) best = utc;
+        }
+
+        return best;
     }
 
     public async Task<FreedomAccountSnapshot> GetAccountSnapshotAsync(ulong userId, CancellationToken ct = default)
@@ -127,8 +149,8 @@ public sealed class FreedomOrderGateway : IFreedomOrderGateway
         }
         catch (FreedomApiException ex)
         {
-            // Сеть/таймаут/5xx — повтор на следующем тике; прочее (отказ брокера, неверный ключ, формат) — определённый отказ.
-            var transient = ex.InnerException is HttpRequestException or TaskCanceledException || ex.Message.Contains("HTTP 5", StringComparison.Ordinal);
+            // Сеть/таймаут/5xx/408/429/«too many requests» — повтор на следующем тике (ключ НЕ инвалидируется); прочее (отказ брокера, неверный ключ, формат) — отказ.
+            var transient = ex.IsTransient;
             throw new FreedomGatewayException(transient ? GatewayErrorKind.Transient : GatewayErrorKind.Rejected, transient ? "unavailable" : "rejected", $"Freedom {cmd}: недоступно или отказ брокера");
         }
     }
@@ -257,6 +279,11 @@ public sealed class FreedomOrderGateway : IFreedomOrderGateway
         {
             FreedomParser.ThrowIfError(cmd, root, keys.PublicKey, keys.PrivateKey);
         }
+        catch (FreedomApiException ex) when (FreedomApiException.IsTransientText(ex.Message))
+        {
+            // Перегрузка/лимит частоты — не отказ: для размещения исход неизвестен (сверка), для чтения/снятия — повтор.
+            throw new FreedomGatewayException(GatewayErrorKind.Transient, "rate_limited", ex.Message.Trim());
+        }
         catch (FreedomApiException ex)
         {
             throw new FreedomGatewayException(GatewayErrorKind.Rejected, "broker_rejected", ex.Message.Trim());
@@ -266,9 +293,9 @@ public sealed class FreedomOrderGateway : IFreedomOrderGateway
     // ─── Разбор заявок ────────────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Список заявок. Живой ответ (через SDK <c>cmd</c>) — <c>{orders: {key, order: [...]}}</c> без обёртки <c>result</c>; допускаются и <c>result.orders.order</c>,
-    /// <c>order</c> одним объектом и <c>orders</c>-массив. <paramref name="offset"/> — смещение локального времени брокера от UTC; <paramref name="onUnknownStat"/> —
-    /// вызывается для кода <c>stat</c> вне официального списка (заявка остаётся активной).
+    /// Список заявок. Живой ответ подписанного v3 (<c>/api/getNotifyOrderJson</c>, проверено на счёте) — <c>{result: {orders: {key, order: [...]}}}</c> С обёрткой
+    /// <c>result</c>; допускаются и ответ без обёртки (<c>{orders: …}</c>), <c>order</c> одним объектом и <c>orders</c>-массив. <paramref name="offset"/> — смещение
+    /// локального времени брокера (МСК) от UTC; <paramref name="onUnknownStat"/> — вызывается для кода <c>stat</c> вне официального списка (заявка остаётся активной).
     /// </summary>
     internal static IReadOnlyList<GatewayOrderState> ParseOrders(JsonElement root, TimeSpan offset, Action<string, string?>? onUnknownStat = null)
     {
@@ -289,11 +316,13 @@ public sealed class FreedomOrderGateway : IFreedomOrderGateway
     }
 
     /// <summary>
-    /// Заявка Tradernet → <see cref="GatewayOrderState"/>. Id брокера — <c>order_id</c>, иначе <c>id</c>; статус и исполнено (<c>q − leaves_qty</c>, штуки = лоты, лот 1) —
-    /// <see cref="FreedomOrderStatusMap.Resolve"/> по официальным кодам. Средняя цена штуки — по <c>trades_json</c>, если он есть; комиссии в заявке нет (null —
-    /// берётся из выписки движений денег при сверке). Реквизиты для сверки без id: <c>instr</c>, <c>oper</c> (1 → Buy, 3 → Sell; маржинальные 2/4 и прочее — null),
-    /// <c>p</c> (валюта бумаги за штуку), <c>date</c> (локальное время брокера: ISO <c>2026-10-23T16:46:41.883</c> или <c>2026-10-23 17:04:15</c>) → UTC = date −
-    /// <paramref name="offset"/>. <c>user_order_id</c> — как есть (в списке заявок брокер отдаёт null). null — у записи нет id.
+    /// Заявка Tradernet → <see cref="GatewayOrderState"/>. Id брокера — <c>order_id</c>, иначе <c>id</c> (на живом счёте совпадают). Номер клиента — <c>userOrderId</c>
+    /// (camelCase, как отдаёт <c>getNotifyOrderJson</c>: <c>api:N</c> у заявок через API, <c>i-6:ios:…</c> у ручных из приложения/терминала), иначе <c>user_order_id</c>.
+    /// Сделки — массив <c>trade: [{id, p, q, v, date}]</c>: исполнено = Σ <c>q</c>, средняя цена штуки = VWAP (Σ p·q / Σ q); статус —
+    /// <see cref="FreedomOrderStatusMap.Resolve"/> по официальным кодам (<c>leaves_qty</c> — только запасной вариант для АКТИВНЫХ кодов без массива <c>trade</c>).
+    /// Комиссии в заявке нет (null — берётся из выписки). Реквизиты для сверки без id: <c>instr</c>, <c>oper</c> (1 → Buy, 3 → Sell; маржинальные 2/4 и прочее — null),
+    /// <c>p</c> (валюта бумаги за штуку), <c>date</c> (МСК без пояса: <c>2026-10-23T16:46:41.883</c> или <c>2026-10-23 17:04:15</c>) → UTC = date − <paramref name="offset"/>.
+    /// null — у записи нет id.
     /// </summary>
     internal static GatewayOrderState? ParseOrder(JsonElement e, TimeSpan offset, Action<string, string?>? onUnknownStat = null)
     {
@@ -302,7 +331,8 @@ public sealed class FreedomOrderGateway : IFreedomOrderGateway
         var statRaw = Dec(e, "stat");
         var stat = statRaw is { } s && s == decimal.Truncate(s) && s is >= int.MinValue and <= int.MaxValue ? (int?)(int)s : null;
         var q = (long)Math.Floor(Dec(e, "q") ?? 0m);
-        var resolution = FreedomOrderStatusMap.Resolve(stat, q, Dec(e, "leaves_qty"));
+        var fills = TradesOf(e);
+        var resolution = FreedomOrderStatusMap.Resolve(stat, q, Dec(e, "leaves_qty"), fills?.Qty);
         if (!resolution.KnownCode) onUnknownStat?.Invoke(id.Trim(), statRaw?.ToString(CultureInfo.InvariantCulture));
         var status = resolution.Status;
         var executed = resolution.Executed;
@@ -315,36 +345,42 @@ public sealed class FreedomOrderGateway : IFreedomOrderGateway
             && local.Kind == DateTimeKind.Unspecified
                 ? DateTime.SpecifyKind(local - offset, DateTimeKind.Utc)
                 : null;
+        var userOrderId = Str(e, "userOrderId") ?? Str(e, "user_order_id");
         return new GatewayOrderState(
-            id.Trim(), Str(e, "user_order_id"), status, q, executed, executed > 0 ? AvgFromTrades(e) : null, null,
+            id.Trim(), string.IsNullOrWhiteSpace(userOrderId) ? null : userOrderId.Trim(), status, q, executed, executed > 0 ? fills?.Vwap : null, null,
             BrokerAssetClassifier.NormalizeCurrency(Str(e, "cur")), message,
             Ticker: Str(e, "instr")?.Trim().ToUpperInvariant(), Side: side, LimitPrice: Dec(e, "p"), PlacedAtUtc: placedUtc);
     }
 
-    /// <summary>Средняя цена штуки по сделкам заявки (<c>trades_json</c> — строка с JSON-массивом <c>{p, q}</c>); нет или не разобралось — null.</summary>
-    private static decimal? AvgFromTrades(JsonElement e)
+    /// <summary>
+    /// Сделки заявки (<c>trade</c> — массив <c>{p, q}</c> или один объект): Σ <c>q</c> и VWAP цены штуки (null — нет сделок с ценой). Массива нет — null (тогда активные
+    /// коды могут опереться на <c>leaves_qty</c>); пустой массив — (0, null).
+    /// </summary>
+    private static (decimal Qty, decimal? Vwap)? TradesOf(JsonElement e)
     {
-        if (Str(e, "trades_json") is not { } raw || string.IsNullOrWhiteSpace(raw)) return null;
-        try
+        if (e.ValueKind != JsonValueKind.Object || !e.TryGetProperty("trade", out var arr)) return null;
+        IEnumerable<JsonElement> items = arr.ValueKind switch
         {
-            using var doc = JsonDocument.Parse(raw);
-            if (doc.RootElement.ValueKind != JsonValueKind.Array) return null;
-            decimal qty = 0m, sum = 0m;
-            foreach (var t in doc.RootElement.EnumerateArray().Where(t => t.ValueKind == JsonValueKind.Object))
+            JsonValueKind.Array => arr.EnumerateArray(),
+            JsonValueKind.Object => [arr],
+            _ => [],
+        };
+        if (arr.ValueKind is not (JsonValueKind.Array or JsonValueKind.Object)) return null;
+        decimal qty = 0m, sum = 0m, priced = 0m;
+        foreach (var t in items.Where(t => t.ValueKind == JsonValueKind.Object))
+        {
+            var n = Dec(t, "q");
+            if (n is not > 0m) continue;
+            qty += n.Value;
+            var p = Dec(t, "p");
+            if (p is > 0m)
             {
-                var p = Dec(t, "p") ?? Dec(t, "price");
-                var n = Dec(t, "q") ?? Dec(t, "qty");
-                if (p is not > 0m || n is not > 0m) continue;
-                qty += n.Value;
                 sum += p.Value * n.Value;
+                priced += n.Value;
             }
+        }
 
-            return qty > 0m ? sum / qty : null;
-        }
-        catch (JsonException)
-        {
-            return null;
-        }
+        return (qty, priced > 0m ? sum / priced : null);
     }
 
     private static string? Trim(string? message) => string.IsNullOrWhiteSpace(message) ? null : message.Length <= 200 ? message : message[..200];
