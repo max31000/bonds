@@ -51,6 +51,27 @@ public static class TradingHours
         return DateTime.SpecifyKind(closeMsk - MoscowOffset, DateTimeKind.Utc);
     }
 
+    /// <summary>
+    /// Закрытие БЛИЖАЙШЕЙ сессии рынка, в которой ещё можно выставлять заявки (UTC): сегодняшняя, если до её закрытия больше <paramref name="minRemaining"/>, иначе —
+    /// следующего буднего дня. null — рынок без ограничений. Праздники не учитываются (как и везде здесь): в праздник брокер не даст NormalTrading.
+    /// </summary>
+    public static DateTime? NextSessionCloseUtc(PolicyMarket market, DateTime nowUtc, PolicyOptions options, TimeSpan minRemaining)
+    {
+        var session = SessionOf(market, options);
+        if (session is null) return null;
+
+        var mskDate = ToMoscow(nowUtc).Date;
+        for (var d = 0; d <= 7; d++)
+        {
+            var day = mskDate.AddDays(d);
+            if (day.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday) continue;
+            var closeUtc = DateTime.SpecifyKind(day + session.Close - MoscowOffset, DateTimeKind.Utc);
+            if (closeUtc - minRemaining > nowUtc) return closeUtc;
+        }
+
+        return null;
+    }
+
     private static TradingSessionOptions? SessionOf(PolicyMarket market, PolicyOptions options) => market switch
     {
         PolicyMarket.Moex => options.Moex,

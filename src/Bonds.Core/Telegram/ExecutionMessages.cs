@@ -44,6 +44,10 @@ public static class ExecutionMessages
         _ => $"🏁 План #{plan.Id} не исполнен — см. причины на странице «Планы».",
     });
 
+    /// <summary>Исполнитель не может снять висящую заявку (нет торгового токена, токен на другой счёт, брокер отказал) — ОДИН раз на заявку.</summary>
+    public static string CancelImpossible(string ticker, long lots) =>
+        Limit($"🚨 Заявка {BotFormat.HtmlTruncated(ticker, 32)} ×{lots} не снята автоматически — снимите её в терминале брокера");
+
     public static string PlanNotStarted(TradePlan plan, string reason) =>
         Limit($"⚠ План #{plan.Id} не передан на исполнение: {BotFormat.HtmlTruncated(reason, MaxReason)}");
 

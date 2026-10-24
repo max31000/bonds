@@ -17,4 +17,7 @@ public interface ITradeOrderRepository
     Task<IReadOnlyList<TradeOrder>> ListByPlanAsync(ulong planId);
 
     Task<IReadOnlyList<TradeOrder>> ListByPlansAsync(IReadOnlyCollection<ulong> planIds);
+
+    /// <summary>Активные заявки пользователя (<c>New</c>/<c>Submitted</c>/<c>PartiallyFilled</c>) по всем его планам — могут висеть у брокера.</summary>
+    Task<IReadOnlyList<TradeOrder>> ListActiveByUserAsync(ulong userId);
 }

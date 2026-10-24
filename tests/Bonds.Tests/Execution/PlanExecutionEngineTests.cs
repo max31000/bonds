@@ -1,3 +1,4 @@
+using Bonds.Core.Capital;
 using Bonds.Core.Credentials;
 using Bonds.Core.Execution;
 using Bonds.Core.Interfaces.Repositories;
@@ -43,6 +44,17 @@ public class PlanExecutionEngineTests
     private readonly Mock<IUserCredentialRepository> _credentialRecords = new();
     private readonly CountingSync _sync = new();
     private readonly ExecutionOptions _options = new() { Enabled = true };
+    private readonly ExecutionLimitsOptions _limits = new();
+
+    /// <summary>Корзины пользователя: «Ликвидность» с авто-покупкой и TMON — белый список AutoApproved.</summary>
+    private readonly List<CapitalBasket> _baskets =
+    [
+        new()
+        {
+            Id = 1, UserId = UserId, Code = "liquidity", Title = "Ликвидность", AutoBuy = true,
+            Members = [new CapitalBasketMember { Id = 1, BasketId = 1, Broker = BrokerIds.TInvest, InstrumentKey = "TMON" }],
+        },
+    ];
 
     private readonly List<InstrumentTradingMeta> _meta =
     [
@@ -59,9 +71,11 @@ public class PlanExecutionEngineTests
         accounts.Setup(a => a.GetByUserIdAndBrokerAsync(UserId, BrokerIds.TInvest))
             .ReturnsAsync([new Account { Id = AccountId, UserId = UserId, Broker = BrokerIds.TInvest, BrokerAccountId = BrokerAccount }]);
         var monitor = Mock.Of<IOptionsMonitor<ExecutionOptions>>(m => m.CurrentValue == _options);
+        var baskets = new Mock<ICapitalBasketRepository>();
+        baskets.Setup(b => b.GetByUserAsync(UserId, It.IsAny<string?>())).ReturnsAsync(() => _baskets);
         return new PlanExecutionEngine(
-            _plans, _orders, meta.Object, accounts.Object, _credentialRecords.Object, _gateway, _gate, _notifier, _sync, monitor,
-            Options.Create(new ExecutionLimitsOptions()), Options.Create(new PolicyOptions()), NullLogger<PlanExecutionEngine>.Instance);
+            _plans, _orders, meta.Object, accounts.Object, _credentialRecords.Object, baskets.Object, _gateway, _gate, _notifier, _sync, monitor,
+            Options.Create(_limits), Options.Create(new PolicyOptions()), NullLogger<PlanExecutionEngine>.Instance);
     }
 
     private void Book(string uid, decimal bid, decimal ask, DateTime at) => _gateway.Books[uid] = new GatewayOrderBook(bid, ask, at.AddSeconds(-3));
@@ -276,18 +290,97 @@ public class PlanExecutionEngineTests
         _orders.All.Single().ErrorCode.Should().Be(PreflightChecks.InsufficientFunds);
     }
 
-    [Fact]
-    public async Task AutoApproved_DayLimitRecomputed_FromAlreadyExecuted()
+    /// <summary>Исполненный сегодня авто-план: оценка 70 × 300 = 21 000 ₽, факт — 70 × <paramref name="avgFill"/>.</summary>
+    private void AddExecutedAutoPlanToday(decimal avgFill)
     {
-        // Сегодня уже исполняется 45 000 ₽ авто; план на 1 665.70 ₽ при лимите 50 000 проходит, на 6 000 — нет.
-        _plans.AutoUsedToday = 45_000m;
+        var done = AddPlan(PlanStatuses.Done, DecidedVia.Auto, FundBuy(price: 300m, lots: 70));
+        done.DecidedAt = Noon.AddHours(-1);
+        _orders.All.Add(new TradeOrder
+        {
+            Id = 900, PlanId = done.Id, LineNo = 1, Attempt = 1, ClientOrderId = Guid.NewGuid().ToString("D"), Status = TradeOrderStatuses.Filled, LimitPrice = 300m,
+            PriceUnit = OrderPriceUnits.Currency, LotsRequested = 70, LotsFilled = 70, AvgFillPrice = avgFill, Currency = "RUB", CreatedAt = Noon.AddHours(-1), UpdatedAt = Noon.AddHours(-1),
+        });
+    }
+
+    [Fact]
+    public async Task AutoApproved_DayLimit_CountsActualFilledAmounts_NotEstimates()
+    {
+        // По оценке другой план — 21 000 (+ этот 6 000 = 27 000 ≤ 50 000), но по ФАКТУ исполнено 70 × 642.86 ≈ 45 000 → 45 000 + 6 000 > 50 000 → отказ.
+        AddExecutedAutoPlanToday(avgFill: 642.86m);
         AddPlan(PlanStatuses.AutoApproved, DecidedVia.Auto, FundBuy(price: 600m));
         Book(FundUid, 599.9m, 600.1m, Noon);
 
         await Engine().RunTickAsync(Noon);
 
         _gateway.PostCount.Should().Be(0);
-        _orders.All.Single().ErrorCode.Should().Be(PreflightChecks.AutoDayLimit);
+        _orders.All.Single(o => o.Id != 900).ErrorCode.Should().Be(PreflightChecks.AutoDayLimit);
+    }
+
+    [Fact]
+    public async Task AutoApproved_DayLimit_ActualBelowLimit_Posts()
+    {
+        AddExecutedAutoPlanToday(avgFill: 300m); // факт 21 000 + 6 000 ≤ 50 000
+        AddPlan(PlanStatuses.AutoApproved, DecidedVia.Auto, FundBuy(price: 600m));
+        Book(FundUid, 599.9m, 600.1m, Noon);
+
+        await Engine().RunTickAsync(Noon);
+
+        _gateway.PostCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task AutoApproved_PerOrderCap_RecheckedAtExecution_WithCurrentLimits()
+    {
+        // При построении лимит был выше; сейчас 25 000 → строка 10 × 3 000 = 30 000 больше лимита, план не стартует.
+        AddPlan(PlanStatuses.AutoApproved, DecidedVia.Auto, FundBuy(price: 3_000m));
+        Book(FundUid, 2_999.9m, 3_000.1m, Noon);
+
+        await Engine().RunTickAsync(Noon);
+
+        _gateway.PostCount.Should().Be(0);
+        _plans[_plans.LastId].Status.Should().Be(PlanStatuses.Failed);
+        _notifier.Texts.Should().Contain(t => t.Contains("больше лимита авто"));
+    }
+
+    [Fact]
+    public async Task AutoApproved_PerOrderCap_AtOrderPrice_Preflight()
+    {
+        // Оценка 24 950 ≤ 25 000 проходит при старте, но цена заявки выше утверждённой (перевыставление) → сумма заявки > 25 000 → не отправляется.
+        _limits.AutoPerOrderRub = 24_960m;
+        AddPlan(PlanStatuses.AutoApproved, DecidedVia.Auto, FundBuy(price: 2_495m));
+        Book(FundUid, 2_495.5m, 2_496.5m, Noon); // mid 2 496 — дрейф 0.04%; первая попытка по лимиту 2 495 → 24 950 ≤ 24 960
+        await Engine().RunTickAsync(Noon);
+        _gateway.PostCount.Should().Be(1);
+
+        _limits.AutoPerOrderRub = 24_955m; // лимит снизили — следующая попытка (цена ближе к ask) уже больше лимита
+        Book(FundUid, 2_495.5m, 2_496.5m, Noon.AddMinutes(5));
+        await Engine().RunTickAsync(Noon.AddMinutes(5));
+
+        _gateway.PostCount.Should().Be(1);
+        _orders.All.OrderBy(o => o.Attempt).Last().ErrorCode.Should().Be(PreflightChecks.AutoOrderLimit);
+    }
+
+    [Fact]
+    public async Task AutoApproved_NotInAutoBuyBasket_NotExecuted()
+    {
+        _baskets[0].AutoBuy = false; // владелец выключил авто-покупку после построения плана
+        var plan = AddPlan(PlanStatuses.AutoApproved, DecidedVia.Auto, FundBuy());
+        Book(FundUid, 166.50m, 166.60m, Noon);
+
+        await Engine().RunTickAsync(Noon);
+
+        _gateway.PostCount.Should().Be(0);
+        _plans[plan.Id].Status.Should().Be(PlanStatuses.Failed);
+        _notifier.Texts.Should().Contain(t => t.Contains("не входит в корзину с авто-покупкой"));
+    }
+
+    [Fact]
+    public async Task AutoApproved_InWhitelist_Executed()
+    {
+        AddPlan(PlanStatuses.AutoApproved, DecidedVia.Auto, FundBuy());
+        Book(FundUid, 166.50m, 166.60m, Noon);
+        await Engine().RunTickAsync(Noon);
+        _gateway.PostCount.Should().Be(1);
     }
 
     [Fact]
@@ -313,24 +406,26 @@ public class PlanExecutionEngineTests
     public async Task Reprice_AfterTimeout_WithinDrift_UpToMaxAttempts_ThenExpired()
     {
         var plan = AddPlan();
-        Book(FundUid, 166.50m, 168.00m, Noon); // ask далеко: цель ограничена 0.5% от 166.57 → 167.40
+        // Дрейф фондов по умолчанию 0.2% (дизайн §5): ask далеко (167.20) — цель ограничена 166.57 × 1.002 → 166.90; mid 166.85 в пределах 0.2%.
+        Book(FundUid, 166.50m, 167.20m, Noon);
         var engine = Engine();
 
         await engine.RunTickAsync(Noon);
         await Engine().RunTickAsync(Noon.AddMinutes(4)); // ещё рано
         _gateway.PostCount.Should().Be(1);
 
-        Book(FundUid, 166.50m, 167.30m, Noon.AddMinutes(5));
+        Book(FundUid, 166.50m, 167.20m, Noon.AddMinutes(5));
         await Engine().RunTickAsync(Noon.AddMinutes(5));
-        Book(FundUid, 166.50m, 167.30m, Noon.AddMinutes(10));
+        Book(FundUid, 166.50m, 167.20m, Noon.AddMinutes(10));
         await Engine().RunTickAsync(Noon.AddMinutes(10));
-        Book(FundUid, 166.50m, 167.30m, Noon.AddMinutes(15));
+        Book(FundUid, 166.50m, 167.20m, Noon.AddMinutes(15));
         await Engine().RunTickAsync(Noon.AddMinutes(15));
 
         var prices = _gateway.Posted.Select(p => p.Order.Price).ToList();
         prices.Should().HaveCount(3, "MaxAttempts = 3");
         prices.Should().BeInAscendingOrder();
-        prices.Should().OnlyContain(p => OrderPricing.DriftFraction(p, 166.57m) <= 0.005m);
+        prices.Last().Should().Be(166.90m);
+        prices.Should().OnlyContain(p => OrderPricing.DriftFraction(p, 166.57m) <= 0.002m);
         _gateway.Cancelled.Should().HaveCount(3);
         _orders.All.OrderBy(o => o.Attempt).Select(o => o.Status).Should().Equal(TradeOrderStatuses.Cancelled, TradeOrderStatuses.Cancelled, TradeOrderStatuses.Expired);
         _plans[plan.Id].Status.Should().Be(PlanStatuses.Failed);
@@ -431,6 +526,176 @@ public class PlanExecutionEngineTests
         _plans[plan.Id].Status.Should().Be(PlanStatuses.Failed);
     }
 
+    // ─── Снять нельзя (M1): одно уведомление, план остаётся Submitting, попытки каждый тик ──
+
+    private async Task<TradePlan> PlanWithLiveOrderAsync()
+    {
+        var plan = AddPlan();
+        Book(FundUid, 166.50m, 166.60m, Noon);
+        await Engine().RunTickAsync(Noon);
+        _gateway.PostCount.Should().Be(1);
+        _notifier.Messages.Clear();
+        return plan;
+    }
+
+    [Fact]
+    public async Task Halt_TokenDeleted_CancelImpossible_AlertsOnce_KeepsSubmitting_RetriesEveryTick()
+    {
+        var plan = await PlanWithLiveOrderAsync();
+        _gate.Result = ExecutionGate.Evaluate(true, ExecutionModes.Live, tradeCredentialOk: false, paused: false);
+        _gateway.CancelError = new TInvestGatewayException(GatewayErrorKind.Rejected, "no_trade_token", "нет токена");
+        _gateway.StateError = new TInvestGatewayException(GatewayErrorKind.Rejected, "no_trade_token", "нет токена");
+
+        await Engine().RunTickAsync(Noon.AddSeconds(20));
+        await Engine().RunTickAsync(Noon.AddSeconds(40));
+
+        _notifier.Texts.Where(t => t.Contains("не снята автоматически")).Should().ContainSingle()
+            .Which.Should().Contain("TMON@").And.Contain("×10").And.Contain("снимите её в терминале брокера");
+        _gateway.Cancelled.Should().HaveCount(2, "сверка и попытка снять — каждый тик");
+        _plans[plan.Id].Status.Should().Be(PlanStatuses.Submitting);
+        _orders.All.Single().Should().Match<TradeOrder>(o => o.Status == TradeOrderStatuses.Submitted && o.HaltAlertedAt != null);
+        _gateway.PostCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task Halt_TokenOnForeignAccount_CancelImpossible_AlertsOnce()
+    {
+        var plan = await PlanWithLiveOrderAsync();
+        _gateway.Accounts.Clear();
+        _gateway.Accounts.Add(new TInvestTradeAccount("ACC-OTHER", true, true));
+        _gateway.CancelError = new TInvestGatewayException(GatewayErrorKind.Rejected, "PermissionDenied", "нет доступа к счёту");
+        _gateway.StateError = new TInvestGatewayException(GatewayErrorKind.Rejected, "PermissionDenied", "нет доступа к счёту");
+
+        await Engine().RunTickAsync(Noon.AddSeconds(20));
+        await Engine().RunTickAsync(Noon.AddSeconds(40));
+
+        _notifier.Texts.Count(t => t.Contains("не снята автоматически")).Should().Be(1);
+        _plans[plan.Id].Status.Should().Be(PlanStatuses.Submitting);
+    }
+
+    [Fact]
+    public async Task Halt_BrokerRefusesCancel_OrderStillActive_AlertsOnce_ThenRecoversWhenCancelled()
+    {
+        var plan = await PlanWithLiveOrderAsync();
+        _gate.Result = ExecutionGate.Evaluate(true, ExecutionModes.Live, true, paused: true);
+        _gateway.CancelError = new TInvestGatewayException(GatewayErrorKind.Rejected, "FailedPrecondition", "нельзя снять");
+
+        await Engine().RunTickAsync(Noon.AddSeconds(20));
+        await Engine().RunTickAsync(Noon.AddSeconds(40));
+        _notifier.Texts.Count(t => t.Contains("не снята автоматически")).Should().Be(1);
+        _plans[plan.Id].Status.Should().Be(PlanStatuses.Submitting);
+
+        // Пользователь снял заявку в терминале — следующий тик видит Cancelled и закрывает план.
+        var id = _gateway.Posted[0].Order.ClientOrderId;
+        _gateway.States[id] = _gateway.States[id] with { Status = TradeOrderStatuses.Cancelled };
+        await Engine().RunTickAsync(Noon.AddMinutes(1));
+
+        _plans[plan.Id].Status.Should().Be(PlanStatuses.Failed);
+        _notifier.Texts.Count(t => t.Contains("не снята автоматически")).Should().Be(1);
+    }
+
+    // ─── Вне часов торгов (MINOR 2) ──────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task ApprovedLivePlan_OutsideTradingHours_WaitsApproved_StartsWhenSessionOpens()
+    {
+        var evening = Noon.Date.AddHours(17); // 20:00 МСК — Мосбиржа закрыта
+        var nextMorning = Noon.Date.AddDays(Noon.DayOfWeek == DayOfWeek.Friday ? 3 : 1).AddHours(7).AddMinutes(5); // 10:05 МСК следующего буднего дня
+        var plan = AddPlan();
+        plan.ExpiresAt = nextMorning.AddHours(8);
+
+        await Engine().RunTickAsync(evening);
+        _plans[plan.Id].Status.Should().Be(PlanStatuses.Approved, "ждёт открытия сессии, а не падает «рынок закрыт»");
+        _gateway.PostCount.Should().Be(0);
+        _orders.All.Should().BeEmpty();
+
+        Book(FundUid, 166.50m, 166.60m, nextMorning);
+        await Engine().RunTickAsync(nextMorning);
+        _plans[plan.Id].Status.Should().Be(PlanStatuses.Submitting);
+        _gateway.PostCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task ApprovedLivePlan_OutsideTradingHours_ExpiresWhenDeadlinePasses()
+    {
+        var evening = Noon.Date.AddHours(17);
+        var plan = AddPlan();
+        plan.ExpiresAt = evening.AddHours(1);
+
+        await Engine().RunTickAsync(evening);
+        await Engine().RunTickAsync(evening.AddHours(2));
+
+        _plans[plan.Id].Status.Should().Be(PlanStatuses.Expired);
+        _gateway.PostCount.Should().Be(0);
+    }
+
+    // ─── Сверка комиссии с задержкой (MINOR 7) ──────────────────────────────────────────────
+
+    [Fact]
+    public async Task FeeZeroRightAfterFill_Deferred_ThenRealFeeArrives_NoFalseAlert()
+    {
+        var plan = AddPlan(lines: FundBuy(fee: 0.50m));
+        Book(FundUid, 166.50m, 166.60m, Noon);
+        await Engine().RunTickAsync(Noon);
+        var id = _gateway.Posted[0].Order.ClientOrderId;
+        _gateway.Fill(id, 10, 166.57m, 0m);
+
+        await Engine().RunTickAsync(Noon.AddSeconds(20));
+        _notifier.Texts.Should().NotContain(t => t.Contains("отличается от оценки")).And.NotContain(t => t.Contains("исполнено 10 лот"));
+        _plans[plan.Id].Status.Should().Be(PlanStatuses.Submitting, "план закрывается после сверки комиссии");
+
+        _gateway.Fill(id, 10, 166.57m, 0.50m); // комиссия пришла
+        await Engine().RunTickAsync(Noon.AddSeconds(40));
+
+        _notifier.Texts.Should().ContainSingle(t => t.Contains("исполнено 10 лот")).And.NotContain(t => t.Contains("отличается от оценки"));
+        _plans[plan.Id].Status.Should().Be(PlanStatuses.Done);
+    }
+
+    [Fact]
+    public async Task FeeStaysZero_AfterMaxRechecks_AlertsOnce_PlanDone()
+    {
+        var plan = AddPlan(lines: FundBuy(fee: 0.50m));
+        Book(FundUid, 166.50m, 166.60m, Noon);
+        await Engine().RunTickAsync(Noon);
+        _gateway.Fill(_gateway.Posted[0].Order.ClientOrderId, 10, 166.57m, 0m);
+
+        for (var i = 1; i <= _options.MaxFeeRechecks + 1; i++) await Engine().RunTickAsync(Noon.AddSeconds(20 * i));
+
+        _notifier.Texts.Count(t => t.Contains("отличается от оценки")).Should().Be(1);
+        _plans[plan.Id].Status.Should().Be(PlanStatuses.Done);
+        _orders.All.Single().FeeRechecks.Should().Be(_options.MaxFeeRechecks);
+    }
+
+    [Fact]
+    public async Task AvgFillPrice_FromOrderStateTotal_DividedByPieces()
+    {
+        AddPlan();
+        Book(FundUid, 166.50m, 166.60m, Noon);
+        await Engine().RunTickAsync(Noon);
+        var id = _gateway.Posted[0].Order.ClientOrderId;
+        // GetOrderState: executed_order_price — ИТОГО (1 665.60 за 10 шт.), а цена штуки брокером не дана.
+        _gateway.States[id] = _gateway.States[id] with { Status = TradeOrderStatuses.Filled, LotsExecuted = 10, AvgFillPrice = null, ExecutedAmount = 1_665.60m, ExecutedCommission = 0m };
+
+        await Engine().RunTickAsync(Noon.AddSeconds(20));
+
+        _orders.All.Single().AvgFillPrice.Should().Be(166.56m);
+    }
+
+    // ─── Цена не на сетке Quotation (NIT) ───────────────────────────────────────────────────
+
+    [Fact]
+    public async Task PriceGridError_BeforePost_OrderFailed_NotUnknown()
+    {
+        var plan = AddPlan();
+        Book(FundUid, 166.50m, 166.60m, Noon);
+        _gateway.OnPost = _ => throw new TInvestGatewayException(GatewayErrorKind.Rejected, TradeOrderErrorCodes.PriceGrid, "Цена заявки не на сетке шага");
+
+        await Engine().RunTickAsync(Noon);
+
+        _orders.All.Single().Should().Match<TradeOrder>(o => o.Status == TradeOrderStatuses.Failed && o.ErrorCode == TradeOrderErrorCodes.PriceGrid);
+        _plans[plan.Id].Status.Should().Be(PlanStatuses.Failed);
+    }
+
     // ─── Двойники ──────────────────────────────────────────────────────────────────────────
 
     private sealed class FakeGate : IExecutionGateResolver
@@ -480,6 +745,10 @@ public sealed class InMemoryOrders : ITradeOrderRepository
 
     public Task<IReadOnlyList<TradeOrder>> ListByPlansAsync(IReadOnlyCollection<ulong> planIds) =>
         Task.FromResult<IReadOnlyList<TradeOrder>>(All.Where(o => planIds.Contains(o.PlanId)).ToList());
+
+    /// <summary>Один пользователь в тестах — все активные.</summary>
+    public Task<IReadOnlyList<TradeOrder>> ListActiveByUserAsync(ulong userId) =>
+        Task.FromResult<IReadOnlyList<TradeOrder>>(All.Where(o => TradeOrderStatuses.IsActive(o.Status)).ToList());
 }
 
 /// <summary>In-memory <see cref="ITradePlanRepository"/> — только методы, нужные исполнителю.</summary>
@@ -491,6 +760,8 @@ public sealed class InMemoryPlans : ITradePlanRepository
     public decimal AutoUsedToday { get; set; }
 
     public TradePlan this[ulong id] => _plans[id];
+
+    public ulong LastId => _next - 1;
 
     public void Add(TradePlan plan)
     {
@@ -530,6 +801,20 @@ public sealed class InMemoryPlans : ITradePlanRepository
     }
 
     public Task<decimal> SumAutoApprovedRubSinceAsync(ulong userId, DateTime sinceUtc, ulong? excludePlanId = null) => Task.FromResult(AutoUsedToday);
+
+    public Task<IReadOnlyList<TradePlan>> ListAutoDayPlansAsync(ulong userId, DateTime sinceUtc) =>
+        Task.FromResult<IReadOnlyList<TradePlan>>(_plans.Values
+            .Where(p => p.UserId == userId && p.DecidedAt >= sinceUtc
+                        && (p.Status is PlanStatuses.Submitting or PlanStatuses.PartiallyDone or PlanStatuses.Done or PlanStatuses.Failed
+                            || (p.Status == PlanStatuses.AutoApproved && !p.DryRun)))
+            .OrderBy(p => p.Id).Select(Copy).ToList());
+
+    public Task<bool> ExtendExpiryAsync(ulong userId, ulong id, DateTime expiresAtUtc)
+    {
+        if (!_plans.TryGetValue(id, out var p) || p.UserId != userId || p.Status != PlanStatuses.Approved) return Task.FromResult(false);
+        if (expiresAtUtc > p.ExpiresAt) p.ExpiresAt = expiresAtUtc;
+        return Task.FromResult(true);
+    }
 
     public Task<TradePlan?> GetAsync(ulong userId, ulong id) => Task.FromResult(_plans.TryGetValue(id, out var p) && p.UserId == userId ? Copy(p) : null);
 

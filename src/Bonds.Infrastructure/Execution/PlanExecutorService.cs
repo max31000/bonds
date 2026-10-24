@@ -11,20 +11,42 @@ namespace Bonds.Infrastructure.Execution;
 /// Фоновый исполнитель планов (задача 65): тик <c>Execution:TickInterval</c> (20 с) → <see cref="PlanExecutionEngine.RunTickAsync"/> в отдельном scope. Работает всегда,
 /// но заявки отправляет только при открытых воротах (по умолчанию закрыты: <c>Execution__Enabled=false</c>); без исполнимых планов тик — один SQL-запрос.
 /// Сбой тика — <c>LogWarning</c> и пропуск, процесс не падает. Часы торгов проверяет сам движок по рынку каждой строки.
+/// <para>
+/// <b>Один исполнитель на кластер</b> (ревью, MINOR 1): тик выполняется только под <see cref="IPlanExecutorLock"/> (MySQL <c>GET_LOCK('bonds-plan-executor', 0)</c>
+/// на отдельном соединении, без ожидания); не взяли — тик пропускается (его делает другой экземпляр или идёт смена торгового токена). Освобождение — в finally.
+/// </para>
 /// </summary>
 public sealed class PlanExecutorService : BackgroundService
 {
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IOptionsMonitor<ExecutionOptions> _options;
+    private readonly IPlanExecutorLock _lock;
     private readonly TimeProvider _time;
     private readonly ILogger<PlanExecutorService> _logger;
 
-    public PlanExecutorService(IServiceScopeFactory scopeFactory, IOptionsMonitor<ExecutionOptions> options, TimeProvider time, ILogger<PlanExecutorService> logger)
+    public PlanExecutorService(
+        IServiceScopeFactory scopeFactory, IOptionsMonitor<ExecutionOptions> options, IPlanExecutorLock executorLock, TimeProvider time, ILogger<PlanExecutorService> logger)
     {
         _scopeFactory = scopeFactory;
         _options = options;
+        _lock = executorLock;
         _time = time;
         _logger = logger;
+    }
+
+    /// <summary>Один тик под блокировкой исполнителя. null — блокировку держит другой (тик пропущен).</summary>
+    public async Task<ExecutionTickResult?> RunOnceAsync(CancellationToken ct)
+    {
+        await using var held = await _lock.TryAcquireAsync(TimeSpan.Zero, ct);
+        if (held is null)
+        {
+            _logger.LogDebug("Plan executor tick skipped: lock is held by another instance");
+            return null;
+        }
+
+        using var scope = _scopeFactory.CreateScope();
+        var engine = scope.ServiceProvider.GetRequiredService<PlanExecutionEngine>();
+        return await engine.RunTickAsync(_time.GetUtcNow().UtcDateTime, ct);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -34,10 +56,8 @@ public sealed class PlanExecutorService : BackgroundService
         {
             try
             {
-                using var scope = _scopeFactory.CreateScope();
-                var engine = scope.ServiceProvider.GetRequiredService<PlanExecutionEngine>();
-                var result = await engine.RunTickAsync(_time.GetUtcNow().UtcDateTime, stoppingToken);
-                if (result.OrdersPosted + result.OrdersCancelled + result.PlansStarted + result.PlansFinished > 0)
+                var result = await RunOnceAsync(stoppingToken);
+                if (result is not null && result.OrdersPosted + result.OrdersCancelled + result.PlansStarted + result.PlansFinished > 0)
                 {
                     _logger.LogInformation(
                         "Plan executor tick: {Posted} posted, {Cancelled} cancelled, {Started} plan(s) started, {Finished} finished",

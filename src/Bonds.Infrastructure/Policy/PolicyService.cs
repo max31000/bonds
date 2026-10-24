@@ -3,7 +3,9 @@ using Bonds.Core.Capital;
 using Bonds.Core.Interfaces.Repositories;
 using Bonds.Core.Policy;
 using Bonds.Core.Telegram;
+using System.Globalization;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Bonds.Infrastructure.Execution;
 
 namespace Bonds.Infrastructure.Policy;
@@ -54,13 +56,19 @@ public sealed class PolicyService
     private readonly PolicyInputBuilder _builder;
     private readonly ITradePlanRepository _plans;
     private readonly IExecutionGateResolver _gate;
+    private readonly PolicyOptions _policy;
+    private readonly IOptionsMonitor<ExecutionOptions> _execution;
     private readonly ILogger<PolicyService> _logger;
 
-    public PolicyService(PolicyInputBuilder builder, ITradePlanRepository plans, IExecutionGateResolver gate, ILogger<PolicyService> logger)
+    public PolicyService(
+        PolicyInputBuilder builder, ITradePlanRepository plans, IExecutionGateResolver gate, IOptions<PolicyOptions> policy, IOptionsMonitor<ExecutionOptions> execution,
+        ILogger<PolicyService> logger)
     {
         _builder = builder;
         _plans = plans;
         _gate = gate;
+        _policy = policy.Value;
+        _execution = execution;
         _logger = logger;
     }
 
@@ -122,8 +130,28 @@ public sealed class PolicyService
             return new PlanDecisionResult(PlanDecisionKind.Expired, await _plans.GetAsync(userId, id));
         }
 
-        var summaryJson = WithNote(plan.SummaryJson, plan.DryRun ? DryRunNote : QueuedNote);
+        // Живой план (dry_run = 0): срок продлевается до конца БЛИЖАЙШЕЙ сессии, в которой ещё можно выставить заявки (подтверждение вечером — исполнение завтра
+        // утром, а не «истёк до исполнения»); заметка — по ТЕКУЩИМ воротам (они могли закрыться после построения плана).
+        DateTime? extendTo = null;
+        string note;
+        if (plan.DryRun)
+        {
+            note = DryRunNote;
+        }
+        else
+        {
+            var gate = await _gate.ResolveAsync(userId);
+            extendTo = ExecutionDeadline(plan, nowUtc);
+            note = !gate.Live
+                ? "не будет исполнен: исполнение сейчас закрыто — " + string.Join("; ", gate.Reasons)
+                : extendTo is { } until && !plan.Lines.All(l => TradingHours.IsOpen(MarketOf(l), nowUtc, _policy))
+                    ? QueuedNote + string.Create(CultureInfo.InvariantCulture, $" — ждёт открытия торгов, срок до {TradingHours.ToMoscow(until):dd.MM HH:mm} МСК")
+                    : QueuedNote;
+        }
+
+        var summaryJson = WithNote(plan.SummaryJson, note);
         var ok = await _plans.TransitionAsync(userId, id, [PlanStatuses.PendingApproval, PlanStatuses.Draft], PlanStatuses.Approved, via, nowUtc, summaryJson);
+        if (ok && extendTo is { } deadline && deadline > plan.ExpiresAt) await _plans.ExtendExpiryAsync(userId, id, deadline);
         var current = await _plans.GetAsync(userId, id);
         return new PlanDecisionResult(ok ? PlanDecisionKind.Ok : PlanDecisionKind.Conflict, current);
     }
@@ -141,6 +169,24 @@ public sealed class PolicyService
     }
 
     /// <summary>Дописывает заметку режима в <c>summary_json</c> (при битом JSON возвращает исходную строку).</summary>
+    private static PolicyMarket MarketOf(TradePlanLine line) => TradingHours.MarketOf(line.Broker, line.Ticker, null);
+
+    /// <summary>
+    /// Конец ближайшей сессии, в которой ещё можно выставить заявки по ВСЕМ строкам (раньше всех закрывающийся рынок; рынок строки — по брокеру и тикеру, класс
+    /// бумаги здесь неизвестен → T-Invest считается Мосбиржей, консервативно). Запас — <c>Execution:CancelBeforeClose</c>. null — без ограничений часов.
+    /// </summary>
+    private DateTime? ExecutionDeadline(TradePlan plan, DateTime nowUtc)
+    {
+        DateTime? deadline = null;
+        foreach (var line in plan.Lines)
+        {
+            var close = TradingHours.NextSessionCloseUtc(MarketOf(line), nowUtc, _policy, _execution.CurrentValue.CancelBeforeClose);
+            if (close is { } c && (deadline is null || c < deadline)) deadline = c;
+        }
+
+        return deadline;
+    }
+
     internal static string? WithNote(string? summaryJson, string note)
     {
         if (string.IsNullOrWhiteSpace(summaryJson)) return JsonSerializer.Serialize(new TradePlanSummary { ExecutionNote = note }, JsonOptions);

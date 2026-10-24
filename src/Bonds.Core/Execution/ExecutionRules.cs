@@ -1,4 +1,5 @@
 using System.Globalization;
+using Bonds.Core.Capital;
 using Bonds.Core.Models;
 using Bonds.Core.Policy;
 
@@ -64,12 +65,17 @@ public static class OrderPricing
     /// (<c>est_amount</c> — сумма с НКД — плюс <c>est_fee</c>) пропорционально лотам и масштабированная вверх, если цена выше утверждённой
     /// (вниз не масштабируется — консервативно). Единицы цены сокращаются (пункты/пункты или рубли/рубли).
     /// </summary>
-    public static decimal RequiredMoney(TradePlanLine line, decimal brokerPrice, long lots)
+    public static decimal RequiredMoney(TradePlanLine line, decimal brokerPrice, long lots) => Scaled(line, line.EstAmount + line.EstFee, brokerPrice, lots);
+
+    /// <summary>Сумма заявки без комиссии (<c>est_amount</c> пропорционально лотам, масштаб вверх при цене выше утверждённой) — для лимита авто на заявку, в валюте строки.</summary>
+    public static decimal OrderAmount(TradePlanLine line, decimal brokerPrice, long lots) => Scaled(line, line.EstAmount, brokerPrice, lots);
+
+    private static decimal Scaled(TradePlanLine line, decimal amount, decimal brokerPrice, long lots)
     {
         if (line.QuantityLots <= 0) return 0m;
         var approved = ApprovedLimit(line);
         var priceFactor = approved > 0m ? Math.Max(1m, brokerPrice / approved) : 1m;
-        return (line.EstAmount + line.EstFee) * lots / line.QuantityLots * priceFactor;
+        return amount * lots / line.QuantityLots * priceFactor;
     }
 
     /// <summary>Порядок отправки строк: сначала продажи (освобождают деньги), затем покупки; внутри — по номеру строки.</summary>
@@ -116,6 +122,12 @@ public sealed record PreflightInput
     public decimal AutoPlanBuysRub { get; init; }
     public decimal AutoPerDayRub { get; init; }
 
+    /// <summary>Только для <c>AutoApproved</c>: лимит ОДНОЙ заявки, рубли (<see cref="ExecutionLimitsOptions.AutoPerOrderRub"/>). null — план не авто.</summary>
+    public decimal? AutoPerOrderRub { get; init; }
+
+    /// <summary>Сумма этой заявки по её цене (оценка строки пропорционально лотам, масштабированная вверх при цене выше утверждённой), в валюте строки, без комиссии.</summary>
+    public decimal OrderAmount { get; init; }
+
     public bool Paused { get; init; }
 
     /// <summary>До закрытия сессии больше <c>CancelBeforeClose</c> и рынок открыт.</summary>
@@ -127,7 +139,7 @@ public sealed record PreflightFailure(string Code, string Message);
 
 /// <summary>
 /// Предполётные проверки заявки (задача 65) — чистая функция, ВСЕ проверки до любого вызова отправки. Порядок: пауза → сессия → свежая котировка →
-/// дрейф mid от утверждённого лимита → статус торгов → api_trade_available → деньги/бумаги → суточный лимит авто. Возвращает первую не прошедшую (null — можно отправлять).
+/// дрейф mid от утверждённого лимита → статус торгов → api_trade_available → деньги/бумаги → лимит авто на заявку → суточный лимит авто. Возвращает первую не прошедшую (null — можно отправлять).
 /// </summary>
 public static class PreflightChecks
 {
@@ -140,6 +152,7 @@ public static class PreflightChecks
     public const string InsufficientFunds = "insufficient_funds";
     public const string InsufficientPosition = "insufficient_position";
     public const string AutoDayLimit = "auto_day_limit";
+    public const string AutoOrderLimit = "auto_order_limit";
     public const string InvalidOrder = "invalid_order";
 
     public static PreflightFailure? Evaluate(PreflightInput i)
@@ -165,6 +178,8 @@ public static class PreflightChecks
         {
             if (i.AvailableMoney is null || i.AvailableMoney.Value < i.RequiredMoney)
                 return new(InsufficientFunds, string.Create(CultureInfo.InvariantCulture, $"Не хватает денег: нужно {i.RequiredMoney:0.##}, свободно {(i.AvailableMoney ?? 0m):0.##}"));
+            if (i.AutoPerOrderRub is { } cap && i.OrderAmount > cap)
+                return new(AutoOrderLimit, string.Create(CultureInfo.InvariantCulture, $"Лимит авто-исполнения на заявку: {i.OrderAmount:0.##} ₽ больше {cap:0.##} ₽"));
             if (i.AutoUsedTodayRub is { } used && used + i.AutoPlanBuysRub > i.AutoPerDayRub)
                 return new(AutoDayLimit, string.Create(CultureInfo.InvariantCulture, $"Суточный лимит авто-исполнения: уже {used:0.##} ₽ + план {i.AutoPlanBuysRub:0.##} ₽ больше {i.AutoPerDayRub:0.##} ₽"));
         }
@@ -217,5 +232,87 @@ public static class PlanExecutionOutcome
     {
         if (lines.Count > 0 && lines.All(l => l.Filled >= l.Requested)) return PlanStatuses.Done;
         return lines.Any(l => l.Filled > 0) ? PlanStatuses.PartiallyDone : PlanStatuses.Failed;
+    }
+}
+
+/// <summary>
+/// Суточный лимит авто-исполнения по ФАКТУ (задача 65, ревью): исполненное — <c>lots_filled × lot_size × avg_fill_price</c> (рубли, цена ОДНОЙ штуки), ещё не
+/// завершённое (план ждёт исполнителя или строка в работе) — оценка <c>est_amount</c> пропорционально неисполненным лотам. Только покупки в RUB.
+/// </summary>
+public static class AutoDayUsage
+{
+    private static readonly HashSet<string> TerminalPlans = [PlanStatuses.Done, PlanStatuses.PartiallyDone, PlanStatuses.Failed];
+
+    public static decimal SpentRub(IEnumerable<TradePlan> plans, IEnumerable<TradeOrder> orders, ulong? excludePlanId = null)
+    {
+        var byPlan = orders.ToLookup(o => o.PlanId);
+        var total = 0m;
+        foreach (var plan in plans)
+        {
+            if (excludePlanId is { } exclude && plan.Id == exclude) continue;
+            var planTerminal = TerminalPlans.Contains(plan.Status);
+            foreach (var line in plan.Lines.Where(l => l.Side == PlanSides.Buy && IsRub(l.Currency)))
+            {
+                var lineOrders = byPlan[plan.Id].Where(o => o.LineNo == line.LineNo).ToList();
+                total += FilledAmount(line, lineOrders);
+                var state = LineExecutionState.From(line, lineOrders);
+                if (!planTerminal && !state.Terminal && line.QuantityLots > 0)
+                    total += line.EstAmount * state.RemainingLots / line.QuantityLots;
+            }
+        }
+
+        return total;
+    }
+
+    /// <summary>Исполненная сумма строки: Σ лоты × лотность × средняя цена штуки (нет цены — утверждённая цена штуки <c>limit_price</c>), в валюте строки.</summary>
+    public static decimal FilledAmount(TradePlanLine line, IEnumerable<TradeOrder> orders) =>
+        orders.Where(o => o.LotsFilled > 0).Sum(o => o.LotsFilled * line.LotSize * (o.AvgFillPrice ?? line.LimitPrice));
+
+    private static bool IsRub(string currency) => currency.Trim().ToUpperInvariant() is "RUB" or "RUR";
+}
+
+/// <summary>
+/// Повторная проверка <c>AutoApproved</c>-плана в момент исполнения (ревью задачи 65): то же, что разрешило авто-подтверждение (<see cref="PolicyKit.DecideStatus"/>),
+/// на ТЕКУЩИХ настройках — только покупки в RUB, не облигации, каждая строка ≤ лимита на заявку, бумага — член (правило «instrument», T-Invest) корзины с
+/// включённой авто-покупкой (дизайн §5: белый список — фонды корзины «Ликвидность»; авто-покупку корзин включает только владелец).
+/// </summary>
+public static class AutoExecutionWhitelist
+{
+    /// <summary>null — план можно исполнять как авто; иначе причина отказа.</summary>
+    public static string? Check(TradePlan plan, IReadOnlyCollection<CapitalBasket> baskets, decimal autoPerOrderRub)
+    {
+        var allowed = baskets.Where(b => b.AutoBuy)
+            .SelectMany(b => b.Members)
+            .Where(m => m.MatchRule == BasketMatchRules.Instrument && string.Equals(m.Broker, Bonds.Core.Models.Brokers.TInvest, StringComparison.OrdinalIgnoreCase))
+            .Select(m => m.InstrumentKey)
+            .ToList();
+        foreach (var line in plan.Lines)
+        {
+            if (line.Side != PlanSides.Buy) return $"авто-исполнение — только покупки ({line.Ticker})";
+            if (!string.Equals(line.Currency.Trim(), "RUB", StringComparison.OrdinalIgnoreCase)) return $"авто-исполнение — только рубли ({line.Ticker})";
+            if (OrderPricing.IsPointsPriced(line)) return $"облигации исполняются только после подтверждения ({line.Ticker})";
+            if (line.EstAmount > autoPerOrderRub)
+                return string.Create(CultureInfo.InvariantCulture, $"заявка {line.Ticker} на {line.EstAmount:0.##} ₽ больше лимита авто {autoPerOrderRub:0.##} ₽");
+            var keys = new[] { BasketDriftService.NormalizeKey(line.InstrumentKey), BasketDriftService.NormalizeKey(line.Ticker) };
+            if (!allowed.Any(m => keys.Any(k => BasketDriftService.KeyMatches(m, k))))
+                return $"бумага {line.Ticker} не входит в корзину с авто-покупкой";
+        }
+
+        return null;
+    }
+}
+
+/// <summary>Средняя цена исполнения ОДНОЙ штуки (ревью задачи 65 — семантика полей T-Invest разная у ответа на отправку заявки и у <c>OrderState</c>).</summary>
+public static class FillPrice
+{
+    /// <summary>
+    /// Есть ИТОГОВАЯ исполненная сумма заявки (<paramref name="executedAmount"/>, валюта) — средняя = сумма / (лоты × лотность), штуки; иначе
+    /// <paramref name="perPieceFallback"/> (цена штуки от брокера). Нет исполнения — null.
+    /// </summary>
+    public static decimal? PerPiece(decimal? executedAmount, long lotsExecuted, decimal lotSize, decimal? perPieceFallback)
+    {
+        if (lotsExecuted <= 0) return null;
+        if (executedAmount is > 0m && lotSize > 0m) return executedAmount.Value / (lotsExecuted * lotSize);
+        return perPieceFallback;
     }
 }

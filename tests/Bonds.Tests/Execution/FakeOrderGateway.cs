@@ -27,6 +27,12 @@ public sealed class FakeOrderGateway : ITInvestOrderGateway
     /// <summary>Брокер «не знает» заявок (GetOrderState → null), даже отправленных.</summary>
     public bool ForgetOrders { get; set; }
 
+    /// <summary>Снятие бросает это исключение (например, нет токена / чужой счёт / брокер отказал). Попытка всё равно записывается в <see cref="Cancelled"/>.</summary>
+    public Exception? CancelError { get; set; }
+
+    /// <summary>GetOrderState/GetOrders бросают это исключение.</summary>
+    public Exception? StateError { get; set; }
+
     public int PostCount
     {
         get { lock (_lock) return Posted.Count; }
@@ -66,11 +72,13 @@ public sealed class FakeOrderGateway : ITInvestOrderGateway
 
     public Task<GatewayOrderState?> GetOrderStateAsync(ulong userId, string accountId, string clientOrderId, CancellationToken ct = default)
     {
+        if (StateError is { } error) throw error;
         lock (_lock) return Task.FromResult(ForgetOrders ? null : States.GetValueOrDefault(clientOrderId));
     }
 
     public Task<IReadOnlyList<GatewayOrderState>> GetActiveOrdersAsync(ulong userId, string accountId, CancellationToken ct = default)
     {
+        if (StateError is { } error) throw error;
         lock (_lock)
         {
             return Task.FromResult<IReadOnlyList<GatewayOrderState>>(ForgetOrders
@@ -84,6 +92,7 @@ public sealed class FakeOrderGateway : ITInvestOrderGateway
         lock (_lock)
         {
             Cancelled.Add(clientOrderId);
+            if (CancelError is { } error) throw error;
             if (States.TryGetValue(clientOrderId, out var s) && s.Status is TradeOrderStatuses.Submitted or TradeOrderStatuses.PartiallyFilled)
                 States[clientOrderId] = s with { Status = TradeOrderStatuses.Cancelled };
             return Task.CompletedTask;

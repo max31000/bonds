@@ -31,10 +31,10 @@ public static class ExecutionSettingsEndpoints
     private static IResult ValidationFailure(string error) =>
         Results.Json(new { error, type = "ValidationException" }, statusCode: StatusCodes.Status422UnprocessableEntity);
 
-    private static async Task<IResult> GetExecution(ICurrentUser currentUser, IExecutionGateResolver gate)
+    private static async Task<IResult> GetExecution(ICurrentUser currentUser, IExecutionGateResolver gate, ITradeOrderRepository orders)
     {
         if (await currentUser.GetUserIdAsync() is not { } userId) return Results.NotFound();
-        return Results.Ok(ToDto(await gate.ResolveAsync(userId)));
+        return Results.Ok(ToDto(await gate.ResolveAsync(userId)) with { ActiveOrders = (await orders.ListActiveByUserAsync(userId)).Count });
     }
 
     private static async Task<IResult> PutMode(
@@ -104,4 +104,7 @@ public sealed record ExecutionStateDto
     public required bool Paused { get; init; }
     public required bool Live { get; init; }
     public required IReadOnlyList<string> Reasons { get; init; }
+
+    /// <summary>Активные заявки пользователя у брокера — независимо от режима и ворот (только в <c>GET</c>; в ответах PUT — 0).</summary>
+    public int ActiveOrders { get; init; }
 }

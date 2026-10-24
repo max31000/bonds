@@ -56,6 +56,9 @@ public sealed record PlanOrderDto
     public string? ErrorMessage { get; init; }
     public required DateTime CreatedAt { get; init; }
     public required DateTime UpdatedAt { get; init; }
+
+    /// <summary>Заявка активна у нас, а снять её автоматически нельзя (ушло уведомление «снимите её в терминале брокера») — нужно действие пользователя.</summary>
+    public bool NeedsAttention { get; init; }
 }
 
 /// <summary>План сделок. <see cref="Id"/> = 0 у предпросмотра (не сохранён). Суммы <see cref="Summary"/> — в валюте портфеля плана.</summary>
@@ -72,6 +75,9 @@ public sealed record PlanDto
     public string? DecidedVia { get; init; }
     public TradePlanSummary? Summary { get; init; }
     public required IReadOnlyList<PlanLineDto> Lines { get; init; }
+
+    /// <summary>Хоть одна заявка плана требует действия пользователя (<see cref="PlanOrderDto.NeedsAttention"/>). План при этом остаётся <c>Submitting</c>.</summary>
+    public bool NeedsAttention { get; init; }
 }
 
 public sealed record PlansResponseDto
@@ -80,6 +86,9 @@ public sealed record PlansResponseDto
 
     /// <summary>Режим наблюдения пользователя: true — сделки не отправляются (ворота исполнения закрыты, задача 65).</summary>
     public required bool DryRun { get; init; }
+
+    /// <summary>Сколько заявок пользователя активно у брокера (<c>New</c>/<c>Submitted</c>/<c>PartiallyFilled</c>) — НЕЗАВИСИМО от ворот и режима (баннер «Есть активные заявки у брокера»).</summary>
+    public int ActiveOrders { get; init; }
 
     public required string Disclaimer { get; init; }
 }

@@ -50,6 +50,7 @@ public static class PlansEndpoints
         {
             Items = plans.Select(p => ToDto(p, byPlan[p.Id].ToList())).ToList(),
             DryRun = dryRun,
+            ActiveOrders = (await orders.ListActiveByUserAsync(userId)).Count,
             Disclaimer = dryRun ? Disclaimer : LiveDisclaimer,
         });
     }
@@ -171,7 +172,11 @@ public static class PlansEndpoints
         DecidedVia = plan.DecidedVia,
         Summary = ParseSummary(plan.SummaryJson),
         Lines = plan.Lines.Select(l => ToDto(l, orders.Where(o => o.LineNo == l.LineNo).OrderBy(o => o.Attempt).ToList())).ToList(),
+        NeedsAttention = orders.Any(NeedsAttention),
     };
+
+    /// <summary>Заявка активна, а исполнитель уже сообщил, что снять её автоматически нельзя (<c>halt_alerted_at</c>).</summary>
+    private static bool NeedsAttention(TradeOrder o) => o.HaltAlertedAt is not null && TradeOrderStatuses.IsActive(o.Status);
 
     /// <summary>Предпросмотр (черновик без id).</summary>
     internal static PlanDto ToDto(TradePlanDraft draft) => new()
@@ -225,6 +230,7 @@ public static class PlansEndpoints
                 ErrorMessage = o.ErrorMessage,
                 CreatedAt = Utc(o.CreatedAt),
                 UpdatedAt = Utc(o.UpdatedAt),
+                NeedsAttention = NeedsAttention(o),
             }).ToList(),
         };
     }

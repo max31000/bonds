@@ -41,6 +41,21 @@ public sealed class ExecutionTickResult
 /// <b>Сопровождение.</b> Не исполнена за <c>RepriceAfter</c> — снятие и новая попытка ближе к противоположной стороне стакана в пределах дрейфа от УТВЕРЖДЁННОГО лимита
 /// (<see cref="OrderPricing.PriceForAttempt"/>), не больше <c>MaxAttempts</c>, затем <c>Expired</c>. За <c>CancelBeforeClose</c> до закрытия сессии висящие снимаются.
 /// Исполнение строки — сверка комиссии с моделью (<see cref="FeeReconciliation"/>), уведомление; план завершён — итог Done/PartiallyDone/Failed и синк портфеля.
+/// Комиссия 0 сразу после исполнения при ненулевой модельной (брокер присылает её с задержкой) — сверка и уведомление откладываются до
+/// <c>Execution:MaxFeeRechecks</c> тиков с перечитыванием состояния (<c>trade_orders.fee_rechecks</c>/<c>fee_checked_at</c>); план закрывается после сверки.
+/// </para>
+/// <para>
+/// <b>Вне часов торгов</b> подтверждённый план ждёт в <c>Approved</c>/<c>AutoApproved</c> (не стартует), пока сессия не откроется и до <c>expires_at</c>
+/// (ручным планам срок продлевается при подтверждении до конца ближайшей сессии — <c>PolicyService.ApproveAsync</c>).
+/// </para>
+/// <para>
+/// <b>AutoApproved</b> перепроверяется в момент исполнения на ТЕКУЩИХ настройках: белый список и лимит на заявку (<see cref="AutoExecutionWhitelist"/>) при старте,
+/// лимит на заявку по цене заявки и суточный лимит по ФАКТУ исполненного (<see cref="AutoDayUsage"/>) перед каждой отправкой.
+/// </para>
+/// <para>
+/// <b>Снять нельзя</b> (нет торгового токена, токен на другой счёт, брокер отказал): одно уведомление на заявку «снимите её в терминале брокера» и отметка
+/// <c>trade_orders.halt_alerted_at</c>; план ОСТАЁТСЯ <c>Submitting</c> (выбранный вариант: не новый статус — исполнимые фильтры, лимиты и отмена продолжают
+/// работать как есть), сверка и попытка снять повторяются каждый тик, пока заявка у нас активна. В API это видно как <c>needsAttention</c> и баннер активных заявок.
 /// </para>
 /// </summary>
 public sealed class PlanExecutionEngine
@@ -50,6 +65,7 @@ public sealed class PlanExecutionEngine
     private readonly IInstrumentTradingMetaRepository _meta;
     private readonly IAccountRepository _accounts;
     private readonly IUserCredentialRepository _credentialRecords;
+    private readonly ICapitalBasketRepository _baskets;
     private readonly ITInvestOrderGateway _gateway;
     private readonly IExecutionGateResolver _gate;
     private readonly IExecutionNotifier _notifier;
@@ -65,6 +81,7 @@ public sealed class PlanExecutionEngine
         IInstrumentTradingMetaRepository meta,
         IAccountRepository accounts,
         IUserCredentialRepository credentialRecords,
+        ICapitalBasketRepository baskets,
         ITInvestOrderGateway gateway,
         IExecutionGateResolver gate,
         IExecutionNotifier notifier,
@@ -79,6 +96,7 @@ public sealed class PlanExecutionEngine
         _meta = meta;
         _accounts = accounts;
         _credentialRecords = credentialRecords;
+        _baskets = baskets;
         _gateway = gateway;
         _gate = gate;
         _notifier = notifier;
@@ -209,11 +227,24 @@ public sealed class PlanExecutionEngine
         {
             reject = "некорректное количество лотов";
         }
+        else if (plan.DecidedVia == DecidedVia.Auto
+                 && AutoExecutionWhitelist.Check(plan, await _baskets.GetByUserAsync(ctx.UserId), _limits.AutoPerOrderRub) is { } notAllowed)
+        {
+            reject = "авто-исполнение не разрешено: " + notAllowed;
+        }
 
         if (reject is not null)
         {
             if (await _plans.SetExecutionStatusAsync(ctx.UserId, plan.Id, Startable, toStatus, WithNote(plan.SummaryJson, "не исполнен: " + reject)))
                 await _notifier.NotifyAsync(ctx.UserId, new BotMessage(ExecutionMessages.PlanNotStarted(plan, reject)), ct);
+            return false;
+        }
+
+        // Вне часов торгов (или в окне перед закрытием) план не стартует, а ждёт открытия сессии в своём статусе — до expires_at (проверено выше).
+        var metas = await MetasAsync(plan);
+        if (plan.Lines.Any(l => IsClosingWindow(l, metas.GetValueOrDefault(l.InstrumentKey), ctx.NowUtc)))
+        {
+            ctx.Result.Notes.Add($"plan {plan.Id}: waiting for trading session");
             return false;
         }
 
@@ -237,13 +268,16 @@ public sealed class PlanExecutionEngine
             return;
         }
 
-        var metas = (await _meta.GetByKeysAsync(Brokers.TInvest, plan.Lines.Select(l => l.InstrumentKey).Distinct(StringComparer.OrdinalIgnoreCase).ToList()))
-            .GroupBy(m => m.InstrumentKey, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+        var metas = await MetasAsync(plan);
 
         foreach (var line in OrderPricing.ExecutionOrder(plan.Lines))
         {
-            if (LineState(line, orders).Terminal) continue;
+            if (LineState(line, orders).Terminal)
+            {
+                if (FeePending(line, orders)) await RecheckFeeAsync(plan, line, orders, ctx, ct);
+                continue;
+            }
+
             var terminal = await AdvanceLineAsync(plan, line, orders, metas.GetValueOrDefault(line.InstrumentKey), ctx, ct);
             if (!terminal) return; // строка в работе — следующая ждёт (по одной строке, продажи раньше покупок)
         }
@@ -251,8 +285,17 @@ public sealed class PlanExecutionEngine
         await FinalizeAsync(plan, orders, ctx, ct);
     }
 
+    private async Task<Dictionary<string, InstrumentTradingMeta>> MetasAsync(TradePlan plan) =>
+        (await _meta.GetByKeysAsync(Brokers.TInvest, plan.Lines.Select(l => l.InstrumentKey).Distinct(StringComparer.OrdinalIgnoreCase).ToList()))
+        .GroupBy(m => m.InstrumentKey, StringComparer.OrdinalIgnoreCase)
+        .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+
     private static LineExecutionState LineState(TradePlanLine line, IEnumerable<TradeOrder> orders) =>
         LineExecutionState.From(line, orders.Where(o => o.LineNo == line.LineNo).ToList());
+
+    /// <summary>Итоговая сверка комиссии строки отложена (комиссия ещё не пришла) — строка исполнена, но план не закрывается, пока сверка не пройдёт.</summary>
+    private static bool FeePending(TradePlanLine line, IEnumerable<TradeOrder> orders) =>
+        orders.Where(o => o.LineNo == line.LineNo).OrderByDescending(o => o.Attempt).FirstOrDefault() is { FeeRechecks: > 0, FeeCheckedAt: null };
 
     /// <summary>Продвигает строку на шаг. true — строка завершена (можно переходить к следующей).</summary>
     private async Task<bool> AdvanceLineAsync(TradePlan plan, TradePlanLine line, List<TradeOrder> orders, InstrumentTradingMeta? meta, Ctx ctx, CancellationToken ct)
@@ -262,7 +305,7 @@ public sealed class PlanExecutionEngine
 
         if (state.Active is { } active)
         {
-            if (!await RefreshAsync(active, ctx, ct)) return false;
+            if (await RefreshAsync(active, line, ctx, ct) != RefreshOutcome.Updated) return false;
             switch (active.Status)
             {
                 case TradeOrderStatuses.New:
@@ -279,7 +322,8 @@ public sealed class PlanExecutionEngine
                 default:
                     if (closing)
                     {
-                        if (!await CancelAsync(active, TradeOrderStatuses.Cancelled, TradeOrderErrorCodes.SessionClose, "снята перед закрытием сессии", ctx, ct)) return false;
+                        if (await CancelAsync(active, line, TradeOrderStatuses.Cancelled, TradeOrderErrorCodes.SessionClose, "снята перед закрытием сессии", ctx, ct) != CancelOutcome.Done)
+                            return false;
                         if (active.Status != TradeOrderStatuses.Filled)
                         {
                             await OnLineTerminalAsync(plan, line, orders, "снята перед закрытием сессии", ctx, ct);
@@ -292,9 +336,9 @@ public sealed class PlanExecutionEngine
                     if (ctx.NowUtc - active.CreatedAt < Opt.RepriceAfter) return false;
 
                     var last = active.Attempt >= Opt.MaxAttempts;
-                    if (!await CancelAsync(
-                            active, last ? TradeOrderStatuses.Expired : TradeOrderStatuses.Cancelled, last ? TradeOrderErrorCodes.Expired : TradeOrderErrorCodes.Reprice,
-                            last ? "не исполнена за отведённые попытки" : "перевыставление", ctx, ct))
+                    if (await CancelAsync(
+                            active, line, last ? TradeOrderStatuses.Expired : TradeOrderStatuses.Cancelled, last ? TradeOrderErrorCodes.Expired : TradeOrderErrorCodes.Reprice,
+                            last ? "не исполнена за отведённые попытки" : "перевыставление", ctx, ct) != CancelOutcome.Done)
                         return false;
                     if (last && active.Status != TradeOrderStatuses.Filled)
                     {
@@ -375,12 +419,17 @@ public sealed class PlanExecutionEngine
         var price = OrderPricing.PriceForAttempt(line.Side, approved, book.Bid, book.Ask, step.Value, drift, attempt, Opt.MaxAttempts, state.Last?.LimitPrice);
         var lots = state.RemainingLots;
 
+        // AutoApproved: суточный лимит по ФАКТУ — исполненное других планов дня (лоты × средняя цена) + оценка ещё не исполненного, плюс этот план так же.
         decimal? autoUsed = null;
+        decimal? autoPerOrder = null;
         var autoPlanBuys = 0m;
         if (plan.DecidedVia == DecidedVia.Auto)
         {
-            autoUsed = await _plans.SumAutoApprovedRubSinceAsync(ctx.UserId, MoscowDayStartUtc(ctx.NowUtc), plan.Id);
-            autoPlanBuys = plan.Lines.Where(l => l.Side == PlanSides.Buy && string.Equals(l.Currency, "RUB", StringComparison.OrdinalIgnoreCase)).Sum(l => l.EstAmount);
+            var dayPlans = await _plans.ListAutoDayPlansAsync(ctx.UserId, MoscowDayStartUtc(ctx.NowUtc));
+            var dayOrders = await _orders.ListByPlansAsync(dayPlans.Where(p => p.Id != plan.Id).Select(p => p.Id).ToList());
+            autoUsed = AutoDayUsage.SpentRub(dayPlans, dayOrders, plan.Id);
+            autoPlanBuys = AutoDayUsage.SpentRub([plan], orders);
+            autoPerOrder = _limits.AutoPerOrderRub;
         }
 
         var failure = PreflightChecks.Evaluate(new PreflightInput
@@ -406,6 +455,8 @@ public sealed class PlanExecutionEngine
             AutoUsedTodayRub = autoUsed,
             AutoPlanBuysRub = autoPlanBuys,
             AutoPerDayRub = _limits.AutoPerDayRub,
+            AutoPerOrderRub = autoPerOrder,
+            OrderAmount = OrderPricing.OrderAmount(line, price, lots),
             Paused = gate.Paused,
             SessionOpenForNewOrders = !closing,
         });
@@ -438,13 +489,20 @@ public sealed class PlanExecutionEngine
             var posted = await _gateway.PostLimitOrderAsync(
                 ctx.UserId, new GatewayLimitOrder(ctx.BrokerAccountId, meta.Uid!, line.Side, lots, price, order.PriceUnit, order.ClientOrderId), ct);
             ctx.Result.OrdersPosted++;
-            Apply(order, posted, ctx.NowUtc);
+            OrderStateMapping.Apply(order, posted, line.LotSize, ctx.NowUtc);
             await _orders.UpdateAsync(order);
         }
         catch (TInvestGatewayException ex) when (ex.Kind == GatewayErrorKind.Rejected)
         {
-            order.Status = ex.Code == "gate_closed" ? TradeOrderStatuses.Failed : TradeOrderStatuses.Rejected;
-            order.ErrorCode = ex.Code == "gate_closed" ? TradeOrderErrorCodes.Halted : TradeOrderErrorCodes.BrokerRejected;
+            // Определённый отказ — заявки у брокера нет. gate_closed (ворота закрылись) и price_grid (цена не легла в Quotation) — до брокера не дошло: Failed.
+            var notSent = ex.Code is "gate_closed" or TradeOrderErrorCodes.PriceGrid;
+            order.Status = notSent ? TradeOrderStatuses.Failed : TradeOrderStatuses.Rejected;
+            order.ErrorCode = ex.Code switch
+            {
+                "gate_closed" => TradeOrderErrorCodes.Halted,
+                TradeOrderErrorCodes.PriceGrid => TradeOrderErrorCodes.PriceGrid,
+                _ => TradeOrderErrorCodes.BrokerRejected,
+            };
             order.ErrorMessage = ex.Message;
             order.UpdatedAt = ctx.NowUtc;
             await _orders.UpdateAsync(order);
@@ -476,9 +534,34 @@ public sealed class PlanExecutionEngine
 
     // ─── Сверка и снятие ───────────────────────────────────────────────────────────────────
 
-    /// <summary>Обновляет заявку по брокеру. false — состояние неизвестно (сбой сети или ещё не подтвердилась) — ждём следующего тика.</summary>
-    private async Task<bool> RefreshAsync(TradeOrder order, Ctx ctx, CancellationToken ct)
+    private enum RefreshOutcome
     {
+        /// <summary>Состояние обновлено (или заявка закрыта как неподтверждённая).</summary>
+        Updated,
+
+        /// <summary>Брокер заявку пока не знает, таймаут не вышел — ждём.</summary>
+        Pending,
+
+        /// <summary>Сбой сети/перегрузка — повтор на следующем тике.</summary>
+        Unavailable,
+
+        /// <summary>Определённый отказ (нет токена, нет прав на счёт) — сверить нельзя, пока не исправят токен.</summary>
+        Impossible,
+    }
+
+    private enum CancelOutcome
+    {
+        Done,
+        Retry,
+
+        /// <summary>Снять нельзя: нет токена/счёта, токен на другой счёт или брокер отказал снять активную заявку.</summary>
+        Impossible,
+    }
+
+    /// <summary>Обновляет заявку по брокеру. Не <see cref="RefreshOutcome.Updated"/> — состояние неизвестно, ждём следующего тика.</summary>
+    private async Task<RefreshOutcome> RefreshAsync(TradeOrder order, TradePlanLine line, Ctx ctx, CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(ctx.BrokerAccountId)) return RefreshOutcome.Impossible;
         GatewayOrderState? state;
         try
         {
@@ -490,13 +573,13 @@ public sealed class PlanExecutionEngine
         catch (TInvestGatewayException ex)
         {
             _logger.LogWarning("Execution: order state unavailable for {ClientOrderId} ({Code})", order.ClientOrderId, ex.Code);
-            return false;
+            return ex.Kind == GatewayErrorKind.Transient ? RefreshOutcome.Unavailable : RefreshOutcome.Impossible;
         }
 
         if (state is null)
         {
             var since = order.Status == TradeOrderStatuses.New ? order.CreatedAt : order.UpdatedAt;
-            if (ctx.NowUtc - since < Opt.UnconfirmedOrderTimeout) return false;
+            if (ctx.NowUtc - since < Opt.UnconfirmedOrderTimeout) return RefreshOutcome.Pending;
 
             // Брокер заявку не знает: отправки не было или она потеряна. Повторно НЕ отправляем — закрываем строку и просим проверить вручную.
             order.Status = TradeOrderStatuses.Failed;
@@ -504,12 +587,12 @@ public sealed class PlanExecutionEngine
             order.ErrorMessage = "Состояние заявки не подтвердилось у брокера — повторно не отправлялась, проверьте терминал";
             order.UpdatedAt = ctx.NowUtc;
             await _orders.UpdateAsync(order);
-            return true;
+            return RefreshOutcome.Updated;
         }
 
-        Apply(order, state, ctx.NowUtc);
+        OrderStateMapping.Apply(order, state, line.LotSize, ctx.NowUtc);
         await _orders.UpdateAsync(order);
-        return true;
+        return RefreshOutcome.Updated;
     }
 
     /// <summary>Снятие брокером без нашей команды. true — строка продолжается перевыставлением; false — окончательно.</summary>
@@ -533,10 +616,15 @@ public sealed class PlanExecutionEngine
 
     /// <summary>
     /// Снимает заявку и фиксирует итог (<paramref name="finalStatus"/> + код). Перед фиксацией состояние перечитывается: если заявка успела исполниться — остаётся
-    /// <c>Filled</c>. false — снять не удалось (сбой сети), повтор на следующем тике.
+    /// <c>Filled</c>. <see cref="CancelOutcome.Retry"/> — сбой сети или брокер ещё не подтвердил снятие (повтор на следующем тике);
+    /// <see cref="CancelOutcome.Impossible"/> — снять нельзя (нет счёта/токена, чужой счёт, брокер отказал снять активную заявку): одно уведомление пользователю
+    /// (<see cref="AlertCancelImpossibleAsync"/>), попытки продолжаются каждый тик.
     /// </summary>
-    private async Task<bool> CancelAsync(TradeOrder order, string finalStatus, string code, string message, Ctx ctx, CancellationToken ct)
+    private async Task<CancelOutcome> CancelAsync(TradeOrder order, TradePlanLine line, string finalStatus, string code, string message, Ctx ctx, CancellationToken ct)
     {
+        if (string.IsNullOrEmpty(ctx.BrokerAccountId)) return await AlertCancelImpossibleAsync(order, line, ctx, ct);
+
+        var refused = false;
         try
         {
             await _gateway.CancelOrderAsync(ctx.UserId, ctx.BrokerAccountId, order.ClientOrderId, ct);
@@ -545,35 +633,42 @@ public sealed class PlanExecutionEngine
         catch (TInvestGatewayException ex) when (ex.Kind == GatewayErrorKind.Transient)
         {
             _logger.LogWarning("Execution: cancel of {ClientOrderId} failed ({Code}) — will retry", order.ClientOrderId, ex.Code);
-            return false;
+            return CancelOutcome.Retry;
         }
         catch (TInvestGatewayException ex)
         {
-            // Отказ снять (уже исполнена/снята) — истину покажет сверка ниже.
+            // Отказ снять (уже исполнена/снята — или токена нет/чужой счёт) — истину покажет сверка ниже.
+            refused = true;
             _logger.LogInformation("Execution: cancel of {ClientOrderId} refused ({Code})", order.ClientOrderId, ex.Code);
         }
 
         try
         {
-            if (await _gateway.GetOrderStateAsync(ctx.UserId, ctx.BrokerAccountId, order.ClientOrderId, ct) is { } state) Apply(order, state, ctx.NowUtc);
+            if (await _gateway.GetOrderStateAsync(ctx.UserId, ctx.BrokerAccountId, order.ClientOrderId, ct) is { } state)
+                OrderStateMapping.Apply(order, state, line.LotSize, ctx.NowUtc);
+        }
+        catch (TInvestGatewayException ex) when (ex.Kind == GatewayErrorKind.Transient)
+        {
+            _logger.LogWarning("Execution: post-cancel state of {ClientOrderId} unavailable ({Code}) — will retry", order.ClientOrderId, ex.Code);
+            return CancelOutcome.Retry;
         }
         catch (TInvestGatewayException ex)
         {
-            _logger.LogWarning("Execution: post-cancel state of {ClientOrderId} unavailable ({Code}) — will retry", order.ClientOrderId, ex.Code);
-            return false;
+            _logger.LogWarning("Execution: post-cancel state of {ClientOrderId} refused ({Code})", order.ClientOrderId, ex.Code);
+            return await AlertCancelImpossibleAsync(order, line, ctx, ct);
         }
 
         if (order.Status == TradeOrderStatuses.Filled)
         {
             await _orders.UpdateAsync(order);
-            return true;
+            return CancelOutcome.Done;
         }
 
         if (TradeOrderStatuses.IsActive(order.Status) && order.Status != TradeOrderStatuses.New)
         {
-            // Брокер ещё показывает заявку активной — дождёмся подтверждения снятия.
+            // Брокер ещё показывает заявку активной: после принятого снятия — ждём подтверждения; после отказа снять — снять нельзя.
             await _orders.UpdateAsync(order);
-            return false;
+            return refused ? await AlertCancelImpossibleAsync(order, line, ctx, ct) : CancelOutcome.Retry;
         }
 
         order.Status = finalStatus;
@@ -581,23 +676,21 @@ public sealed class PlanExecutionEngine
         order.ErrorMessage = message;
         order.UpdatedAt = ctx.NowUtc;
         await _orders.UpdateAsync(order);
-        return true;
+        return CancelOutcome.Done;
     }
 
-    private static void Apply(TradeOrder order, GatewayOrderState state, DateTime nowUtc)
+    /// <summary>
+    /// Снять заявку автоматически нельзя: ОДНО уведомление на заявку «снимите её в терминале брокера» (<c>halt_alerted_at</c>), без повторов. Заявка остаётся
+    /// активной у нас, сверка/снятие повторяются каждый тик.
+    /// </summary>
+    private async Task<CancelOutcome> AlertCancelImpossibleAsync(TradeOrder order, TradePlanLine line, Ctx ctx, CancellationToken ct)
     {
-        if (!string.IsNullOrEmpty(state.BrokerOrderId)) order.BrokerOrderId = state.BrokerOrderId;
-        order.Status = state.Status;
-        order.LotsFilled = Math.Max(order.LotsFilled, state.LotsExecuted);
-        if (state.AvgFillPrice is { } avg) order.AvgFillPrice = avg;
-        if (state.ExecutedCommission is { } fee) order.ExecutedCommission = fee;
-        if (state.Status == TradeOrderStatuses.Rejected)
-        {
-            order.ErrorCode = TradeOrderErrorCodes.BrokerRejected;
-            order.ErrorMessage = state.Message ?? "Брокер отклонил заявку";
-        }
-
-        order.UpdatedAt = nowUtc;
+        _logger.LogWarning("Execution: order {ClientOrderId} cannot be cancelled automatically", order.ClientOrderId);
+        if (order.HaltAlertedAt is not null) return CancelOutcome.Impossible;
+        order.HaltAlertedAt = ctx.NowUtc;
+        await _orders.UpdateAsync(order);
+        await _notifier.NotifyAsync(ctx.UserId, new BotMessage(ExecutionMessages.CancelImpossible(line.Ticker, Math.Max(0, order.LotsRequested - order.LotsFilled))), ct);
+        return CancelOutcome.Impossible;
     }
 
     // ─── Итоги строк и планов ──────────────────────────────────────────────────────────────
@@ -634,9 +727,27 @@ public sealed class PlanExecutionEngine
         var lineOrders = orders.Where(o => o.LineNo == line.LineNo).ToList();
         var filled = lineOrders.Sum(o => o.LotsFilled);
         var currency = NormalizeCurrency(line.Currency);
+        var lastOrder = lineOrders.OrderByDescending(o => o.Attempt).FirstOrDefault();
         if (filled > 0)
         {
             var commission = lineOrders.Sum(o => o.ExecutedCommission ?? 0m);
+
+            // Комиссия 0 сразу после исполнения при ненулевой модельной — брокер ещё не прислал её: откладываем сверку и уведомление (перечитаем на следующих тиках).
+            if (commission == 0m && lastOrder is { FeeCheckedAt: null } && lastOrder.FeeRechecks < Opt.MaxFeeRechecks
+                && FeeReconciliation.IsMismatch(line, filled, 0m, Opt.FeeMismatchThreshold))
+            {
+                lastOrder.FeeRechecks++;
+                lastOrder.UpdatedAt = ctx.NowUtc;
+                await _orders.UpdateAsync(lastOrder);
+                return;
+            }
+
+            if (lastOrder is not null)
+            {
+                lastOrder.FeeCheckedAt = ctx.NowUtc;
+                await _orders.UpdateAsync(lastOrder);
+            }
+
             var weighted = lineOrders.Where(o => o.LotsFilled > 0 && o.AvgFillPrice is not null).ToList();
             decimal? avg = weighted.Count == 0 ? null : weighted.Sum(o => o.AvgFillPrice!.Value * o.LotsFilled) / weighted.Sum(o => o.LotsFilled);
             await _notifier.NotifyAsync(ctx.UserId, new BotMessage(ExecutionMessages.Filled(plan, line, filled, avg, commission, currency)), ct);
@@ -651,7 +762,7 @@ public sealed class PlanExecutionEngine
 
         if (filled < line.QuantityLots && reason is not null)
         {
-            var last = lineOrders.OrderByDescending(o => o.Attempt).FirstOrDefault();
+            var last = lastOrder;
             var text = last?.Status is TradeOrderStatuses.Cancelled or TradeOrderStatuses.Expired
                 ? ExecutionMessages.Cancelled(plan, line, reason)
                 : ExecutionMessages.Failed(plan, line, reason);
@@ -659,10 +770,39 @@ public sealed class PlanExecutionEngine
         }
     }
 
+    /// <summary>Отложенная сверка комиссии: перечитать комиссию исполненных заявок строки (только её) и повторить итог строки.</summary>
+    private async Task RecheckFeeAsync(TradePlan plan, TradePlanLine line, List<TradeOrder> orders, Ctx ctx, CancellationToken ct)
+    {
+        var lineOrders = orders.Where(o => o.LineNo == line.LineNo).ToList();
+        if (!string.IsNullOrEmpty(ctx.BrokerAccountId))
+        {
+            foreach (var o in lineOrders.Where(o => o.LotsFilled > 0 && (o.ExecutedCommission ?? 0m) == 0m))
+            {
+                try
+                {
+                    if (await _gateway.GetOrderStateAsync(ctx.UserId, ctx.BrokerAccountId, o.ClientOrderId, ct) is { ExecutedCommission: { } fee } && fee != 0m)
+                    {
+                        o.ExecutedCommission = fee;
+                        o.UpdatedAt = ctx.NowUtc;
+                        await _orders.UpdateAsync(o);
+                    }
+                }
+                catch (TInvestGatewayException ex)
+                {
+                    _logger.LogInformation("Execution: commission re-read of {ClientOrderId} unavailable ({Code})", o.ClientOrderId, ex.Code);
+                }
+            }
+        }
+
+        var filled = lineOrders.Sum(o => o.LotsFilled);
+        var last = lineOrders.OrderByDescending(o => o.Attempt).FirstOrDefault();
+        await OnLineTerminalAsync(plan, line, orders, filled < line.QuantityLots ? last?.ErrorMessage ?? "исполнено не полностью" : null, ctx, ct);
+    }
+
     private async Task FinalizeAsync(TradePlan plan, List<TradeOrder> orders, Ctx ctx, CancellationToken ct)
     {
         var states = plan.Lines.Select(l => (Line: l, State: LineState(l, orders))).ToList();
-        if (states.Any(s => !s.State.Terminal)) return;
+        if (states.Any(s => !s.State.Terminal) || plan.Lines.Any(l => FeePending(l, orders))) return;
 
         var outcome = PlanExecutionOutcome.Resolve(states.Select(s => (s.Line.QuantityLots, s.State.FilledLots)).ToList());
         var note = outcome switch
@@ -681,7 +821,8 @@ public sealed class PlanExecutionEngine
 
     /// <summary>
     /// Ворота закрыты (или токен не прошёл сверку): НИЧЕГО не отправляем. Неначатые планы → Failed с причиной; у исполняемых висящие заявки снимаются (снятие — не
-    /// отправка, оно уменьшает риск), неначатые строки → Failed, план закрывается итогом. Без торгового токена снять нельзя — план остаётся Submitting до следующего тика.
+    /// отправка, оно уменьшает риск), неначатые строки → Failed, план закрывается итогом. Снять нельзя (нет токена, чужой счёт, брокер отказал) — одно уведомление
+    /// на заявку «снимите её в терминале брокера», план остаётся Submitting и попытки повторяются каждый тик.
     /// </summary>
     private async Task HaltAsync(ulong userId, Account? primary, IReadOnlyList<TradePlan> plans, string reason, DateTime nowUtc, ExecutionTickResult result, CancellationToken ct)
     {
@@ -707,13 +848,29 @@ public sealed class PlanExecutionEngine
         foreach (var line in OrderPricing.ExecutionOrder(plan.Lines))
         {
             var state = LineState(line, orders);
-            if (state.Terminal) continue;
+            if (state.Terminal)
+            {
+                if (FeePending(line, orders)) await RecheckFeeAsync(plan, line, orders, ctx, ct);
+                continue;
+            }
+
             if (state.Active is { } active)
             {
-                if (active.Status == TradeOrderStatuses.New && !await RefreshAsync(active, ctx, ct)) { allStopped = false; continue; }
+                if (active.Status == TradeOrderStatuses.New)
+                {
+                    var refreshed = await RefreshAsync(active, line, ctx, ct);
+                    if (refreshed != RefreshOutcome.Updated)
+                    {
+                        // Заявка могла дойти до брокера, а сверить её нельзя — пусть пользователь проверит терминал (одно уведомление).
+                        if (refreshed == RefreshOutcome.Impossible) await AlertCancelImpossibleAsync(active, line, ctx, ct);
+                        allStopped = false;
+                        continue;
+                    }
+                }
+
                 if (TradeOrderStatuses.IsActive(active.Status))
                 {
-                    if (string.IsNullOrEmpty(ctx.BrokerAccountId) || !await CancelAsync(active, TradeOrderStatuses.Cancelled, code, reason, ctx, ct))
+                    if (await CancelAsync(active, line, TradeOrderStatuses.Cancelled, code, reason, ctx, ct) != CancelOutcome.Done)
                     {
                         _logger.LogWarning("Execution: could not cancel order {ClientOrderId} of plan {PlanId} while stopping", active.ClientOrderId, plan.Id);
                         allStopped = false;

@@ -34,6 +34,15 @@ public interface ITradePlanRepository
     /// </summary>
     Task<decimal> SumAutoApprovedRubSinceAsync(ulong userId, DateTime sinceUtc, ulong? excludePlanId = null);
 
+    /// <summary>
+    /// Планы (со строками), входящие в суточный лимит авто-исполнения с <paramref name="sinceUtc"/> (по <c>decided_at</c>): <c>Submitting</c>, <c>PartiallyDone</c>,
+    /// <c>Done</c>, <c>Failed</c> и <c>AutoApproved</c> с <c>dry_run = 0</c>. Суммы считает исполнитель по ФАКТУ заявок (<c>AutoDayUsage</c>), а не по оценке.
+    /// </summary>
+    Task<IReadOnlyList<TradePlan>> ListAutoDayPlansAsync(ulong userId, DateTime sinceUtc);
+
+    /// <summary>Продлевает <c>expires_at</c> подтверждённого плана (только вперёд: <c>GREATEST</c>). false — план не в <c>Approved</c>.</summary>
+    Task<bool> ExtendExpiryAsync(ulong userId, ulong id, DateTime expiresAtUtc);
+
     /// <summary>Пользователи, у которых есть что исполнять: план в <c>Submitting</c> или <c>Approved</c>/<c>AutoApproved</c> с <c>dry_run = 0</c> (задача 65).</summary>
     Task<IReadOnlyList<ulong>> ListUserIdsWithExecutablePlansAsync();
 

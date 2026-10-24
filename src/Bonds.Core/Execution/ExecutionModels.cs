@@ -52,6 +52,12 @@ public static class TradeOrderErrorCodes
     public const string Preflight = "preflight";
     public const string BrokerRejected = "broker_rejected";
     public const string Expired = "expired";
+
+    /// <summary>Цена не легла на сетку Quotation (точнее 10^-9) — заявка НЕ отправлялась (ошибка до вызова брокера).</summary>
+    public const string PriceGrid = "price_grid";
+
+    /// <summary>Снята перед удалением/заменой торгового токена (<c>?cancelActive=true</c>).</summary>
+    public const string TokenChange = "token_change";
 }
 
 /// <summary>Единица цены заявки: облигации T-Invest — ПУНКТЫ (процент номинала), остальное — валюта цены за 1 штуку.</summary>
@@ -92,6 +98,18 @@ public sealed class TradeOrder
     public string? ErrorMessage { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
+
+    /// <summary>
+    /// Когда ушло ЕДИНСТВЕННОЕ уведомление «заявка не снята автоматически — снимите её в терминале брокера» (снять нельзя: нет токена, чужой счёт, брокер
+    /// отказал). null — не отправлялось. Пока заявка активна у нас, исполнитель продолжает сверку каждый тик, но повторно не уведомляет.
+    /// </summary>
+    public DateTime? HaltAlertedAt { get; set; }
+
+    /// <summary>Сколько раз итоговая сверка комиссии строки отложена (брокер ещё не прислал комиссию: 0 сразу после исполнения). Ведётся на последней заявке строки.</summary>
+    public int FeeRechecks { get; set; }
+
+    /// <summary>Когда строка (по последней заявке) прошла итоговую сверку комиссии и уведомление об исполнении. null — ещё нет.</summary>
+    public DateTime? FeeCheckedAt { get; set; }
 }
 
 /// <summary>

@@ -3,6 +3,7 @@ using Bonds.Api.Auth;
 using Bonds.Api.Middleware;
 using Bonds.Core.Credentials;
 using Bonds.Core.Interfaces.Repositories;
+using Bonds.Infrastructure.Execution;
 
 namespace Bonds.Api.Endpoints;
 
@@ -12,6 +13,9 @@ namespace Bonds.Api.Endpoints;
 /// <item><c>GET /api/credentials</c> — строка на КАЖДОГО провайдера реестра (незаданные — <c>status: "missing"</c>).</item>
 /// <item><c>PUT /api/credentials/{provider}</c> — валидация (<see cref="ICredentialValidator"/>) ДО сохранения.</item>
 /// <item><c>DELETE /api/credentials/{provider}</c> — 204.</item>
+/// <item><c>tinvest_trade</c> (задача 65, ревью M1): удаление или замена ДРУГИМ токеном при активных заявках у брокера — 409 (<c>type: "ActiveOrders"</c>),
+/// пока нет <c>?cancelActive=true</c>; с ним заявки сначала синхронно снимаются ТЕКУЩИМ токеном (<see cref="TradeTokenChangeGuard"/>), и только потом токен
+/// удаляется/заменяется; хоть одна не снята — 409, токен не меняется.</item>
 /// <item><c>GET /api/capabilities</c> — какие части функционала включены (флаг true только при status ok).</item>
 /// </list>
 /// <para>
@@ -52,7 +56,9 @@ public static class CredentialsEndpoints
         IUserCredentialStore store,
         IAccountRepository accountRepo,
         IEnumerable<ICredentialValidator> validators,
-        CancellationToken ct)
+        TradeTokenChangeGuard tradeGuard,
+        CancellationToken ct,
+        bool? cancelActive = null)
     {
         var descriptor = CredentialProviders.Find(provider)
             ?? throw new NotFoundException($"Неизвестный провайдер: {provider}");
@@ -84,12 +90,22 @@ public static class CredentialsEndpoints
             return ValidationFailure(validation.Message ?? "Секрет не прошёл проверку");
         }
 
-        var previous = descriptor.Id == CredentialProviders.TInvestRead
+        var previous = descriptor.Id is CredentialProviders.TInvestRead or CredentialProviders.TInvestTrade
             ? await store.GetSecretAsync(userId, descriptor.Id)
             : null;
 
         var last4 = validation.Last4 ?? descriptor.ComputeLast4(fields);
-        await store.SaveAsync(userId, descriptor.Id, fields, last4, validation.MetaJson);
+        Task Save() => store.SaveAsync(userId, descriptor.Id, fields, last4, validation.MetaJson);
+        if (descriptor.Id == CredentialProviders.TInvestTrade && previous is not null && previous.GetValueOrDefault("token") != fields["token"])
+        {
+            // Замена торгового токена ДРУГИМ: висящие заявки должны быть сняты текущим токеном, иначе их больше никто не снимет.
+            var outcome = await tradeGuard.RunAsync(userId, cancelActive == true, Save, DateTime.UtcNow, ct);
+            if (!outcome.Ok) return ActiveOrdersConflict(outcome);
+        }
+        else
+        {
+            await Save();
+        }
 
         if (descriptor.Id == CredentialProviders.TInvestRead)
         {
@@ -101,14 +117,24 @@ public static class CredentialsEndpoints
         return Results.Ok(ToDto(descriptor, saved));
     }
 
-    private static async Task<IResult> DeleteCredential(string provider, ICurrentUser currentUser, IUserCredentialStore store)
+    private static async Task<IResult> DeleteCredential(
+        string provider, ICurrentUser currentUser, IUserCredentialStore store, TradeTokenChangeGuard tradeGuard, CancellationToken ct, bool? cancelActive = null)
     {
         var descriptor = CredentialProviders.Find(provider)
             ?? throw new NotFoundException($"Неизвестный провайдер: {provider}");
         var userId = await ResolveUserIdAsync(currentUser);
+        if (descriptor.Id == CredentialProviders.TInvestTrade)
+        {
+            var outcome = await tradeGuard.RunAsync(userId, cancelActive == true, () => store.DeleteAsync(userId, descriptor.Id), DateTime.UtcNow, ct);
+            return outcome.Ok ? Results.NoContent() : ActiveOrdersConflict(outcome);
+        }
+
         await store.DeleteAsync(userId, descriptor.Id);
         return Results.NoContent();
     }
+
+    private static IResult ActiveOrdersConflict(TokenChangeOutcome outcome) =>
+        Results.Json(new { error = outcome.Error, type = "ActiveOrders", activeOrders = outcome.ActiveOrders }, statusCode: StatusCodes.Status409Conflict);
 
     private static async Task<IResult> GetCapabilities(ICurrentUser currentUser, IUserCredentialStore store)
     {

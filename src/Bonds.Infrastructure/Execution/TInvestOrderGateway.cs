@@ -12,8 +12,9 @@ namespace Bonds.Infrastructure.Execution;
 
 /// <summary>
 /// Реализация <see cref="ITInvestOrderGateway"/> поверх официального SDK (<c>Tinkoff.InvestApi</c> 0.6.22.1, контракт сверен отражением сборки — см. README коннектора).
-/// Клиент строится по торговому токену пользователя (<c>tinvest_trade</c> из <see cref="IUserCredentialStore"/>) и кэшируется на время scope; конфиг
-/// <c>TInvest:Sandbox</c> переключает контур, как у синка. Токен не логируется и не попадает в исключения. Scoped.
+/// Клиент строится по торговому токену пользователя (<c>tinvest_trade</c> из <see cref="IUserCredentialStore"/>) и берётся из singleton-кэша
+/// <see cref="TInvestTradeClientCache"/> по (пользователь, SHA-256 токена): канал gRPC переиспользуется между тиками и пересоздаётся только при смене токена;
+/// внутри scope токен читается один раз. Конфиг <c>TInvest:Sandbox</c> переключает контур, как у синка. Токен не логируется и не попадает в исключения. Scoped.
 /// <para>
 /// <b>Цена заявки:</b> <see cref="GatewayLimitOrder.Price"/> переводится в <see cref="Quotation"/> ровно один раз — <see cref="TInvestNumeric.ToQuotation"/>; единицы задаёт
 /// <c>PriceType</c>: облигации — <see cref="PriceType.Point"/> (пункты, процент номинала), остальное — <see cref="PriceType.Currency"/> (валюта за штуку).
@@ -27,13 +28,16 @@ public sealed class TInvestOrderGateway : ITInvestOrderGateway
     private readonly IExecutionGateResolver _gate;
     private readonly IConfiguration _configuration;
     private readonly ILogger<TInvestOrderGateway> _logger;
-    private readonly Dictionary<ulong, InvestApiClient> _clients = new();
+    private readonly TInvestTradeClientCache _cache;
+    private readonly Dictionary<ulong, InvestApiClient> _scopeClients = new();
 
-    public TInvestOrderGateway(IUserCredentialStore credentials, IExecutionGateResolver gate, IConfiguration configuration, ILogger<TInvestOrderGateway> logger)
+    public TInvestOrderGateway(
+        IUserCredentialStore credentials, IExecutionGateResolver gate, IConfiguration configuration, TInvestTradeClientCache cache, ILogger<TInvestOrderGateway> logger)
     {
         _credentials = credentials;
         _gate = gate;
         _configuration = configuration;
+        _cache = cache;
         _logger = logger;
     }
 
@@ -44,14 +48,19 @@ public sealed class TInvestOrderGateway : ITInvestOrderGateway
         Sandbox = _configuration.GetValue<bool?>("TInvest:Sandbox") ?? false,
     });
 
-    private async Task<InvestApiClient> ClientForAsync(ulong userId)
+    /// <summary>Клиент по ТЕКУЩЕМУ сохранённому торговому токену: в scope — один раз, между scope — из <see cref="TInvestTradeClientCache"/>.</summary>
+    internal async Task<InvestApiClient> ClientForAsync(ulong userId)
     {
-        if (_clients.TryGetValue(userId, out var cached)) return cached;
+        if (_scopeClients.TryGetValue(userId, out var scoped)) return scoped;
         var secret = await _credentials.GetSecretResultAsync(userId, CredentialProviders.TInvestTrade);
         if (secret.Outcome != CredentialReadOutcome.Ok || secret.Fields is null || !secret.Fields.TryGetValue("token", out var token) || string.IsNullOrWhiteSpace(token))
+        {
+            _cache.Invalidate(userId);
             throw new TInvestGatewayException(GatewayErrorKind.Rejected, "no_trade_token", "Торговый токен T-Invest не задан или не расшифровался");
-        var client = CreateClient(token);
-        _clients[userId] = client;
+        }
+
+        var client = _cache.GetOrCreate(userId, token, CreateClient);
+        _scopeClients[userId] = client;
         return client;
     }
 
@@ -78,13 +87,24 @@ public sealed class TInvestOrderGateway : ITInvestOrderGateway
         if (order.Lots <= 0 || order.Price <= 0m || !Guid.TryParse(order.ClientOrderId, out _))
             throw new TInvestGatewayException(GatewayErrorKind.Rejected, "invalid_order", "Некорректная заявка");
 
+        // Цена — в Quotation ДО любого сетевого вызова: не легла на сетку 10^-9 — определённый отказ (код price_grid), заявка НЕ отправлялась.
+        Quotation price;
+        try
+        {
+            price = TInvestNumeric.ToQuotation(order.Price);
+        }
+        catch (ArgumentException)
+        {
+            throw new TInvestGatewayException(GatewayErrorKind.Rejected, TradeOrderErrorCodes.PriceGrid, "Цена заявки не на сетке шага (точнее 10^-9) — заявка не отправлялась");
+        }
+
         var client = await ClientForAsync(userId);
         var request = new PostOrderRequest
         {
             AccountId = order.AccountId,
             InstrumentId = order.InstrumentUid,
             Quantity = order.Lots,
-            Price = TInvestNumeric.ToQuotation(order.Price),
+            Price = price,
             PriceType = order.PriceUnit == OrderPriceUnits.Points ? PriceType.Point : PriceType.Currency,
             Direction = order.Side == PlanSides.Sell ? OrderDirection.Sell : OrderDirection.Buy,
             OrderType = OrderType.Limit,
@@ -94,10 +114,7 @@ public sealed class TInvestOrderGateway : ITInvestOrderGateway
         _logger.LogInformation(
             "Posting limit order {ClientOrderId}: {Side} {Lots} lot(s) of {InstrumentUid} at {Price} {Unit}", order.ClientOrderId, order.Side, order.Lots, order.InstrumentUid, order.Price, order.PriceUnit);
         var response = await CallAsync(async () => await client.Orders.PostOrderAsync(request, cancellationToken: ct), "PostOrder");
-        return new GatewayOrderState(
-            response.OrderId, order.ClientOrderId, MapStatus(response.ExecutionReportStatus), response.LotsRequested, response.LotsExecuted,
-            AvgPrice(response.ExecutedOrderPrice, response.LotsExecuted), response.ExecutedCommission.ToNullableDecimal(), CurrencyOf(response.ExecutedOrderPrice ?? response.InitialOrderPrice),
-            Trim(response.Message));
+        return MapPosted(response, order.ClientOrderId);
     }
 
     public async Task<GatewayOrderState?> GetOrderStateAsync(ulong userId, string accountId, string clientOrderId, CancellationToken ct = default)
@@ -172,15 +189,32 @@ public sealed class TInvestOrderGateway : ITInvestOrderGateway
 
     // ─── Маппинг и ошибки ──────────────────────────────────────────────────────────────────
 
-    private static GatewayOrderState Map(OrderState s) => new(
-        s.OrderId, string.IsNullOrEmpty(s.OrderRequestId) ? null : s.OrderRequestId, MapStatus(s.ExecutionReportStatus), s.LotsRequested, s.LotsExecuted,
-        AvgPrice(s.ExecutedOrderPrice, s.LotsExecuted), s.ExecutedCommission.ToNullableDecimal(), CurrencyOf(s.ExecutedOrderPrice ?? s.InitialOrderPrice), null);
+    /// <summary>
+    /// Ответ <c>PostOrder</c>. Семантика по XML-документации SDK 0.6.22.1: <c>PostOrderResponse.executed_order_price</c> — «исполненная СРЕДНЯЯ цена ОДНОГО
+    /// инструмента в заявке» → <see cref="GatewayOrderState.AvgFillPrice"/> (цена штуки), итоговой суммы в ответе нет (<see cref="GatewayOrderState.ExecutedAmount"/> = null).
+    /// </summary>
+    internal static GatewayOrderState MapPosted(PostOrderResponse r, string clientOrderId) => new(
+        r.OrderId, clientOrderId, MapStatus(r.ExecutionReportStatus), r.LotsRequested, r.LotsExecuted,
+        r.LotsExecuted > 0 ? r.ExecutedOrderPrice.ToNullableDecimal() : null, r.ExecutedCommission.ToNullableDecimal(), CurrencyOf(r.ExecutedOrderPrice ?? r.InitialOrderPrice),
+        Trim(r.Message));
 
     /// <summary>
-    /// <c>ExecutedOrderPrice</c> — средняя цена исполнения ОДНОГО инструмента (документация T-Invest), MoneyValue в валюте (облигации — уже рубли с учётом номинала,
-    /// не пункты). Нет исполнения — null.
+    /// <c>GetOrderState</c>/<c>GetOrders</c>. ВНИМАНИЕ — у <c>OrderState</c> поле с тем же именем значит другое: <c>executed_order_price</c> — «исполненная цена
+    /// заявки, ПРОИЗВЕДЕНИЕ средней цены на количество» (итоговая сумма исполненного, валюта, без комиссии) → <see cref="GatewayOrderState.ExecutedAmount"/>; среднюю
+    /// цену ШТУКИ считает исполнитель (<see cref="FillPrice.PerPiece"/>: сумма / (лоты × лотность)). Запасной вариант цены штуки — средневзвешенная по стадиям
+    /// исполнения (<c>OrderStage.price</c> — «цена за 1 инструмент», <c>quantity</c> — лоты). <c>average_position_price</c> («средняя цена позиции по сделке»)
+    /// неоднозначно и не используется. Облигации — рубли (MoneyValue), не пункты.
     /// </summary>
-    private static decimal? AvgPrice(MoneyValue? executed, long lotsExecuted) => lotsExecuted > 0 ? executed.ToNullableDecimal() : null;
+    internal static GatewayOrderState Map(OrderState s)
+    {
+        decimal? stagesAvg = null;
+        var qty = s.Stages.Sum(st => st.Quantity);
+        if (qty > 0) stagesAvg = s.Stages.Sum(st => (st.Price.ToNullableDecimal() ?? 0m) * st.Quantity) / qty;
+        return new GatewayOrderState(
+            s.OrderId, string.IsNullOrEmpty(s.OrderRequestId) ? null : s.OrderRequestId, MapStatus(s.ExecutionReportStatus), s.LotsRequested, s.LotsExecuted,
+            s.LotsExecuted > 0 ? stagesAvg : null, s.ExecutedCommission.ToNullableDecimal(), CurrencyOf(s.ExecutedOrderPrice ?? s.InitialOrderPrice), null,
+            s.LotsExecuted > 0 ? s.ExecutedOrderPrice.ToNullableDecimal() : null);
+    }
 
     private static string? CurrencyOf(MoneyValue? value) => string.IsNullOrEmpty(value?.Currency) ? null : NormalizeCurrency(value.Currency);
 

@@ -126,6 +126,37 @@ public class TradePlanRepository : ITradePlanRepository
             new { UserId = userId, Since = sinceUtc, Exclude = excludePlanId });
     }
 
+    public async Task<IReadOnlyList<TradePlan>> ListAutoDayPlansAsync(ulong userId, DateTime sinceUtc)
+    {
+        using var conn = CreateConnection();
+        var plans = (await conn.QueryAsync<TradePlan>(
+            $@"SELECT {PlanColumns} FROM trade_plans
+               WHERE user_id = @UserId AND decided_at >= @Since
+                 AND (status IN ('Submitting', 'PartiallyDone', 'Done', 'Failed') OR (status = 'AutoApproved' AND dry_run = 0))
+               ORDER BY id",
+            new { UserId = userId, Since = sinceUtc })).ToList();
+        return await WithLinesAsync(conn, plans);
+    }
+
+    public async Task<bool> ExtendExpiryAsync(ulong userId, ulong id, DateTime expiresAtUtc)
+    {
+        using var conn = CreateConnection();
+        var affected = await conn.ExecuteAsync(
+            "UPDATE trade_plans SET expires_at = GREATEST(expires_at, @ExpiresAt) WHERE id = @Id AND user_id = @UserId AND status = 'Approved'",
+            new { Id = id, UserId = userId, ExpiresAt = expiresAtUtc });
+        return affected > 0;
+    }
+
+    private static async Task<IReadOnlyList<TradePlan>> WithLinesAsync(MySqlConnection conn, List<TradePlan> plans)
+    {
+        if (plans.Count == 0) return plans;
+        var lines = (await conn.QueryAsync<TradePlanLine>(
+            $"SELECT {LineColumns} FROM trade_plan_lines WHERE plan_id IN @Ids ORDER BY plan_id, line_no", new { Ids = plans.Select(p => p.Id).ToArray() })).ToList();
+        var byPlan = lines.GroupBy(l => l.PlanId).ToDictionary(g => g.Key, g => g.ToList());
+        foreach (var plan in plans) plan.Lines = byPlan.TryGetValue(plan.Id, out var l) ? l : [];
+        return plans;
+    }
+
     private const string ExecutableFilter =
         "(status = 'Submitting' OR (status IN ('Approved', 'AutoApproved') AND dry_run = 0))";
 
@@ -141,13 +172,7 @@ public class TradePlanRepository : ITradePlanRepository
         var plans = (await conn.QueryAsync<TradePlan>(
             $"SELECT {PlanColumns} FROM trade_plans WHERE user_id = @UserId AND {ExecutableFilter} ORDER BY id",
             new { UserId = userId })).ToList();
-        if (plans.Count == 0) return plans;
-
-        var lines = (await conn.QueryAsync<TradePlanLine>(
-            $"SELECT {LineColumns} FROM trade_plan_lines WHERE plan_id IN @Ids ORDER BY plan_id, line_no", new { Ids = plans.Select(p => p.Id).ToArray() })).ToList();
-        var byPlan = lines.GroupBy(l => l.PlanId).ToDictionary(g => g.Key, g => g.ToList());
-        foreach (var plan in plans) plan.Lines = byPlan.TryGetValue(plan.Id, out var l) ? l : [];
-        return plans;
+        return await WithLinesAsync(conn, plans);
     }
 
     public async Task<bool> SetExecutionStatusAsync(

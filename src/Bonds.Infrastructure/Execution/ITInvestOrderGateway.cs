@@ -5,7 +5,9 @@ public sealed record TInvestTradeAccount(string Id, bool FullAccess, bool Open);
 
 /// <summary>
 /// Состояние заявки у брокера. <see cref="Status"/> — значение <c>TradeOrderStatuses</c> (Submitted/PartiallyFilled/Filled/Cancelled/Rejected); лоты — целые;
-/// <see cref="AvgFillPrice"/> — средняя цена исполнения ОДНОЙ штуки в <see cref="Currency"/> (MoneyValue брокера), <see cref="ExecutedCommission"/> — комиссия заявки.
+/// <see cref="AvgFillPrice"/> — средняя цена исполнения ОДНОЙ штуки в <see cref="Currency"/> (MoneyValue брокера), <see cref="ExecutedCommission"/> — комиссия заявки;
+/// <see cref="ExecutedAmount"/> — ИТОГОВАЯ исполненная сумма заявки в валюте (без комиссии), если брокер её отдаёт (<c>OrderState</c>), иначе null. Есть сумма —
+/// исполнитель считает цену штуки сам: сумма / (лоты × лотность) (<see cref="Bonds.Core.Execution.FillPrice"/>).
 /// </summary>
 public sealed record GatewayOrderState(
     string BrokerOrderId,
@@ -16,7 +18,8 @@ public sealed record GatewayOrderState(
     decimal? AvgFillPrice,
     decimal? ExecutedCommission,
     string? Currency,
-    string? Message);
+    string? Message,
+    decimal? ExecutedAmount = null);
 
 /// <summary>Статус торгов бумагой (<c>GetTradingStatus</c>).</summary>
 public sealed record GatewayTradingStatus(bool NormalTrading, bool LimitOrderAvailable, bool ApiTradeAvailable);

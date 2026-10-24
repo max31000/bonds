@@ -30,7 +30,7 @@ public class TInvestOrderGatewayTests
         var gate = new Mock<IExecutionGateResolver>();
         gate.Setup(g => g.ResolveAsync(1)).ReturnsAsync(ExecutionGate.Evaluate(enabled, live ? ExecutionModes.Live : ExecutionModes.Observe, token, paused));
         var store = new Mock<IUserCredentialStore>(MockBehavior.Strict);
-        var gateway = new TInvestOrderGateway(store.Object, gate.Object, new ConfigurationBuilder().Build(), NullLogger<TInvestOrderGateway>.Instance);
+        var gateway = new TInvestOrderGateway(store.Object, gate.Object, new ConfigurationBuilder().Build(), new TInvestTradeClientCache(), NullLogger<TInvestOrderGateway>.Instance);
 
         var act = () => gateway.PostLimitOrderAsync(1, new GatewayLimitOrder("ACC", "uid", PlanSides.Buy, 1, 100m, OrderPriceUnits.Currency, Guid.NewGuid().ToString("D")));
 
@@ -45,7 +45,7 @@ public class TInvestOrderGatewayTests
         gate.Setup(g => g.ResolveAsync(1)).ReturnsAsync(ExecutionGate.Evaluate(true, ExecutionModes.Live, true, false));
         var store = new Mock<IUserCredentialStore>();
         store.Setup(s => s.GetSecretResultAsync(1, CredentialProviders.TInvestTrade)).ReturnsAsync(new CredentialSecretResult(CredentialReadOutcome.Missing, null));
-        var gateway = new TInvestOrderGateway(store.Object, gate.Object, new ConfigurationBuilder().Build(), NullLogger<TInvestOrderGateway>.Instance);
+        var gateway = new TInvestOrderGateway(store.Object, gate.Object, new ConfigurationBuilder().Build(), new TInvestTradeClientCache(), NullLogger<TInvestOrderGateway>.Instance);
 
         var act = () => gateway.PostLimitOrderAsync(1, new GatewayLimitOrder("ACC", "uid", PlanSides.Buy, 1, 100m, OrderPriceUnits.Currency, Guid.NewGuid().ToString("D")));
 

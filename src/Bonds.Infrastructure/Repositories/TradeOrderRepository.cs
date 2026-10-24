@@ -18,7 +18,8 @@ public class TradeOrderRepository : ITradeOrderRepository
         id AS Id, plan_id AS PlanId, line_no AS LineNo, attempt AS Attempt, client_order_id AS ClientOrderId, broker_order_id AS BrokerOrderId,
         status AS Status, limit_price AS LimitPrice, price_unit AS PriceUnit, lots_requested AS LotsRequested, lots_filled AS LotsFilled,
         avg_fill_price AS AvgFillPrice, executed_commission AS ExecutedCommission, currency AS Currency, error_code AS ErrorCode,
-        error_message AS ErrorMessage, created_at AS CreatedAt, updated_at AS UpdatedAt";
+        error_message AS ErrorMessage, created_at AS CreatedAt, updated_at AS UpdatedAt, halt_alerted_at AS HaltAlertedAt, fee_rechecks AS FeeRechecks,
+        fee_checked_at AS FeeCheckedAt";
 
     private static string? Truncate(string? value, int max) => value is null || value.Length <= max ? value : value[..max];
 
@@ -45,12 +46,14 @@ public class TradeOrderRepository : ITradeOrderRepository
         await conn.ExecuteAsync(
             @"UPDATE trade_orders
               SET broker_order_id = @BrokerOrderId, status = @Status, lots_filled = @LotsFilled, avg_fill_price = @AvgFillPrice,
-                  executed_commission = @ExecutedCommission, error_code = @ErrorCode, error_message = @ErrorMessage, updated_at = @UpdatedAt
+                  executed_commission = @ExecutedCommission, error_code = @ErrorCode, error_message = @ErrorMessage, updated_at = @UpdatedAt,
+                  halt_alerted_at = @HaltAlertedAt, fee_rechecks = @FeeRechecks, fee_checked_at = @FeeCheckedAt
               WHERE id = @Id",
             new
             {
                 order.Id, order.BrokerOrderId, order.Status, order.LotsFilled, order.AvgFillPrice, order.ExecutedCommission,
                 ErrorCode = Truncate(order.ErrorCode, 64), ErrorMessage = Truncate(order.ErrorMessage, 500), order.UpdatedAt,
+                order.HaltAlertedAt, order.FeeRechecks, order.FeeCheckedAt,
             });
     }
 
@@ -59,6 +62,16 @@ public class TradeOrderRepository : ITradeOrderRepository
         using var conn = CreateConnection();
         return (await conn.QueryAsync<TradeOrder>(
             $"SELECT {Columns} FROM trade_orders WHERE plan_id = @PlanId ORDER BY line_no, attempt", new { PlanId = planId })).ToList();
+    }
+
+    public async Task<IReadOnlyList<TradeOrder>> ListActiveByUserAsync(ulong userId)
+    {
+        using var conn = CreateConnection();
+        return (await conn.QueryAsync<TradeOrder>(
+            $@"SELECT {Columns} FROM trade_orders
+               WHERE plan_id IN (SELECT id FROM trade_plans WHERE user_id = @UserId) AND status IN ('New', 'Submitted', 'PartiallyFilled')
+               ORDER BY plan_id, line_no, attempt",
+            new { UserId = userId })).ToList();
     }
 
     public async Task<IReadOnlyList<TradeOrder>> ListByPlansAsync(IReadOnlyCollection<ulong> planIds)

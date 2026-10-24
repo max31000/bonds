@@ -40,11 +40,14 @@ public sealed class ExecutionOptions
     /// </summary>
     public bool EffectiveDryRun => !Enabled;
 
-    /// <summary>Допустимое отклонение mid стакана от УТВЕРЖДЁННОГО лимита для фондов/акций, ДОЛЯ (0.005 = 0.5%). Тот же предел ограничивает перевыставление.</summary>
-    public decimal MaxPriceDriftFraction { get; set; } = 0.005m;
+    /// <summary>
+    /// Допустимое отклонение mid стакана от УТВЕРЖДЁННОГО лимита для фондов/акций, ДОЛЯ (0.002 = 0.2%, значение дизайна §5 «Жёсткие лимиты»). Симметрично (вверх и
+    /// вниз); тот же предел ограничивает перевыставление.
+    /// </summary>
+    public decimal MaxPriceDriftFraction { get; set; } = 0.002m;
 
-    /// <summary>То же для облигаций (сравнение в пунктах), ДОЛЯ (0.01 = 1%).</summary>
-    public decimal MaxBondPriceDriftFraction { get; set; } = 0.01m;
+    /// <summary>То же для облигаций (сравнение в пунктах), ДОЛЯ (0.005 = 0.5%, дизайн §5). Симметрично.</summary>
+    public decimal MaxBondPriceDriftFraction { get; set; } = 0.005m;
 
     /// <summary>Не исполнена за это время — отмена и перевыставление ближе к противоположной стороне стакана.</summary>
     public TimeSpan RepriceAfter { get; set; } = TimeSpan.FromMinutes(5);
@@ -66,6 +69,12 @@ public sealed class ExecutionOptions
 
     /// <summary>Порог сверки комиссии: |факт − модель| больше этого (в валюте строки) — предупреждение в бот.</summary>
     public decimal FeeMismatchThreshold { get; set; } = 0.01m;
+
+    /// <summary>
+    /// Сколько тиков подряд откладывать итоговую сверку комиссии, если брокер прислал исполнение с комиссией 0, а модель ждёт ненулевую (комиссия у T-Invest
+    /// приходит с задержкой): каждый тик состояние перечитывается; после стольких попыток сверка идёт по тому, что есть.
+    /// </summary>
+    public int MaxFeeRechecks { get; set; } = 3;
 
     /// <summary>Предел дрейфа для строки: облигации (цена в пунктах) — <see cref="MaxBondPriceDriftFraction"/>, остальное — <see cref="MaxPriceDriftFraction"/>.</summary>
     public decimal DriftFor(bool isBond) => isBond ? MaxBondPriceDriftFraction : MaxPriceDriftFraction;

@@ -66,7 +66,7 @@ public class TInvestSandboxTests
             var gate = new Mock<IExecutionGateResolver>();
             gate.Setup(g => g.ResolveAsync(1)).ReturnsAsync(ExecutionGate.Evaluate(true, ExecutionModes.Live, true, false));
             var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["TInvest:Sandbox"] = "true" }).Build();
-            var gateway = new TInvestOrderGateway(store.Object, gate.Object, config, NullLogger<TInvestOrderGateway>.Instance);
+            var gateway = new TInvestOrderGateway(store.Object, gate.Object, config, new TInvestTradeClientCache(), NullLogger<TInvestOrderGateway>.Instance);
 
             var book = await gateway.GetOrderBookAsync(1, tmon.Uid);
             _out.WriteLine($"book bid {book.Bid} ask {book.Ask} at {book.TimestampUtc:O}");
@@ -105,7 +105,7 @@ public class TInvestSandboxTests
             var accounts = new Mock<IAccountRepository>();
             accounts.Setup(a => a.GetByUserIdAndBrokerAsync(1, BrokerIds.TInvest)).ReturnsAsync([new Bonds.Core.Models.Account { Id = 1, UserId = 1, BrokerAccountId = accountId }]);
             var engine = new PlanExecutionEngine(
-                plans, orders, meta.Object, accounts.Object, Mock.Of<IUserCredentialRepository>(), gateway, gate.Object, new NullExecutionNotifier(),
+                plans, orders, meta.Object, accounts.Object, Mock.Of<IUserCredentialRepository>(), Mock.Of<ICapitalBasketRepository>(), gateway, gate.Object, new NullExecutionNotifier(),
                 new NullPortfolioSyncTrigger(), Mock.Of<IOptionsMonitor<ExecutionOptions>>(m => m.CurrentValue == new ExecutionOptions { Enabled = true }),
                 Options.Create(new ExecutionLimitsOptions()), Options.Create(new PolicyOptions()), NullLogger<PlanExecutionEngine>.Instance);
 
