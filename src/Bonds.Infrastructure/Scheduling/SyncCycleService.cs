@@ -181,6 +181,10 @@ public sealed class SyncCycleService : ISyncCycleRunner
             result.Errors.Add($"Sync: непредвиденная ошибка ({ex.GetType().Name})");
         }
 
+        // --- 1-bis. T-Invest остальных пользователей (задача 67, #5): каждый пользователь с валидным tinvest_read синкается СВОИМ токеном в свой счёт.
+        // Основной путь выше не меняется. Сбой чужого синка — только лог (цикл владельца неуспешным не помечается, как у Freedom).
+        await SyncOtherTInvestUsersAsync(sp, accountId.Value, asOf, ct);
+
         // --- 1a. Watchlist: справочник/расписания/котировка бумаг без позиции.
         // Отдельный шаг, независимый от счёта/токена T-Invest — не влияет на позиции/сигналы ниже,
         // поэтому не должен блокировать остальной цикл при собственной ошибке.
@@ -291,6 +295,60 @@ public sealed class SyncCycleService : ISyncCycleRunner
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Задача 67 (#5): синк T-Invest для пользователей с валидным <c>tinvest_read</c>, кроме владельца основного счёта: отдельный DI-скоуп на пользователя
+    /// (scoped <see cref="ITInvestTokenProvider"/> привязывается к нему — клиент T-Invest строится по ЕГО токену), счёт T-Invest пользователя (нет —
+    /// создаётся, брокерский счёт привяжет первый синк), затем журнал/позиции, проекция денежного потока и снимок стоимости. Сигналы (уведомления
+    /// владельцу) для чужих счетов не запускаются.
+    /// </summary>
+    private async Task SyncOtherTInvestUsersAsync(IServiceProvider sp, ulong primaryAccountId, DateOnly asOf, CancellationToken ct)
+    {
+        var credentials = sp.GetService<IUserCredentialRepository>();
+        if (credentials is null) return; // шаг не зарегистрирован (юнит-тесты цикла)
+
+        IReadOnlyList<ulong> users;
+        ulong? owner;
+        try
+        {
+            owner = (await sp.GetRequiredService<IAccountRepository>().GetByIdAsync(primaryAccountId))?.UserId;
+            users = await credentials.ListUserIdsAsync(Bonds.Core.Credentials.CredentialProviders.TInvestRead, Bonds.Core.Credentials.CredentialStatus.Ok) ?? [];
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "T-Invest users lookup failed — other users are not synced this cycle");
+            return;
+        }
+
+        foreach (var userId in users.Where(u => u != owner).Distinct())
+        {
+            ct.ThrowIfCancellationRequested();
+            try
+            {
+                using var scope = _scopeFactory.CreateScope();
+                var usp = scope.ServiceProvider;
+                usp.GetRequiredService<ITInvestTokenProvider>().UseUser(userId);
+
+                var accounts = usp.GetRequiredService<IAccountRepository>();
+                var account = (await accounts.GetByUserIdAndBrokerAsync(userId, Brokers.TInvest) ?? []).OrderBy(a => a.Id).FirstOrDefault();
+                var accountId = account?.Id ?? await accounts.CreateAsync(new Account { UserId = userId, Broker = Brokers.TInvest });
+
+                var sync = await usp.GetRequiredService<BondSyncService>().SyncAsync(accountId, ct: ct);
+                if (sync.HasErrors) _logger.LogWarning("T-Invest sync of user {UserId} finished with problems: {Errors}", userId, string.Join("; ", sync.Errors));
+
+                await usp.GetRequiredService<CashFlowProjectionOrchestrator>().ProjectAccountAsync(accountId, asOf, ct: ct);
+                await usp.GetRequiredService<PortfolioSnapshotService>().ComputeAndStoreSnapshotAsync(accountId, asOf, ct);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "T-Invest sync of user {UserId} failed — their data keeps the previous values", userId);
+            }
+        }
     }
 
     private async Task RefreshFundMarketDataAsync(IServiceProvider sp, bool tInvestAvailable, CancellationToken ct)

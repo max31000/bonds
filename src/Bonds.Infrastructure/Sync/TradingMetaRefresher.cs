@@ -156,8 +156,15 @@ public sealed class TradingMetaRefresher
         var previous = existing.ToDictionary(m => m.InstrumentKey, StringComparer.OrdinalIgnoreCase);
 
         var queries = new List<string>();
-        var accountId = await _accounts.GetPrimaryAccountIdAsync();
-        if (accountId is { } acc)
+        // Задача 67 (#5): позиции не только основного счёта, но и счетов T-Invest всех пользователей с валидным tinvest_read (у каждого свой токен и свой
+        // портфель; метаданные торгов общие).
+        var accountIds = new List<ulong>();
+        if (await _accounts.GetPrimaryAccountIdAsync() is { } primaryAccount) accountIds.Add(primaryAccount);
+        foreach (var userId in await _credentials.ListUserIdsWithValidAsync(CredentialProviders.TInvestRead) ?? [])
+            foreach (var a in await _accounts.GetByUserIdAndBrokerAsync(userId, Brokers.TInvest) ?? [])
+                if (!accountIds.Contains(a.Id)) accountIds.Add(a.Id);
+
+        foreach (var acc in accountIds)
         {
             foreach (var p in await _positions.GetByAccountIdAsync(acc))
             {

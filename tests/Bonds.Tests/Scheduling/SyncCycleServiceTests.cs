@@ -53,6 +53,7 @@ public class SyncCycleServiceTests
     private readonly Mock<IInstrumentRiskLevelRepository> _riskLevels = new();
     private readonly Mock<IBondUniverseRepository> _universe = new();
     private readonly Mock<ISecurityDetailsRepository> _securityDetails = new();
+    private Mock<IUserCredentialRepository>? _credentialRecords;
 
     private void SetupNoPositionsHappyPath()
     {
@@ -114,6 +115,7 @@ public class SyncCycleServiceTests
         services.AddSingleton(_riskLevels.Object);
         services.AddSingleton(_universe.Object);
         services.AddSingleton(_securityDetails.Object);
+        if (_credentialRecords is not null) services.AddSingleton(_credentialRecords.Object);
 
         services.AddSingleton(NullLoggerFactory.Instance);
         services.AddSingleton(typeof(Microsoft.Extensions.Logging.ILogger<>), typeof(NullLogger<>));
@@ -133,6 +135,32 @@ public class SyncCycleServiceTests
         services.AddSingleton<ISyncCycleRunner, SyncCycleService>();
 
         return services.BuildServiceProvider();
+    }
+
+    [Fact]
+    public async Task T67_TwoUsersWithTInvestRead_EachSyncedWithOwnTokenIntoOwnAccount_OwnerPathUnchanged()
+    {
+        // Задача 67 (#5): владелец (user 1, основной счёт 1 / BA-1) — как раньше, без привязки провайдера; второй пользователь с валидным tinvest_read
+        // (user 2, счёт 2 / BA-2) — в отдельном скоупе с UseUser(2): клиент T-Invest строится по ЕГО токену, синк идёт в ЕГО счёт.
+        SetupNoPositionsHappyPath();
+        _credentialRecords = new Mock<IUserCredentialRepository>();
+        _credentialRecords.Setup(r => r.ListUserIdsAsync("tinvest_read", "ok")).ReturnsAsync([1UL, 2UL]);
+        _accounts.Setup(a => a.GetByIdAsync(AccountId)).ReturnsAsync(new Account { Id = AccountId, UserId = 1, BrokerAccountId = BrokerAccountId });
+        _accounts.Setup(a => a.GetByIdAsync(2UL)).ReturnsAsync(new Account { Id = 2, UserId = 2, BrokerAccountId = "BA-2" });
+        _accounts.Setup(a => a.GetByUserIdAndBrokerAsync(2UL, Bonds.Core.Models.Brokers.TInvest)).ReturnsAsync([new Account { Id = 2, UserId = 2, BrokerAccountId = "BA-2" }]);
+        _tInvest.Setup(c => c.GetPortfolioAsync("BA-2", It.IsAny<CancellationToken>())).ReturnsAsync(new TInvestPortfolio { Bonds = [] });
+        _tInvest.Setup(c => c.GetOperationsAsync("BA-2", It.IsAny<DateTime?>(), It.IsAny<CancellationToken>())).ReturnsAsync(new List<TInvestOperation>());
+        _positions.Setup(p => p.GetByAccountIdAsync(2UL)).ReturnsAsync(new List<Position>());
+        _operations.Setup(o => o.GetByAccountIdAsync(2UL, null, null)).ReturnsAsync(new List<Operation>());
+
+        var result = await BuildServiceProvider().GetRequiredService<ISyncCycleRunner>().RunCycleAsync();
+
+        result.HasErrors.Should().BeFalse();
+        _tokenProvider.Verify(t => t.UseUser(2UL), Times.Once);
+        _tokenProvider.Verify(t => t.UseUser(1UL), Times.Never, "путь владельца не меняется");
+        _tInvest.Verify(c => c.GetPortfolioAsync(BrokerAccountId, It.IsAny<CancellationToken>()), Times.Once);
+        _tInvest.Verify(c => c.GetPortfolioAsync("BA-2", It.IsAny<CancellationToken>()), Times.Once);
+        _accounts.Verify(a => a.CreateAsync(It.IsAny<Account>()), Times.Never, "счёт второго пользователя уже есть");
     }
 
     [Fact]

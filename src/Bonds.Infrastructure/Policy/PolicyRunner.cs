@@ -70,6 +70,8 @@ public sealed class PolicyRunner
         var userIds = new HashSet<ulong>();
         if (await _users.GetPrimaryUserIdAsync() is { } primary) userIds.Add(primary);
         foreach (var id in await _credentials.ListUserIdsWithValidAsync(CredentialProviders.Freedom)) userIds.Add(id);
+        // Задача 67 (#5): владельцы tinvest_read (их счета синкаются своими токенами).
+        foreach (var id in await _credentials.ListUserIdsWithValidAsync(CredentialProviders.TInvestRead) ?? []) userIds.Add(id);
 
         foreach (var userId in userIds)
         {

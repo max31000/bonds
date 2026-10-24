@@ -25,6 +25,7 @@ public sealed class TInvestTokenProvider : ITInvestTokenProvider
     private readonly IUserRepository _userRepo;
     private readonly IDataProtectionProvider _dataProtection;
     private readonly ILogger<TInvestTokenProvider> _logger;
+    private ulong? _userId;
 
     public TInvestTokenProvider(
         IUserCredentialStore credentialStore,
@@ -39,6 +40,9 @@ public sealed class TInvestTokenProvider : ITInvestTokenProvider
         _dataProtection = dataProtection;
         _logger = logger;
     }
+
+    /// <inheritdoc />
+    public void UseUser(ulong userId) => _userId = userId;
 
     public async Task<string?> GetTokenAsync(CancellationToken ct = default)
     {
@@ -59,7 +63,8 @@ public sealed class TInvestTokenProvider : ITInvestTokenProvider
     /// </summary>
     private async Task<(TInvestTokenStatus Status, string? Token)> ResolveAsync()
     {
-        var userId = await _userRepo.GetPrimaryUserIdAsync();
+        // Задача 67 (#5): скоуп, привязанный к пользователю (синк T-Invest по каждому владельцу tinvest_read), — его токен; иначе основной пользователь.
+        var userId = _userId ?? await _userRepo.GetPrimaryUserIdAsync();
         if (userId is null)
         {
             return (TInvestTokenStatus.NotConfigured, null);

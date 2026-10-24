@@ -398,6 +398,23 @@ public class TInvestTokenProviderCredentialsTests
     }
 
     [Fact]
+    public async Task T67_UseUser_ReadsThatUsersToken_DefaultIsPrimaryUser()
+    {
+        // Задача 67 (#5): два пользователя со своими tinvest_read — скоуп, привязанный к пользователю 9, берёт ЕГО токен; без привязки — основной (5).
+        _store.Setup(s => s.GetSecretResultAsync(5UL, "tinvest_read")).ReturnsAsync(
+            new CredentialSecretResult(CredentialReadOutcome.Ok, new Dictionary<string, string> { ["token"] = "t.owner" }));
+        _store.Setup(s => s.GetSecretResultAsync(9UL, "tinvest_read")).ReturnsAsync(
+            new CredentialSecretResult(CredentialReadOutcome.Ok, new Dictionary<string, string> { ["token"] = "t.second" }));
+
+        (await Create().GetTokenAsync()).Should().Be("t.owner");
+
+        var scoped = Create();
+        scoped.UseUser(9);
+        (await scoped.GetTokenAsync()).Should().Be("t.second");
+        (await scoped.GetTokenStatusAsync()).Should().Be(TInvestTokenStatus.Valid);
+    }
+
+    [Fact]
     public async Task NoStoreRow_FallsBackToLegacyUserSettings()
     {
         _store.Setup(s => s.GetSecretResultAsync(5UL, "tinvest_read")).ReturnsAsync(new CredentialSecretResult(CredentialReadOutcome.Missing, null));
