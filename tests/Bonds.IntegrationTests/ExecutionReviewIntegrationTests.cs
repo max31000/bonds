@@ -225,25 +225,38 @@ public class ExecutionReviewIntegrationTests
     [Fact]
     public async Task ApproveLivePlan_ExtendsExpiryToNextSessionClose_NoteReflectsCurrentGate()
     {
+        // T-67E (M3): dry_run пересчитывается при подтверждении по ТЕКУЩИМ воротам без учёта паузы. Ворота открыты (env + live + токен), но пауза —
+        // план живой: срок продлевается, заметка «ждёт: исполнение сейчас закрыто».
         var s = await SeedAsync();
         var now = DateTime.UtcNow;
+        var settings = new UserSettingsRepository(Conn);
+        await settings.SetExecutionModeAsync(s.UserId, ExecutionModes.Live);
+        await SaveTradeTokenAsync(s.UserId);
+        await settings.SetExecutionPausedAsync(s.UserId, true);
+        var enabled = _factory.WithWebHostBuilder(b => b.UseSetting("Execution:Enabled", "true"));
+        var client = enabled.CreateClient();
+        Mvv42TestAuth.Authorize(client, (await new UserRepository(Conn).GetByIdAsync(s.UserId))!.TelegramId);
         var plan = await InsertPlanAsync(s, PlanStatuses.PendingApproval, dryRun: false, expiresAt: now.AddMinutes(20));
 
-        var resp = await s.Client.PostAsync($"/api/plans/{plan.Id}/approve", null);
+        var resp = await client.PostAsync($"/api/plans/{plan.Id}/approve", null);
         resp.StatusCode.Should().Be(HttpStatusCode.OK);
 
         var expected = TradingHours.NextSessionCloseUtc(PolicyMarket.Moex, now, new PolicyOptions(), new ExecutionOptions().CancelBeforeClose)!.Value;
         var reloaded = (await new TradePlanRepository(Conn).GetAsync(s.UserId, plan.Id))!;
         reloaded.Status.Should().Be(PlanStatuses.Approved);
+        reloaded.DryRun.Should().BeFalse("пауза не делает план dry-run");
         reloaded.ExpiresAt.Should().BeCloseTo(expected > now.AddMinutes(20) ? expected : now.AddMinutes(20), TimeSpan.FromMinutes(2));
-
-        // Ворота в тестовой фабрике закрыты (Execution__Enabled=false) — заметка говорит об этом, а не «передан исполнителю».
         var body = await resp.Content.ReadFromJsonAsync<JsonElement>();
         body.GetProperty("summary").GetProperty("executionNote").GetString().Should().StartWith("ждёт: исполнение сейчас закрыто");
 
-        // dry-run план срок не продлевает.
-        var dry = await InsertPlanAsync(s, PlanStatuses.PendingApproval, dryRun: true, expiresAt: now.AddMinutes(20));
-        (await s.Client.PostAsync($"/api/plans/{dry.Id}/approve", null)).StatusCode.Should().Be(HttpStatusCode.OK);
-        (await new TradePlanRepository(Conn).GetAsync(s.UserId, dry.Id))!.ExpiresAt.Should().BeCloseTo(now.AddMinutes(20), TimeSpan.FromSeconds(2));
+        // Ворота закрыты (тестовая фабрика: Execution__Enabled=false) — план, сохранённый живым, при подтверждении становится dry-run и срок не продлевает.
+        var closed = await InsertPlanAsync(s, PlanStatuses.PendingApproval, dryRun: false, expiresAt: now.AddMinutes(20));
+        var closedResp = await s.Client.PostAsync($"/api/plans/{closed.Id}/approve", null);
+        closedResp.StatusCode.Should().Be(HttpStatusCode.OK);
+        var closedPlan = (await new TradePlanRepository(Conn).GetAsync(s.UserId, closed.Id))!;
+        closedPlan.DryRun.Should().BeTrue();
+        closedPlan.ExpiresAt.Should().BeCloseTo(now.AddMinutes(20), TimeSpan.FromSeconds(2));
+        (await closedResp.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("summary").GetProperty("executionNote").GetString()
+            .Should().Be(Bonds.Infrastructure.Policy.PolicyService.DryRunNote);
     }
 }
