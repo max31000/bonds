@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { EmptyState, ErrorState, Page, Section } from '@mvv42/kit';
 import { Skeleton } from '@mantine/core';
 import { Disclaimer } from '../components/Disclaimer';
-import { DryRunBanner } from '../components/plans/DryRunBanner';
+import { ActiveOrdersBanner, DryRunBanner } from '../components/plans/DryRunBanner';
 import { PlanCard } from '../components/plans/PlanCard';
 import { usePlansStore } from '../store/usePlansStore';
 import { isDecidable } from '../utils/plans';
@@ -29,6 +29,7 @@ export function Plans() {
   return (
     <Page title="Планы" description="Какие сделки сервис рассчитал как кандидаты по правилам: оценка по ценам стакана, не рекомендация" width="wide" data-testid="plans-page">
       <DryRunBanner live={data?.dryRun === false} onStop={stop} />
+      <ActiveOrdersBanner count={data?.activeOrders ?? 0} />
       {isLoading && !data && (
         <Section>
           <Skeleton height={120} />

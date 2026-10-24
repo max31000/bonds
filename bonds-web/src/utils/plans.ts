@@ -67,6 +67,15 @@ export const LINE_EXECUTION_COLOR: Record<PlanLineExecutionStatus, string> = {
   Expired: 'gray',
 };
 
+/** Текст статуса строки: «unknown_state» (ответ брокера потерян, повторно не отправлялась) — отдельной подписью, а не «не отправлена». */
+export const UNKNOWN_STATE_LABEL = 'Статус заявки неизвестен — проверьте терминал';
+
+export function lineExecutionLabel(line: Pick<PlanLine, 'executionStatus' | 'orders'>): string {
+  const last = line.orders[line.orders.length - 1];
+  if (last?.errorCode === 'unknown_state' && line.executionStatus === 'Failed') return UNKNOWN_STATE_LABEL;
+  return LINE_EXECUTION_LABEL[line.executionStatus];
+}
+
 /** Можно попросить снять висящие заявки (план исполняется или ждёт исполнителя). */
 export function isCancellableExecution(plan: Pick<Plan, 'status' | 'dryRun'>): boolean {
   return plan.status === 'Submitting' || (!plan.dryRun && (plan.status === 'Approved' || plan.status === 'AutoApproved'));

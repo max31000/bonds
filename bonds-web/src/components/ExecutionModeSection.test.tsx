@@ -26,6 +26,22 @@ function renderSection() {
 }
 
 describe('ExecutionModeSection (задача 65)', () => {
+  it('формулировка лимитов: лимит по сумме — только у авто-подтверждённых; у ручных — нет', async () => {
+    server.use(http.get('*/api/settings/execution', () => HttpResponse.json(observe())));
+    renderSection();
+
+    const note = await screen.findByTestId('execution-limits-note');
+    expect(note).toHaveTextContent('только для планов, подтверждённых автоматически');
+    expect(note).toHaveTextContent('лимита по сумме нет');
+    expect(screen.queryByTestId('execution-active-orders')).not.toBeInTheDocument();
+  });
+
+  it('активные заявки у брокера видны в любом режиме', async () => {
+    server.use(http.get('*/api/settings/execution', () => HttpResponse.json(observe({ activeOrders: 1 }))));
+    renderSection();
+    expect(await screen.findByTestId('execution-active-orders')).toHaveTextContent('Есть активные заявки у брокера: 1');
+  });
+
   it('без проверенного торгового токена включить нельзя', async () => {
     server.use(http.get('*/api/settings/execution', () => HttpResponse.json(observe({ tradeCredentialOk: false }))));
     renderSection();

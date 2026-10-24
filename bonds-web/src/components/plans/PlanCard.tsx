@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Badge, Button, Group, SimpleGrid, Stack, Text } from '@mantine/core';
+import { Badge, Button, Group, List, Modal, SimpleGrid, Stack, Text } from '@mantine/core';
 import type { Plan, PlanLine } from '../../api/types';
 import type { PlanDecisionResult } from '../../store/usePlansStore';
 import { formatDateTime } from '../../utils/format';
@@ -11,7 +11,7 @@ import {
   isCancellableExecution,
   isDecidable,
   LINE_EXECUTION_COLOR,
-  LINE_EXECUTION_LABEL,
+  lineExecutionLabel,
   PLAN_RULE_LABEL,
   PLAN_STATUS_COLOR,
   PLAN_STATUS_LABEL,
@@ -35,7 +35,7 @@ function LineExecution({ planId, line }: { planId: number; line: PlanLine }) {
   return (
     <Group gap="xs" wrap="wrap" data-testid={`plan-${planId}-line-${line.lineNo}-exec`}>
       <Badge variant="dot" color={LINE_EXECUTION_COLOR[line.executionStatus]} data-testid={`plan-${planId}-line-${line.lineNo}-exec-status`}>
-        {LINE_EXECUTION_LABEL[line.executionStatus]}
+        {lineExecutionLabel(line)}
       </Badge>
       <Text size="xs" c="dimmed">
         исполнено {line.filledLots} из {line.quantityLots} лот.
@@ -43,6 +43,11 @@ function LineExecution({ planId, line }: { planId: number; line: PlanLine }) {
         {last?.avgFillPrice != null && ` · средняя ${formatPlanMoney(last.avgFillPrice, last.currency)}`}
         {last?.executedCommission != null && ` · комиссия ${formatPlanMoney(last.executedCommission, last.currency)}`}
       </Text>
+      {last?.needsAttention && (
+        <Text size="xs" c="red" fw={600} data-testid={`plan-${planId}-line-${line.lineNo}-exec-attention`}>
+          Заявка не снята автоматически — снимите её в терминале брокера
+        </Text>
+      )}
       {last?.errorMessage && (
         <Text size="xs" c={last.status === 'Filled' ? 'dimmed' : 'red'} data-testid={`plan-${planId}-line-${line.lineNo}-exec-error`}>
           {last.errorMessage}
@@ -105,6 +110,7 @@ export function PlanCard({
   onCancelExecution?: (id: number) => Promise<PlanDecisionResult>;
 }) {
   const [error, setError] = useState<string | null>(null);
+  const [confirmLive, setConfirmLive] = useState(false);
   const summary = plan.summary;
   const currency = summary?.currency ?? plan.lines[0]?.currency ?? 'RUB';
 
@@ -192,6 +198,11 @@ export function PlanCard({
           {summary.executionNote}
         </Text>
       )}
+      {plan.needsAttention && (
+        <Text size="sm" c="red" fw={600} data-testid={`plan-${plan.id}-attention`}>
+          Есть заявка, которую сервис не смог снять, — снимите её в терминале брокера.
+        </Text>
+      )}
       {error && (
         <Text size="sm" c="red" data-testid={`plan-${plan.id}-error`}>
           {error}
@@ -206,13 +217,51 @@ export function PlanCard({
       )}
       {isDecidable(plan.status) && (
         <Group gap="xs">
-          <Button size="xs" disabled={busy} onClick={() => void decide(onApprove)} data-testid={`plan-${plan.id}-approve`}>
+          <Button
+            size="xs"
+            disabled={busy}
+            onClick={() => (plan.dryRun ? void decide(onApprove) : setConfirmLive(true))}
+            data-testid={`plan-${plan.id}-approve`}
+          >
             Подтвердить
           </Button>
           <Button size="xs" variant="default" disabled={busy} onClick={() => void decide(onReject)} data-testid={`plan-${plan.id}-reject`}>
             Отклонить
           </Button>
         </Group>
+      )}
+      {!plan.dryRun && (
+        <Modal opened={confirmLive} onClose={() => setConfirmLive(false)} title="Отправить заявки брокеру?" data-testid={`plan-${plan.id}-confirm-live`}>
+          <Stack gap="sm">
+            <Text size="sm">
+              После подтверждения сервис отправит в T-Invest настоящие лимитные заявки (продажи раньше покупок). Цена каждой заявки не дальше допустимого отклонения
+              от утверждённой; вне часов торгов план подождёт открытия сессии до {formatDateTime(plan.expiresAt)}.
+            </Text>
+            <List size="sm" data-testid={`plan-${plan.id}-confirm-live-orders`}>
+              {plan.lines.map((line) => (
+                <List.Item key={line.lineNo}>
+                  {line.side === 'Buy' ? 'Покупка' : 'Продажа'} {line.ticker} — {formatQuantity(line)} по {formatLimitPrice(line)}, ≈ {formatPlanMoney(line.estAmount, line.currency)}
+                </List.Item>
+              ))}
+            </List>
+            <Group justify="flex-end" gap="xs">
+              <Button variant="default" onClick={() => setConfirmLive(false)} data-testid={`plan-${plan.id}-confirm-live-cancel`}>
+                Отмена
+              </Button>
+              <Button
+                color="red"
+                disabled={busy}
+                onClick={() => {
+                  setConfirmLive(false);
+                  void decide(onApprove);
+                }}
+                data-testid={`plan-${plan.id}-confirm-live-submit`}
+              >
+                Отправить заявки
+              </Button>
+            </Group>
+          </Stack>
+        </Modal>
       )}
     </Stack>
   );

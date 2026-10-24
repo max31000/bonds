@@ -19,7 +19,7 @@ DI-метод `services.AddInvestApiClient((sp, settings) => {...})`) выста
   используются синком (read-only синк позиций/операций — spec §11). Торговые сервисы (заявки) с задачи 65 вызывает ТОЛЬКО
   `Bonds.Infrastructure/Execution/TInvestOrderGateway.cs` по торговому токену; контракт заявок (сверен отражением 0.6.22.1):
   `PostOrderRequest { AccountId, InstrumentId, Quantity (лоты), Price: Quotation, PriceType (Point|Currency), Direction, OrderType.Limit, OrderId (наш UUID — идемпотентность), TimeInForce }`,
-  ответ/`OrderState` — `OrderId` (брокера), `OrderRequestId` (наш), `ExecutionReportStatus`, `LotsRequested/LotsExecuted`, `ExecutedOrderPrice` (средняя за 1 инструмент, MoneyValue),
+  ответ/`OrderState` — `OrderId` (брокера), `OrderRequestId` (наш), `ExecutionReportStatus`, `LotsRequested/LotsExecuted`, `ExecutedOrderPrice` (MoneyValue; по XML-докам SDK у `PostOrderResponse` — средняя за 1 инструмент, а у `OrderState` — ИТОГО: средняя × количество; цену штуки по `OrderState` исполнитель считает как итог / (лоты × лотность), запасной вариант — средневзвешенная по `Stages[].Price` «за 1 инструмент»),
   `ExecutedCommission`; `GetOrderState`/`CancelOrder` принимают `OrderIdType.Request` (поиск по нашему id); `GetTradingStatus` — `TradingStatus`, `LimitOrderAvailableFlag`, `ApiTradeAvailableFlag`;
   `Users.GetAccounts` — `Account.AccessLevel` (`AccountAccessLevelFullAccess`); `Operations.GetPositions` — `Money` (свободно) / `Blocked` / `Securities[].Balance` (штуки).
 
