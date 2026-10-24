@@ -283,11 +283,15 @@ internal static class PolicyKit
         return (amount + fee) * q.FxToPortfolio;
     }
 
+    /// <summary>Пометка строки P3b, когда у эмитента нет свежего рейтинга (кандидат допущен без проверки «не ниже A»).</summary>
+    public const string RatingNotSpecifiedNote = "рейтинг не указан";
+
     /// <summary>
     /// Покупка облигаций-кандидатов на <paramref name="budget"/> рублей через <see cref="CashAllocationService.Allocate"/> (источник «recommended»: ось сектора,
     /// не больше <see cref="PolicyOptions.MaxBondLotsPerCandidate"/> лотов на бумагу) с РЕАЛЬНЫМ лотом и ценой по стакану. Кандидат без стакана пропускается.
     /// </summary>
-    /// <param name="requireRatingAtLeastA">P3b (дизайн §4): только эмитенты со свежим рейтингом не ниже A (<see cref="PolicyBondCandidate.IssuerRatingAtLeastA"/>).</param>
+    /// <param name="requireRatingAtLeastA">P3b (дизайн §4): эмитенты со свежим рейтингом ниже A исключаются; без свежего рейтинга — допускаются с пометкой
+    /// «рейтинг не указан» (<see cref="PolicyBondCandidate.IssuerRatingAtLeastA"/>).</param>
     public static List<TradePlanLine> BuyBonds(
         PolicyInput input, decimal budget, decimal? minAfterTaxYield, string reasonPrefix, List<PlanSkip> skipped, bool applyIssuerLimit,
         bool requireRatingAtLeastA = false)
@@ -298,11 +302,11 @@ internal static class PolicyKit
         var byKey = new Dictionary<string, (PolicyBondCandidate Cand, PolicyQuote Quote, PricedQuote Price)>(StringComparer.Ordinal);
         foreach (var cand in input.BondCandidates)
         {
-            if (requireRatingAtLeastA && cand.IssuerRatingAtLeastA != true)
+            // Решение владельца (T-67D): свежий рейтинг есть — он должен быть не ниже A; свежего рейтинга нет (null) — кандидат ДОПУСКАЕТСЯ (прочие фильтры
+            // остаются: доходность, ликвидность/стакан, лимит эмитента, премия), а в причине строки пишется «рейтинг не указан».
+            if (requireRatingAtLeastA && cand.IssuerRatingAtLeastA == false)
             {
-                skipped.Add(new PlanSkip(cand.Secid, cand.IssuerRatingAtLeastA == false
-                    ? "рейтинг эмитента ниже A — для перелива ликвидности нужен не ниже A"
-                    : "нет свежего рейтинга эмитента (не ниже A) — введите рейтинг на странице эмитента"));
+                skipped.Add(new PlanSkip(cand.Secid, "рейтинг эмитента ниже A — для перелива ликвидности нужен не ниже A"));
                 continue;
             }
 
@@ -406,7 +410,8 @@ internal static class PolicyKit
             if (cand.IssuerKey is not null) plannedByIssuer[cand.IssuerKey] = plannedByIssuer.GetValueOrDefault(cand.IssuerKey) + lots * perLotRub;
 
             var yieldText = cand.AfterTaxYieldFraction is { } y ? $", после налога {y:P2} годовых" : string.Empty;
-            lines.Add(BuildLine(input, q, p, PlanSides.Buy, lots, $"{reasonPrefix}: кандидат {cand.Name}{yieldText}"));
+            var ratingText = requireRatingAtLeastA && cand.IssuerRatingAtLeastA is null ? $", {RatingNotSpecifiedNote}" : string.Empty;
+            lines.Add(BuildLine(input, q, p, PlanSides.Buy, lots, $"{reasonPrefix}: кандидат {cand.Name}{yieldText}{ratingText}"));
         }
 
         return lines;

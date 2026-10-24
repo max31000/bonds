@@ -131,10 +131,11 @@ public class AuditWaveBTests
     [Theory]
     [InlineData(true, true)]
     [InlineData(false, false)]
-    [InlineData(null, false)]
+    [InlineData(null, true)]
     public void T67_P3b_RequiresIssuerRatingAtLeastA(bool? ratingA, bool planned)
     {
-        // Дизайн §4: перелив ликвидности в облигации — только эмитенты с рейтингом не ниже A (свежие ручные рейтинги issuer_ratings). Без рейтинга — нет.
+        // Дизайн §4 + решение владельца (T-67D): свежий рейтинг (≤ 18 мес.) должен быть не ниже A; рейтинга нет — кандидат допускается (прочие фильтры
+        // остаются), а в причине строки — «рейтинг не указан».
         var bonds = Basket("bonds", 0.85m, tier: 2, fill: BasketFillRules.Engine, members: [ClassMember("bond")]);
         var positions = new[] { Pos("TMON@", "fund", 299_844m), Pos("RU000A", "bond", 700_156m) };
         var input = Input([Liquidity(), bonds], positions, 0m, [Tmon, Tsav], holdings: [Holding("TMON@", 1_800m, 299_844m, 150m, "liquidity")],
@@ -142,7 +143,12 @@ public class AuditWaveBTests
 
         var outcome = LiquidityToBondsRule.Evaluate(input);
 
-        if (planned) outcome.Plan!.Lines.Should().Contain(l => l.Ticker == "RU000A1");
+        if (planned)
+        {
+            var line = outcome.Plan!.Lines.Should().Contain(l => l.Ticker == "RU000A1").Subject;
+            if (ratingA is null) line.Reason.Should().Contain("рейтинг не указан");
+            else line.Reason.Should().NotContain("рейтинг не указан");
+        }
         else
         {
             outcome.Plan.Should().BeNull();

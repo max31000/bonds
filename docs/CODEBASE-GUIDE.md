@@ -396,7 +396,7 @@ P5, целиком покрытый свободными деньгами, — �
 (`IBotStateRepository.TryAdvanceAsync`, ключ `plan_cmd_update_{userId}`); сбой обработки кнопки — всё равно `answerCallbackQuery` с ошибкой; 401/403 Freedom на
 синке → ключ `invalid`; поле секрета > 4096 символов → 422. (NIT) Веб `/plans/:id`; в боте «N шт.» (+ лоты при лоте ≠ 1) и цена «% ном.» у облигаций; `/help`
 зависит от режима; цена < шага — строка пропускается с причиной; `TransitionAsync(..., notExpiredAt)` проверяет срок в UPDATE; миграция 040 — FK
-`trade_orders → trade_plans` `ON DELETE RESTRICT`; P3b «рейтинг не ниже A» — `PolicyBondCandidate.IssuerRatingAtLeastA` по свежим ручным `issuer_ratings`.
+`trade_orders → trade_plans` `ON DELETE RESTRICT`; P3b «рейтинг не ниже A» — `PolicyBondCandidate.IssuerRatingAtLeastA` по свежим ручным `issuer_ratings` (`false` → исключён, `null` → допущен с «рейтинг не указан»).
 
 **Telegram-бот (задача 64).** Тот же бот (`Telegram:BotToken`), long polling `getUpdates` (25 с), webhook нет. `Bonds.Core/Telegram` — чистые функции: `BotCommandParser` («15%» → ДОЛЯ 0.15 один раз), `BotCallback`
 (`p:{planId}:{a|r}:{nonce}`, nonce = 8 случайных байт base64url в `trade_plans.bot_nonce`, не уходит в API), `PlanMessageFormatter`/`BotTexts`/`BotFormat` (HTML-экранирование, русская локаль независимо от

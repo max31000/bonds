@@ -222,7 +222,7 @@ public static class LiquidityToBondsRule
         var (sells, net, taxUnknown) = BasketSell.Sell(input, PolicyNames.Liquidity, excess, "P3b: излишек ликвидности сверх цели", skipped);
         if (sells.Count == 0) return PolicyOutcome.None(notes.Append("P3b: нечего продавать из ликвидности (нет цены или лота)").ToArray());
 
-        // Безопасность по дизайну §4: «рейтинг не ниже A» — по свежим ручным рейтингам эмитента (issuer_ratings); без рейтинга кандидат не берётся.
+        // Безопасность по дизайну §4: «рейтинг не ниже A» — по свежим ручным рейтингам эмитента (issuer_ratings); без свежего рейтинга кандидат допускается с пометкой «рейтинг не указан» (решение владельца, T-67D).
         var buys = PolicyKit.BuyBonds(input, net, floor, "P3b замена ликвидности", skipped, applyIssuerLimit: true, requireRatingAtLeastA: true);
         if (buys.Count == 0)
         {
