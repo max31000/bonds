@@ -379,6 +379,25 @@ P5, целиком покрытый свободными деньгами, — �
 (`WithdrawHoldTtl` рабочих дней или `/withdrawn`). `GetCashHoldAsync` берёт брокера безстрочного плана из `summary.portfolio`. P1 при удержании не паркует. (b) выход из корзины — как в волне A.
 (c) 422 только на включение авто-флага. (d) P4 продаёт излишек HardAbove у любой корзины не `hold` независимо от `auto_sell` (план всегда `PendingApproval`).
 
+**Исправления аудита (задача 67, волны B и C).** (#8) Облигация с номиналом не в рублях: `ReferenceCleanPricePerPiece` — в валюте ПОРТФЕЛЯ (рубли), `LinePricer` делит
+его на `FxToPortfolio` один раз; НКД и средняя цена входа таких облигаций в `PolicyInputBuilder` — в валюте цены. (#10) Суточный авто-лимит — только `decided_via = 'auto'`
+(`SumAutoApprovedRubSinceAsync`, `ListAutoDayPlansAsync`, `AutoDayUsage`). (#12) Лимиты авто — (сумма + комиссия) строки × курс в валюте портфеля
+(`PolicyKit.WithFeeInPortfolio`), день в БД — `est_amount + est_fee`. (#11) Закрытые ворота/пауза: неначатый `Approved`/`AutoApproved` ЖДЁТ до `expires_at`
+(одно уведомление «ждёт» на причину, затем `Expired`), исполняемый — снятие заявок и итог с причиной; тексты `/stop`/`/resume` — `BotTexts.StopReply/ResumeReply`.
+(#17) Заявка, которой брокер не знает: перед `unknown_state` — история сделок (`IExecutionVenue.FillsFromHistoryAsync`: T-Invest `ITInvestFillHistory` =
+`GetOperationsByCursor` клиентом на чтение пользователя, тот же инструмент и сторона с `created_at − 30 с`; Freedom — `getTradesHistory` по `order_id`).
+(#6) Тариф Freedom обновляется в meta `freedom` на каждом синке (`IUserCredentialStore.UpdateMetaAsync`). (#9) Комиссия Freedom: процентная часть округляется
+до центов ДО фикса — эталоны выписки сходятся точно. (#5) `ITInvestTokenProvider.UseUser(userId)` (scoped): синк T-Invest каждого пользователя с валидным
+`tinvest_read` — в своём DI-скоупе своим токеном (путь владельца не меняется); `TradingMetaRefresher` и `PolicyRunner` охватывают их счета. (#15) HttpClient-ы
+`telegram-bot*` — `RemoveAllLoggers()` (`DependencyInjection.AddTelegramHttpClients`), токен не попадает в логи при любой конфигурации. (#13) `PUT /api/baskets`
+— `ICapitalBasketRepository.UpdateLockedAsync` (одна транзакция, `SELECT … FOR UPDATE`); прогон правил и ручные планы сериализуются `GET_LOCK('bonds-policy-user-{id}')`
+(`IPolicyUserLock`). (#14) KZT всегда отслеживается (ЦБ R01335); сводка капитала: `otherBrokersDataIncomplete`, если синк Freedom старше 26 ч; шорты Freedom
+(qty < 0) хранятся с отрицательной стоимостью; облигации Freedom — оценка неполная. (#16) `/inflow`, `/withdraw`, `/exit` идемпотентны по `update_id`
+(`IBotStateRepository.TryAdvanceAsync`, ключ `plan_cmd_update_{userId}`); сбой обработки кнопки — всё равно `answerCallbackQuery` с ошибкой; 401/403 Freedom на
+синке → ключ `invalid`; поле секрета > 4096 символов → 422. (NIT) Веб `/plans/:id`; в боте «N шт.» (+ лоты при лоте ≠ 1) и цена «% ном.» у облигаций; `/help`
+зависит от режима; цена < шага — строка пропускается с причиной; `TransitionAsync(..., notExpiredAt)` проверяет срок в UPDATE; миграция 040 — FK
+`trade_orders → trade_plans` `ON DELETE RESTRICT`; P3b «рейтинг не ниже A» — `PolicyBondCandidate.IssuerRatingAtLeastA` по свежим ручным `issuer_ratings`.
+
 **Telegram-бот (задача 64).** Тот же бот (`Telegram:BotToken`), long polling `getUpdates` (25 с), webhook нет. `Bonds.Core/Telegram` — чистые функции: `BotCommandParser` («15%» → ДОЛЯ 0.15 один раз), `BotCallback`
 (`p:{planId}:{a|r}:{nonce}`, nonce = 8 случайных байт base64url в `trade_plans.bot_nonce`, не уходит в API), `PlanMessageFormatter`/`BotTexts`/`BotFormat` (HTML-экранирование, русская локаль независимо от
 культуры сервера, «режим наблюдения: сделка не отправляется»). `Bonds.Infrastructure/Telegram`: `ITelegramBotClient` (sendMessage c inline-клавиатурой, editMessageText, answerCallbackQuery, getUpdates),
