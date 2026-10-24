@@ -115,10 +115,11 @@ public class TradePlanRepository : ITradePlanRepository
     {
         // Исполняемые/исполненные (Submitting, PartiallyDone, Done) + AutoApproved, ждущий исполнителя (dry_run = 0). AutoApproved dry-run НИКОГДА не исполняется —
         // его деньги не потрачены, в лимит он не входит. Внутри одного цикла раннер сам наращивает счётчик (PolicyRunner.CarryForward).
+        // Задача 67 (#12): с комиссией (est_fee строки), как PolicyKit.DecideStatus.
         // Задача 67 (#10): только планы, решённые АВТОМАТИЧЕСКИ (decided_via = 'auto') — ручная покупка не съедает авто-лимит.
         using var conn = CreateConnection();
         return await conn.ExecuteScalarAsync<decimal>(
-            @"SELECT COALESCE(SUM(l.est_amount), 0)
+            @"SELECT COALESCE(SUM(l.est_amount + l.est_fee), 0)
               FROM trade_plans p JOIN trade_plan_lines l ON l.plan_id = p.id
               WHERE p.user_id = @UserId AND p.decided_at >= @Since AND p.decided_via = 'auto'
                 AND (p.status IN ('Submitting', 'PartiallyDone', 'Done') OR (p.status = 'AutoApproved' AND p.dry_run = 0))

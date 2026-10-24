@@ -65,4 +65,49 @@ public class AuditWaveBTests
         var exit = ExitBasketRule.Evaluate(input, "bonds").Plan!;
         exit.Summary.SellTotal.Should().Be(126_250m);
     }
+
+    // ─── #12: лимиты авто — рубли (× курс) и с комиссией ──────────────────────────────────────
+
+    [Fact]
+    public void T67_AutoPerOrderLimit_IncludesCommission()
+    {
+        // LQDT по 100 ₽, комиссия 0.3%: 250 лотов = 25 000 ₽ + 75 ₽ комиссии = 25 075 ₽ > лимита заявки 25 000 ₽ → PendingApproval. До исправления
+        // сравнивалась сумма без комиссии (25 000 ≤ 25 000 → AutoApproved).
+        var lqdt = Fund("LQDT", 99.99m, 100.01m);
+        var input = Input([Liquidity(Member("LQDT"))], [], 25_100m, [lqdt], feeRate: 0.003m);
+
+        var plan = SweepRule.Evaluate(input).Plan!;
+
+        plan.Lines.Single().EstAmount.Should().Be(25_000m);
+        plan.Lines.Single().EstFee.Should().Be(75m);
+        plan.Status.Should().Be(PlanStatuses.PendingApproval);
+
+        SweepRule.Evaluate(Input([Liquidity(Member("LQDT"))], [], 20_000m, [lqdt], feeRate: 0.003m)).Plan!.Status
+            .Should().Be(PlanStatuses.AutoApproved, "контроль: заявка с комиссией в лимите");
+    }
+
+    [Fact]
+    public void T67_AutoLimits_CompareRubles_ForLineInForeignPriceCurrency()
+    {
+        // Фонд в юанях (Fx 12.5): 2 400 CNY = 30 000 ₽ > 25 000 ₽ → PendingApproval. До исправления: «2 400 ≤ 25 000» → AutoApproved.
+        var cny = Fund("CNYF", 9.99m, 10.01m) with { Currency = "CNY", FxToPortfolio = 12.5m };
+        var input = Input([Liquidity(Member("CNYF"))], [], 30_000m, [cny]);
+
+        var plan = SweepRule.Evaluate(input).Plan!;
+
+        plan.Lines.Single().EstAmount.Should().Be(2_400m);
+        plan.Status.Should().Be(PlanStatuses.PendingApproval);
+    }
+
+    [Fact]
+    public void T67_AutoPerDayLimit_IncludesCommission()
+    {
+        // Сегодня уже 30 000 ₽ авто; новый план 19 900 ₽ + 59.70 ₽ комиссии = 19 959.70 ₽ → 49 959.70 ≤ 50 000 — авто; на 19 950 ₽ + 59.85 → 50 009.85 > 50 000 — нет.
+        var lqdt = Fund("LQDT", 99.99m, 100.01m);
+        SweepRule.Evaluate(Input([Liquidity(Member("LQDT"))], [], 19_960m, [lqdt], feeRate: 0.003m, autoToday: 30_000m)).Plan!.Status
+            .Should().Be(PlanStatuses.AutoApproved);
+        var over = Fund("LQDT", 99.99m, 100.01m, step: 0.01m) with { Bid = 49.99m, Ask = 50.01m };
+        SweepRule.Evaluate(Input([Liquidity(Member("LQDT"))], [], 20_010m, [over], feeRate: 0.003m, autoToday: 30_000m)).Plan!.Status
+            .Should().Be(PlanStatuses.PendingApproval);
+    }
 }

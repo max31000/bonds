@@ -256,10 +256,10 @@ public static class AutoDayUsage
             foreach (var line in plan.Lines.Where(l => l.Side == PlanSides.Buy && IsRub(l.Currency)))
             {
                 var lineOrders = byPlan[plan.Id].Where(o => o.LineNo == line.LineNo).ToList();
-                total += FilledAmount(line, lineOrders);
+                total += FilledAmount(line, lineOrders) + FilledCommissionRub(lineOrders);
                 var state = LineExecutionState.From(line, lineOrders);
                 if (!planTerminal && !state.Terminal && line.QuantityLots > 0)
-                    total += line.EstAmount * state.RemainingLots / line.QuantityLots;
+                    total += (line.EstAmount + line.EstFee) * state.RemainingLots / line.QuantityLots; // задача 67 (#12): лимит — с комиссией
             }
         }
 
@@ -269,6 +269,10 @@ public static class AutoDayUsage
     /// <summary>Исполненная сумма строки: Σ лоты × лотность × средняя цена штуки (нет цены — утверждённая цена штуки <c>limit_price</c>), в валюте строки.</summary>
     public static decimal FilledAmount(TradePlanLine line, IEnumerable<TradeOrder> orders) =>
         orders.Where(o => o.LotsFilled > 0).Sum(o => o.LotsFilled * line.LotSize * (o.AvgFillPrice ?? line.LimitPrice));
+
+    /// <summary>Фактическая комиссия исполненных заявок строки в рублях (валюта комиссии не указана = валюта строки, т.е. рубли).</summary>
+    public static decimal FilledCommissionRub(IEnumerable<TradeOrder> orders) =>
+        orders.Where(o => o.LotsFilled > 0 && (o.CommissionCurrency is null || IsRub(o.CommissionCurrency))).Sum(o => Math.Abs(o.ExecutedCommission ?? 0m));
 
     private static bool IsRub(string currency) => currency.Trim().ToUpperInvariant() is "RUB" or "RUR";
 }

@@ -438,6 +438,7 @@ internal static class PolicyKit
     /// <summary>
     /// Статус плана по лимитам авто-подтверждения. <c>AutoApproved</c>, только если <paramref name="autoAllowed"/> и ВСЕ строки — покупки, каждая заявка
     /// ≤ <see cref="ExecutionLimitsOptions.AutoPerOrderRub"/> и Σ плана + уже авто-подтверждённое за сутки ≤ <see cref="ExecutionLimitsOptions.AutoPerDayRub"/>.
+    /// Суммы — В РУБЛЯХ (валюта цены × курс) и С КОМИССИЕЙ (<see cref="WithFeeInPortfolio"/>, задача 67 #12).
     /// Freedom: только при <see cref="ExecutionLimitsOptions.FreedomAutoUsd"/> &gt; 0 и заявке не выше него. Иначе <c>PendingApproval</c>.
     /// Задача 67 (#1): КАЖДАЯ строка обязана пройти белый список в коде (<see cref="AutoWhitelist.LineRejection"/>: фонд без выплат из корзины «liquidity»),
     /// флаги корзин его только сужают.
@@ -447,18 +448,23 @@ internal static class PolicyKit
         if (!autoAllowed || lines.Count == 0 || lines.Any(l => l.Side != PlanSides.Buy)) return PlanStatuses.PendingApproval;
         if (lines.Any(l => AutoWhitelist.LineRejection(input, l) is not null)) return PlanStatuses.PendingApproval;
 
+        // Задача 67 (#12): лимиты сравниваются с суммой заявки В ВАЛЮТЕ ПОРТФЕЛЯ (рубли T-Invest, доллары Freedom) — строка в валюте цены × курс — и С КОМИССИЕЙ:
+        // фонд в юанях на 2 400 CNY — это 30 000 ₽, а не «2 400 ≤ 25 000»; заявка 25 000 ₽ + 75 ₽ комиссии лимит 25 000 ₽ превышает.
         if (input.Broker == BrokerIds.Freedom)
         {
             var limit = input.Limits.FreedomAutoUsd;
             if (limit <= 0m) return PlanStatuses.PendingApproval;
-            return lines.All(l => l.EstAmount <= limit) ? PlanStatuses.AutoApproved : PlanStatuses.PendingApproval;
+            return lines.All(l => WithFeeInPortfolio(input, l) <= limit) ? PlanStatuses.AutoApproved : PlanStatuses.PendingApproval;
         }
 
         if (!string.Equals(input.Currency, "RUB", StringComparison.OrdinalIgnoreCase)) return PlanStatuses.PendingApproval;
-        if (lines.Any(l => l.EstAmount > input.Limits.AutoPerOrderRub)) return PlanStatuses.PendingApproval;
-        var total = lines.Sum(l => l.EstAmount);
+        if (lines.Any(l => WithFeeInPortfolio(input, l) > input.Limits.AutoPerOrderRub)) return PlanStatuses.PendingApproval;
+        var total = lines.Sum(l => WithFeeInPortfolio(input, l));
         return input.AutoApprovedTodayRub + total <= input.Limits.AutoPerDayRub ? PlanStatuses.AutoApproved : PlanStatuses.PendingApproval;
     }
+
+    /// <summary>Сумма строки с комиссией в валюте ПОРТФЕЛЯ: (<c>EstAmount</c> + <c>EstFee</c>) в валюте цены × <see cref="PolicyQuote.FxToPortfolio"/> (задача 67, #12).</summary>
+    public static decimal WithFeeInPortfolio(PolicyInput input, TradePlanLine line) => (line.EstAmount + line.EstFee) * FxOf(input, line);
 
     /// <summary>Срок жизни плана: TTL, но не позже закрытия ближайшей сессии рынков строк (если рынок открыт и часы учитываются).</summary>
     public static DateTime ExpiresAt(PolicyInput input, IEnumerable<TradePlanLine> lines)

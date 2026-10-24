@@ -238,8 +238,9 @@ public sealed class PolicyRunner
     internal static PolicyInput CarryForward(PolicyInput input, TradePlanDraft draft, string savedStatus)
     {
         var spent = draft.Summary.ReservedBuy;
-        var autoRub = savedStatus == PlanStatuses.AutoApproved
-            ? draft.Lines.Where(l => l.Side == PlanSides.Buy && string.Equals(l.Currency, "RUB", StringComparison.OrdinalIgnoreCase)).Sum(l => l.EstAmount)
+        // Задача 67 (#12): как в PolicyKit.DecideStatus — рубли с комиссией (покупки + комиссия в валюте портфеля = ReservedBuy рублёвого портфеля).
+        var autoRub = savedStatus == PlanStatuses.AutoApproved && string.Equals(input.Currency, "RUB", StringComparison.OrdinalIgnoreCase)
+            ? draft.Summary.ReservedBuy
             : 0m;
         return input with
         {

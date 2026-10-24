@@ -8,10 +8,10 @@ public sealed class ExecutionLimitsOptions
 {
     public const string SectionName = "ExecutionLimits";
 
-    /// <summary>Максимум суммы ОДНОЙ заявки (строки плана) для <c>AutoApproved</c>, рубли.</summary>
+    /// <summary>Максимум суммы ОДНОЙ заявки (строки плана) для <c>AutoApproved</c>, рубли: сумма строки в валюте цены × курс, ВКЛЮЧАЯ комиссию (задача 67, #12).</summary>
     public decimal AutoPerOrderRub { get; set; } = 25_000m;
 
-    /// <summary>Максимум Σ авто-подтверждённых планов за московские сутки, рубли.</summary>
+    /// <summary>Максимум Σ авто-подтверждённых планов за московские сутки, рубли (строки × курс, с комиссией — задача 67, #12).</summary>
     public decimal AutoPerDayRub { get; set; } = 50_000m;
 
     /// <summary>Лимит авто-подтверждения для Freedom, доллары. 0 — выключено.</summary>
