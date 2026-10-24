@@ -41,7 +41,10 @@ public static class PlanStatuses
     /// <summary>«Открытые» планы: ещё ждут решения или (в боевом режиме) исполнения. По ним ищутся дубликаты и считается резерв денег.</summary>
     public static readonly IReadOnlyList<string> Open = [Draft, PendingApproval, AutoApproved, Approved, Submitting];
 
-    /// <summary>Планы, резервирующие деньги под покупки: Approved dry-run деньги НЕ резервирует (он никогда не исполнится).</summary>
+    /// <summary>
+    /// Статусы, резервирующие деньги под покупки при любом <c>dry_run</c>. Плюс <c>Approved</c> с <c>dry_run = 0</c> (задача 67, #2: живой план, одобренный вечером, ждёт
+    /// открытия торгов — его деньги заняты; условие по <c>dry_run</c> — в <c>SumReservedBuysAsync</c>). Approved dry-run деньги НЕ резервирует (он никогда не исполнится).
+    /// </summary>
     public static readonly IReadOnlyList<string> ReservingCash = [Draft, PendingApproval, AutoApproved, Submitting];
 }
 

@@ -200,11 +200,13 @@ public class TradePlanRepository : ITradePlanRepository
     {
         // Строки хранятся в валюте ЦЕНЫ (EUR-строка Freedom, USD-комиссия и т.п.), складывать их напрямую нельзя: берём резерв из summary_json
         // (TradePlanSummary.ReservedBuy — уже в валюте ПОРТФЕЛЯ плана). План без поля (до введения) резервирует 0.
+        // Задача 67 (#2): живой Approved (dry_run = 0) тоже резервирует — он ждёт открытия торгов и утром отправит заявки на эти деньги.
         using var conn = CreateConnection();
         var summaries = await conn.QueryAsync<string?>(
             @"SELECT CAST(p.summary_json AS CHAR)
               FROM trade_plans p
-              WHERE p.user_id = @UserId AND p.status IN @Reserving AND p.expires_at > @Now
+              WHERE p.user_id = @UserId AND p.expires_at > @Now
+                AND (p.status IN @Reserving OR (p.status = 'Approved' AND p.dry_run = 0))
                 AND EXISTS (SELECT 1 FROM trade_plan_lines l WHERE l.plan_id = p.id AND l.side = 'Buy' AND l.broker = @Broker)",
             new { UserId = userId, Reserving = PlanStatuses.ReservingCash.ToArray(), Now = nowUtc, Broker = broker });
 

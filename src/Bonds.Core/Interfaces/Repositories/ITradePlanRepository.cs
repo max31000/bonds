@@ -61,7 +61,7 @@ public interface ITradePlanRepository
     /// <summary>
     /// Σ <c>TradePlanSummary.ReservedBuy</c> (покупки + комиссия в валюте ПОРТФЕЛЯ) открытых, не просроченных планов, РЕЗЕРВИРУЮЩИХ деньги
     /// (<see cref="PlanStatuses.ReservingCash"/>), с покупками у брокера <paramref name="broker"/> и валютой портфеля <paramref name="currency"/>.
-    /// Деньги Approved dry-run не резервируются.
+    /// плюс живые <c>Approved</c> (<c>dry_run = 0</c>, задача 67). Деньги Approved dry-run не резервируются.
     /// </summary>
     Task<decimal> SumReservedBuysAsync(ulong userId, string broker, string currency, DateTime nowUtc);
 

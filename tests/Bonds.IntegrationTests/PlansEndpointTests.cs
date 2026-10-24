@@ -654,6 +654,41 @@ public class PlansEndpointTests
     }
 
     [Fact]
+    public async Task T67_ApprovedLivePlanFromEvening_ReservesCash_P1At10SeesFreeCashMinusReserve()
+    {
+        // Вечером (вторник 22:00 МСК) одобрен живой план облигаций на 50 000 ₽ — он ждёт открытия торгов в Approved до 18:30 среды. В среду 10:00 МСК P1 видит
+        // свободные 60 000 − 50 000 = 10 000 ₽, а не все 60 000 (иначе P1 «увёл» бы деньги, под которые утром пойдут заявки облигаций).
+        var (userId, _, _, _, _, _, factory) = await SeedRubAsync(cashRub: 60_000m, aQuantity: 0m);
+        var wednesdayNoon = OpenNowUtc();
+        var evening = wednesdayNoon.AddDays(-1).AddHours(10); // вторник 19:00 UTC = 22:00 МСК
+        var at10 = wednesdayNoon.AddHours(-2); // среда 07:00 UTC = 10:00 МСК
+        var repo = new TradePlanRepository(Conn);
+
+        var live = NewPlan(userId, PlanStatuses.Approved, evening, expiresAt: wednesdayNoon.AddHours(6.5), rule: PlanRules.P2Inflow, trigger: "облигации",
+            summary: new TradePlanSummary { Currency = "RUB", ReservedBuy = 50_000m });
+        live.DryRun = false;
+        live.DecidedAt = evening;
+        live.DecidedVia = DecidedVia.Web;
+        await repo.InsertAsync(live);
+
+        // Approved dry-run не исполнится никогда — резерва нет.
+        var dry = NewPlan(userId, PlanStatuses.Approved, evening, expiresAt: wednesdayNoon.AddHours(6.5), rule: PlanRules.P2Inflow, trigger: "dry",
+            summary: new TradePlanSummary { Currency = "RUB", ReservedBuy = 7_000m });
+        dry.DecidedAt = evening;
+        await repo.InsertAsync(dry);
+
+        (await repo.SumReservedBuysAsync(userId, BrokerIds.TInvest, "RUB", at10)).Should().Be(50_000m);
+
+        using (var scope = factory.Services.CreateScope())
+            await scope.ServiceProvider.GetRequiredService<PolicyRunner>().RunForUserAsync(userId, at10, new PolicyRunResult());
+
+        var p1 = (await PlansOfAsync(userId)).Single(p => p.Rule == PlanRules.P1Sweep);
+        var summary = JsonSerializer.Deserialize<TradePlanSummary>(p1.SummaryJson!, WebJson)!;
+        summary.CashBefore.Should().Be(10_000m);
+        summary.ReservedBuy.Should().BeLessThanOrEqualTo(10_000m);
+    }
+
+    [Fact]
     public async Task Runner_RealPlan_SavesReservedBuy_ThatTheRepositoryReserves()
     {
         var (userId, _, _, _, _, _, factory) = await SeedRubAsync(cashRub: 7_340m, aQuantity: 0m);
