@@ -46,6 +46,9 @@ public sealed class AgentOptions
     /// </summary>
     public bool AllowWebResearch { get; set; }
 
+    /// <summary>Сколько планов агент может предложить (<c>propose_plan</c>) за один запуск.</summary>
+    public int MaxProposalsPerRun { get; set; } = 1;
+
     /// <summary>Пауза между двумя <c>/ask</c> одного пользователя.</summary>
     public TimeSpan AskCooldown { get; set; } = TimeSpan.FromMinutes(1);
 

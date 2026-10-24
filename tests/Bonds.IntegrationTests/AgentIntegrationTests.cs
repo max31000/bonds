@@ -247,6 +247,10 @@ public class AgentIntegrationTests
         var dto = await client.GetFromJsonAsync<JsonElement>($"/api/plans/{planId}");
         dto.GetProperty("source").GetString().Should().Be("agent");
 
+        var (_, second) = await McpAsync(factory, 801, bearer, ToolCall("propose_plan", new { kind = "withdraw", amount = 1_000m, rationale = "ещё один" }));
+        second!.Value.GetProperty("result").GetProperty("isError").GetBoolean().Should().BeTrue("не больше одного плана за запуск");
+        (await new TradePlanRepository(Conn).ListAsync(userId, null, 10)).Should().ContainSingle();
+
         var sent = factory.Services.GetRequiredService<FakeTelegramBotClient>().SentTo(telegramId);
         sent.Should().ContainSingle(m => m.Keyboard != null, "план ушёл пользователю тем же путём подтверждения — с кнопками");
         sent.Single().Html.Should().NotContain("<script>");

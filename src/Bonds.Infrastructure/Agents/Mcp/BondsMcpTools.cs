@@ -106,7 +106,7 @@ public sealed partial class BondsMcpTools
     private static partial Regex BasketCodePattern();
 
     /// <summary>Вызов инструмента. Ошибка ввода — <c>isError</c> с понятным текстом; прочие сбои — общий текст (подробности только в лог, без данных).</summary>
-    public async Task<(string Text, bool IsError)> CallAsync(string name, JsonElement args, ulong userId, CancellationToken ct = default)
+    public async Task<(string Text, bool IsError)> CallAsync(string name, JsonElement args, ulong userId, CancellationToken ct = default, ulong runId = 0)
     {
         try
         {
@@ -121,7 +121,7 @@ public sealed partial class BondsMcpTools
                 "scorecard" => await ScorecardAsync(RequireIsin(args), ct),
                 "freedom_holdings" => await FreedomAsync(userId, ct),
                 "cash" => await Get<CashOverviewBuilder>().BuildAsync(userId, Today(), ct),
-                "propose_plan" => await ProposePlanAsync(userId, args, ct),
+                "propose_plan" => await ProposePlanAsync(userId, runId, args, ct),
                 _ => throw new McpToolInputException("Неизвестный инструмент"),
             };
             return (Serialize(payload), false);
@@ -317,7 +317,7 @@ public sealed partial class BondsMcpTools
         return new { units = "поля без суффикса — валюта строки; *Rub — рубли; *Usd — доллары", holdings, disclaimer = Disclaimer };
     }
 
-    private async Task<object> ProposePlanAsync(ulong userId, JsonElement args, CancellationToken ct)
+    private async Task<object> ProposePlanAsync(ulong userId, ulong runId, JsonElement args, CancellationToken ct)
     {
         if (args.ValueKind != JsonValueKind.Object) throw new McpToolInputException("Нужны аргументы kind и rationale");
         string? Str(string key) => args.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
@@ -326,6 +326,11 @@ public sealed partial class BondsMcpTools
         var rationale = Str("rationale")?.Trim();
         if (string.IsNullOrWhiteSpace(rationale)) throw new McpToolInputException("rationale обязателен: объясните, зачем план");
         if (rationale.Length > 1000) rationale = rationale[..1000];
+
+        // Не больше AgentOptions.MaxProposalsPerRun планов за запуск: инъекция в данных не должна заваливать пользователя планами.
+        var tokens = Get<AgentMcpTokens>();
+        if (!tokens.CanPropose(runId, _options.CurrentValue.MaxProposalsPerRun))
+            throw new McpToolInputException("В этом запуске план уже предложен — больше нельзя");
 
         var portfolio = Str("portfolio");
         var (rule, parameters) = Str("kind") switch
@@ -339,6 +344,7 @@ public sealed partial class BondsMcpTools
         var now = _time.GetUtcNow().UtcDateTime;
         var (plan, outcome) = await Get<PolicyService>().CreateManualAsync(userId, rule, parameters, now, ct, new PlanOrigin(PlanSources.Agent, rationale));
         if (plan is null) return new { created = false, notes = outcome.Notes };
+        tokens.RecordProposal(runId);
 
         // Тот же путь подтверждения, что у любого плана: уведомление с кнопками в бот; решение — только пользователь.
         if (_sp.GetService(typeof(IPlanNotifier)) is IPlanNotifier notifier) await notifier.NotifyPlanCreatedAsync(plan, ct);

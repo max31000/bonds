@@ -23,8 +23,8 @@ public sealed class BondsMcpServer
         _logger = logger;
     }
 
-    /// <summary>Ответ на сообщение или null (уведомление — HTTP 202 без тела).</summary>
-    public async Task<JsonObject?> HandleAsync(JsonElement message, ulong userId, CancellationToken ct = default)
+    /// <summary>Ответ на сообщение или null (уведомление — HTTP 202 без тела). <paramref name="runId"/> — запуск агента (лимит <c>propose_plan</c> на запуск).</summary>
+    public async Task<JsonObject?> HandleAsync(JsonElement message, ulong userId, CancellationToken ct = default, ulong runId = 0)
     {
         if (message.ValueKind != JsonValueKind.Object) return Error(null, -32600, "Invalid Request: ожидается один JSON-RPC объект");
 
@@ -61,7 +61,7 @@ public sealed class BondsMcpServer
                 if (name is null || !BondsMcpTools.Names.Contains(name)) return Error(id, -32602, "Unknown tool");
                 var args = @params.TryGetProperty("arguments", out var a) && a.ValueKind == JsonValueKind.Object ? a : default;
 
-                var (text, isError) = await _tools.CallAsync(name, args, userId, ct);
+                var (text, isError) = await _tools.CallAsync(name, args, userId, ct, runId);
                 return Result(id, new JsonObject
                 {
                     ["content"] = new JsonArray(new JsonObject { ["type"] = "text", ["text"] = text }),

@@ -70,7 +70,7 @@ public static class McpEndpoints
 
         using (doc)
         {
-            var response = await server.HandleAsync(doc.RootElement, userId, ct);
+            var response = await server.HandleAsync(doc.RootElement, userId, ct, runId);
             return response is null ? Results.StatusCode(StatusCodes.Status202Accepted) : Results.Text(response.ToJsonString(), "application/json");
         }
     }

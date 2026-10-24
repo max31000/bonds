@@ -42,14 +42,25 @@ public sealed class AgentMcpTokens
         return grant.RunId == runId ? grant.UserId : null;
     }
 
-    public void Revoke(string token) => _grants.TryRemove(Hash(token), out _);
+    public void Revoke(string token)
+    {
+        if (_grants.TryRemove(Hash(token), out var grant)) _proposals.TryRemove(grant.RunId, out _);
+    }
+
+    private readonly ConcurrentDictionary<ulong, int> _proposals = new();
+
+    /// <summary>Можно ли запуску ещё предложить план (<c>propose_plan</c>): созданных меньше <paramref name="max"/>. Неудачные попытки (ошибка валидации) не считаются.</summary>
+    public bool CanPropose(ulong runId, int max) => _proposals.GetValueOrDefault(runId) < max;
+
+    /// <summary>Запуск создал план.</summary>
+    public void RecordProposal(ulong runId) => _proposals.AddOrUpdate(runId, 1, (_, n) => n + 1);
 
     private void PurgeExpired()
     {
         var now = _time.GetUtcNow().UtcDateTime;
         foreach (var (key, grant) in _grants)
         {
-            if (grant.ExpiresAtUtc <= now) _grants.TryRemove(key, out _);
+            if (grant.ExpiresAtUtc <= now && _grants.TryRemove(key, out _)) _proposals.TryRemove(grant.RunId, out _);
         }
     }
 
