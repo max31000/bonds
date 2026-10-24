@@ -314,4 +314,17 @@ public class FreedomExecutionIntegrationTests
         (await PutTradeKey(client, "trade-pub-NEW")).StatusCode.Should().Be(HttpStatusCode.OK, "тот же ключ — не смена");
         (await PutTradeKey(client, "trade-pub-OTHER")).StatusCode.Should().Be(HttpStatusCode.Conflict);
     }
+
+    [Fact]
+    public async Task LiveMode_CanBeEnabledWithFreedomTradeKeyOnly()
+    {
+        var s = await SeedAsync();
+        var denied = await s.Client.PutAsJsonAsync("/api/settings/execution-mode", new { mode = "live", confirmation = "LIVE" });
+        denied.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity, "нет ни одного торгового ключа");
+
+        await SaveTradeKeyAsync(s);
+        var ok = await s.Client.PutAsJsonAsync("/api/settings/execution-mode", new { mode = "live", confirmation = "LIVE" });
+        ok.StatusCode.Should().Be(HttpStatusCode.OK);
+        (await new UserSettingsRepository(Conn).GetExecutionModeAsync(s.UserId)).Should().Be(ExecutionModes.Live);
+    }
 }

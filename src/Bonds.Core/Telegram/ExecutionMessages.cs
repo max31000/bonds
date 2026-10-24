@@ -53,7 +53,7 @@ public static class ExecutionMessages
     public static string PlanNotStarted(TradePlan plan, string reason) =>
         Limit($"⚠ План #{plan.Id} не передан на исполнение: {BotFormat.HtmlTruncated(reason, MaxReason)}");
 
-    public const string ExecutionEnabled = "🟢 Исполнение включено: подтверждённые планы будут отправляться брокеру T-Invest лимитными заявками. Остановить — /stop.";
+    public const string ExecutionEnabled = "🟢 Исполнение включено: подтверждённые планы будут отправляться брокеру (T-Invest, Freedom — при проверенном торговом ключе) лимитными заявками. Остановить — /stop.";
 
     /// <summary>«Исполнение включено» + (если ворота ещё закрыты, например сервер выключен) — почему заявки пока не отправляются.</summary>
     public static string Enabled(IReadOnlyList<string> pendingReasons) => pendingReasons.Count == 0

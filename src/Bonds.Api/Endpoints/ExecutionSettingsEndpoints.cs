@@ -49,9 +49,11 @@ public static class ExecutionSettingsEndpoints
         {
             if (!string.Equals(request!.Confirmation, LiveConfirmationWord, StringComparison.Ordinal))
                 return ValidationFailure($"Для включения исполнения введите слово «{LiveConfirmationWord}».");
+            // Режим общий для брокеров (задача 66): нужен хотя бы один проверенный торговый ключ — T-Invest или Freedom; ворота каждого брокера всё равно проверяются отдельно.
             var before = await gate.ResolveAsync(userId);
-            if (!before.TradeCredentialOk)
-                return ValidationFailure("Нужен проверенный торговый токен T-Invest (Настройки → Подключения → «T-Invest (торговля)»).");
+            var freedom = await gate.ResolveForBrokerAsync(userId, Bonds.Core.Models.Brokers.Freedom);
+            if (!before.TradeCredentialOk && !freedom.TradeCredentialOk)
+                return ValidationFailure("Нужен проверенный торговый токен T-Invest или торговый ключ Freedom (Настройки → Подключения → «T-Invest (торговля)» / «Freedom (торговля)»).");
         }
 
         var previous = await settings.GetExecutionModeAsync(userId);
