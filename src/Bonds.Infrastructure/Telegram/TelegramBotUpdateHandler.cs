@@ -47,6 +47,12 @@ public sealed class TelegramBotUpdateHandler : ITelegramUpdateHandler
 
     public const string CallbackFailedText = "Ошибка, попробуйте ещё раз.";
 
+    /// <summary>
+    /// T-67E (minor 8): ответ на сообщение, обработка которого упала (в т.ч. отправка ответа). Команда плана к этому моменту уже отмечена обработанной
+    /// (повтор того же update_id план не строит) — без этого ответа пользователь не узнал бы, что ничего не произошло.
+    /// </summary>
+    public const string MessageFailedText = "Ошибка при обработке команды — проверьте /plans и при необходимости повторите её.";
+
     public TelegramBotUpdateHandler(
         ITelegramBotClient bot,
         IUserRepository users,
@@ -100,6 +106,19 @@ public sealed class TelegramBotUpdateHandler : ITelegramUpdateHandler
                 catch (Exception answerEx) when (answerEx is not OperationCanceledException)
                 {
                     _logger.LogInformation("Telegram callback {UpdateId}: error answer not delivered ({ErrorType})", update.UpdateId, answerEx.GetType().Name);
+                }
+            }
+            else if (update.Message is { ChatType: PrivateChat } msg && msg.ChatId == msg.FromId)
+            {
+                // T-67E (minor 8): сбой в пути сообщения (например, Telegram не принял ответ с планом, а команда уже отмечена обработанной) — отдельный ответ об ошибке.
+                // Только личка с самим собой (как и вся обработка сообщений). Если и он не ушёл — глушим.
+                try
+                {
+                    await _bot.SendMessageAsync(msg.ChatId, MessageFailedText, null, ct);
+                }
+                catch (Exception replyEx) when (replyEx is not OperationCanceledException)
+                {
+                    _logger.LogInformation("Telegram update {UpdateId}: error reply not delivered ({ErrorType})", update.UpdateId, replyEx.GetType().Name);
                 }
             }
         }
