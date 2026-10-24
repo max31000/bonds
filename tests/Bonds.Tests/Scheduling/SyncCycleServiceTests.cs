@@ -250,6 +250,46 @@ public class SyncCycleServiceTests
     }
 
     [Fact]
+    public async Task T67E_NextCycle_WaitsForBackgroundPolicies_BeforeWritingData_StatusNotRunningAfterCore()
+    {
+        // Minor 4: правила читают снимок прошлого цикла — новый цикл не начинает синк (запись данных), пока они не закончат; статус после ядра — «не идёт».
+        SetupNoPositionsHappyPath();
+        var fake = new FakePolicyRunner { Slow = true };
+        _policyRunner = fake;
+        var service = (SyncCycleService)BuildServiceProvider().GetRequiredService<ISyncCycleRunner>();
+
+        await service.RunCycleAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        await fake.Started.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        service.GetStatus().IsRunning.Should().BeFalse("ядро синка закончилось — правила идут в фоне");
+        _tInvest.Invocations.Count(i => i.Method.Name == nameof(ITInvestPortfolioClient.GetPortfolioAsync)).Should().Be(1);
+
+        var second = service.RunCycleAsync();
+        await Task.Delay(300);
+        second.IsCompleted.Should().BeFalse("второй цикл ждёт окончания правил");
+        _tInvest.Invocations.Count(i => i.Method.Name == nameof(ITInvestPortfolioClient.GetPortfolioAsync)).Should().Be(1, "данные не переписываются, пока правила читают снимок");
+        (await service.RunCycleAsync()).AlreadyRunning.Should().BeTrue("ворота заняты ждущим циклом");
+
+        fake.Release.SetResult();
+        var result = await second.WaitAsync(TimeSpan.FromSeconds(10));
+        result.HasErrors.Should().BeFalse();
+        _tInvest.Invocations.Count(i => i.Method.Name == nameof(ITInvestPortfolioClient.GetPortfolioAsync)).Should().Be(2);
+        await service.BackgroundPolicies.WaitAsync(TimeSpan.FromSeconds(10));
+        fake.Calls.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task T67E_CycleFailure_ReleasesPoliciesGate_NextCycleRuns()
+    {
+        SetupNoPositionsHappyPath();
+        _accounts.SetupSequence(a => a.GetPrimaryAccountIdAsync()).ThrowsAsync(new InvalidOperationException("db down")).ReturnsAsync(AccountId);
+        _policyRunner = new FakePolicyRunner();
+        var service = (SyncCycleService)BuildServiceProvider().GetRequiredService<ISyncCycleRunner>();
+
+        await FluentActions.Invoking(() => service.RunCycleAsync()).Should().ThrowAsync<InvalidOperationException>();
+        (await service.RunCycleAsync().WaitAsync(TimeSpan.FromSeconds(10))).AlreadyRunning.Should().BeFalse("хвост ворот отпущен и при сбое ядра");
+    }
+
+    [Fact]
     public async Task T67D_Policies_InvokedOncePerCycle()
     {
         SetupNoPositionsHappyPath();

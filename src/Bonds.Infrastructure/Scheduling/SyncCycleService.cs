@@ -43,6 +43,13 @@ public sealed class SyncCycleService : ISyncCycleRunner
     private readonly ILogger<SyncCycleService> _logger;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
+    /// <summary>
+    /// T-67E (minor 4): «хвост» ворот синка. Держится ядром цикла (пока оно пишет данные) и передаётся фоновому прогону правил — тот отпускает его, дочитав
+    /// снимок. Следующий цикл ждёт его ПЕРЕД первой записью: правила никогда не читают наполовину переписанный снимок, а <c>/api/sync/status</c> после
+    /// ядра показывает «не идёт» (основные ворота <see cref="_gate"/> отпущены).
+    /// </summary>
+    private readonly SemaphoreSlim _policiesGate = new(1, 1);
+
     private readonly object _statusLock = new();
     private bool _isRunning;
     private DateTime? _lastRunStartedAtUtc;
@@ -88,6 +95,8 @@ public sealed class SyncCycleService : ISyncCycleRunner
         }
 
         SyncCycleResult result;
+        var policiesHeld = false;
+        var handOverToPolicies = false;
         try
         {
             lock (_statusLock)
@@ -96,7 +105,12 @@ public sealed class SyncCycleService : ISyncCycleRunner
                 _lastRunStartedAtUtc = DateTime.UtcNow;
             }
 
+            // T-67E (minor 4): прогон правил прошлого цикла ещё читает снимок — ждём его, прежде чем переписывать данные.
+            await _policiesGate.WaitAsync(ct);
+            policiesHeld = true;
+
             result = await RunCycleInternalAsync(ct);
+            handOverToPolicies = !result.NoAccountConfigured;
 
             lock (_statusLock)
             {
@@ -121,13 +135,15 @@ public sealed class SyncCycleService : ISyncCycleRunner
                 _isRunning = false;
             }
 
+            if (policiesHeld && !handOverToPolicies) _policiesGate.Release();
             _gate.Release();
         }
 
         // T-67D: правила и планы (задача 63) — ВНЕ критического пути синка. Ворота уже отпущены (/api/sync/status показывает «не идёт»), прогон идёт в фоне
         // в своём DI-скоупе; цикл (ручной POST /api/sync и плановые суточные) возвращает результат, не дожидаясь правил. Параллельные прогоны правил одного
         // пользователя сериализует его GET_LOCK (IPolicyUserLock). Нет счёта — правил тоже нет (как раньше: цикл пропускался целиком).
-        if (!result.NoAccountConfigured) StartBackgroundPolicies();
+        // T-67E (minor 4): «хвост» ворот (_policiesGate) передан прогону правил — следующий цикл не начнёт писать данные, пока правила не дочитают снимок.
+        if (handOverToPolicies) StartBackgroundPolicies();
         return result;
     }
 
@@ -151,6 +167,10 @@ public sealed class SyncCycleService : ISyncCycleRunner
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Background policy run failed — plans keep the previous state");
+            }
+            finally
+            {
+                _policiesGate.Release(); // хвост ворот синка: следующий цикл может писать данные
             }
         });
         Volatile.Write(ref _backgroundPolicies, task);
