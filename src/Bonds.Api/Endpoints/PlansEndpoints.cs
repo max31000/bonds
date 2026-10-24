@@ -191,6 +191,7 @@ public static class PlansEndpoints
         ExpiresAt = Utc(plan.ExpiresAt),
         DecidedAt = plan.DecidedAt is { } d ? Utc(d) : null,
         DecidedVia = plan.DecidedVia,
+        Source = plan.Source,
         Summary = ParseSummary(plan.SummaryJson),
         Lines = plan.Lines.Select(l => ToDto(l, orders.Where(o => o.LineNo == l.LineNo).OrderBy(o => o.Attempt).ToList())).ToList(),
         NeedsAttention = orders.Any(NeedsAttention),

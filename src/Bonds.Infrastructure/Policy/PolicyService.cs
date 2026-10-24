@@ -15,6 +15,12 @@ namespace Bonds.Infrastructure.Policy;
 public sealed record PlanParams(
     decimal? Amount = null, decimal? Fraction = null, string? Portfolio = null, IReadOnlyList<string>? IncludeBaskets = null, string? Code = null);
 
+/// <summary>
+/// Кто предложил ручной план (задача 68): <see cref="Source"/> — значение <c>trade_plans.source</c> (<see cref="PlanSources.Agent"/>), <see cref="Rationale"/> — обоснование
+/// (недоверенный текст модели: в бот уходит экранированным, в вебе рендерится как текст).
+/// </summary>
+public sealed record PlanOrigin(string Source, string Rationale);
+
 /// <summary>Ошибка в параметрах запроса плана (API отдаёт 422).</summary>
 public class PolicyValidationException : Exception
 {
@@ -106,8 +112,12 @@ public sealed class PolicyService
         await EvaluateAsync(userId, rule, p, nowUtc, ignoreHours: true, ct);
 
     /// <summary>Строит и СОХРАНЯЕТ ручной план (всегда PendingApproval). Null — правило не дало плана (причины — в <see cref="PolicyOutcome.Notes"/>).</summary>
+    /// <para>
+    /// <paramref name="origin"/> (задача 68) — план предложен не пользователем, а ИИ-агентом (<c>propose_plan</c>): та же валидация и то же построение, что у
+    /// ручного запроса, статус ВСЕГДА <c>PendingApproval</c>, <c>dry_run</c> — по обычным воротам; в <c>source</c> пишется источник, обоснование — в причину и заметки.
+    /// </para>
     public async Task<(TradePlan? Plan, PolicyOutcome Outcome)> CreateManualAsync(
-        ulong userId, string rule, PlanParams p, DateTime nowUtc, CancellationToken ct = default)
+        ulong userId, string rule, PlanParams p, DateTime nowUtc, CancellationToken ct = default, PlanOrigin? origin = null)
     {
         // Задача 67 (#13): тот же замок пользователя, что у прогона правил — ручной inflow/withdraw не строится на тех же свободных деньгах параллельно с ним.
         await using var held = _userLock is null ? null : await _userLock.TryAcquireAsync(userId, UserLockWait, ct);
@@ -116,7 +126,18 @@ public sealed class PolicyService
         var outcome = await EvaluateAsync(userId, rule, p, nowUtc, ignoreHours: true, ct);
         if (outcome.Plan is null) return (null, outcome);
 
-        var plan = await SaveAsync(userId, outcome.Plan, nowUtc, forcePending: true);
+        var draft = outcome.Plan;
+        if (origin is not null)
+        {
+            var rationale = origin.Rationale.Trim();
+            draft = draft with
+            {
+                Trigger = "ИИ-агент: " + (rationale.Length > 200 ? rationale[..200] + "…" : rationale),
+                Summary = draft.Summary with { Notes = ["Обоснование ИИ-агента: " + rationale, "Запрос: " + draft.Trigger, .. draft.Summary.Notes] },
+            };
+        }
+
+        var plan = await SaveAsync(userId, draft, nowUtc, forcePending: true, source: origin?.Source);
         return (plan, outcome);
     }
 
@@ -124,7 +145,7 @@ public sealed class PolicyService
     /// Сохраняет черновик правила: статус по лимитам (AutoApproved получает <c>decided_at</c>/<c>decided_via=auto</c>); <c>dry_run</c> — по воротам исполнения
     /// пользователя (dry-run, если хоть одно условие не выполнено или в плане есть строки не T-Invest).
     /// </summary>
-    public async Task<TradePlan> SaveAsync(ulong userId, TradePlanDraft draft, DateTime nowUtc, bool forcePending)
+    public async Task<TradePlan> SaveAsync(ulong userId, TradePlanDraft draft, DateTime nowUtc, bool forcePending, string? source = null)
     {
         var status = forcePending && draft.Status == PlanStatuses.AutoApproved ? PlanStatuses.PendingApproval : draft.Status;
         var auto = status == PlanStatuses.AutoApproved;
@@ -142,6 +163,7 @@ public sealed class PolicyService
             ExpiresAt = draft.ExpiresAtUtc,
             DecidedAt = auto ? nowUtc : null,
             DecidedVia = auto ? DecidedVia.Auto : null,
+            Source = source,
             BotNonce = BotCallback.NewNonce(),
             SummaryJson = JsonSerializer.Serialize(dryRun ? draft.Summary : draft.Summary with { ExecutionNote = LiveNote }, JsonOptions),
             Lines = draft.Lines.ToList(),

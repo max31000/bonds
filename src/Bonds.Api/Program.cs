@@ -129,6 +129,10 @@ app.MapLiveEndpoints();
 app.MapWatchlistEndpoints();
 app.MapUniverseEndpoints();
 app.MapIssuerEndpoints();
+app.MapAgentEndpoints();
+
+// Задача 68: MCP-сервер bonds для процесса ИИ-агента — вне cookie-авторизации (AllowAnonymous), защищён loopback-проверкой и одноразовым bearer запуска.
+app.MapMcpEndpoints();
 
 // Внимание: FallbackPolicy требует авторизацию по умолчанию — новые публичные маршруты
 // нужно явно помечать .AllowAnonymous().

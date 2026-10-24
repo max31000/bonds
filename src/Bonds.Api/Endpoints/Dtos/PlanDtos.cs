@@ -78,6 +78,10 @@ public sealed record PlanDto
     public required DateTime ExpiresAt { get; init; }
     public DateTime? DecidedAt { get; init; }
     public string? DecidedVia { get; init; }
+
+    /// <summary>Кто предложил план (задача 68): null — правила или пользователь, <c>agent</c> — ИИ-агент (решение всё равно за пользователем).</summary>
+    public string? Source { get; init; }
+
     public TradePlanSummary? Summary { get; init; }
     public required IReadOnlyList<PlanLineDto> Lines { get; init; }
 
