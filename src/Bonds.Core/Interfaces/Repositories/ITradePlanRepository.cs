@@ -73,6 +73,12 @@ public interface ITradePlanRepository
     /// </summary>
     Task<CashHoldState> GetCashHoldAsync(ulong userId, string broker, string currency, DateTime nowUtc, int withdrawHoldTtl);
 
+    /// <summary>
+    /// Задача 67 (#4): атомарная смена <c>bot_nonce</c> ждущего решения плана (<c>PendingApproval</c>) с <paramref name="expectedNonce"/> на <paramref name="newNonce"/> —
+    /// кнопки Telegram одноразовые. false — nonce уже другой (кнопку нажали раньше/параллельно) или план не ждёт решения.
+    /// </summary>
+    Task<bool> RotateNonceAsync(ulong userId, ulong id, string expectedNonce, string newNonce);
+
     /// <summary>«Деньги выведены» (<c>/withdrawn</c>, кнопка в вебе): снимает удержание у всех планов вывода/выхода пользователя. Возвращает число планов.</summary>
     Task<int> ReleaseCashHoldsAsync(ulong userId, DateTime nowUtc);
 

@@ -121,4 +121,56 @@ public class PlanMessageFormatterTests
         BotFormat.PercentPoints(-0.008m).Should().Be("−0,8 п.п.");
         BotFormat.PercentPoints(0.02m).Should().Be("+2,0 п.п.");
     }
+
+    // ─── Задача 67 (#4): живой план ────────────────────────────────────────────────────────
+
+    private static TradePlan LivePlan()
+    {
+        var plan = Plan();
+        plan.DryRun = false;
+        plan.SummaryJson = JsonSerializer.Serialize(
+            new TradePlanSummary { Portfolio = "rub", Currency = "RUB", CashBefore = 7340m, CashAfter = 11m, BuyTotal = 7329m, ExecutionNote = "исполнение включено: после подтверждения заявки уйдут брокеру" },
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        return plan;
+    }
+
+    [Fact]
+    public void T67_LivePlan_BoldRealOrdersWarning_AndExecutionNote()
+    {
+        var html = PlanMessageFormatter.ForNewPlan(LivePlan(), Now, null).Html;
+
+        html.Should().Contain("<b>⚠️ РЕАЛЬНЫЕ ЗАЯВКИ</b>");
+        html.Should().Contain("исполнение включено: после подтверждения заявки уйдут брокеру");
+        html.Should().NotContain(PlanMessageFormatter.ObservationNote);
+
+        PlanMessageFormatter.ForNewPlan(Plan(), Now, null).Html.Should().NotContain("РЕАЛЬНЫЕ ЗАЯВКИ");
+    }
+
+    [Fact]
+    public void T67_PlansList_LivePlan_HasNoDecisionButtons_OnlyDetailsLink()
+    {
+        var live = LivePlan();
+        var dry = Plan();
+        dry.Id = 43;
+
+        var message = BotTexts.Plans([live, dry], "https://example.org", 10);
+
+        var buttons = message.Keyboard!.Rows.SelectMany(r => r).ToList();
+        buttons.Where(b => b.CallbackData is not null).Should().OnlyContain(b => b.CallbackData!.StartsWith("p:43:"), "кнопки решения — только у dry-run плана");
+        buttons.Should().Contain(b => b.Url == "https://example.org/bonds/plans/42");
+        message.Html.Should().Contain("№42").And.Contain("реальные заявки");
+    }
+
+    [Fact]
+    public void T67_SendConfirmation_ListsRealOrders_AndSendButtonWithNewNonce()
+    {
+        var message = PlanMessageFormatter.ForSendConfirmation(LivePlan(), Now, "NewNonce123", null);
+
+        message.Html.Should().Contain("<b>⚠️ РЕАЛЬНЫЕ ЗАЯВКИ</b>").And.Contain($"<code>{BotFormat.Html(PlanMessageFormatter.FormatLine(LivePlan().Lines[0]))}</code>");
+        message.Html.Should().Contain("Отправить заявки");
+        var data = message.Keyboard!.Rows.SelectMany(r => r).Select(b => b.CallbackData).Where(d => d is not null).ToList();
+        data.Should().Contain(BotCallback.Build(42, BotPlanAction.Send, "NewNonce123"));
+        data.Should().Contain(BotCallback.Build(42, BotPlanAction.Reject, "NewNonce123"));
+        data.Should().NotContain(d => d!.Contains(":a:"), "первый шаг уже пройден");
+    }
 }

@@ -21,6 +21,11 @@ public static class PlanMessageFormatter
 {
     public const string ObservationNote = "режим наблюдения: сделка не отправляется";
 
+    /// <summary>Жирная пометка живого плана (<c>dry_run = 0</c>, задача 67): после подтверждения уйдут настоящие заявки брокеру.</summary>
+    public const string RealOrdersMark = "⚠️ РЕАЛЬНЫЕ ЗАЯВКИ";
+
+    private const int MaxExecutionNote = 300;
+
     /// <summary>Лимит Telegram на текст сообщения (символы UTF-16).</summary>
     public const int TelegramLimit = 4096;
 
@@ -62,6 +67,13 @@ public static class PlanMessageFormatter
         var summary = ParseSummary(plan.SummaryJson);
 
         var head = new StringBuilder();
+        if (!plan.DryRun)
+        {
+            // Задача 67 (#4): живой план — заметно и первой строкой, с заметкой исполнения (кому и когда уйдут заявки).
+            head.Append($"<b>{RealOrdersMark}</b>\n");
+            if (!string.IsNullOrWhiteSpace(summary?.ExecutionNote)) head.Append($"{BotFormat.HtmlTruncated(summary.ExecutionNote, MaxExecutionNote)}\n");
+        }
+
         head.Append($"<b>План №{plan.Id}</b> · {BotFormat.HtmlTruncated(RuleTitle(plan.Rule), MaxRuleTitle)}\n");
         if (!string.IsNullOrWhiteSpace(plan.Trigger)) head.Append($"Причина: {BotFormat.HtmlTruncated(plan.Trigger, MaxTrigger)}\n");
         head.Append('\n');
@@ -132,6 +144,26 @@ public static class PlanMessageFormatter
 
         if (DetailsUrl(plan.Id, webBaseUrl) is { } url) rows.Add([new InlineButton("🔎 Детали", Url: url)]);
         return new BotMessage(FormatHtml(plan, nowUtc), rows.Count == 0 ? null : new InlineKeyboard(rows));
+    }
+
+    /// <summary>
+    /// Второй шаг подтверждения ЖИВОГО плана (задача 67, #4): первое нажатие «Подтвердить» ничего не решает, а показывает этот текст — план с пометкой
+    /// <see cref="RealOrdersMark"/> и списком РЕАЛЬНЫХ заявок (строки плана) — и кнопку «Отправить заявки» с НОВЫМ <paramref name="nonce"/> (старые кнопки
+    /// после смены nonce недействительны, каждая кнопка одноразовая). Подтверждает план только «Отправить заявки».
+    /// </summary>
+    public static BotMessage ForSendConfirmation(TradePlan plan, DateTime nowUtc, string nonce, string? webBaseUrl)
+    {
+        const string footer = "Проверьте заявки выше: это настоящие лимитные заявки брокеру. Отправить — «📨 Отправить заявки», передумали — «❌ Отклонить».";
+        var rows = new List<IReadOnlyList<InlineButton>>
+        {
+            new InlineButton[]
+            {
+                new("📨 Отправить заявки", BotCallback.Build(plan.Id, BotPlanAction.Send, nonce)),
+                new("❌ Отклонить", BotCallback.Build(plan.Id, BotPlanAction.Reject, nonce)),
+            },
+        };
+        if (DetailsUrl(plan.Id, webBaseUrl) is { } url) rows.Add([new InlineButton("🔎 Детали", Url: url)]);
+        return new BotMessage(FormatHtml(plan, nowUtc, footer), new InlineKeyboard(rows));
     }
 
     /// <summary>Клавиатура только со ссылкой «Детали» (без кнопок решения) или null, если базовый адрес не задан.</summary>

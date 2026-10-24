@@ -23,6 +23,8 @@ public interface ITelegramUpdateHandler
 /// управляет СВОИМИ планами, владелец не зашит); чужие и незнакомые id получают «Нет доступа» и дальше не обрабатываются. Команды — только в личном чате с ботом.
 /// Нажатие кнопки проверяет: пользователь — владелец плана, nonce совпал, статус <c>PendingApproval</c>, срок не истёк; повторное нажатие безопасно
 /// (решение атомарно в <see cref="ITradePlanRepository.TransitionAsync"/>).
+/// Задача 67 (#4): живой план (<c>dry_run = 0</c>) подтверждается в ДВА шага — «Подтвердить» показывает реальные заявки и «Отправить заявки» (nonce меняется
+/// на каждом шаге через <see cref="ITradePlanRepository.RotateNonceAsync"/>, кнопки одноразовые); в <c>/plans</c> у живых планов кнопок решения нет.
 /// </summary>
 public sealed class TelegramBotUpdateHandler : ITelegramUpdateHandler
 {
@@ -261,15 +263,39 @@ public sealed class TelegramBotUpdateHandler : ITelegramUpdateHandler
             return;
         }
 
-        var result = data.Action == BotPlanAction.Approve
+        // Задача 67 (#4): ЖИВОЙ план (dry_run = 0) подтверждается в два шага. Первое «Подтвердить» ничего не решает: nonce меняется (старые кнопки умирают),
+        // сообщение показывает реальные заявки и кнопку «Отправить заявки». Решает только она — и её nonce тоже одноразовый (меняется до подтверждения).
+        if (data.Action == BotPlanAction.Approve && !plan.DryRun)
+        {
+            var next = BotCallback.NewNonce();
+            if (!await _plans.RotateNonceAsync(user.Id, plan.Id, data.Nonce, next))
+            {
+                await _bot.AnswerCallbackQueryAsync(callback.Id, "План не найден или кнопка недействительна.", true, ct);
+                return;
+            }
+
+            plan.BotNonce = next;
+            await _bot.AnswerCallbackQueryAsync(callback.Id, "Проверьте реальные заявки и нажмите «Отправить заявки».", false, ct);
+            await EditWithKeyboardAsync(callback, PlanMessageFormatter.ForSendConfirmation(plan, now, next, _options.WebBaseUrl), ct);
+            return;
+        }
+
+        if (data.Action == BotPlanAction.Send && !await _plans.RotateNonceAsync(user.Id, plan.Id, data.Nonce, BotCallback.NewNonce()))
+        {
+            await _bot.AnswerCallbackQueryAsync(callback.Id, "План не найден или кнопка недействительна.", true, ct);
+            return;
+        }
+
+        var approve = data.Action is BotPlanAction.Approve or BotPlanAction.Send;
+        var result = approve
             ? await _policy.ApproveAsync(user.Id, plan.Id, DecidedVia.Telegram, now)
             : await _policy.RejectAsync(user.Id, plan.Id, DecidedVia.Telegram, now);
 
         switch (result.Kind)
         {
             case PlanDecisionKind.Ok when result.Plan is { } decided:
-                var verb = data.Action == BotPlanAction.Approve ? "✅ Подтверждено" : "❌ Отклонено";
-                await _bot.AnswerCallbackQueryAsync(callback.Id, data.Action == BotPlanAction.Approve ? "Подтверждено." : "Отклонено.", false, ct);
+                var verb = approve ? (data.Action == BotPlanAction.Send ? "📨 Заявки переданы исполнителю" : "✅ Подтверждено") : "❌ Отклонено";
+                await _bot.AnswerCallbackQueryAsync(callback.Id, approve ? "Подтверждено." : "Отклонено.", false, ct);
                 await EditAsync(callback, decided, now, $"{verb} {BotFormat.MoscowTime(decided.DecidedAt ?? now)}", ct);
                 break;
             case PlanDecisionKind.Expired:
@@ -280,6 +306,20 @@ public sealed class TelegramBotUpdateHandler : ITelegramUpdateHandler
                 await _bot.AnswerCallbackQueryAsync(callback.Id, "План уже обработан: " + StatusText(result.Plan?.Status) + ".", false, ct);
                 if (result.Plan is not null) await EditAsync(callback, result.Plan, now, $"ℹ Уже обработан: {StatusText(result.Plan.Status)}", ct);
                 break;
+        }
+    }
+
+    /// <summary>Переписывает сообщение с кнопкой на <paramref name="message"/> (текст и новую клавиатуру). Сбой правки — только лог.</summary>
+    private async Task EditWithKeyboardAsync(BotIncomingCallback callback, BotMessage message, CancellationToken ct)
+    {
+        if (callback.ChatId is not { } chatId || callback.MessageId is not { } messageId) return;
+        try
+        {
+            await _bot.EditMessageTextAsync(chatId, messageId, message.Html, message.Keyboard, ct);
+        }
+        catch (Exception ex) when (ex is TelegramApiException or HttpRequestException)
+        {
+            _logger.LogWarning("Telegram message edit failed: {Message}", ex.Message);
         }
     }
 

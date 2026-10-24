@@ -13,13 +13,17 @@ public enum BotPlanAction
 
     /// <summary>Снять висящие заявки исполняемого плана (задача 65, кнопка «Отменить»).</summary>
     CancelExecution,
+
+    /// <summary>Второй шаг подтверждения ЖИВОГО плана (задача 67, #4): «Отправить заявки» после показа реальных заявок.</summary>
+    Send,
 }
 
 /// <summary>Разобранный <c>callback_data</c> кнопки плана.</summary>
 public sealed record BotCallbackData(ulong PlanId, BotPlanAction Action, string Nonce);
 
 /// <summary>
-/// Формат <c>callback_data</c> кнопок плана (задача 64): <c>p:{planId}:{a|r|c}:{nonce}</c> (c — снять заявки исполняемого плана, задача 65), nonce — случайные 8 байт в base64url (11 символов, хранится в
+/// Формат <c>callback_data</c> кнопок плана (задача 64): <c>p:{planId}:{a|r|c|s}:{nonce}</c> (c — снять заявки исполняемого плана, задача 65; s — второй шаг
+/// подтверждения живого плана «Отправить заявки», задача 67 — nonce при каждом шаге меняется, кнопка одноразовая), nonce — случайные 8 байт в base64url (11 символов, хранится в
 /// <c>trade_plans.bot_nonce</c>). Лимит Telegram на callback_data — 64 байта: максимум около 2 + 20 + 2 + 11 = 35. Чистые функции, без БД и сети.
 /// </summary>
 public static partial class BotCallback
@@ -28,6 +32,7 @@ public static partial class BotCallback
     private const string ApproveCode = "a";
     private const string RejectCode = "r";
     private const string CancelCode = "c";
+    private const string SendCode = "s";
 
     [GeneratedRegex("^[A-Za-z0-9_-]{8,16}$", RegexOptions.CultureInvariant)]
     private static partial Regex NonceRegex();
@@ -43,6 +48,7 @@ public static partial class BotCallback
     {
         BotPlanAction.Approve => ApproveCode,
         BotPlanAction.Reject => RejectCode,
+        BotPlanAction.Send => SendCode,
         _ => CancelCode,
     };
 
@@ -58,6 +64,7 @@ public static partial class BotCallback
         if (parts[2] == ApproveCode) action = BotPlanAction.Approve;
         else if (parts[2] == RejectCode) action = BotPlanAction.Reject;
         else if (parts[2] == CancelCode) action = BotPlanAction.CancelExecution;
+        else if (parts[2] == SendCode) action = BotPlanAction.Send;
         else return false;
         if (!NonceRegex().IsMatch(parts[3])) return false;
         parsed = new BotCallbackData(id, action, parts[3]);

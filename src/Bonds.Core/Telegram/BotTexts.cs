@@ -93,7 +93,15 @@ public static class BotTexts
                 _ => plan.Status,
             };
             var lines = plan.Lines.Count;
-            sb.Append($"№{plan.Id} · {BotFormat.Html(PlanMessageFormatter.RuleTitle(plan.Rule))} · {status} · строк: {lines} · до {BotFormat.MoscowTime(plan.ExpiresAt)}\n");
+            var live = plan.DryRun ? string.Empty : " · ⚠️ реальные заявки";
+            sb.Append($"№{plan.Id} · {BotFormat.Html(PlanMessageFormatter.RuleTitle(plan.Rule))} · {status}{live} · строк: {lines} · до {BotFormat.MoscowTime(plan.ExpiresAt)}\n");
+
+            if (!plan.DryRun)
+            {
+                // Задача 67 (#4): живой план из списка не подтверждается — только в сообщении плана (два шага с показом заявок) или в вебе.
+                if (PlanMessageFormatter.DetailsUrl(plan.Id, webBaseUrl) is { } detailsUrl) rows.Add([new InlineButton($"🔎 №{plan.Id}", Url: detailsUrl)]);
+                continue;
+            }
 
             if (plan.Status == PlanStatuses.PendingApproval && !string.IsNullOrEmpty(plan.BotNonce))
             {

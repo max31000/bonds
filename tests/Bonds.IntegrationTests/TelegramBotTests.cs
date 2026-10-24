@@ -112,6 +112,60 @@ public class TelegramBotTests
     }
 
     [Fact]
+    public async Task T67_LivePlan_TwoStepConfirm_FirstTapShowsOrders_SecondApproves_NonceOneTime()
+    {
+        var (userId, tg) = await NewUserAsync();
+        var plan = await NewPlanAsync(userId);
+        await using (var conn = new MySqlConnector.MySqlConnection(Conn))
+            await Dapper.SqlMapper.ExecuteAsync(conn, "UPDATE trade_plans SET dry_run = 0 WHERE id = @Id", new { plan.Id });
+        var firstApprove = Approve(plan);
+
+        // Шаг 1: «Подтвердить» — план НЕ решён, сообщение показывает реальные заявки и кнопку «Отправить заявки» с новым nonce.
+        var cb1 = "cb-" + Guid.NewGuid();
+        await PressAsync(tg, cb1, firstApprove);
+        var afterFirst = await ReloadAsync(plan);
+        afterFirst.Status.Should().Be(PlanStatuses.PendingApproval);
+        afterFirst.BotNonce.Should().NotBe(plan.BotNonce, "nonce меняется на каждом шаге");
+        var edit = Bot.Edits.Last(e => e.ChatId == tg);
+        edit.Html.Should().Contain("РЕАЛЬНЫЕ ЗАЯВКИ").And.Contain("TMON@");
+        var send = BotCallback.Build(plan.Id, BotPlanAction.Send, afterFirst.BotNonce!);
+        edit.Keyboard!.Rows.SelectMany(r => r).Select(b => b.CallbackData).Should().Contain(send);
+
+        // Старая кнопка «Подтвердить» после смены nonce недействительна.
+        var cbOld = "cb-" + Guid.NewGuid();
+        await PressAsync(tg, cbOld, firstApprove);
+        AnswerFor(cbOld).Text.Should().Contain("недействительна");
+        (await ReloadAsync(plan)).Status.Should().Be(PlanStatuses.PendingApproval);
+
+        // Шаг 2: «Отправить заявки» — план подтверждён; та же кнопка второй раз не работает (nonce одноразовый).
+        var cb2 = "cb-" + Guid.NewGuid();
+        await PressAsync(tg, cb2, send);
+        var approved = await ReloadAsync(plan);
+        approved.Status.Should().Be(PlanStatuses.Approved);
+        approved.DecidedVia.Should().Be(DecidedVia.Telegram);
+        approved.BotNonce.Should().NotBe(afterFirst.BotNonce);
+
+        var cb3 = "cb-" + Guid.NewGuid();
+        await PressAsync(tg, cb3, send);
+        AnswerFor(cb3).Text.Should().Contain("недействительна");
+    }
+
+    [Fact]
+    public async Task T67_PlansList_LivePlan_HasNoApproveButtons()
+    {
+        var (userId, tg) = await NewUserAsync();
+        var plan = await NewPlanAsync(userId);
+        await using (var conn = new MySqlConnector.MySqlConnection(Conn))
+            await Dapper.SqlMapper.ExecuteAsync(conn, "UPDATE trade_plans SET dry_run = 0 WHERE id = @Id", new { plan.Id });
+
+        await TextAsync(tg, "/plans");
+
+        var message = Bot.SentTo(tg).Single();
+        message.Html.Should().Contain($"№{plan.Id}");
+        (message.Keyboard?.Rows.SelectMany(r => r).Where(b => b.CallbackData is not null) ?? []).Should().BeEmpty();
+    }
+
+    [Fact]
     public async Task Reject_ChangesStatus()
     {
         var (userId, tg) = await NewUserAsync();

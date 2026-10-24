@@ -18,6 +18,7 @@ public class BotCallbackTests
     [Theory]
     [InlineData(BotPlanAction.Approve, "a")]
     [InlineData(BotPlanAction.Reject, "r")]
+    [InlineData(BotPlanAction.Send, "s")]
     public void RoundTrip(BotPlanAction action, string code)
     {
         var nonce = BotCallback.NewNonce();

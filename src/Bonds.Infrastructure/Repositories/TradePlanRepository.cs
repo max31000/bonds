@@ -196,6 +196,17 @@ public class TradePlanRepository : ITradePlanRepository
         return affected > 0;
     }
 
+    public async Task<bool> RotateNonceAsync(ulong userId, ulong id, string expectedNonce, string newNonce)
+    {
+        // Сравнение-и-замена: из двух одновременных нажатий одной кнопки выигрывает одно; второе увидит уже другой nonce.
+        using var conn = CreateConnection();
+        var affected = await conn.ExecuteAsync(
+            @"UPDATE trade_plans SET bot_nonce = @New
+              WHERE id = @Id AND user_id = @UserId AND bot_nonce = @Expected AND status = 'PendingApproval'",
+            new { Id = id, UserId = userId, Expected = expectedNonce, New = newNonce });
+        return affected > 0;
+    }
+
     public async Task<decimal> SumReservedBuysAsync(ulong userId, string broker, string currency, DateTime nowUtc, int withdrawHoldTtl = 3)
     {
         var hold = await GetCashHoldAsync(userId, broker, currency, nowUtc, withdrawHoldTtl);
