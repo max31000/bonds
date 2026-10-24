@@ -13,8 +13,9 @@ public sealed record FreedomTradeAccountInfo(string AccountNumber, int TariffId)
 public sealed record FreedomLimitOrder(string Ticker, string Side, long Quantity, decimal LimitPrice, string UserOrderId);
 
 /// <summary>
-/// Котировка: лучшие bid/ask и шаг цены — в валюте <see cref="Currency"/> за штуку. <see cref="QuoteTimeUtc"/> — момент котировки (UTC): самая поздняя из меток брокера
-/// <c>ltt</c> (последняя сделка), <c>bbt</c>/<c>bat</c> (лучшие цены), переведённых из МСК, не позже «сейчас + 1 мин»; null — меток нет (котировка считается несвежей).
+/// Котировка: лучшие bid/ask и шаг цены — в валюте <see cref="Currency"/> за штуку. <see cref="QuoteTimeUtc"/> — момент котировки (UTC): самая поздняя из меток стакана
+/// <c>bbt</c>/<c>bat</c> (лучшие цены), переведённых из МСК, не позже «сейчас + 1 мин»; <c>ltt</c> (последняя сделка) — только если меток стакана нет (T-67E);
+/// null — меток нет (котировка считается несвежей).
 /// <see cref="MarketOpen"/> — <c>marketStatus</c> бумаги = <c>OPEN</c> (null — поля нет).
 /// </summary>
 public sealed record FreedomMarketQuote(decimal? Bid, decimal? Ask, decimal? MinStep, string? Currency, DateTime? QuoteTimeUtc = null, bool? MarketOpen = null);
