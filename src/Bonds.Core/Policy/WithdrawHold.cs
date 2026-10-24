@@ -27,6 +27,9 @@ public static class WithdrawHold
     public static readonly IReadOnlyList<string> Statuses =
         [PlanStatuses.Draft, PlanStatuses.PendingApproval, PlanStatuses.AutoApproved, PlanStatuses.Approved, PlanStatuses.Submitting, PlanStatuses.Done, PlanStatuses.PartiallyDone];
 
+    /// <summary>Статусы, у которых удержание снимает «Деньги выведены» (<c>/withdrawn</c>): только исполненные планы (T-67E, minor 5).</summary>
+    public static readonly IReadOnlyList<string> ReleasableStatuses = [PlanStatuses.Done, PlanStatuses.PartiallyDone];
+
     /// <summary>Сумма удержания из итогов (валюта портфеля <see cref="TradePlanSummary.Currency"/>); битая/старая сводка — 0.</summary>
     public static decimal AmountOf(TradePlan plan) => SummaryOf(plan)?.CashHold is { } hold && hold > 0m ? hold : 0m;
 

@@ -80,7 +80,8 @@ public static class PlansEndpoints
     }
 
     /// <summary>
-    /// «Деньги выведены» (задача 67, #3; то же, что <c>/withdrawn</c> в боте): снимает удержание денег под вывод у всех планов вывода/выхода пользователя —
+    /// «Деньги выведены» (задача 67, #3; то же, что <c>/withdrawn</c> в боте): снимает удержание денег под вывод у ИСПОЛНЕННЫХ (Done/PartiallyDone) планов
+    /// вывода/выхода пользователя (T-67E: неисполненные держат деньги дальше) —
     /// P1 и остальные правила снова видят эти деньги свободными. Брокеров не вызывает. Ответ: <c>{ released: N }</c>.
     /// </summary>
     private static async Task<IResult> ReleaseCashHold(ICurrentUser currentUser, ITradePlanRepository repo)

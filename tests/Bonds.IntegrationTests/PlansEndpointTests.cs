@@ -737,6 +737,13 @@ public class PlansEndpointTests
         (await PlansOfAsync(userId)).Should().NotContain(p => p.Rule == PlanRules.P1Sweep);
         result.Notes.Should().Contain(n => n.Contains("удержан"));
 
+        // T-67E (minor 5): неисполненный план вывода удержание не отдаёт — продажи ещё не прошли.
+        var early = await client.PostAsync("/api/plans/cash-hold/release", null);
+        (await ReadAsync(early)).GetProperty("released").GetInt32().Should().Be(0);
+
+        // План исполнен (продажа прошла, деньги ушли в банк) — «Деньги выведены» снимает удержание.
+        await using (var conn = new MySqlConnector.MySqlConnection(Conn))
+            await Dapper.SqlMapper.ExecuteAsync(conn, "UPDATE trade_plans SET status = 'Done' WHERE id = @Id", new { withdraw.Id });
         var release = await client.PostAsync("/api/plans/cash-hold/release", null);
         release.StatusCode.Should().Be(HttpStatusCode.OK);
         (await ReadAsync(release)).GetProperty("released").GetInt32().Should().Be(1);

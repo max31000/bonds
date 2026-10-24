@@ -98,6 +98,11 @@ function hasActiveCashHold(plan: Plan): boolean {
   return plan.status !== 'Rejected' && plan.status !== 'Expired' && plan.status !== 'Failed';
 }
 
+/** «Деньги выведены» снимает удержание только у исполненных планов (T-67E): неисполненный вывод деньги ещё не освободил. */
+function canReleaseCashHold(plan: Plan): boolean {
+  return plan.status === 'Done' || plan.status === 'PartiallyDone';
+}
+
 /** План «только удержание» (T-67D): вывод целиком из свободных денег — строк нет, есть сумма удержания `summary.cashHold`. */
 function isHoldOnly(plan: Plan): boolean {
   return plan.lines.length === 0 && (plan.summary?.cashHold ?? 0) > 0;
@@ -228,7 +233,7 @@ export function PlanCard({
           <Text size="sm">
             Удержано под вывод: <b>{formatPlanMoney(summary?.cashHold ?? 0, currency)}</b> — правила не трогают эти деньги, пока вы не выведете их в банк.
           </Text>
-          {onReleaseCashHold && (
+          {onReleaseCashHold && canReleaseCashHold(plan) && (
             <Button
               size="xs"
               variant="light"

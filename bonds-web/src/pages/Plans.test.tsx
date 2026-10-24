@@ -173,6 +173,15 @@ describe('Plans — страница «Планы» (задача 63, режим
     await waitFor(() => expect(screen.queryByTestId('plan-13-release-hold')).not.toBeInTheDocument());
   });
 
+  it('T-67E: неисполненный план вывода держит деньги — кнопки «Деньги выведены» нет', async () => {
+    const pending = { ...withdrawPlan, status: 'PendingApproval' as const, summary: { ...withdrawPlan.summary!, cashHold: 2000 }, cashHoldReleasedAt: null };
+    server.use(http.get('*/api/plans', () => HttpResponse.json(plansResponse([pending]))));
+    renderPlans();
+
+    expect(await screen.findByTestId('plan-13-cash-hold')).toBeInTheDocument();
+    expect(screen.queryByTestId('plan-13-release-hold')).not.toBeInTheDocument();
+  });
+
   it('T-67D: план «только удержание» (P5 без строк) — вместо пустой таблицы строк «Удержание N ₽ под вывод»', async () => {
     const holdOnly = { ...withdrawPlan, lines: [], summary: { ...withdrawPlan.summary!, cashHold: 30000 }, cashHoldReleasedAt: null };
     server.use(http.get('*/api/plans', () => HttpResponse.json(plansResponse([holdOnly]))));

@@ -248,12 +248,13 @@ public class TradePlanRepository : ITradePlanRepository
 
     public async Task<int> ReleaseCashHoldsAsync(ulong userId, DateTime nowUtc)
     {
-        // Снимаем у ВСЕХ планов вывода/выхода пользователя, где удержание ещё не снято: «деньги выведены» — общее подтверждение владельца.
+        // Снимаем у ИСПОЛНЕННЫХ (Done/PartiallyDone, в т.ч. «только удержание») планов вывода/выхода, где удержание ещё не снято: «деньги выведены» — общее
+        // подтверждение владельца. Неисполненный план (Pending/Approved/Submitting) деньги ещё не освободил — его удержание остаётся (T-67E, minor 5).
         using var conn = CreateConnection();
         var ids = (await conn.QueryAsync<ulong>(
             @"SELECT id FROM trade_plans
               WHERE user_id = @UserId AND rule IN @Rules AND status IN @Statuses AND cash_hold_released_at IS NULL",
-            new { UserId = userId, Rules = WithdrawHold.Rules.ToArray(), Statuses = WithdrawHold.Statuses.ToArray() })).ToList();
+            new { UserId = userId, Rules = WithdrawHold.Rules.ToArray(), Statuses = WithdrawHold.ReleasableStatuses.ToArray() })).ToList();
         if (ids.Count == 0) return 0;
 
         var candidates = (await conn.QueryAsync<TradePlan>($"SELECT {PlanColumns} FROM trade_plans WHERE id IN @Ids", new { Ids = ids })).ToList();

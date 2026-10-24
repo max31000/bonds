@@ -80,7 +80,11 @@ public interface ITradePlanRepository
     /// </summary>
     Task<bool> RotateNonceAsync(ulong userId, ulong id, string expectedNonce, string newNonce);
 
-    /// <summary>«Деньги выведены» (<c>/withdrawn</c>, кнопка в вебе): снимает удержание у всех планов вывода/выхода пользователя. Возвращает число планов.</summary>
+    /// <summary>
+    /// «Деньги выведены» (<c>/withdrawn</c>, кнопка в вебе): снимает удержание у ИСПОЛНЕННЫХ планов вывода/выхода пользователя — <c>Done</c>/<c>PartiallyDone</c>
+    /// (в т.ч. план «только удержание», который при подтверждении сразу Done). Неисполненные (Pending/Approved/Submitting…) держат деньги дальше: продажи ещё не
+    /// прошли, вывести эти деньги пользователь не мог (T-67E, minor 5). Возвращает число планов.
+    /// </summary>
     Task<int> ReleaseCashHoldsAsync(ulong userId, DateTime nowUtc);
 
     /// <summary>

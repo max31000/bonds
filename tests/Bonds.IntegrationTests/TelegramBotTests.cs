@@ -351,6 +351,38 @@ public class TelegramBotTests
     }
 
     [Fact]
+    public async Task T67E_Withdrawn_ReleasesOnlyDoneOrPartiallyDone_UnexecutedP5KeepsHold()
+    {
+        var (userId, tg) = await NewUserAsync();
+        async Task<TradePlan> P5(string status)
+        {
+            var p = await NewPlanAsync(userId, status);
+            await using var conn = new MySqlConnector.MySqlConnection(Conn);
+            await Dapper.SqlMapper.ExecuteAsync(conn, "UPDATE trade_plans SET rule = 'P5_WITHDRAW', summary_json = @J WHERE id = @Id",
+                new { p.Id, J = """{"portfolio":"rub","currency":"RUB","cashHold":50000}""" });
+            return p;
+        }
+
+        var pending = await P5(PlanStatuses.PendingApproval);
+        var approved = await P5(PlanStatuses.Approved);
+        var submitting = await P5(PlanStatuses.Submitting);
+        var done = await P5(PlanStatuses.Done);
+        var partial = await P5(PlanStatuses.PartiallyDone);
+
+        await TextAsync(tg, "/withdrawn");
+
+        (await ReloadAsync(pending)).CashHoldReleasedAt.Should().BeNull("продажи ещё не прошли — вывести нечего");
+        (await ReloadAsync(approved)).CashHoldReleasedAt.Should().BeNull();
+        (await ReloadAsync(submitting)).CashHoldReleasedAt.Should().BeNull();
+        (await ReloadAsync(done)).CashHoldReleasedAt.Should().NotBeNull();
+        (await ReloadAsync(partial)).CashHoldReleasedAt.Should().NotBeNull();
+
+        // Веб-кнопка — тот же репозиторий: Pending по-прежнему держит.
+        (await new TradePlanRepository(Conn).ReleaseCashHoldsAsync(userId, DateTime.UtcNow)).Should().Be(0);
+        (await ReloadAsync(pending)).CashHoldReleasedAt.Should().BeNull();
+    }
+
+    [Fact]
     public async Task Plans_ListsOnlyOwnOpenPlans_WithButtons()
     {
         var (userId, tg) = await NewUserAsync();
