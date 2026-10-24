@@ -41,6 +41,7 @@ public sealed class TelegramBotUpdateHandler : ITelegramUpdateHandler
     private readonly TimeProvider _time;
     private readonly ILogger<TelegramBotUpdateHandler> _logger;
     private readonly IBotStateRepository? _state;
+    private readonly Bonds.Infrastructure.Agents.AgentAskService? _ask;
 
     /// <summary>Отметка последнего апдейта, по которому пользователь строил план (задача 67, #16: повтор того же update_id плана не создаёт).</summary>
     public static string PlanCommandMarkKey(ulong userId) => "plan_cmd_update_" + userId;
@@ -64,9 +65,11 @@ public sealed class TelegramBotUpdateHandler : ITelegramUpdateHandler
         IOptions<TelegramBotOptions> options,
         TimeProvider time,
         ILogger<TelegramBotUpdateHandler> logger,
-        IBotStateRepository? state = null)
+        IBotStateRepository? state = null,
+        Bonds.Infrastructure.Agents.AgentAskService? ask = null)
     {
         _state = state;
+        _ask = ask;
         _bot = bot;
         _users = users;
         _plans = plans;
@@ -186,6 +189,10 @@ public sealed class TelegramBotUpdateHandler : ITelegramUpdateHandler
                         : "Удержаний денег под вывод нет.", null, ct);
                     break;
                 }
+                case BotCommandKind.Ask:
+                    // Задача 68: вопрос агенту только ставится в очередь (ворота, пауза между вопросами, суточный лимит); ответ — отдельным сообщением, HTML-escape.
+                    await ReplyAsync(message.ChatId, BotFormat.Html(_ask is null ? "ИИ-агент недоступен." : await _ask.SubmitAsync(user.Id, command.Question ?? string.Empty)), null, ct);
+                    break;
                 case BotCommandKind.Invalid:
                     await ReplyAsync(message.ChatId, BotFormat.Html(command.Error), null, ct);
                     break;

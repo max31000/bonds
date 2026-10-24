@@ -205,6 +205,21 @@ export const handlers = [
   http.put('*/api/settings/tinvest-token', () =>
     HttpResponse.json({ tInvestTokenConfigured: true, tInvestTokenMasked: '...1234' }),
   ),
+  // Задача 68: ИИ-агент — по умолчанию выключен, подключения нет, история пуста.
+  http.get('*/api/agent', () =>
+    HttpResponse.json({
+      enabled: false,
+      model: 'sonnet',
+      monthlyModel: 'opus',
+      dailyRunLimit: 5,
+      maxDailyRunLimit: 20,
+      credentialOk: false,
+      serverEnabled: true,
+      runsToday: 0,
+      runs: [],
+      disclaimer: 'Ответы ИИ-агента — оценки, не инвестиционные рекомендации.',
+    }),
+  ),
   // Задача 58: «Подключения» — по умолчанию ничего не подключено; сценарии переопределяются через server.use.
   http.get('*/api/credentials', () => HttpResponse.json([])),
   http.get('*/api/capabilities', () =>

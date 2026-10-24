@@ -178,6 +178,26 @@ public static class DependencyInjection
         services.AddScoped<Bonds.Infrastructure.Policy.IPlanNotifier, Bonds.Infrastructure.Telegram.TelegramPlanNotifier>();
         services.AddHostedService<Bonds.Infrastructure.Telegram.TelegramBotPollingService>();
 
+        // Задача 68: ИИ-агенты (Claude Code CLI). Агент только читает данные через MCP bonds и может лишь ПРЕДЛОЖИТЬ план (PendingApproval).
+        // По умолчанию у пользователя выключен (agent_settings.enabled = 0); серверный выключатель — Agent__Enabled.
+        services.Configure<Bonds.Core.Agents.AgentOptions>(configuration.GetSection(Bonds.Core.Agents.AgentOptions.SectionName));
+        services.AddScoped<IAgentSettingsRepository>(sp => new AgentSettingsRepository(GetConnStr(sp)));
+        services.AddScoped<IAgentRunRepository>(sp => new AgentRunRepository(GetConnStr(sp)));
+        services.AddSingleton<Bonds.Infrastructure.Agents.Mcp.AgentMcpTokens>();
+        services.AddScoped<Bonds.Infrastructure.Agents.Mcp.BondsMcpTools>();
+        services.AddScoped<Bonds.Infrastructure.Agents.Mcp.BondsMcpServer>();
+        services.AddSingleton<Bonds.Infrastructure.Agents.IAgentProcessExecutor, Bonds.Infrastructure.Agents.AgentProcessExecutor>();
+        services.AddSingleton<Bonds.Core.Agents.IAgentRunner, Bonds.Infrastructure.Agents.ClaudeCode.ClaudeCodeAgentRunner>();
+        services.AddScoped<Bonds.Infrastructure.Agents.IAgentNotifier, Bonds.Infrastructure.Telegram.TelegramAgentNotifier>();
+        services.AddScoped<Bonds.Infrastructure.Agents.AgentService>();
+        services.AddScoped<Bonds.Infrastructure.Agents.AgentAskService>();
+        services.AddScoped<Bonds.Infrastructure.Agents.AgentScheduler>();
+        services.AddSingleton<Bonds.Infrastructure.Agents.AgentWorkQueue>();
+        services.AddSingleton<Bonds.Infrastructure.Agents.IAgentEventTrigger>(sp => sp.GetRequiredService<Bonds.Infrastructure.Agents.AgentWorkQueue>());
+        services.AddHostedService<Bonds.Infrastructure.Agents.AgentStartupHostedService>();
+        services.AddHostedService<Bonds.Infrastructure.Agents.AgentWorkerHostedService>();
+        services.AddHostedService<Bonds.Infrastructure.Agents.AgentSchedulerHostedService>();
+
         // T-Invest: gRPC-клиент НЕ регистрируется здесь готовым (нет статического токена в DI) —
         // TInvestPortfolioClient сам резолвит токен через ITInvestTokenProvider (БД на пользователя,
         // без ENV-фолбэка) и лениво строит InvestApiClient внутри своего scoped-экземпляра
@@ -300,7 +320,19 @@ public static class DependencyInjection
             {
                 var keysPath = sp.GetRequiredService<IConfiguration>()["DataProtection:KeysPath"]
                     ?? "/app/dataprotection-keys";
-                options.XmlRepository = new FileSystemXmlRepository(new DirectoryInfo(keysPath), sp.GetRequiredService<ILoggerFactory>());
+                var loggerFactory = sp.GetRequiredService<ILoggerFactory>();
+                // Задача 68 (ревью M1): каталог ключей — 0700 владельца (root в контейнере), чтобы процесс ИИ-агента (uid 10001) не прочитал ключи
+                // и не расшифровал токены из user_credentials. Сбой — предупреждение (ключи нужны API в любом случае).
+                try
+                {
+                    Bonds.Infrastructure.Agents.AgentFileSystem.EnsureOwnerOnlyDirectory(keysPath);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    loggerFactory.CreateLogger("DataProtection").LogWarning("DataProtection keys directory: cannot restrict mode to 0700 ({ErrorType})", ex.GetType().Name);
+                }
+
+                options.XmlRepository = new FileSystemXmlRepository(new DirectoryInfo(keysPath), loggerFactory);
             }));
         services.AddScoped<ITInvestTokenProvider, TInvestTokenProvider>();
 

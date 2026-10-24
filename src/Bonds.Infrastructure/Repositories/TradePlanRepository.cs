@@ -21,7 +21,7 @@ public class TradePlanRepository : ITradePlanRepository
 
     private const string PlanColumns = @"
         id AS Id, user_id AS UserId, rule AS Rule, `trigger` AS `Trigger`, status AS Status, dry_run AS DryRun, created_at AS CreatedAt,
-        expires_at AS ExpiresAt, decided_at AS DecidedAt, decided_via AS DecidedVia, bot_nonce AS BotNonce, cancel_requested AS CancelRequested,
+        expires_at AS ExpiresAt, decided_at AS DecidedAt, decided_via AS DecidedVia, source AS Source, bot_nonce AS BotNonce, cancel_requested AS CancelRequested,
         cash_hold_released_at AS CashHoldReleasedAt, CAST(summary_json AS CHAR) AS SummaryJson";
 
     private const string LineColumns = @"
@@ -35,12 +35,12 @@ public class TradePlanRepository : ITradePlanRepository
         await conn.OpenAsync();
         using var tx = await conn.BeginTransactionAsync();
         var id = await conn.ExecuteScalarAsync<ulong>(
-            @"INSERT INTO trade_plans (user_id, rule, `trigger`, status, dry_run, created_at, expires_at, decided_at, decided_via, bot_nonce, summary_json)
-              VALUES (@UserId, @Rule, @Trigger, @Status, @DryRun, @CreatedAt, @ExpiresAt, @DecidedAt, @DecidedVia, @BotNonce, @SummaryJson);
+            @"INSERT INTO trade_plans (user_id, rule, `trigger`, status, dry_run, created_at, expires_at, decided_at, decided_via, source, bot_nonce, summary_json)
+              VALUES (@UserId, @Rule, @Trigger, @Status, @DryRun, @CreatedAt, @ExpiresAt, @DecidedAt, @DecidedVia, @Source, @BotNonce, @SummaryJson);
               SELECT LAST_INSERT_ID();",
             new
             {
-                plan.UserId, plan.Rule, plan.Trigger, plan.Status, plan.DryRun, plan.CreatedAt, plan.ExpiresAt, plan.DecidedAt, plan.DecidedVia, plan.BotNonce, plan.SummaryJson,
+                plan.UserId, plan.Rule, plan.Trigger, plan.Status, plan.DryRun, plan.CreatedAt, plan.ExpiresAt, plan.DecidedAt, plan.DecidedVia, plan.Source, plan.BotNonce, plan.SummaryJson,
             }, tx);
 
         foreach (var l in plan.Lines)

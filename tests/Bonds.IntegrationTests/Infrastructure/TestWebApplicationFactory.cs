@@ -109,6 +109,11 @@ public class TestWebApplicationFactory : WebApplicationFactory<Program>, IAsyncL
             services.RemoveAll<Bonds.Infrastructure.Execution.IPortfolioSyncTrigger>();
             services.AddSingleton<Bonds.Infrastructure.Execution.IPortfolioSyncTrigger, Bonds.Infrastructure.Execution.NullPortfolioSyncTrigger>();
 
+            // Задача 68: настоящего Claude Code CLI в тестах нет — раннер агента только двойник.
+            services.RemoveAll<Bonds.Core.Agents.IAgentRunner>();
+            services.AddSingleton<FakeAgentRunner>();
+            services.AddSingleton<Bonds.Core.Agents.IAgentRunner>(sp => sp.GetRequiredService<FakeAgentRunner>());
+
             Mvv42TestAuth.UseTestSigningKey(services);
             services.RemoveAll<IOwnerAccess>();
             services.AddSingleton<IOwnerAccess, AnyTelegramIdIsOwner>();

@@ -529,6 +529,43 @@ tradernet.global/tradernet-api/order-statuses). **Исполненное — Σ 
 Фронт: страница «Планы» (`/plans`, `pages/Plans.tsx`, `usePlansStore`, `components/plans/*`, баннер «Режим наблюдения: сделки не отправляются»), блок «Планы сделок» на «Капитале» (`components/capital/PlanActions.tsx`:
 «Распределить сумму…», «Вывести…», «Выйти из временной корзины»).
 
+### ИИ-агенты (задача 68) — только чтение + `propose_plan`, по умолчанию ВЫКЛЮЧЕНЫ
+
+**Инвариант:** агент не торгует, не подтверждает планы и не меняет лимиты/настройки/ключи — закреплено `AgentArchitectureTests` (скан `Bonds.Core/Agents/`,
+`Bonds.Infrastructure/Agents/`, `McpEndpoints.cs`). Единственный пишущий путь — MCP-инструмент `propose_plan` → `PolicyService.CreateManualAsync(..., PlanOrigin)` (та же валидация,
+что у ручных inflow/withdraw/exit-basket; `PendingApproval` всегда, `dry_run` — обычные ворота, `trade_plans.source = 'agent'`, обоснование — в `trigger` «ИИ-агент: …» и в `summary.notes`;
+уведомление — тот же `IPlanNotifier` с кнопками). Провайдер — `IAgentRunner` (`Bonds.Core/Agents`), реализация `ClaudeCodeAgentRunner`: `claude -p --output-format json --strict-mcp-config
+--mcp-config <файл> --tools "" --allowedTools mcp__bonds__* --permission-prompts none --max-turns N --model <алиас> --no-session-persistence` (БЕЗ `--bare`; флаги сверены с `--help` версии
+из Dockerfile, 2.1.296). Задание — через **stdin** (`--tools`/`--allowedTools`/`--mcp-config` вариадические, argv виден в `ps`). Окружение процесса собирается С НУЛЯ (`ClaudeCodeCli.BuildEnvironment`):
+`CLAUDE_CODE_OAUTH_TOKEN` (секрет `claude_code`, расшифровывается только на запуск), `HOME` = каталог запуска, `PATH`; `ANTHROPIC_API_KEY`
+не передаётся никогда. Таймаут (`Agent:Timeout`, 5 мин) — `Kill(entireProcessTree)`. Секреты вычищаются из текста ответа/ошибок (`Redactor`).
+**Изоляция процесса (ревью M1):** на Linux CLI стартует через `setpriv --reuid=10001 --regid=10001 --clear-groups --no-new-privs --inh-caps=-all --bounding-set=-all -- claude …`
+(`ClaudeCodeCli.SetprivLaunch`; `Agent:UseSetpriv` — по умолчанию да на Linux, нет на Windows; `Agent:RunAsUid/RunAsGid`, `Agent:SetprivPath`). Пользователь `agent` (10001, без home, nologin)
+создаётся в Dockerfile; API пока root. Каталоги (`AgentFileSystem`): корень `/var/lib/bonds-agent` — root 0711 (`AgentStartupHostedService` при старте; там же удаляет `run-*` прошлых
+запусков), каталог запуска `run-<guid>` — 0700 и `chown` (libc P/Invoke) на 10001, MCP-конфиг с bearer — 0600 того же владельца, удаляется в `finally`. Ключи DataProtection — 0700 root
+(`AgentFileSystem.EnsureOwnerOnlyDirectory` при настройке `KeyManagementOptions`). Итог: процесс агента не читает `/proc/1/environ` (строка БД, токен бота) и ключи (не расшифрует `user_credentials`).
+**MCP** — `POST /internal/mcp/{runId}` (`McpEndpoints`, `AllowAnonymous`, вне cookie-авторизации): только loopback `RemoteIpAddress` И `LocalIpAddress` без заголовков прокси
+`X-Forwarded-For`/`Forwarded`/`X-Real-IP` (иначе 404), `Origin` → 403, `Authorization: Bearer` — одноразовый токен запуска (`AgentMcpTokens`: 32 байта, хранится SHA-256, привязан к
+пользователю, `runId` и ВИДУ задачи, TTL = таймаут + 1 мин, отзывается после запуска) → 401. `propose_plan` — только `EventReview` и `OnDemand` (дайджест/обзор → ошибка инструмента),
+не больше `Agent:MaxProposalsPerRun` (1) за запуск — атомарная бронь слота (`TryReserveProposal`, CAS), неудача валидации слот возвращает.
+Сервер — минимальный JSON-RPC (`BondsMcpServer`: initialize/ping/tools/list/tools/call; `server/discover` CLI 2.x → -32601, клиент откатывается на initialize; версия протокола — до 2025-06-18).
+Инструменты (`BondsMcpTools`) переиспользуют точки истины (`PortfolioHoldingsBuilder`, `CapitalOverviewBuilder`, `CashOverviewBuilder`, `BrokerHoldingsBuilder`, `ReliabilityScoreProvider`, репозитории на чтение),
+единицы — как в API (ДОЛИ, валюта поля), ответ ≤ `Agent:McpMaxResponseChars`. **Запуски:** `AgentService` (ворота `AgentRunGate`: `Agent:Enabled`, секрет `claude_code` ok, `agent_settings.enabled`,
+`daily_run_limit` (сжимается до `Agent:MaxDailyRunLimit`) за сутки МСК, разборов событий ≤ 3/сутки) → строка `agent_runs` ДО процесса → раннер → итог (текст ≤ `MaxResultChars`) →
+`TelegramAgentNotifier` (HTML-escape, ≤ 4096). Токен не расшифровался/пуст — в журнал пишется завершённый запуск с ошибкой (входит в лимит; расписание не повторяет его каждую минуту).
+Очередь `AgentWorkQueue` (один потребитель `AgentWorkerHostedService`; не больше одного ждущего задания каждого вида на пользователя, включая `/ask`; новые Critical, пока разбор ждёт,
+дописываются в него — `Begin` собирает описание), расписание `AgentScheduler` (будни 19:00 МСК — `DailyDigest`, 1-е число — `MonthlyReview` (модель `monthly_model`, `opus`);
+окно 3 ч, раз в сутки по журналу), `EventReview` — из `SyncCycleService.RunSignalsAsync` по новым Critical (`IAgentEventTrigger`), `/ask <вопрос>` в боте (`AgentAskService`: ворота + пауза 1 мин;
+отказ очереди паузу не тратит). WebSearch/WebFetch — только при `Agent:AllowWebResearch=true` — **НЕ рекомендуется**, пока агент не вынесен в отдельный контейнер-воркер (канал утечки
+данных портфеля; при включении — warning на старте). Миграция 042: `agent_settings`, `agent_runs`, `trade_plans.source`.
+**Dockerfile:** базовые образы закреплены по `@sha256`; в финальном образе только нативный бинарь `claude` (без Node.js); сборка падает, если в `claude --help` нет
+`--permission-prompts`/`--strict-mcp-config`/`--allowedTools`/`--no-session-persistence`/`--mcp-config`/`--tools`/`--output-format`, и проверяет `setpriv … claude --version` под uid 10001.
+PR-сборка образа без push — в `deploy.yml`; локально при правке Dockerfile — `scripts/pre-push-check.sh --all --docker`.
+API: `GET /api/agent`, `PUT /api/agent/settings` (включение — только с подключением, модель — `AgentModelName`, лимит 1…`MaxDailyRunLimit`). Фронт: `AgentSection` на «Настройках» (текст агента — только как
+текст), бейдж «предложен ИИ-агентом» на `PlanCard`. Тесты: двойник `FakeAgentRunner` в `TestWebApplicationFactory`; MCP-запросы с loopback — `factory.Server.SendAsync` с `RemoteIpAddress` и `LocalIpAddress`;
+юнит-тесты раннера — `UseSetpriv = false` и `RunRoot` во временном каталоге (CI не root);
+реальный CLI — `ClaudeCodeSandboxTests` (`Category=Sandbox`, env `CLAUDE_CODE_OAUTH_TOKEN_TEST`, опц. `CLAUDE_CLI_PATH`).
+
 ## Тесты
 
 **Юнит** (`tests/Bonds.Tests`, папки по доменам): без сети и без БД. HTTP-клиенты — вложенный

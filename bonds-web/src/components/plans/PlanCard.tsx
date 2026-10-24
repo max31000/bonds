@@ -148,7 +148,14 @@ export function PlanCard({
     <Stack gap="xs" p="md" className="bonds-plan-card" data-testid={`plan-${plan.id}`}>
       <Group justify="space-between" wrap="wrap" gap="xs">
         <Stack gap={2}>
-          <Text fw={600}>{PLAN_RULE_LABEL[plan.rule] ?? plan.rule}</Text>
+          <Group gap="xs">
+            <Text fw={600}>{PLAN_RULE_LABEL[plan.rule] ?? plan.rule}</Text>
+            {plan.source === 'agent' && (
+              <Badge size="sm" variant="outline" color="grape" data-testid={`plan-${plan.id}-agent`}>
+                предложен ИИ-агентом
+              </Badge>
+            )}
+          </Group>
           <Text size="sm" c="dimmed" data-testid={`plan-${plan.id}-trigger`}>
             {plan.trigger}
           </Text>

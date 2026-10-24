@@ -4,6 +4,7 @@ import { ErrorState, Page, Section } from '@mvv42/kit';
 import { useForm } from '@mantine/form';
 import { notifications } from '@mantine/notifications';
 import { CredentialsSection } from '../components/CredentialsSection';
+import { AgentSection } from '../components/AgentSection';
 import { ExecutionModeSection } from '../components/ExecutionModeSection';
 import { IssuerDataBlock } from '../components/IssuerDataBlock';
 import { useSettingsStore } from '../store/useSettingsStore';
@@ -210,6 +211,8 @@ export function Settings() {
       <CredentialsSection />
 
       <ExecutionModeSection />
+
+      <AgentSection />
 
       {!isLoading && settings && (
         <>

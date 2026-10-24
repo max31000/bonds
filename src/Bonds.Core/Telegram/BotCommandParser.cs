@@ -22,6 +22,9 @@ public enum BotCommandKind
 
     /// <summary><c>/withdrawn</c> — «деньги выведены»: снять удержание денег под вывод (задача 67, #3).</summary>
     Withdrawn,
+
+    /// <summary><c>/ask &lt;вопрос&gt;</c> — вопрос ИИ-агенту (задача 68); текст — <see cref="BotCommand.Question"/>.</summary>
+    Ask,
 }
 
 /// <summary>
@@ -34,7 +37,8 @@ public sealed record BotCommand(
     decimal? Fraction = null,
     string? Portfolio = null,
     string? Code = null,
-    string? Error = null);
+    string? Error = null,
+    string? Question = null);
 
 /// <summary>
 /// Парсер команд Telegram-бота (задача 64) — чистая функция. Поддерживает <c>/cmd@BotName</c>, запятую как десятичный разделитель, суффиксы валюты
@@ -77,11 +81,23 @@ public static partial class BotCommandParser
             "inflow" => ParseMoney(args, allowFraction: false, InflowUsage, BotCommandKind.Inflow),
             "withdraw" => ParseMoney(args, allowFraction: true, WithdrawUsage, BotCommandKind.Withdraw),
             "exit" => ParseExit(args),
+            "ask" => ParseAsk(text.Trim()[head.Length..]),
             _ => Invalid($"Не знаю команду «{BotFormat.Echo(head)}». Список команд — /help."),
         };
     }
 
     private static BotCommand Invalid(string error) => new(BotCommandKind.Invalid, Error: error);
+
+    /// <summary>Длина вопроса <c>/ask</c> (символов); сервер дополнительно ограничивает <c>Agent:MaxQuestionChars</c>.</summary>
+    public const int MaxAskChars = 1000;
+
+    private static BotCommand ParseAsk(string rest)
+    {
+        var question = rest.Trim();
+        if (question.Length == 0) return Invalid("Нужен вопрос. Пример: /ask какие оферты у меня в ближайший месяц?");
+        if (question.Length > MaxAskChars) return Invalid($"Вопрос длиннее {MaxAskChars} символов — сократите его.");
+        return new BotCommand(BotCommandKind.Ask, Question: question);
+    }
 
     private static BotCommand ParseExit(string[] args)
     {

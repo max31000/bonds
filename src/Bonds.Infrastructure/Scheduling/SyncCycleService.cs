@@ -651,6 +651,11 @@ public sealed class SyncCycleService : ISyncCycleRunner
 
         await NotifyNewCriticalAsync(sp, plan.ToInsert, ct);
 
+        // Задача 68: новое Critical-событие → разбор ИИ-агентом (только постановка в очередь; ворота — agent_enabled, подключение, ≤ 3 разборов в сутки — при запуске).
+        var newCritical = plan.ToInsert.Where(s => s.Severity == SignalSeverity.Critical).ToList();
+        if (newCritical.Count > 0 && account is not null)
+            sp.GetService<Bonds.Infrastructure.Agents.IAgentEventTrigger>()?.CriticalSignalsDetected(account.UserId, newCritical.Select(s => $"{s.Subject}: {s.SuggestedAction}").ToList());
+
         return plan.ToInsert.Count;
     }
 

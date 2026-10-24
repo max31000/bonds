@@ -63,6 +63,13 @@ public static class DecidedVia
     public const string Auto = "auto";
 }
 
+/// <summary>Источник плана (<c>trade_plans.source</c>, задача 68). null — правила или ручной запрос пользователя.</summary>
+public static class PlanSources
+{
+    /// <summary>Предложен ИИ-агентом через MCP-инструмент <c>propose_plan</c>: статус всегда <c>PendingApproval</c>, решает только пользователь.</summary>
+    public const string Agent = "agent";
+}
+
 /// <summary>
 /// Строка плана = одна будущая лимитная заявка (в этой фазе — только данные). <b>Единицы:</b> <see cref="QuantityLots"/> — ЦЕЛЫЕ лоты
 /// (штуки = лоты × <see cref="LotSize"/>); <see cref="LimitPrice"/> — валюта цены за 1 штуку (для облигаций — ЧИСТАЯ цена в рублях за штуку);
@@ -116,6 +123,9 @@ public sealed class TradePlan
     public DateTime ExpiresAt { get; set; }
     public DateTime? DecidedAt { get; set; }
     public string? DecidedVia { get; set; }
+
+    /// <summary>Кто предложил план (задача 68): null — правила или пользователь, <see cref="PlanSources.Agent"/> — ИИ-агент (<c>propose_plan</c>, всегда ждёт решения).</summary>
+    public string? Source { get; set; }
 
     /// <summary>Случайные 8 байт base64url (11 символов): зашиты в callback_data кнопок Telegram, сверяются при нажатии (задача 64). Не отдаётся в API.</summary>
     public string? BotNonce { get; set; }
