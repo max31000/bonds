@@ -1,7 +1,10 @@
 -- Задача 67 (NIT): заявки брокеру - журнал денег, удаление плана не должно молча стирать его заявки.
 -- trade_orders.plan_id -> trade_plans.id: ON DELETE CASCADE заменяется на ON DELETE RESTRICT (план с заявками удалить нельзя, сначала разбор заявок).
+-- T-67E (minor 7): замена разбита на ДВЕ миграции, потому что DDL в MySQL фиксируется сразу (откат транзакции раннера его не отменяет).
+--   040 - только DROP старого внешнего ключа (CASCADE). 041 - ADD нового ключа RESTRICT под НОВЫМ именем fk_trade_orders_plan_restrict.
+--   Сбой ADD после DROP: 040 уже записана в _migrations, повторный запуск выполнит только 041 (ключа ещё нет) - миграция перезапускаема.
+--   База, где применялась прежняя 040 (DROP + ADD под старым именем, только ветка задачи 67, на прод не выкатывалась): новая 040 пропускается по имени файла,
+--   041 добавляет второй ключ RESTRICT под новым именем - ошибки нет, оба ключа RESTRICT.
 -- Примечание: в комментариях миграций не использовать символ точка-с-запятой (MigrationRunner делит файл по нему).
 
-ALTER TABLE trade_orders DROP FOREIGN KEY fk_trade_orders_plan;
-
-ALTER TABLE trade_orders ADD CONSTRAINT fk_trade_orders_plan FOREIGN KEY (plan_id) REFERENCES trade_plans (id) ON DELETE RESTRICT
+ALTER TABLE trade_orders DROP FOREIGN KEY fk_trade_orders_plan
