@@ -307,7 +307,7 @@ public class FreedomOrderGatewayTests
 
     [Theory]
     [InlineData("{\"id\":1,\"stat\":31,\"q\":5,\"leaves_qty\":0,\"trade\":[]}", TradeOrderStatuses.Cancelled, 0)]
-    [InlineData("{\"id\":1,\"stat\":31,\"q\":5,\"leaves_qty\":0}", TradeOrderStatuses.Cancelled, 0)]
+    [InlineData("{\"id\":1,\"stat\":31,\"q\":5,\"leaves_qty\":0}", TradeOrderStatuses.Submitted, 0)] // T-67E (M1): без trade[] — не окончательна до сверки истории
     [InlineData("{\"id\":1,\"stat\":31,\"q\":5,\"leaves_qty\":0,\"trade\":[{\"id\":7,\"p\":10.5,\"q\":2,\"v\":21}]}", TradeOrderStatuses.Cancelled, 2)]
     [InlineData("{\"id\":1,\"stat\":31,\"q\":5,\"leaves_qty\":0,\"trade\":{\"id\":7,\"p\":10.5,\"q\":3}}", TradeOrderStatuses.Cancelled, 3)]
     [InlineData("{\"id\":1,\"stat\":70,\"q\":5,\"leaves_qty\":0,\"trade\":[]}", TradeOrderStatuses.Rejected, 0)]
@@ -398,15 +398,51 @@ public class FreedomOrderGatewayTests
     }
 
     [Fact]
-    public void QuoteTime_IgnoresFutureAndStaleStamps_TakesLatest()
+    public void QuoteTime_BookStampsWin_FreshTradeDoesNotRefreshStaleBook()
+    {
+        // T-67E (minor 6): свежесть — по стакану max(bbt, bat); свежая сделка (ltt) при застывшем стакане котировку свежей НЕ делает.
+        var now = new DateTime(2026, 10, 24, 13, 35, 57, DateTimeKind.Utc);
+        var stale = new DateTime(2026, 10, 24, 15, 0, 0); // МСК = 12:00 UTC — полтора часа назад
+        var q = new Bonds.Infrastructure.Connectors.Freedom.Models.FreedomQuote(
+            "VUAA.EU", 1m, 2m, 1m, "USD", 0.01m,
+            LastTradeLocal: new DateTime(2026, 10, 24, 16, 35, 57), // МСК = now — свежая сделка
+            BidTimeLocal: stale,
+            AskTimeLocal: stale.AddMinutes(-5));
+        FreedomOrderGateway.QuoteTimeUtc(q, TimeSpan.FromHours(3), now).Should().Be(new DateTime(2026, 10, 24, 12, 0, 0, DateTimeKind.Utc));
+    }
+
+    [Fact]
+    public void QuoteTime_MaxOfBidAskTimes_FutureDropped_LttOnlyWhenBothMissing()
     {
         var now = new DateTime(2026, 10, 24, 13, 35, 57, DateTimeKind.Utc);
-        var q = new Bonds.Infrastructure.Connectors.Freedom.Models.FreedomQuote(
-            "BTC/USD", 1m, 2m, 1m, "USD", 1m,
-            LastTradeLocal: new DateTime(2026, 10, 24, 16, 35, 57), // МСК = now
-            BidTimeLocal: new DateTime(2023, 7, 6, 3, 30, 1), // застывшая (как у живого счёта)
-            AskTimeLocal: new DateTime(2026, 10, 24, 18, 0, 0)); // «будущее» — отброшена
-        FreedomOrderGateway.QuoteTimeUtc(q, TimeSpan.FromHours(3), now).Should().Be(now);
+        var withBook = new Bonds.Infrastructure.Connectors.Freedom.Models.FreedomQuote(
+            "VUAA.EU", 1m, 2m, 1m, "USD", 0.01m,
+            LastTradeLocal: new DateTime(2026, 10, 24, 16, 35, 0),
+            BidTimeLocal: new DateTime(2026, 10, 24, 16, 30, 0),
+            AskTimeLocal: new DateTime(2026, 10, 24, 16, 34, 0));
+        FreedomOrderGateway.QuoteTimeUtc(withBook, TimeSpan.FromHours(3), now).Should().Be(new DateTime(2026, 10, 24, 13, 34, 0, DateTimeKind.Utc), "max(bbt, bat), не ltt");
+
+        var future = withBook with { AskTimeLocal = new DateTime(2026, 10, 24, 18, 0, 0) };
+        FreedomOrderGateway.QuoteTimeUtc(future, TimeSpan.FromHours(3), now).Should().Be(new DateTime(2026, 10, 24, 13, 30, 0, DateTimeKind.Utc), "метка из будущего отброшена");
+
+        var noBook = withBook with { BidTimeLocal = null, AskTimeLocal = null };
+        FreedomOrderGateway.QuoteTimeUtc(noBook, TimeSpan.FromHours(3), now).Should().Be(new DateTime(2026, 10, 24, 13, 35, 0, DateTimeKind.Utc), "нет меток стакана — ltt");
+    }
+
+    [Theory]
+    [InlineData(30)]
+    [InlineData(31)]
+    [InlineData(71)]
+    [InlineData(72)]
+    public void Orders_ClosedCodeWithoutTradeArray_IsActiveUnconfirmed_NotFinalZero(int stat)
+    {
+        // T-67E (M1): окончательный код снятия БЕЗ массива trade — исполненное неизвестно, заявка не «снята с нулём».
+        using var doc = JsonDocument.Parse("{\"orders\":{\"order\":[{\"id\":5,\"stat\":" + stat + ",\"oper\":1,\"q\":10,\"leaves_qty\":0}]}}");
+        var s = FreedomOrderGateway.ParseOrders(doc.RootElement, TimeSpan.Zero).Single();
+        s.Status.Should().Be(TradeOrderStatuses.Submitted);
+        s.LotsExecuted.Should().Be(0);
+        s.FillsUnconfirmed.Should().BeTrue();
+        s.BrokerStat.Should().Be(stat);
     }
 
     [Theory]

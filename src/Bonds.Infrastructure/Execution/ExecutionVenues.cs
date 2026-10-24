@@ -309,17 +309,19 @@ public sealed class FreedomExecutionVenue : IExecutionVenue
     private readonly IAccountRepository _accounts;
     private readonly IUserCredentialRepository _credentialRecords;
     private readonly ITradeOrderRepository _orders;
+    private readonly ITradePlanRepository? _plans;
     private readonly ILogger _logger;
 
     public FreedomExecutionVenue(
         IFreedomOrderGateway gateway, IExecutionGateResolver gate, IAccountRepository accounts, IUserCredentialRepository credentialRecords, ITradeOrderRepository orders,
-        ILogger logger)
+        ILogger logger, ITradePlanRepository? plans = null)
     {
         _gateway = gateway;
         _gate = gate;
         _accounts = accounts;
         _credentialRecords = credentialRecords;
         _orders = orders;
+        _plans = plans;
         _logger = logger;
     }
 
@@ -404,20 +406,64 @@ public sealed class FreedomExecutionVenue : IExecutionVenue
         var bid = sameCurrency ? quote.Bid : null;
         var ask = sameCurrency ? quote.Ask : null;
 
+        var active = await ActiveWithLinesAsync(userId);
+
+        // Деньги: остаток валюты МИНУС все активные заявки Freedom пользователя в этой валюте — остаток × лимит + оценка комиссии строки на остаток (T-67E, NIT:
+        // est_fee × остаток / лоты строки; у Freedom комиссия списывается сверх суммы сделки). Продажи тоже вычитаются (консервативно).
         decimal? money = null;
         if (snapshot.Cash.TryGetValue(currency, out var cash))
         {
-            var reserved = (await _orders.ListActiveByUserAsync(userId, Brokers.Freedom))
-                .Where(o => string.Equals(o.Currency, currency, StringComparison.OrdinalIgnoreCase))
-                .Sum(o => Math.Max(0, o.LotsRequested - o.LotsFilled) * o.LimitPrice);
+            var reserved = active
+                .Where(x => string.Equals(x.Order.Currency, currency, StringComparison.OrdinalIgnoreCase))
+                .Sum(x => ReservedMoney(x.Order, x.Line));
             money = cash - reserved;
         }
 
-        // Момент котировки — метка брокера (ltt/bbt/bat), не момент запроса; обычные торги — marketStatus бумаги = OPEN (нет поля — не подтверждено → preflight откажет).
+        // Бумаги (T-67E, M2): остаток в портфеле МИНУС неисполненный остаток активных ПРОДАЖ Freedom пользователя по этому тикеру (все планы) — брокер может не
+        // вычитать бумаги под висящую продажу, и два плана продали бы одни и те же штуки. Штуки = лоты × лотность (у Freedom лот 1).
+        decimal? pieces = null;
+        if (snapshot.PiecesByTicker.TryGetValue(instrumentId, out var held))
+        {
+            var selling = active
+                .Where(x => x.Line is { Side: PlanSides.Sell } l && string.Equals(InstrumentIdOf(l), instrumentId, StringComparison.OrdinalIgnoreCase))
+                .Sum(x => Math.Max(0, x.Order.LotsRequested - x.Order.LotsFilled) * (x.Line!.LotSize > 0m ? x.Line.LotSize : 1m));
+            pieces = held - selling;
+        }
+
+        // Момент котировки — метка брокера (bbt/bat; ltt — только если меток стакана нет), не момент запроса; обычные торги — marketStatus бумаги = OPEN (нет поля —
+        // не подтверждено → preflight откажет).
         return new VenueMarket(
             bid, ask, quote.QuoteTimeUtc, quote.MarketOpen == true, true,
             meta.ApiTradeAvailable && FreedomOrderRules.IsTradableTicker(instrumentId),
-            money, snapshot.PiecesByTicker.TryGetValue(instrumentId, out var pieces) ? pieces : null);
+            money, pieces);
+    }
+
+    /// <summary>Резерв денег активной заявки, валюта заявки: остаток × лимит штуки + доля оценки комиссии строки (<c>est_fee</c> × остаток / лоты строки; нет строки — 0).</summary>
+    internal static decimal ReservedMoney(TradeOrder order, TradePlanLine? line)
+    {
+        var remaining = Math.Max(0, order.LotsRequested - order.LotsFilled);
+        var fee = line is { QuantityLots: > 0 } l ? Math.Max(0m, l.EstFee) * remaining / l.QuantityLots : 0m;
+        return remaining * order.LimitPrice + fee;
+    }
+
+    /// <summary>Активные заявки Freedom пользователя со строками их планов (строка null — план не найден или репозиторий планов не подключён).</summary>
+    private async Task<List<(TradeOrder Order, TradePlanLine? Line)>> ActiveWithLinesAsync(ulong userId)
+    {
+        var active = await _orders.ListActiveByUserAsync(userId, Brokers.Freedom);
+        var plans = new Dictionary<ulong, TradePlan?>();
+        var result = new List<(TradeOrder, TradePlanLine?)>(active.Count);
+        foreach (var o in active)
+        {
+            if (!plans.TryGetValue(o.PlanId, out var plan))
+            {
+                plan = _plans is null ? null : await _plans.GetAsync(userId, o.PlanId);
+                plans[o.PlanId] = plan;
+            }
+
+            result.Add((o, plan?.Lines.FirstOrDefault(l => l.LineNo == o.LineNo)));
+        }
+
+        return result;
     }
 
     public Task<GatewayOrderState> PostAsync(VenueSession session, ulong userId, TradePlanLine line, string instrumentId, TradeOrder order, CancellationToken ct) =>
@@ -442,6 +488,65 @@ public sealed class FreedomExecutionVenue : IExecutionVenue
     /// повторно НЕ отправляет).
     /// </summary>
     public async Task<GatewayOrderState?> StateAsync(VenueSession session, ulong userId, TradeOrder order, TradePlanLine? line, bool searchActive, CancellationToken ct)
+    {
+        var found = await FindAsync(userId, order, line, ct);
+        return found is null ? null : await ConfirmFillsAsync(userId, order, found, ct);
+    }
+
+    /// <summary>
+    /// T-67E (M1): заявка снята/истекла у брокера (<c>Cancelled</c>) или пришёл окончательный код снятия без массива <c>trade</c>
+    /// (<see cref="GatewayOrderState.FillsUnconfirmed"/>) — ПЕРЕД тем как движок перевыставит остаток (любой путь: снятие брокером или наше снятие), исполненное
+    /// сверяется с <c>getTradesHistory</c> по <c>order_id</c>: исполнено = max(список заявок, история сделок), не больше запрошенного; покрыто всё — <c>Filled</c>.
+    /// История недоступна — или для кодов частичного исполнения (30/72) без <c>trade[]</c> история пока не показала ни одной сделки — исход НЕИЗВЕСТЕН:
+    /// <see cref="GatewayErrorKind.Transient"/> (движок ждёт следующего тика и ничего не перевыставляет). Остаток строки = запрошено − ПОДТВЕРЖДЁННОЕ исполнение.
+    /// </summary>
+    private async Task<GatewayOrderState> ConfirmFillsAsync(ulong userId, TradeOrder order, GatewayOrderState state, CancellationToken ct)
+    {
+        if (!state.FillsUnconfirmed && state.Status != TradeOrderStatuses.Cancelled) return state;
+        if (string.IsNullOrEmpty(state.BrokerOrderId))
+            throw new FreedomGatewayException(GatewayErrorKind.Transient, "fills_unconfirmed", "Freedom: исполнение снятой заявки не сверить без id брокера");
+
+        IReadOnlyList<Bonds.Infrastructure.Connectors.Freedom.Models.FreedomTrade> trades;
+        try
+        {
+            // Заявка дневная: сделки — в день размещения; окно с запасом на часовые пояса.
+            var from = DateOnly.FromDateTime(order.CreatedAt).AddDays(-1);
+            var to = DateOnly.FromDateTime(order.CreatedAt).AddDays(2);
+            trades = await _gateway.GetTradesAsync(userId, from, to, ct);
+        }
+        catch (ExecutionGatewayException ex)
+        {
+            _logger.LogWarning("Execution: Freedom order {BrokerOrderId} closed by broker, trades history unavailable ({Code}) — fills unconfirmed, waiting", state.BrokerOrderId, ex.Code);
+            throw new FreedomGatewayException(GatewayErrorKind.Transient, "fills_unconfirmed", "Freedom: история сделок недоступна — исполнение снятой заявки не подтверждено");
+        }
+
+        var own = trades.Where(t => string.Equals(t.OrderId, state.BrokerOrderId, StringComparison.Ordinal)).ToList();
+        var requested = state.LotsRequested > 0 ? state.LotsRequested : order.LotsRequested;
+        var historyLots = Math.Clamp((long)Math.Floor(own.Sum(t => t.Quantity)), 0, Math.Max(0, requested));
+        var confirmed = Math.Max(state.LotsExecuted, historyLots);
+        if (state.FillsUnconfirmed && confirmed == 0 && FreedomOrderStatusMap.IsPartialClosed(state.BrokerStat))
+        {
+            _logger.LogWarning("Execution: Freedom order {BrokerOrderId} stat {Stat} (partial) without trades yet — fills unconfirmed, waiting", state.BrokerOrderId, state.BrokerStat);
+            throw new FreedomGatewayException(GatewayErrorKind.Transient, "fills_unconfirmed", "Freedom: частичное исполнение снятой заявки ещё не видно в истории сделок");
+        }
+
+        if (historyLots != state.LotsExecuted)
+            _logger.LogWarning(
+                "Execution: Freedom order {BrokerOrderId}: filled {Listed} by order list, {History} by trades history — taking {Confirmed}",
+                state.BrokerOrderId, state.LotsExecuted, historyLots, confirmed);
+        var priced = own.Where(t => t.Price > 0m && t.Quantity > 0m).ToList();
+        var pricedQty = priced.Sum(t => t.Quantity);
+        var avg = historyLots > state.LotsExecuted && pricedQty > 0m ? priced.Sum(t => t.Price * t.Quantity) / pricedQty : state.AvgFillPrice;
+        return state with
+        {
+            Status = requested > 0 && confirmed >= requested ? TradeOrderStatuses.Filled : TradeOrderStatuses.Cancelled,
+            LotsExecuted = confirmed,
+            AvgFillPrice = confirmed > 0 ? avg : null,
+            FillsUnconfirmed = false,
+        };
+    }
+
+    private async Task<GatewayOrderState?> FindAsync(ulong userId, TradeOrder order, TradePlanLine? line, CancellationToken ct)
     {
         var orders = await _gateway.GetOrdersAsync(userId, activeOnly: false, ct);
         if (!string.IsNullOrEmpty(order.BrokerOrderId))

@@ -103,7 +103,6 @@ public class FreedomExecutionRulesTests
     [InlineData(21, 5, -1, -1, TradeOrderStatuses.Filled, 5)]
     // снята/истекла: исполнено = Σ trade[].q, leaves_qty НЕ используется (у снятой по FIX он 0)
     [InlineData(31, 5, 0, 0, TradeOrderStatuses.Cancelled, 0)]
-    [InlineData(31, 5, 0, -1, TradeOrderStatuses.Cancelled, 0)]
     [InlineData(31, 5, 0, 2, TradeOrderStatuses.Cancelled, 2)]
     [InlineData(30, 5, 3, 2, TradeOrderStatuses.Cancelled, 2)]
     [InlineData(71, 5, 0, 0, TradeOrderStatuses.Cancelled, 0)]
@@ -133,6 +132,20 @@ public class FreedomExecutionRulesTests
         r.Status.Should().Be(expected);
         r.Executed.Should().Be(executed);
         r.KnownCode.Should().BeTrue();
+    }
+
+    [Theory]
+    [InlineData(30)]
+    [InlineData(31)]
+    [InlineData(71)]
+    [InlineData(72)]
+    public void StatusMap_ClosedWithoutTradeArray_IsActiveUntilFillsConfirmed(int stat)
+    {
+        // T-67E (M1): нет массива trade — исполненное неизвестно; «окончательно с нулём» привело бы к перевыставлению всего количества (перекупка).
+        var r = FreedomOrderStatusMap.Resolve(stat, 10, 0, null);
+        r.Should().Be(new FreedomOrderResolution(TradeOrderStatuses.Submitted, 0, true, FillsUnconfirmed: true));
+        TradeOrderStatuses.IsActive(r.Status).Should().BeTrue();
+        FreedomOrderStatusMap.Resolve(stat, 10, 0, 0).FillsUnconfirmed.Should().BeFalse("пустой массив trade — исполнено 0 подтверждено");
     }
 
     [Theory]

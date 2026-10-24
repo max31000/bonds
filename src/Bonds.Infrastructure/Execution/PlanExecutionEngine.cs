@@ -129,7 +129,7 @@ public sealed class PlanExecutionEngine
         _policy = policy.Value;
         _logger = logger;
         _venues[Brokers.TInvest] = new TInvestExecutionVenue(gateway, gate, accounts, credentialRecords, logger, meta, tinvestFills);
-        if (freedomGateway is not null) _venues[Brokers.Freedom] = new FreedomExecutionVenue(freedomGateway, gate, accounts, credentialRecords, orders, logger);
+        if (freedomGateway is not null) _venues[Brokers.Freedom] = new FreedomExecutionVenue(freedomGateway, gate, accounts, credentialRecords, orders, logger, plans);
     }
 
     private ExecutionOptions Opt => _options.CurrentValue;
