@@ -31,6 +31,7 @@ public sealed class PolicyBondCandidateProvider
     private readonly IOptions<PolicyOptions> _policyOptions;
     private readonly TradingMetaRefresher _meta;
     private readonly IPlanQuoteSource _quotes;
+    private readonly IIssuerRatingRepository? _ratings;
 
     public PolicyBondCandidateProvider(
         IBondUniverseRepository universe,
@@ -39,8 +40,10 @@ public sealed class PolicyBondCandidateProvider
         IOptions<BondUniverseRefreshOptions> universeOptions,
         IOptions<PolicyOptions> policyOptions,
         TradingMetaRefresher meta,
-        IPlanQuoteSource quotes)
+        IPlanQuoteSource quotes,
+        IIssuerRatingRepository? ratings = null)
     {
+        _ratings = ratings;
         _universe = universe;
         _snapshots = snapshots;
         _reliability = reliability;
@@ -101,6 +104,12 @@ public sealed class PolicyBondCandidateProvider
             heldByIssuer[key] = heldByIssuer.GetValueOrDefault(key) + h.MarketValueRub;
         }
 
+        // Задача 67 (P3b «рейтинг не ниже A»): свежие ручные рейтинги эмитентов пула (issuer_ratings по ИНН).
+        var inns = pool.Select(e => e.EmitentInn?.Trim()).Where(i => !string.IsNullOrWhiteSpace(i)).Select(i => i!).Distinct(StringComparer.Ordinal).ToList();
+        var ratingsByInn = _ratings is null || inns.Count == 0
+            ? new Dictionary<string, IReadOnlyList<IssuerRating>>() as IReadOnlyDictionary<string, IReadOnlyList<IssuerRating>>
+            : await _ratings.GetByInnsAsync(inns, ct);
+
         var result = new List<PolicyBondCandidate>();
         foreach (var entry in pool)
         {
@@ -149,11 +158,29 @@ public sealed class PolicyBondCandidateProvider
                 AccruedRub = accrued,
                 IssuerKey = issuerKey,
                 IssuerHeldValueRub = issuerKey is not null ? heldByIssuer.GetValueOrDefault(issuerKey) : 0m,
+                IssuerRatingAtLeastA = RatingAtLeastA(entry.EmitentInn is { } inn && ratingsByInn.TryGetValue(inn.Trim(), out var rs) ? rs : [], asOf),
                 Quote = quote,
             });
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Самый низкий из свежих (≤ 18 мес.) распознанных рейтингов не ниже A (<see cref="ReliabilityScoreService.TryScoreRating"/>: A → 8 баллов). null — свежих
+    /// распознанных рейтингов нет.
+    /// </summary>
+    internal static bool? RatingAtLeastA(IReadOnlyList<IssuerRating> ratings, DateOnly asOf)
+    {
+        var cutoff = asOf.AddMonths(-ReliabilityScoreOptions.ManualRatingFreshMonths);
+        int? worst = null;
+        foreach (var r in ratings.Where(r => r.RatingDate >= cutoff))
+        {
+            if (!ReliabilityScoreService.TryScoreRating(r.Rating, out var points, out _)) continue;
+            worst = worst is null ? points : Math.Min(worst.Value, points);
+        }
+
+        return worst is null ? null : worst.Value >= 8;
     }
 
     /// <summary>Эмитент для лимита концентрации: id эмитента MOEX, иначе ИНН, иначе нет (лимит не применяется).</summary>

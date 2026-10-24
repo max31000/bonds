@@ -180,6 +180,12 @@ public sealed record PolicyBondCandidate
     /// <summary>Рыночная стоимость уже удерживаемых бумаг этого эмитента, рубли.</summary>
     public decimal IssuerHeldValueRub { get; init; }
 
+    /// <summary>
+    /// Задача 67 (P3b «рейтинг не ниже A», дизайн §4): самый низкий из СВЕЖИХ (≤ <see cref="Bonds.Core.Analytics.ReliabilityScoreOptions.ManualRatingFreshMonths"/> мес.)
+    /// рейтингов эмитента (<c>issuer_ratings</c>, ручной ввод) не ниже категории A. null — свежего распознанного рейтинга нет.
+    /// </summary>
+    public bool? IssuerRatingAtLeastA { get; init; }
+
     public PolicyQuote? Quote { get; init; }
 }
 

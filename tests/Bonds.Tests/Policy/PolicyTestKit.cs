@@ -67,6 +67,7 @@ internal static class PolicyTestKit
     {
         Secid = secid, Isin = secid, Name = secid, Sector = sector, YieldFraction = yield, AfterTaxYieldFraction = afterTax,
         CleanPriceRub = 1000m, AccruedRub = 10m, IssuerKey = secid, Quote = Bond(secid, bidPts, askPts),
+        IssuerRatingAtLeastA = true, // задача 67: P3b берёт только эмитентов со свежим рейтингом не ниже A
     };
 
     public static PolicyInput Input(

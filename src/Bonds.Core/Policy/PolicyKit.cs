@@ -287,8 +287,10 @@ internal static class PolicyKit
     /// Покупка облигаций-кандидатов на <paramref name="budget"/> рублей через <see cref="CashAllocationService.Allocate"/> (источник «recommended»: ось сектора,
     /// не больше <see cref="PolicyOptions.MaxBondLotsPerCandidate"/> лотов на бумагу) с РЕАЛЬНЫМ лотом и ценой по стакану. Кандидат без стакана пропускается.
     /// </summary>
+    /// <param name="requireRatingAtLeastA">P3b (дизайн §4): только эмитенты со свежим рейтингом не ниже A (<see cref="PolicyBondCandidate.IssuerRatingAtLeastA"/>).</param>
     public static List<TradePlanLine> BuyBonds(
-        PolicyInput input, decimal budget, decimal? minAfterTaxYield, string reasonPrefix, List<PlanSkip> skipped, bool applyIssuerLimit)
+        PolicyInput input, decimal budget, decimal? minAfterTaxYield, string reasonPrefix, List<PlanSkip> skipped, bool applyIssuerLimit,
+        bool requireRatingAtLeastA = false)
     {
         if (budget <= 0m) return [];
 
@@ -296,6 +298,14 @@ internal static class PolicyKit
         var byKey = new Dictionary<string, (PolicyBondCandidate Cand, PolicyQuote Quote, PricedQuote Price)>(StringComparer.Ordinal);
         foreach (var cand in input.BondCandidates)
         {
+            if (requireRatingAtLeastA && cand.IssuerRatingAtLeastA != true)
+            {
+                skipped.Add(new PlanSkip(cand.Secid, cand.IssuerRatingAtLeastA == false
+                    ? "рейтинг эмитента ниже A — для перелива ликвидности нужен не ниже A"
+                    : "нет свежего рейтинга эмитента (не ниже A) — введите рейтинг на странице эмитента"));
+                continue;
+            }
+
             if (minAfterTaxYield is { } floor && (cand.AfterTaxYieldFraction is not { } at || at < floor))
             {
                 skipped.Add(new PlanSkip(cand.Secid, $"доходность после налога ниже порога {floor:P2}"));

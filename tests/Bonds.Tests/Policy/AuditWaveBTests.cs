@@ -125,4 +125,41 @@ public class AuditWaveBTests
         outcome.Plan.Should().BeNull();
         outcome.Notes.Should().Contain(n => n.Contains(LinePricer.PriceBelowStepReason));
     }
+
+    // ─── NIT: P3b «рейтинг не ниже A» ───────────────────────────────────────────────────────
+
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(false, false)]
+    [InlineData(null, false)]
+    public void T67_P3b_RequiresIssuerRatingAtLeastA(bool? ratingA, bool planned)
+    {
+        // Дизайн §4: перелив ликвидности в облигации — только эмитенты с рейтингом не ниже A (свежие ручные рейтинги issuer_ratings). Без рейтинга — нет.
+        var bonds = Basket("bonds", 0.85m, tier: 2, fill: BasketFillRules.Engine, members: [ClassMember("bond")]);
+        var positions = new[] { Pos("TMON@", "fund", 299_844m), Pos("RU000A", "bond", 700_156m) };
+        var input = Input([Liquidity(), bonds], positions, 0m, [Tmon, Tsav], holdings: [Holding("TMON@", 1_800m, 299_844m, 150m, "liquidity")],
+            candidates: [Candidate("RU000A1", 0.14m, 0.15m) with { IssuerRatingAtLeastA = ratingA }], fundYield: 0.10m);
+
+        var outcome = LiquidityToBondsRule.Evaluate(input);
+
+        if (planned) outcome.Plan!.Lines.Should().Contain(l => l.Ticker == "RU000A1");
+        else
+        {
+            outcome.Plan.Should().BeNull();
+            outcome.Notes.Should().Contain(n => n.Contains("замены нет"));
+        }
+    }
+
+    [Fact]
+    public void T67_RatingAtLeastA_WorstFreshRating_StaleIgnored()
+    {
+        var today = new DateOnly(2026, 10, 24);
+        static Bonds.Core.Models.IssuerRating R(string agency, string rating, DateOnly date) => new() { Inn = "7700000000", Agency = agency, Rating = rating, RatingDate = date };
+
+        Bonds.Infrastructure.Policy.PolicyBondCandidateProvider.RatingAtLeastA([R("АКРА", "A(RU)", today.AddMonths(-2))], today).Should().BeTrue();
+        Bonds.Infrastructure.Policy.PolicyBondCandidateProvider.RatingAtLeastA(
+            [R("АКРА", "AA(RU)", today.AddMonths(-1)), R("Эксперт", "ruBBB+", today.AddMonths(-3))], today).Should().BeFalse("берётся самый низкий свежий");
+        Bonds.Infrastructure.Policy.PolicyBondCandidateProvider.RatingAtLeastA([R("АКРА", "AAA(RU)", today.AddMonths(-20))], today).Should().BeNull("рейтинг протух");
+        Bonds.Infrastructure.Policy.PolicyBondCandidateProvider.RatingAtLeastA([], today).Should().BeNull();
+    }
 }
