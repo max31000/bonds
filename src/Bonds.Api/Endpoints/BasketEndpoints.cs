@@ -99,6 +99,7 @@ public static class BasketEndpoints
         if (request.Band is null || request.HardBand is null || request.LiquidityTier is null || request.FillRule is null || request.MinTrade is null)
             return "band, hardBand, liquidityTier, fillRule и minTrade обязательны.";
 
+        var (wasAutoBuy, wasAutoSell) = (basket.AutoBuy, basket.AutoSell);
         basket.Title = request.Title?.Trim() ?? string.Empty;
         basket.TargetWeight = request.TargetWeight;
         basket.Band = request.Band.Value;
@@ -110,8 +111,9 @@ public static class BasketEndpoints
         basket.MinTrade = request.MinTrade.Value;
 
         // Задача 67 (#1): авто-исполнение разрешено КОДОМ только для корзины «liquidity» (AutoWhitelist); флаг на другой корзине — ошибка, а не тихо
-        // игнорируемая настройка (иначе владелец думал бы, что авто включено).
-        if ((request.AutoBuy || request.AutoSell) && !string.Equals(basket.Code, AutoWhitelist.BasketCode, StringComparison.Ordinal))
+        // игнорируемая настройка (иначе владелец думал бы, что авто включено). Ошибка — только когда запрос ВКЛЮЧАЕТ флаг (false → true, решение владельца A2):
+        // унаследованное true на старой корзине проходит как есть (без авто по коду оно ничего не делает), выключить его можно всегда.
+        if (((request.AutoBuy && !wasAutoBuy) || (request.AutoSell && !wasAutoSell)) && !string.Equals(basket.Code, AutoWhitelist.BasketCode, StringComparison.Ordinal))
             return $"autoBuy/autoSell можно включить только у корзины «{AutoWhitelist.BasketCode}» (авто-исполнение — только фонды ликвидности).";
         return BasketValidation.ValidateFields(basket);
     }

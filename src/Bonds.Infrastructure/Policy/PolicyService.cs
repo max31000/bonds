@@ -52,6 +52,7 @@ public sealed class PolicyService
     public const string QueuedNote = "передан исполнителю";
     public const string LiveNote = "исполнение включено: после подтверждения заявки уйдут брокеру (T-Invest или Freedom — по строкам плана)";
     public const string NotExecutedExpiredNote = "не исполнен: срок действия истёк";
+    public const string HoldOnlyNote = "удержание под вывод: заявок нет, деньги отложены до «Деньги выведены» (/withdrawn)";
 
     internal static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
@@ -157,6 +158,15 @@ public sealed class PolicyService
         {
             await _plans.TransitionAsync(userId, id, [PlanStatuses.PendingApproval, PlanStatuses.Draft], PlanStatuses.Expired, null, nowUtc, null);
             return new PlanDecisionResult(PlanDecisionKind.Expired, await _plans.GetAsync(userId, id));
+        }
+
+        // План «только удержание» (задача 67, A2: вывод целиком из свободных денег): заявок нет — подтверждение = «выведу эти деньги», план сразу Done,
+        // удержание (summary.cashHold) действует WithdrawHoldTtl рабочих дней или до /withdrawn («Деньги выведены»).
+        if (plan.Lines.Count == 0 && WithdrawHold.AmountOf(plan) > 0m)
+        {
+            var held = await _plans.TransitionAsync(
+                userId, id, [PlanStatuses.PendingApproval, PlanStatuses.Draft], PlanStatuses.Done, via, nowUtc, WithNote(plan.SummaryJson, HoldOnlyNote));
+            return new PlanDecisionResult(held ? PlanDecisionKind.Ok : PlanDecisionKind.Conflict, await _plans.GetAsync(userId, id));
         }
 
         // Живой план (dry_run = 0): срок продлевается до конца БЛИЖАЙШЕЙ сессии, в которой ещё можно выставить заявки (подтверждение вечером — исполнение завтра

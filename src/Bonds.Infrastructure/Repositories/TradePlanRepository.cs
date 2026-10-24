@@ -216,14 +216,18 @@ public class TradePlanRepository : ITradePlanRepository
     public async Task<CashHoldState> GetCashHoldAsync(ulong userId, string broker, string currency, DateTime nowUtc, int withdrawHoldTtl)
     {
         // Кандидаты — планы вывода/выхода с удержанием, не снятым владельцем, у брокера портфеля (любая сторона строк); окно выборки с запасом на TTL
-        // (рабочие дни + выходные), точное решение — WithdrawHold.IsActive.
+        // (рабочие дни + выходные), точное решение — WithdrawHold.IsActive. План «только удержание» (задача 67, A2) строк не имеет — его брокер берём из
+        // summary.portfolio (CapitalPortfolios.BrokerOf).
         using var conn = CreateConnection();
         var since = nowUtc.AddDays(-(Math.Max(0, withdrawHoldTtl) * 2 + 14));
         var plans = (await conn.QueryAsync<TradePlan>(
             $@"SELECT {PlanColumns} FROM trade_plans p
                WHERE p.user_id = @UserId AND p.rule IN @Rules AND p.status IN @Statuses AND p.cash_hold_released_at IS NULL AND p.created_at >= @Since
-                 AND EXISTS (SELECT 1 FROM trade_plan_lines l WHERE l.plan_id = p.id AND l.broker = @Broker)",
+                 AND (EXISTS (SELECT 1 FROM trade_plan_lines l WHERE l.plan_id = p.id AND l.broker = @Broker)
+                      OR NOT EXISTS (SELECT 1 FROM trade_plan_lines l WHERE l.plan_id = p.id))",
             new { UserId = userId, Rules = WithdrawHold.Rules.ToArray(), Statuses = WithdrawHold.Statuses.ToArray(), Since = since, Broker = broker })).ToList();
+        var withLines = (await conn.QueryAsync<ulong>(
+            "SELECT DISTINCT plan_id FROM trade_plan_lines WHERE plan_id IN @Ids", new { Ids = plans.Select(p => p.Id).DefaultIfEmpty(0UL).ToArray() })).ToHashSet();
 
         var amount = 0m;
         var count = 0;
@@ -231,6 +235,8 @@ public class TradePlanRepository : ITradePlanRepository
         {
             var summary = WithdrawHold.SummaryOf(plan);
             if (summary is null || !string.Equals(summary.Currency, currency, StringComparison.OrdinalIgnoreCase)) continue;
+            if (!withLines.Contains(plan.Id)
+                && !string.Equals(Bonds.Core.Capital.CapitalPortfolios.BrokerOf(summary.Portfolio), broker, StringComparison.OrdinalIgnoreCase)) continue;
             amount += summary.CashHold;
             count++;
         }

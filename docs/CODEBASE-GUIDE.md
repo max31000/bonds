@@ -364,15 +364,20 @@ instrument|asset_class); таблица `target_allocations` **удалена** 
 **Исправления аудита (задача 67, волна A).** (1) **Белый список авто — в коде** (`Bonds.Core/Policy/AutoWhitelist`): `AutoApproved` только для покупки члена (instrument, T-Invest) корзины
 с кодом `liquidity` и `auto_buy`, класса «фонд» (`PolicyQuote.Kind`; у исполнителя — метаданные торгов есть и цена не в пунктах) без выплат (`pays_distributions = false`; null = «платит») или из
 `Policy:AutoFundWhitelist` (тикеры, по умолчанию пусто). Проверяет `PolicyKit.DecideStatus` и исполнитель (`AutoExecutionWhitelist.Check` для ЛЮБОГО `AutoApproved` или `decided_via = auto`;
-`AutoApproved` без `decided_via = auto` не исполняется); Freedom в авто не бывает. `PUT /api/baskets[/{id}]` с `autoBuy/autoSell = true` не у `liquidity` → 422. (2) **Резерв** `SumReservedBuysAsync`
+`AutoApproved` без `decided_via = auto` не исполняется); Freedom в авто не бывает. `PUT /api/baskets[/{id}]`, ВКЛЮЧАЮЩИЙ (false → true) `autoBuy/autoSell` не у `liquidity`, → 422 (унаследованное true проходит как есть). (2) **Резерв** `SumReservedBuysAsync`
 включает живой `Approved` (`dry_run = 0`). (3) **Удержание под вывод:** `summary.cashHold` (валюта портфеля) — P5: запрошенное − нехватка, выход из корзины: чистая выручка; действует, пока план
 открыт (до `expires_at`, Submitting — всегда) и `Policy:WithdrawHoldTtl` (3) рабочих дня от `expires_at` исполненного плана (`WithdrawHold.IsActive`), входит в `SumReservedBuysAsync`; при нём
 P1 не паркует (`PolicyInput.CashHoldActive`). Снять — `/withdrawn` в боте или «Деньги выведены» на «Планах» (`POST /api/plans/cash-hold/release`, миграция 039 `cash_hold_released_at`).
-P5, целиком покрытый свободными деньгами, плана (и удержания) не создаёт. (4) **Живой план в боте:** первой строкой жирное «⚠️ РЕАЛЬНЫЕ ЗАЯВКИ» + `executionNote`; в `/plans` у живых
+P5, целиком покрытый свободными деньгами, — план «только удержание» (A2, см. ниже). (4) **Живой план в боте:** первой строкой жирное «⚠️ РЕАЛЬНЫЕ ЗАЯВКИ» + `executionNote`; в `/plans` у живых
 планов только ссылка «Детали»; «Подтвердить» в сообщении плана — шаг 1 (nonce меняется `RotateNonceAsync`, показ реальных заявок, кнопки `p:{id}:s:{nonce}` «Отправить заявки» / «Отклонить»),
 шаг 2 «Отправить заявки» поглощает nonce и подтверждает. (5) **Неполные/устаревшие данные** (`PolicyDataGate`): `PolicyInput.DataIncomplete`/`IncompleteBaskets` (коды строк дрейфа позиций без
 цены/курса, `cash` — сумма свободных денег не определена; источник — `CapitalPortfolioOverview.IncompleteKeys`) и `StaleSince` (последний синк старше `Policy:MaxSyncAge` 26 ч; синка не было —
 `DateTime.MinValue`): P3b, P4 и P2 (распределение по дефициту, и ручное) не строятся, P1 — при устаревших данных или неполноте `liquidity`/`cash`; причина — в заметках прогона и предпросмотра.
+
+**Решения владельца по волне A (задача 67, A2).** (a) P5, целиком покрытый свободными деньгами, создаёт план «только удержание» (`PolicyKit.FinishHoldOnly`: rule `P5_WITHDRAW`, строк нет,
+`summary.cashHold` = сумма, `PendingApproval`, срок `PendingTtl`); `PolicyService.ApproveAsync` переводит его сразу в `Done` (заявок нет) — дальше удержание как у исполненного плана
+(`WithdrawHoldTtl` рабочих дней или `/withdrawn`). `GetCashHoldAsync` берёт брокера безстрочного плана из `summary.portfolio`. P1 при удержании не паркует. (b) выход из корзины — как в волне A.
+(c) 422 только на включение авто-флага. (d) P4 продаёт излишек HardAbove у любой корзины не `hold` независимо от `auto_sell` (план всегда `PendingApproval`).
 
 **Telegram-бот (задача 64).** Тот же бот (`Telegram:BotToken`), long polling `getUpdates` (25 с), webhook нет. `Bonds.Core/Telegram` — чистые функции: `BotCommandParser` («15%» → ДОЛЯ 0.15 один раз), `BotCallback`
 (`p:{planId}:{a|r}:{nonce}`, nonce = 8 случайных байт base64url в `trade_plans.bot_nonce`, не уходит в API), `PlanMessageFormatter`/`BotTexts`/`BotFormat` (HTML-экранирование, русская локаль независимо от

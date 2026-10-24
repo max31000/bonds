@@ -766,6 +766,42 @@ public class PlansEndpointTests
     }
 
     [Fact]
+    public async Task T67A2_Withdraw30k_FullyCoveredBy40kFree_HoldOnlyPlan_NextP1ParksAtMost10k()
+    {
+        // Вывод 30 000 ₽ при свободных 40 000 ₽ — продажи не нужны, но деньги всё равно удерживаются планом «только удержание» (без строк, cashHold = 30 000).
+        // Подтверждение переводит его сразу в Done (заявок нет), удержание продолжает действовать — P1 не паркует удержанные деньги.
+        var (userId, _, _, _, _, _, factory) = await SeedRubAsync(cashRub: 40_000m, aQuantity: 0m);
+        var now = OpenNowUtc();
+        var repo = new TradePlanRepository(Conn);
+
+        TradePlan withdraw;
+        using (var scope = factory.Services.CreateScope())
+        {
+            var (plan, _) = await scope.ServiceProvider.GetRequiredService<PolicyService>()
+                .CreateManualAsync(userId, PlanRules.P5Withdraw, new PlanParams(Amount: 30_000m), now);
+            plan.Should().NotBeNull("вывод из свободных денег — тоже план (удержание)");
+            withdraw = plan!;
+        }
+
+        withdraw.Lines.Should().BeEmpty();
+        withdraw.Status.Should().Be(PlanStatuses.PendingApproval);
+        JsonSerializer.Deserialize<TradePlanSummary>(withdraw.SummaryJson!, WebJson)!.CashHold.Should().Be(30_000m);
+        (await repo.SumReservedBuysAsync(userId, BrokerIds.TInvest, "RUB", now)).Should().Be(30_000m);
+
+        using (var scope = factory.Services.CreateScope())
+            (await scope.ServiceProvider.GetRequiredService<PolicyService>().ApproveAsync(userId, withdraw.Id, DecidedVia.Web, now)).Kind.Should().Be(PlanDecisionKind.Ok);
+        (await repo.GetAsync(userId, withdraw.Id))!.Status.Should().Be(PlanStatuses.Done);
+        (await repo.SumReservedBuysAsync(userId, BrokerIds.TInvest, "RUB", now.AddMinutes(1))).Should().Be(30_000m, "удержание живёт после подтверждения");
+
+        using (var scope = factory.Services.CreateScope())
+            await scope.ServiceProvider.GetRequiredService<PolicyRunner>().RunForUserAsync(userId, now.AddMinutes(1), new PolicyRunResult());
+
+        var p1 = (await PlansOfAsync(userId)).Where(p => p.Rule == PlanRules.P1Sweep).ToList();
+        foreach (var plan in p1)
+            JsonSerializer.Deserialize<TradePlanSummary>(plan.SummaryJson!, WebJson)!.ReservedBuy.Should().BeLessThanOrEqualTo(10_000m);
+    }
+
+    [Fact]
     public async Task Runner_RealPlan_SavesReservedBuy_ThatTheRepositoryReserves()
     {
         var (userId, _, _, _, _, _, factory) = await SeedRubAsync(cashRub: 7_340m, aQuantity: 0m);

@@ -525,6 +525,30 @@ internal static class PolicyKit
         return new PolicyOutcome(new TradePlanDraft(rule, trigger, status, ExpiresAt(input, lines), lines, summary), notes);
     }
 
+    /// <summary>
+    /// План «только удержание» (задача 67, A2): без строк, <see cref="TradePlanSummary.CashHold"/> = <paramref name="hold"/> (валюта портфеля), всегда
+    /// <c>PendingApproval</c>. Заявок нет — подтверждение (<c>PolicyService.ApproveAsync</c>) сразу переводит его в <c>Done</c>.
+    /// </summary>
+    public static PolicyOutcome FinishHoldOnly(PolicyInput input, string rule, string trigger, decimal hold, List<string> notes, List<string>? warnings = null)
+    {
+        var summary = new TradePlanSummary
+        {
+            Portfolio = input.Portfolio,
+            Currency = input.Currency,
+            CashBefore = input.FreeCash,
+            CashAfter = input.FreeCash,
+            RequestedNet = hold,
+            NetToWithdraw = hold,
+            CashHold = Math.Max(0m, hold),
+            Warnings = warnings ?? [],
+            Notes = notes,
+            Skipped = [],
+            ExecutionNote = "удержание под вывод: заявок нет",
+        };
+        return new PolicyOutcome(
+            new TradePlanDraft(rule, trigger, PlanStatuses.PendingApproval, input.NowUtc + input.Options.PendingTtl, [], summary), notes);
+    }
+
     private static decimal FxOf(PolicyInput input, TradePlanLine line) =>
         input.Quotes.FirstOrDefault(q => q.Broker == line.Broker && q.InstrumentKey == line.InstrumentKey)?.FxToPortfolio
         ?? input.BondCandidates.Select(c => c.Quote).FirstOrDefault(q => q is not null && q.InstrumentKey == line.InstrumentKey)?.FxToPortfolio

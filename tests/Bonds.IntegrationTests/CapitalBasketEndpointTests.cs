@@ -317,6 +317,29 @@ public class CapitalBasketEndpointTests
     }
 
     [Fact]
+    public async Task T67A2_Put_LegacyAutoTrueOnNonLiquidity_PassesUnchanged_ButTurningOnIs422()
+    {
+        // Решение владельца (A2, c): 422 — только когда запрос ВКЛЮЧАЕТ авто-флаг у корзины не «liquidity». Унаследованное true (до задачи 67) проходит
+        // как есть — правка заголовка/полосы не должна требовать сначала выключить флаг.
+        var (client, userId) = await NewUserAsync();
+        var (id, _) = await FindAsync(client, "usd", "global_core");
+        await using (var conn = new MySqlConnector.MySqlConnection(Conn))
+            await Dapper.SqlMapper.ExecuteAsync(conn, "UPDATE baskets SET auto_buy = 1, auto_sell = 0 WHERE id = @Id AND user_id = @UserId", new { Id = id, UserId = userId });
+
+        var keep = await client.PutAsJsonAsync($"/api/baskets/{id}", UpdateBody("Ядро (переименовано)", 1.0m, autoBuy: true, autoSell: false));
+        keep.StatusCode.Should().Be(HttpStatusCode.OK, "autoBuy = true не меняется — legacy-значение проходит");
+        var kept = Basket(Portfolio(await keep.Content.ReadFromJsonAsync<JsonElement>(), "usd"), "global_core");
+        kept.GetProperty("title").GetString().Should().Be("Ядро (переименовано)");
+        kept.GetProperty("autoBuy").GetBoolean().Should().BeTrue();
+
+        var turnOn = await client.PutAsJsonAsync($"/api/baskets/{id}", UpdateBody("Ядро", 1.0m, autoBuy: true, autoSell: true));
+        turnOn.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity, "autoSell false → true на корзине не liquidity");
+
+        var off = await client.PutAsJsonAsync($"/api/baskets/{id}", UpdateBody("Ядро", 1.0m, autoBuy: false, autoSell: false));
+        off.StatusCode.Should().Be(HttpStatusCode.OK, "выключить флаг можно всегда");
+    }
+
+    [Fact]
     public async Task Put_UsdPortfolio_EditBand_Succeeds_AndChangingTargetAwayFromOneIs422()
     {
         var (client, _) = await NewUserAsync();

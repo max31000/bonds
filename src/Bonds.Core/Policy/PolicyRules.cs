@@ -236,7 +236,7 @@ public static class LiquidityToBondsRule
     }
 }
 
-/// <summary>P4 — ребаланс: только корзины в HardAbove/HardBelow без hold. Продаём излишек (если у корзины включён auto_sell) и докупаем дефицит. Всегда PendingApproval.</summary>
+/// <summary>P4 — ребаланс: только корзины в HardAbove/HardBelow без hold. Продаём излишек (независимо от auto_sell, задача 67 A2) и докупаем дефицит. Всегда PendingApproval.</summary>
 public static class RebalanceRule
 {
     public static string TriggerFor(IEnumerable<string> codes) => $"Жёсткое отклонение корзин: {string.Join(", ", codes.OrderBy(c => c, StringComparer.Ordinal))}";
@@ -273,14 +273,10 @@ public static class RebalanceRule
         var lines = new List<TradePlanLine>();
         var net = 0m;
         var taxUnknown = false;
+        // Задача 67 (A2, решение владельца): продажа излишка НЕ зависит от auto_sell (флаг — только про авто-исполнение, а P4 всегда ждёт подтверждения):
+        // предлагается у любой корзины не hold в HardAbove.
         foreach (var (row, basket) in rows.Where(r => r.Row.State == BasketState.HardAbove))
         {
-            if (!basket.AutoSell)
-            {
-                notes.Add($"«{basket.Title}»: выше цели, но продажа излишка не разрешена (auto_sell выключен)");
-                continue;
-            }
-
             var excess = -(row.DeficitToTarget ?? 0m);
             var (sells, sellNet, unknown) = BasketSell.Sell(input, basket.Code, excess, $"P4 ребаланс «{basket.Title}»: излишек", skipped);
             lines.AddRange(sells);
@@ -400,8 +396,10 @@ public static class WithdrawRule
 
         if (lines.Count == 0 && remaining <= 0m)
         {
-            notes.Add("Вся сумма покрывается свободными деньгами — продажи не нужны");
-            return new PolicyOutcome(null, notes);
+            // Задача 67 (A2, решение владельца): вывод целиком из свободных денег всё равно удерживает их — план «только удержание» без строк
+            // (summary.cashHold = сумма). Подтверждение переводит его сразу в Done (заявок нет) — удержание живёт WithdrawHoldTtl рабочих дней или до /withdrawn.
+            notes.Add("Вся сумма покрывается свободными деньгами — продажи не нужны; деньги удерживаются под вывод (P1 их не паркует)");
+            return PolicyKit.FinishHoldOnly(input, PlanRules.P5Withdraw, trigger, requested, notes, warnings);
         }
 
         // Удержание под вывод (задача 67, #3) — сумма, которую владелец выведет: запрошенное за вычетом нехватки.
