@@ -63,7 +63,7 @@
 
 **Предполётные проверки — любая не прошла → строка `Failed` с причиной, план `PartiallyDone`/`Failed`, уведомление в бот:**
 1. Свежая котировка.
-2. Отклонение mid от утверждённого лимита ≤ `Execution:MaxPriceDriftFraction` (0.005 фонды, 0.01 облигации).
+2. Отклонение mid от утверждённого лимита ≤ `Execution:MaxPriceDriftFraction` (0.002 фонды и акции, 0.005 облигации — значения дизайна §5, ревью 65).
 3. Хватает денег — по `GetPositions`/`GetPortfolio` с учётом уже отправленных заявок.
 4. `GetTradingStatus == NormalTrading`.
 5. `api_trade_available`.
