@@ -1,0 +1,53 @@
+{
+ "result": {
+  "orders": {
+   "key": "SYNTHETIC",
+   "order": [
+    {
+     "id": 900000001,
+     "date": "2026-10-23 17:04:15",
+     "stat": 10,
+     "stat_orig": 10,
+     "instr": "VUAA.EU",
+     "oper": 1,
+     "type": 2,
+     "cur": "USD",
+     "p": 147.7,
+     "q": 3,
+     "leaves_qty": 3,
+     "exp": 1,
+     "user_order_id": "1234567890",
+     "trades_json": "[]",
+     "error": ""
+    },
+    {
+     "id": 900000002,
+     "date": "2026-10-23 17:10:00",
+     "stat": 3,
+     "instr": "SPYM.US",
+     "oper": 1,
+     "type": 2,
+     "cur": "USD",
+     "p": 54.1,
+     "q": 2,
+     "leaves_qty": 0,
+     "exp": 1,
+     "user_order_id": "api:1792764255",
+     "trades_json": "[{\"p\": 54.0, \"q\": 1}, {\"p\": 54.1, \"q\": 1}]"
+    },
+    {
+     "id": 900000003,
+     "stat": 7,
+     "instr": "XB0T.EU",
+     "oper": 3,
+     "cur": "USD",
+     "p": 19.9,
+     "q": 1,
+     "leaves_qty": 1,
+     "user_order_id": "1111111111",
+     "error": "Not enough funds"
+    }
+   ]
+  }
+ }
+}

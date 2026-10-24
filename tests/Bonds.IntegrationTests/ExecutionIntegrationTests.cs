@@ -304,7 +304,7 @@ public class ExecutionIntegrationTests
 
             var freedomLine = draft.Lines[0];
             var mixed = draft with { Lines = [freedomLine, new TradePlanLine { LineNo = 2, Broker = BrokerIds.Freedom, Ticker = "SPYM.US", InstrumentKey = "SPYM.US", Currency = "USD" }] };
-            (await service.SaveAsync(s.UserId, mixed, Noon, forcePending: false)).DryRun.Should().BeTrue("Freedom не исполняется");
+            (await service.SaveAsync(s.UserId, mixed, Noon, forcePending: false)).DryRun.Should().BeTrue("ворота Freedom закрыты: нет ключа freedom_trade (задача 66)");
         }
 
         using (var scope = _factory.Services.CreateScope())

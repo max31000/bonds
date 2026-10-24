@@ -27,5 +27,6 @@
   <ItemGroup>
     <!-- Задача 65: двойник шлюза заявок — общий файл с юнит-тестами (сети в тестах нет никогда). -->
     <Compile Include="..\Bonds.Tests\Execution\FakeOrderGateway.cs" Link="Infrastructure\FakeOrderGateway.cs" />
+    <Compile Include="..\Bonds.Tests\Execution\FakeFreedomOrderGateway.cs" Link="Infrastructure\FakeFreedomOrderGateway.cs" />
   </ItemGroup>
 </Project>

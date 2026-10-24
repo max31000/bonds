@@ -239,6 +239,11 @@ public sealed class PlanExecutionEngine
         {
             reject = "Freedom исполняется только после ручного подтверждения (авто-исполнение Freedom выключено)";
         }
+        else if (plan.Lines.FirstOrDefault(l => string.Equals(l.Broker, Brokers.Freedom, StringComparison.OrdinalIgnoreCase)
+                                                && FreedomOrderRules.TickerRejection(l.Ticker) is not null) is { } badTicker)
+        {
+            reject = FreedomOrderRules.TickerRejection(badTicker.Ticker);
+        }
         else if (plan.Lines.Any(l => l.QuantityLots <= 0))
         {
             reject = "некорректное количество лотов";

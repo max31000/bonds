@@ -102,6 +102,10 @@ public class TestWebApplicationFactory : WebApplicationFactory<Program>, IAsyncL
             services.RemoveAll<Bonds.Infrastructure.Execution.ITInvestOrderGateway>();
             services.AddSingleton<Bonds.Tests.Execution.FakeOrderGateway>();
             services.AddSingleton<Bonds.Infrastructure.Execution.ITInvestOrderGateway>(sp => sp.GetRequiredService<Bonds.Tests.Execution.FakeOrderGateway>());
+            // Задача 66: шлюз заявок Freedom — тоже только двойник (реальных putTradeOrder в тестах нет).
+            services.RemoveAll<Bonds.Infrastructure.Execution.IFreedomOrderGateway>();
+            services.AddSingleton<Bonds.Tests.Execution.FakeFreedomOrderGateway>();
+            services.AddSingleton<Bonds.Infrastructure.Execution.IFreedomOrderGateway>(sp => sp.GetRequiredService<Bonds.Tests.Execution.FakeFreedomOrderGateway>());
             services.RemoveAll<Bonds.Infrastructure.Execution.IPortfolioSyncTrigger>();
             services.AddSingleton<Bonds.Infrastructure.Execution.IPortfolioSyncTrigger, Bonds.Infrastructure.Execution.NullPortfolioSyncTrigger>();
 
