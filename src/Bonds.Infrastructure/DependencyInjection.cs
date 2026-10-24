@@ -257,6 +257,7 @@ public static class DependencyInjection
         services.AddScoped<Bonds.Infrastructure.Policy.PolicyInputBuilder>();
         services.AddScoped<Bonds.Infrastructure.Policy.PolicyService>();
         services.AddScoped<Bonds.Infrastructure.Policy.PolicyRunner>();
+        services.AddScoped<Bonds.Infrastructure.Policy.IPolicyCycleRunner>(sp => sp.GetRequiredService<Bonds.Infrastructure.Policy.PolicyRunner>());
 
         // Задача 65: исполнитель планов T-Invest. ВЫКЛЮЧЕН по умолчанию (Execution__Enabled=false, режим пользователя observe, нужен проверенный торговый токен).
         // ITInvestOrderGateway — ЕДИНСТВЕННЫЙ путь к торговым сервисам T-Invest (архитектурный тест), торговый токен читается только внутри шлюза.

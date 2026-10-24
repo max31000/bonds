@@ -17,6 +17,15 @@ public sealed class PolicyRunResult
 }
 
 /// <summary>
+/// Прогон правил по всем пользователям — шаг после цикла синка (T-67D: запускается <see cref="Bonds.Infrastructure.Scheduling.SyncCycleService"/> В ФОНЕ, в своём DI-скоупе,
+/// после освобождения ворот синка). Интерфейс — ради подмены в юнит-тестах цикла (медленный/падающий прогон).
+/// </summary>
+public interface IPolicyCycleRunner
+{
+    Task<PolicyRunResult> RunAllAsync(DateTime nowUtc, CancellationToken ct = default);
+}
+
+/// <summary>
 /// Шаг <c>SyncCycleService</c> ПОСЛЕ синка всех брокеров (задача 63). Для каждого пользователя: просроченные <c>PendingApproval</c> и <c>AutoApproved</c> → <c>Expired</c>, затем правила
 /// P2 (по НОВЫМ пополнениям), P1, P7, P3b (в день недели из опций, по умолчанию понедельник), P4. Порядок P2 до P1 намеренный: пополнение сначала делится по
 /// дефициту корзин, и только оставшиеся свободные деньги паркует P1 (иначе P1 увёл бы всё в «ликвидность»). Дубликат не создаётся, если открыт план того же
@@ -25,7 +34,7 @@ public sealed class PolicyRunResult
 /// Пауза пользователя (<c>user_settings.execution_paused</c>, команда <c>/stop</c>) — AutoApproved не создаётся, только PendingApproval. Каждый сохранённый план уходит в
 /// <see cref="IPlanNotifier"/> (Telegram: PendingApproval — с кнопками, AutoApproved — информационно).
 /// </summary>
-public sealed class PolicyRunner
+public sealed class PolicyRunner : IPolicyCycleRunner
 {
     private readonly PolicyInputBuilder _builder;
     private readonly PolicyService _service;

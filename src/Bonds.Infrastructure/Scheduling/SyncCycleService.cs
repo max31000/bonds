@@ -87,6 +87,7 @@ public sealed class SyncCycleService : ISyncCycleRunner
             return new SyncCycleResult { AlreadyRunning = true };
         }
 
+        SyncCycleResult result;
         try
         {
             lock (_statusLock)
@@ -95,7 +96,7 @@ public sealed class SyncCycleService : ISyncCycleRunner
                 _lastRunStartedAtUtc = DateTime.UtcNow;
             }
 
-            var result = await RunCycleInternalAsync(ct);
+            result = await RunCycleInternalAsync(ct);
 
             lock (_statusLock)
             {
@@ -112,7 +113,6 @@ public sealed class SyncCycleService : ISyncCycleRunner
                 }
             }
 
-            return result;
         }
         finally
         {
@@ -123,6 +123,37 @@ public sealed class SyncCycleService : ISyncCycleRunner
 
             _gate.Release();
         }
+
+        // T-67D: правила и планы (задача 63) — ВНЕ критического пути синка. Ворота уже отпущены (/api/sync/status показывает «не идёт»), прогон идёт в фоне
+        // в своём DI-скоупе; цикл (ручной POST /api/sync и плановые суточные) возвращает результат, не дожидаясь правил. Параллельные прогоны правил одного
+        // пользователя сериализует его GET_LOCK (IPolicyUserLock). Нет счёта — правил тоже нет (как раньше: цикл пропускался целиком).
+        if (!result.NoAccountConfigured) StartBackgroundPolicies();
+        return result;
+    }
+
+    private Task _backgroundPolicies = Task.CompletedTask;
+
+    /// <summary>
+    /// Последний фоновый прогон правил (T-67D). Никогда не завершается с ошибкой (исключения ловятся и пишутся в лог) — для тестов и диагностики.
+    /// </summary>
+    internal Task BackgroundPolicies => Volatile.Read(ref _backgroundPolicies);
+
+    private void StartBackgroundPolicies()
+    {
+        // CancellationToken.None: токен HTTP-запроса ручного синка отменится сразу после ответа — фоновый прогон не должен от него зависеть.
+        var task = Task.Run(async () =>
+        {
+            try
+            {
+                using var scope = _scopeFactory.CreateScope();
+                await Timed("policies (background)", () => RunPoliciesAsync(scope.ServiceProvider, CancellationToken.None));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Background policy run failed — plans keep the previous state");
+            }
+        });
+        Volatile.Write(ref _backgroundPolicies, task);
     }
 
     /// <summary>Меньше стольких снапшотов истории — история считается пустой и пересобирается бэкфиллом.</summary>
@@ -226,9 +257,7 @@ public sealed class SyncCycleService : ISyncCycleRunner
         // шагом: сбой Freedom (сеть, ключи) пишется в лог и НЕ добавляется в result.Errors - цикл T-Invest неуспешным не помечается.
         await Timed("freedom", () => SyncFreedomAsync(sp, ct));
 
-        // --- 1a-quinquies. Правила и планы сделок (задача 63): ПОСЛЕ синка всех брокеров. Планы - только данные (dry-run, заявки не отправляются).
-        // Необязательный шаг: сбой - только лог, цикл НЕ помечается неуспешным.
-        await Timed("policies", () => RunPoliciesAsync(sp, ct));
+        // --- 1a-quinquies. Правила и планы сделок (задача 63) — T-67D: вынесены из цикла, запускаются в фоне ПОСЛЕ его завершения (StartBackgroundPolicies).
 
         // --- 1b. Бэкфилл истории стоимости, если она пуста/почти пуста (первый запуск, или миграция
         // пересчёта истории её очистила). Строго ПОСЛЕ успешного перечитывания журнала: история
@@ -391,7 +420,7 @@ public sealed class SyncCycleService : ISyncCycleRunner
         try
         {
             // GetService (не Required): цикл не должен падать, если шаг не зарегистрирован (юнит-тесты цикла).
-            var runner = sp.GetService<Bonds.Infrastructure.Policy.PolicyRunner>();
+            var runner = sp.GetService<Bonds.Infrastructure.Policy.IPolicyCycleRunner>();
             if (runner is null) return;
 
             var run = await runner.RunAllAsync(DateTime.UtcNow, ct);

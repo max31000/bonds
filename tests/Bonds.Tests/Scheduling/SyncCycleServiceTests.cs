@@ -54,6 +54,28 @@ public class SyncCycleServiceTests
     private readonly Mock<IBondUniverseRepository> _universe = new();
     private readonly Mock<ISecurityDetailsRepository> _securityDetails = new();
     private Mock<IUserCredentialRepository>? _credentialRecords;
+    private Bonds.Infrastructure.Policy.IPolicyCycleRunner? _policyRunner;
+
+    /// <summary>Фейковый прогон правил (T-67D): считает вызовы, может ждать сигнала (медленный прогон) или бросать.</summary>
+    private sealed class FakePolicyRunner : Bonds.Infrastructure.Policy.IPolicyCycleRunner
+    {
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public bool Slow { get; init; }
+        public bool Throw { get; init; }
+        public int Calls;
+        public bool Completed;
+
+        public async Task<Bonds.Infrastructure.Policy.PolicyRunResult> RunAllAsync(DateTime nowUtc, CancellationToken ct = default)
+        {
+            Interlocked.Increment(ref Calls);
+            Started.TrySetResult();
+            if (Slow) await Release.Task;
+            if (Throw) throw new InvalidOperationException("policy boom");
+            Completed = true;
+            return new Bonds.Infrastructure.Policy.PolicyRunResult();
+        }
+    }
 
     private void SetupNoPositionsHappyPath()
     {
@@ -116,6 +138,7 @@ public class SyncCycleServiceTests
         services.AddSingleton(_universe.Object);
         services.AddSingleton(_securityDetails.Object);
         if (_credentialRecords is not null) services.AddSingleton(_credentialRecords.Object);
+        if (_policyRunner is not null) services.AddSingleton(_policyRunner);
 
         services.AddSingleton(NullLoggerFactory.Instance);
         services.AddSingleton(typeof(Microsoft.Extensions.Logging.ILogger<>), typeof(NullLogger<>));
@@ -201,6 +224,75 @@ public class SyncCycleServiceTests
         await runner.RunCycleAsync();
 
         _snapshots.Verify(s => s.GetByAccountIdAsync(AccountId, null, null), Times.AtLeastOnce);
+    }
+
+    // ─── T-67D: правила — в фоне после цикла, вне критического пути ручного синка ─────────────────────
+
+    [Fact]
+    public async Task T67D_Policies_RunInBackground_AfterCycleReturnedAndGateReleased()
+    {
+        SetupNoPositionsHappyPath();
+        var fake = new FakePolicyRunner { Slow = true };
+        _policyRunner = fake;
+        var service = (SyncCycleService)BuildServiceProvider().GetRequiredService<ISyncCycleRunner>();
+
+        var result = await service.RunCycleAsync().WaitAsync(TimeSpan.FromSeconds(10)); // медленные правила НЕ держат цикл
+
+        result.HasErrors.Should().BeFalse();
+        service.GetStatus().IsRunning.Should().BeFalse("ворота синка отпущены до правил");
+        await fake.Started.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        fake.Completed.Should().BeFalse("правила ещё идут, а цикл уже вернул результат");
+
+        fake.Release.SetResult();
+        await service.BackgroundPolicies.WaitAsync(TimeSpan.FromSeconds(10));
+        fake.Completed.Should().BeTrue();
+        fake.Calls.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task T67D_Policies_InvokedOncePerCycle()
+    {
+        SetupNoPositionsHappyPath();
+        var fake = new FakePolicyRunner();
+        _policyRunner = fake;
+        var service = (SyncCycleService)BuildServiceProvider().GetRequiredService<ISyncCycleRunner>();
+
+        await service.RunCycleAsync();
+        await service.BackgroundPolicies.WaitAsync(TimeSpan.FromSeconds(10));
+        fake.Calls.Should().Be(1);
+
+        await service.RunCycleAsync();
+        await service.BackgroundPolicies.WaitAsync(TimeSpan.FromSeconds(10));
+        fake.Calls.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task T67D_Policies_ExceptionDoesNotEscape()
+    {
+        SetupNoPositionsHappyPath();
+        var fake = new FakePolicyRunner { Throw = true };
+        _policyRunner = fake;
+        var service = (SyncCycleService)BuildServiceProvider().GetRequiredService<ISyncCycleRunner>();
+
+        var result = await service.RunCycleAsync();
+        await service.BackgroundPolicies.WaitAsync(TimeSpan.FromSeconds(10)); // не бросает
+
+        result.HasErrors.Should().BeFalse("сбой правил — только лог");
+        service.BackgroundPolicies.IsFaulted.Should().BeFalse();
+        fake.Calls.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task T67D_Policies_NotRun_WhenNoAccountConfigured()
+    {
+        _accounts.Setup(a => a.GetPrimaryAccountIdAsync()).ReturnsAsync((ulong?)null);
+        var fake = new FakePolicyRunner();
+        _policyRunner = fake;
+        var service = (SyncCycleService)BuildServiceProvider().GetRequiredService<ISyncCycleRunner>();
+
+        (await service.RunCycleAsync()).NoAccountConfigured.Should().BeTrue();
+        await service.BackgroundPolicies.WaitAsync(TimeSpan.FromSeconds(10));
+        fake.Calls.Should().Be(0);
     }
 
     [Fact]
