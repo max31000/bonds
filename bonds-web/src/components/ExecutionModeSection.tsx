@@ -20,17 +20,28 @@ export function ExecutionModeSection() {
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
-    setError(null);
     try {
-      setState(await fetchExecutionState());
+      const next = await fetchExecutionState();
+      setError(null);
+      setState(next);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Не удалось загрузить режим исполнения');
     }
   }, []);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    let alive = true;
+    fetchExecutionState()
+      .then((next) => {
+        if (alive) setState(next);
+      })
+      .catch((err: unknown) => {
+        if (alive) setError(err instanceof Error ? err.message : 'Не удалось загрузить режим исполнения');
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   const run = async (action: () => Promise<ExecutionState>) => {
     setBusy(true);
