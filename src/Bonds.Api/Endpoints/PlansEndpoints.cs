@@ -140,6 +140,11 @@ public static class PlansEndpoints
                 Disclaimer = (plan?.DryRun ?? true) ? Disclaimer : LiveDisclaimer,
             });
         }
+        catch (PolicyBusyException ex)
+        {
+            // Планы пользователя сейчас пересчитываются (замок занят) — повторить позже: 409, сообщение то же (T-67D).
+            return Results.Json(new { error = ex.Message, type = "PolicyBusy" }, statusCode: StatusCodes.Status409Conflict);
+        }
         catch (PolicyValidationException ex)
         {
             return AnalyticsSupport.ValidationError(ex.Message);

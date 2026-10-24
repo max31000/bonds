@@ -749,6 +749,35 @@ public class PlansEndpointTests
         after.Notes.Should().NotContain(n => n.Contains("удержан"));
     }
 
+    private sealed class BusyUserLock : IPolicyUserLock
+    {
+        public Task<IAsyncDisposable?> TryAcquireAsync(ulong userId, TimeSpan wait, CancellationToken ct = default) => Task.FromResult<IAsyncDisposable?>(null);
+    }
+
+    [Fact]
+    public async Task T67D_ManualPlan_UserLockBusy_Returns409_WithBusyMessage()
+    {
+        // Решение владельца (T-67D): замок пользователя занят прогоном правил — это конфликт состояния (повторить позже), а не ошибка ввода: 409, не 422.
+        var (factory, _) = NewFactory(configure: s =>
+        {
+            s.RemoveAll<IPolicyUserLock>();
+            s.AddSingleton<IPolicyUserLock>(new BusyUserLock());
+        });
+        var (_, client) = await NewUserAsync(factory);
+
+        foreach (var (url, body) in new (string, object)[]
+                 {
+                     ("/api/plans/inflow", new { amount = 5_000m }),
+                     ("/api/plans/withdraw", new { amount = 5_000m }),
+                     ("/api/plans/exit-basket", new { code = "temporary" }),
+                 })
+        {
+            var response = await client.PostAsJsonAsync(url, body);
+            response.StatusCode.Should().Be(HttpStatusCode.Conflict, url);
+            (await ReadAsync(response)).GetProperty("error").GetString().Should().Be(PolicyService.BusyMessage);
+        }
+    }
+
     [Fact]
     public async Task T67_IncompleteOrStaleData_StopsRules_WithReasonInRunAndPreview()
     {

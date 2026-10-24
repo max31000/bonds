@@ -391,7 +391,7 @@ P5, целиком покрытый свободными деньгами, — �
 `tinvest_read` — в своём DI-скоупе своим токеном (путь владельца не меняется); `TradingMetaRefresher` и `PolicyRunner` охватывают их счета. (#15) HttpClient-ы
 `telegram-bot*` — `RemoveAllLoggers()` (`DependencyInjection.AddTelegramHttpClients`), токен не попадает в логи при любой конфигурации. (#13) `PUT /api/baskets`
 — `ICapitalBasketRepository.UpdateLockedAsync` (одна транзакция, `SELECT … FOR UPDATE`); прогон правил и ручные планы сериализуются `GET_LOCK('bonds-policy-user-{id}')`
-(`IPolicyUserLock`). (#14) KZT всегда отслеживается (ЦБ R01335); сводка капитала: `otherBrokersDataIncomplete`, если синк Freedom старше 26 ч; шорты Freedom
+(`IPolicyUserLock`); замок занят дольше ожидания — ручной план отвечает **409** `type: "PolicyBusy"` (`PolicyBusyException`, T-67D). (#14) KZT всегда отслеживается (ЦБ R01335); сводка капитала: `otherBrokersDataIncomplete`, если синк Freedom старше 26 ч; шорты Freedom
 (qty < 0) хранятся с отрицательной стоимостью; облигации Freedom — оценка неполная. (#16) `/inflow`, `/withdraw`, `/exit` идемпотентны по `update_id`
 (`IBotStateRepository.TryAdvanceAsync`, ключ `plan_cmd_update_{userId}`); сбой обработки кнопки — всё равно `answerCallbackQuery` с ошибкой; 401/403 Freedom на
 синке → ключ `invalid`; поле секрета > 4096 символов → 422. (NIT) Веб `/plans/:id`; в боте «N шт.» (+ лоты при лоте ≠ 1) и цена «% ном.» у облигаций; `/help`

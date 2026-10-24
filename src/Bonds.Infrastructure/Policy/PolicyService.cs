@@ -16,9 +16,18 @@ public sealed record PlanParams(
     decimal? Amount = null, decimal? Fraction = null, string? Portfolio = null, IReadOnlyList<string>? IncludeBaskets = null, string? Code = null);
 
 /// <summary>Ошибка в параметрах запроса плана (API отдаёт 422).</summary>
-public sealed class PolicyValidationException : Exception
+public class PolicyValidationException : Exception
 {
     public PolicyValidationException(string message) : base(message) { }
+}
+
+/// <summary>
+/// Замок пользователя (<see cref="IPolicyUserLock"/>) занят прогоном правил дольше ожидания — конфликт состояния, а не ошибка ввода: API отвечает 409
+/// (решение владельца, T-67D). Наследует <see cref="PolicyValidationException"/>, чтобы прочие вызывающие (бот) показывали то же сообщение без изменений.
+/// </summary>
+public sealed class PolicyBusyException : PolicyValidationException
+{
+    public PolicyBusyException(string message) : base(message) { }
 }
 
 public enum PlanDecisionKind
@@ -92,7 +101,7 @@ public sealed class PolicyService
     {
         // Задача 67 (#13): тот же замок пользователя, что у прогона правил — ручной inflow/withdraw не строится на тех же свободных деньгах параллельно с ним.
         await using var held = _userLock is null ? null : await _userLock.TryAcquireAsync(userId, UserLockWait, ct);
-        if (_userLock is not null && held is null) throw new PolicyValidationException(BusyMessage);
+        if (_userLock is not null && held is null) throw new PolicyBusyException(BusyMessage);
 
         var outcome = await EvaluateAsync(userId, rule, p, nowUtc, ignoreHours: true, ct);
         if (outcome.Plan is null) return (null, outcome);
