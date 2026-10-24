@@ -165,23 +165,12 @@ public static class DependencyInjection
         // Telegram Bot API — алерт владельцу при падении автосинка. Тот же бот,
         // что и CI-алерты (Telegram:BotToken), base address без секрета в URL самого
         // клиента (токен подставляется в путь запроса на каждый вызов, см. TelegramAlertSender).
-        services.AddHttpClient(TelegramAlertSender.HttpClientName, client =>
-        {
-            client.BaseAddress = new Uri("https://api.telegram.org");
-            client.Timeout = TimeSpan.FromSeconds(10);
-        });
+        AddTelegramHttpClients(services);
         services.AddSingleton<ITelegramAlertSender, TelegramAlertSender>();
         services.AddSingleton<SyncAlertThrottle>();
 
         // Задача 64: Telegram-бот (long polling getUpdates, подтверждение планов и команды). Тот же токен Telegram:BotToken. Клиент опроса — с таймаутом больше
-        // timeout getUpdates (25 с). Токен — часть пути запроса, а стандартный логгер HttpClient печатает путь на уровне Information: категории telegram-bot* глушим до Warning.
-        services.AddHttpClient(Bonds.Infrastructure.Telegram.TelegramBotClient.PollHttpClientName, client =>
-        {
-            client.BaseAddress = new Uri("https://api.telegram.org");
-            client.Timeout = TimeSpan.FromSeconds(45);
-        });
-        services.Configure<Microsoft.Extensions.Logging.LoggerFilterOptions>(o =>
-            o.Rules.Add(new Microsoft.Extensions.Logging.LoggerFilterRule(null, "System.Net.Http.HttpClient.telegram-bot", Microsoft.Extensions.Logging.LogLevel.Warning, null)));
+        // timeout getUpdates (25 с). HttpClient-ы — в AddTelegramHttpClients (логгеры HttpClient сняты: токен в пути запроса).
         services.Configure<Bonds.Infrastructure.Telegram.TelegramBotOptions>(configuration.GetSection(Bonds.Infrastructure.Telegram.TelegramBotOptions.SectionName));
         services.AddSingleton<Bonds.Infrastructure.Telegram.ITelegramBotClient, Bonds.Infrastructure.Telegram.TelegramBotClient>();
         services.AddScoped<IBotStateRepository>(sp => new BotStateRepository(GetConnStr(sp)));
@@ -362,5 +351,25 @@ public static class DependencyInjection
         services.AddSingleton<Bonds.Infrastructure.Universe.ReliabilityScoreProvider>();
 
         return services;
+    }
+
+    /// <summary>
+    /// HttpClient-ы Telegram Bot API (<c>telegram-bot</c> — алерты, <c>telegram-bot-poll</c> — бот). Токен — часть ПУТИ запроса (<c>/bot&lt;token&gt;/…</c>), а
+    /// стандартные логгеры HttpClient печатают URI на уровне Information. Задача 67 (#15): защита НЕ зависит от конфигурации логирования — у этих клиентов
+    /// логгеры HttpClient сняты (<c>RemoveAllLoggers</c>), поэтому никакое правило вида <c>Logging:Console:LogLevel:Default=Information</c> токен не выведет.
+    /// Свои сообщения клиенты пишут сами и токен в них не подставляют.
+    /// </summary>
+    internal static void AddTelegramHttpClients(IServiceCollection services)
+    {
+        services.AddHttpClient(TelegramAlertSender.HttpClientName, client =>
+        {
+            client.BaseAddress = new Uri("https://api.telegram.org");
+            client.Timeout = TimeSpan.FromSeconds(10);
+        }).RemoveAllLoggers();
+        services.AddHttpClient(Bonds.Infrastructure.Telegram.TelegramBotClient.PollHttpClientName, client =>
+        {
+            client.BaseAddress = new Uri("https://api.telegram.org");
+            client.Timeout = TimeSpan.FromSeconds(45);
+        }).RemoveAllLoggers();
     }
 }
