@@ -159,7 +159,7 @@ public sealed class SyncCycleService : ISyncCycleRunner
         try
         {
             var syncService = sp.GetRequiredService<BondSyncService>();
-            var syncResult = await syncService.SyncAsync(accountId.Value, ct: ct);
+            var syncResult = await Timed("tinvest-sync", () => syncService.SyncAsync(accountId.Value, ct: ct));
             result.InstrumentsSynced = syncResult.InstrumentsSynced;
             result.OperationsUpserted = syncResult.OperationsUpserted;
             result.YieldCurveUpdated = syncResult.YieldCurveUpdated;
@@ -183,7 +183,7 @@ public sealed class SyncCycleService : ISyncCycleRunner
 
         // --- 1-bis. T-Invest остальных пользователей (задача 67, #5): каждый пользователь с валидным tinvest_read синкается СВОИМ токеном в свой счёт.
         // Основной путь выше не меняется. Сбой чужого синка — только лог (цикл владельца неуспешным не помечается, как у Freedom).
-        await SyncOtherTInvestUsersAsync(sp, accountId.Value, asOf, ct);
+        await Timed("tinvest-other-users", () => SyncOtherTInvestUsersAsync(sp, accountId.Value, asOf, ct));
 
         // --- 1a. Watchlist: справочник/расписания/котировка бумаг без позиции.
         // Отдельный шаг, независимый от счёта/токена T-Invest — не влияет на позиции/сигналы ниже,
@@ -191,7 +191,7 @@ public sealed class SyncCycleService : ISyncCycleRunner
         try
         {
             var watchlistSync = sp.GetRequiredService<WatchlistSyncService>();
-            var watchlistResult = await watchlistSync.SyncAllAsync(ct);
+            var watchlistResult = await Timed("watchlist", () => watchlistSync.SyncAllAsync(ct));
             result.WatchlistInstrumentsSynced = watchlistResult.InstrumentsSynced;
             if (watchlistResult.HasErrors) result.Errors.AddRange(watchlistResult.Errors);
         }
@@ -206,29 +206,29 @@ public sealed class SyncCycleService : ISyncCycleRunner
         // только лог, цикл НЕ помечается неуспешным (иначе Telegram-алерт синка из-за второстепенного шага).
         if (!result.TokenMissingOrInvalid)
         {
-            await RefreshRiskLevelsAsync(sp, ct);
+            await Timed("risk-levels", () => RefreshRiskLevelsAsync(sp, ct));
         }
 
         // --- 1a''. Рыночные данные фондов (задача 51): история цен паёв, выплаты, индекс RGBI — раз в сутки (ворота
         // по БД внутри). Необязательный шаг: сбой — только лог, цикл НЕ помечается неуспешным. MOEX-часть работает и без
         // токена T-Invest (выплаты в этом случае пропускаются).
-        await RefreshFundMarketDataAsync(sp, tInvestAvailable: !result.TokenMissingOrInvalid, ct);
+        await Timed("fund-market-data", () => RefreshFundMarketDataAsync(sp, tInvestAvailable: !result.TokenMissingOrInvalid, ct));
 
         // --- 1a-bis. Торговые метаданные инструментов (задача 61): лот, шаг цены, флаги, режим торгов, признак выплат фондов - раз в сутки
         // (ворота по записям внутри). Необязательный шаг: сбой - только лог, цикл НЕ помечается неуспешным. Freedom-часть работает по ключам
         // пользователей и от токена T-Invest не зависит.
-        await RefreshTradingMetaAsync(sp, tInvestAvailable: !result.TokenMissingOrInvalid, ct);
+        await Timed("trading-meta", () => RefreshTradingMetaAsync(sp, tInvestAvailable: !result.TokenMissingOrInvalid, ct));
 
         // --- 1a-ter. История курса валют (задача 55, MOEX CETS) - тот же суточный шаг и те же правила (необязательный, сбой - лог).
-        await RefreshCurrencyRatesAsync(sp, ct);
+        await Timed("currency-rates", () => RefreshCurrencyRatesAsync(sp, ct));
 
         // --- 1a-quater. Счёт Freedom (задача 60): позиции, деньги, журнал по всем пользователям с ключами. СТРОГО после T-Invest и отдельным
         // шагом: сбой Freedom (сеть, ключи) пишется в лог и НЕ добавляется в result.Errors - цикл T-Invest неуспешным не помечается.
-        await SyncFreedomAsync(sp, ct);
+        await Timed("freedom", () => SyncFreedomAsync(sp, ct));
 
         // --- 1a-quinquies. Правила и планы сделок (задача 63): ПОСЛЕ синка всех брокеров. Планы - только данные (dry-run, заявки не отправляются).
         // Необязательный шаг: сбой - только лог, цикл НЕ помечается неуспешным.
-        await RunPoliciesAsync(sp, ct);
+        await Timed("policies", () => RunPoliciesAsync(sp, ct));
 
         // --- 1b. Бэкфилл истории стоимости, если она пуста/почти пуста (первый запуск, или миграция
         // пересчёта истории её очистила). Строго ПОСЛЕ успешного перечитывания журнала: история
@@ -258,7 +258,7 @@ public sealed class SyncCycleService : ISyncCycleRunner
         try
         {
             var projectionOrchestrator = sp.GetRequiredService<CashFlowProjectionOrchestrator>();
-            var projectionResult = await projectionOrchestrator.ProjectAccountAsync(accountId.Value, asOf, ct: ct);
+            var projectionResult = await Timed("projection", () => projectionOrchestrator.ProjectAccountAsync(accountId.Value, asOf, ct: ct));
             result.PositionsProjected = projectionResult.PositionsProjected;
             result.FlowsWritten = projectionResult.FlowsWritten;
             if (projectionResult.HasErrors) result.Errors.AddRange(projectionResult.Errors.Select(e => $"Projection: {e}"));
@@ -273,7 +273,7 @@ public sealed class SyncCycleService : ISyncCycleRunner
         try
         {
             var snapshotService = sp.GetRequiredService<PortfolioSnapshotService>();
-            await snapshotService.ComputeAndStoreSnapshotAsync(accountId.Value, asOf, ct);
+            await Timed("snapshot", () => snapshotService.ComputeAndStoreSnapshotAsync(accountId.Value, asOf, ct));
             result.SnapshotStored = true;
         }
         catch (Exception ex)
@@ -285,7 +285,7 @@ public sealed class SyncCycleService : ISyncCycleRunner
         // --- 4. Signals Engine (требует holdings с метриками inline + контексты позиций) ---
         try
         {
-            var signalsCreated = await RunSignalsAsync(sp, accountId.Value, asOf, ct);
+            var signalsCreated = await Timed("signals", () => RunSignalsAsync(sp, accountId.Value, asOf, ct));
             result.SignalsCreated = signalsCreated;
         }
         catch (Exception ex)
@@ -349,6 +349,21 @@ public sealed class SyncCycleService : ISyncCycleRunner
                 _logger.LogWarning(ex, "T-Invest sync of user {UserId} failed — their data keeps the previous values", userId);
             }
         }
+    }
+
+    /// <summary>Длительность шага цикла в лог (Information) — диагностика медленного синка (2026-10-24: ~60 с против ~18 с до цикла 58).</summary>
+    private async Task<T> Timed<T>(string step, Func<Task<T>> run)
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        try { return await run(); }
+        finally { _logger.LogInformation("Sync step {Step} took {ElapsedMs} ms", step, sw.ElapsedMilliseconds); }
+    }
+
+    private async Task Timed(string step, Func<Task> run)
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        try { await run(); }
+        finally { _logger.LogInformation("Sync step {Step} took {ElapsedMs} ms", step, sw.ElapsedMilliseconds); }
     }
 
     private async Task RefreshFundMarketDataAsync(IServiceProvider sp, bool tInvestAvailable, CancellationToken ct)
