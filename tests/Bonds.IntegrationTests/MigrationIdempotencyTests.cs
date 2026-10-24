@@ -89,6 +89,7 @@ public class MigrationIdempotencyTests : IAsyncLifetime
             "037_trade_orders_broker.sql",
             "038_trade_orders_commission_currency.sql",
             "039_trade_plans_cash_hold.sql",
+            "040_trade_orders_fk_restrict.sql",
         });
 
         var expectedTables = new[]
@@ -133,13 +134,26 @@ public class MigrationIdempotencyTests : IAsyncLifetime
         await conn.OpenAsync();
 
         var migrationCount = await conn.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM _migrations");
-        migrationCount.Should().Be(39, "повторный запуск не должен заново применять уже применённые миграции");
+        migrationCount.Should().Be(40, "повторный запуск не должен заново применять уже применённые миграции");
 
         // users.base_currency существует ровно один раз (ALTER ... ADD COLUMN IF NOT EXISTS не падает повторно).
         var columnCount = await conn.ExecuteScalarAsync<long>(
             @"SELECT COUNT(*) FROM information_schema.columns
               WHERE table_schema = DATABASE() AND table_name = 'users' AND column_name = 'base_currency'");
         columnCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task T67_Migration040_TradeOrdersPlanFk_IsRestrict()
+    {
+        // Задача 67 (NIT): удаление плана не стирает его заявки брокеру — FK trade_orders → trade_plans ON DELETE RESTRICT.
+        var connectionString = _container.GetConnectionString();
+        await new MigrationRunner(connectionString, NullLogger<MigrationRunner>.Instance).RunAsync();
+        await using var conn = new MySqlConnection(connectionString);
+        var rule = await Dapper.SqlMapper.ExecuteScalarAsync<string>(conn,
+            @"SELECT DELETE_RULE FROM information_schema.REFERENTIAL_CONSTRAINTS
+              WHERE CONSTRAINT_SCHEMA = DATABASE() AND CONSTRAINT_NAME = 'fk_trade_orders_plan'");
+        rule.Should().Be("RESTRICT");
     }
 
     [Fact]

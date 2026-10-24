@@ -23,6 +23,8 @@ public static class LinePricer
 
     private static readonly PolicyOptions DefaultOptions = new();
 
+    public const string PriceBelowStepReason = "цена меньше шага цены — заявку не построить";
+
     /// <summary>
     /// Санити-проверка стакана до построения цены: перевёрнутый (ask &lt; bid), слишком широкий спред ((ask−bid)/mid &gt; <see cref="PolicyOptions.MaxSpreadFraction"/>,
     /// для облигаций <see cref="PolicyOptions.MaxBondSpreadFraction"/>) или mid далеко от последней сделки (|mid−last|/last &gt; <see cref="PolicyOptions.MaxLastDeviationFraction"/>,
@@ -70,6 +72,12 @@ public static class LinePricer
             }
 
             var points = RoundToStep(mid, q.PriceStepPoints.Value, side);
+            if (points <= 0m)
+            {
+                skipReason = PriceBelowStepReason;
+                return null;
+            }
+
             decimal clean;
             if (q.NominalRub is > 0m)
             {
@@ -97,6 +105,13 @@ public static class LinePricer
         }
 
         var price = RoundToStep(mid, q.PriceStep.Value, side);
+        if (price <= 0m)
+        {
+            // Задача 67 (NIT): mid меньше шага — покупка округляется вниз до 0: «бесплатный» лот зациклил бы добор лотов (BuyMembers).
+            skipReason = PriceBelowStepReason;
+            return null;
+        }
+
         return new PricedQuote(price, null, price);
     }
 }
@@ -232,7 +247,7 @@ internal static class PolicyKit
             {
                 var (_, q, p, _) = eligible[i];
                 var next = CostWithFee(input, q, p, lots[i] + 1) - spent[i];
-                if (next > left) continue;
+                if (next <= 0m || next > left) continue; // задача 67 (NIT): нулевая стоимость лота — не добираем (иначе бесконечный цикл)
                 var gap = budget * weights[i] - spent[i];
                 if (gap > bestGap)
                 {

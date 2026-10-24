@@ -297,14 +297,19 @@ public class TradePlanRepository : ITradePlanRepository
     }
 
     public async Task<bool> TransitionAsync(
-        ulong userId, ulong id, IReadOnlyCollection<string> fromStatuses, string toStatus, string? decidedVia, DateTime decidedAtUtc, string? summaryJson)
+        ulong userId, ulong id, IReadOnlyCollection<string> fromStatuses, string toStatus, string? decidedVia, DateTime decidedAtUtc, string? summaryJson,
+        DateTime? notExpiredAt = null)
     {
         using var conn = CreateConnection();
         var affected = await conn.ExecuteAsync(
             @"UPDATE trade_plans
               SET status = @To, decided_at = @DecidedAt, decided_via = @DecidedVia, summary_json = COALESCE(@SummaryJson, summary_json)
-              WHERE id = @Id AND user_id = @UserId AND status IN @From",
-            new { Id = id, UserId = userId, From = fromStatuses.ToArray(), To = toStatus, DecidedAt = decidedAtUtc, DecidedVia = decidedVia, SummaryJson = summaryJson });
+              WHERE id = @Id AND user_id = @UserId AND status IN @From AND (@NotExpiredAt IS NULL OR expires_at > @NotExpiredAt)",
+            new
+            {
+                Id = id, UserId = userId, From = fromStatuses.ToArray(), To = toStatus, DecidedAt = decidedAtUtc, DecidedVia = decidedVia, SummaryJson = summaryJson,
+                NotExpiredAt = notExpiredAt,
+            });
         return affected > 0;
     }
 

@@ -110,4 +110,19 @@ public class AuditWaveBTests
         SweepRule.Evaluate(Input([Liquidity(Member("LQDT"))], [], 20_010m, [over], feeRate: 0.003m, autoToday: 30_000m)).Plan!.Status
             .Should().Be(PlanStatuses.PendingApproval);
     }
+
+    // ─── NIT: mid меньше шага — без бесконечного цикла ─────────────────────────────────────────
+
+    [Fact(Timeout = 5000)]
+    public async Task T67_MidBelowStep_NoInfiniteLoop_LineSkippedWithReason()
+    {
+        // Фонд с ценой 0.004 ₽ при шаге 0.01: покупка округляется вниз до 0 — раньше «бесплатный» лот зацикливал добор лотов в BuyMembers.
+        var penny = Fund("PENNY", 0.00400m, 0.00401m, step: 0.01m);
+        var input = Input([Liquidity(Member("PENNY"))], [], 10_000m, [penny]);
+
+        var outcome = await Task.Run(() => SweepRule.Evaluate(input));
+
+        outcome.Plan.Should().BeNull();
+        outcome.Notes.Should().Contain(n => n.Contains(LinePricer.PriceBelowStepReason));
+    }
 }

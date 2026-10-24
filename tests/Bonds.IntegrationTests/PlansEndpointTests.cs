@@ -941,4 +941,20 @@ public class PlansEndpointTests
         await using var again = await userLock.TryAcquireAsync(9_000_001, TimeSpan.Zero);
         again.Should().NotBeNull("освобождено после Dispose");
     }
+
+    [Fact]
+    public async Task T67_TransitionSql_ChecksExpiresAt()
+    {
+        // Задача 67 (NIT): переход с notExpiredAt не срабатывает у плана, чей срок истёк к моменту решения (проверка в самом UPDATE).
+        var (factory, _) = NewFactory();
+        var (userId, _) = await NewUserAsync(factory);
+        var repo = new TradePlanRepository(Conn);
+        var now = DateTime.UtcNow;
+        var expired = await repo.InsertAsync(NewPlan(userId, PlanStatuses.PendingApproval, now.AddMinutes(-40), expiresAt: now.AddMinutes(-10)));
+        var alive = await repo.InsertAsync(NewPlan(userId, PlanStatuses.PendingApproval, now, expiresAt: now.AddMinutes(10)));
+
+        (await repo.TransitionAsync(userId, expired, [PlanStatuses.PendingApproval], PlanStatuses.Approved, DecidedVia.Web, now, null, notExpiredAt: now)).Should().BeFalse();
+        (await repo.GetAsync(userId, expired))!.Status.Should().Be(PlanStatuses.PendingApproval);
+        (await repo.TransitionAsync(userId, alive, [PlanStatuses.PendingApproval], PlanStatuses.Approved, DecidedVia.Web, now, null, notExpiredAt: now)).Should().BeTrue();
+    }
 }

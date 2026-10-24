@@ -176,7 +176,7 @@ public sealed class PolicyService
         if (plan.Lines.Count == 0 && WithdrawHold.AmountOf(plan) > 0m)
         {
             var held = await _plans.TransitionAsync(
-                userId, id, [PlanStatuses.PendingApproval, PlanStatuses.Draft], PlanStatuses.Done, via, nowUtc, WithNote(plan.SummaryJson, HoldOnlyNote));
+                userId, id, [PlanStatuses.PendingApproval, PlanStatuses.Draft], PlanStatuses.Done, via, nowUtc, WithNote(plan.SummaryJson, HoldOnlyNote), notExpiredAt: nowUtc);
             return new PlanDecisionResult(held ? PlanDecisionKind.Ok : PlanDecisionKind.Conflict, await _plans.GetAsync(userId, id));
         }
 
@@ -200,7 +200,8 @@ public sealed class PolicyService
         }
 
         var summaryJson = WithNote(plan.SummaryJson, note);
-        var ok = await _plans.TransitionAsync(userId, id, [PlanStatuses.PendingApproval, PlanStatuses.Draft], PlanStatuses.Approved, via, nowUtc, summaryJson);
+        // Задача 67 (NIT): срок проверяется и в самом UPDATE — план, истёкший между чтением и решением, не станет Approved.
+        var ok = await _plans.TransitionAsync(userId, id, [PlanStatuses.PendingApproval, PlanStatuses.Draft], PlanStatuses.Approved, via, nowUtc, summaryJson, notExpiredAt: nowUtc);
         if (ok && extendTo is { } deadline && deadline > plan.ExpiresAt) await _plans.ExtendExpiryAsync(userId, id, deadline);
         var current = await _plans.GetAsync(userId, id);
         return new PlanDecisionResult(ok ? PlanDecisionKind.Ok : PlanDecisionKind.Conflict, current);
