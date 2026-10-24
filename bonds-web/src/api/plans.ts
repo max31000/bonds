@@ -30,3 +30,8 @@ export function createWithdrawPlan(body: PlanWithdrawBody): Promise<PlanResult> 
 export function createExitBasketPlan(code: string): Promise<PlanResult> {
   return apiClient.post<PlanResult>('/plans/exit-basket', { code });
 }
+
+/** POST /api/plans/cash-hold/release — «Деньги выведены» (задача 67, то же, что /withdrawn в боте): снять удержание денег под вывод у всех планов вывода. */
+export function releaseCashHold(): Promise<{ released: number }> {
+  return apiClient.post<{ released: number }>('/plans/cash-hold/release');
+}

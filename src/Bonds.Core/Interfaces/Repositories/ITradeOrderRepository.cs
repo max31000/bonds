@@ -25,6 +25,12 @@ public interface ITradeOrderRepository
     Task<IReadOnlyList<TradeOrder>> ListActiveByUserAsync(ulong userId, string broker);
 
     /// <summary>
+    /// Заявки пользователя брокера <paramref name="broker"/> с <c>updated_at</c> не раньше <paramref name="sinceUtc"/> — любые статусы (T-67E: при восстановлении
+    /// исполнения по истории сделок вычитается уже засчитанное другим заявкам того же инструмента и стороны в окне).
+    /// </summary>
+    Task<IReadOnlyList<TradeOrder>> ListByUserUpdatedSinceAsync(ulong userId, string broker, DateTime sinceUtc);
+
+    /// <summary>
     /// id заявки брокера <paramref name="brokerOrderId"/> уже привязан к строке <c>trade_orders</c> этого брокера, кроме <paramref name="exceptOrderId"/> (задача 66: сверка заявки
     /// Freedom без id не должна «присвоить» заявку другой строки).
     /// </summary>

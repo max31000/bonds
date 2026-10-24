@@ -64,8 +64,8 @@ public class CapitalBasketEndpointTests
     }
 
     private static object UpdateBody(
-        string title, decimal? target, decimal band = 0.05m, decimal hard = 0.10m, string fillRule = "fixed", bool autoBuy = false) =>
-        new { title, targetWeight = target, band, hardBand = hard, liquidityTier = 1, fillRule, autoBuy, autoSell = false, minTrade = 0m };
+        string title, decimal? target, decimal band = 0.05m, decimal hard = 0.10m, string fillRule = "fixed", bool autoBuy = false, bool autoSell = false) =>
+        new { title, targetWeight = target, band, hardBand = hard, liquidityTier = 1, fillRule, autoBuy, autoSell, minTrade = 0m };
 
     // --- посев ---
 
@@ -285,12 +285,58 @@ public class CapitalBasketEndpointTests
     public async Task Put_FlagsOnly_DoesNotRecheckTargetsSum()
     {
         var (client, _) = await NewUserAsync();
-        var (id, _) = await FindAsync(client, "usd", "global_core"); // стартовая цель usd 1.0, Σ = 1
+        var (id, _) = await FindAsync(client, "rub", "liquidity"); // стартовая цель 0.15, авто-флаги включены
 
-        var response = await client.PutAsJsonAsync($"/api/baskets/{id}", UpdateBody("Глобальное ядро", 1.0m, autoBuy: true));
+        var response = await client.PutAsJsonAsync($"/api/baskets/{id}", UpdateBody("Ликвидность", 0.15m, autoBuy: false));
 
         response.StatusCode.Should().Be(HttpStatusCode.OK, "цель не менялась — сумма не проверяется");
-        Basket(Portfolio(await response.Content.ReadFromJsonAsync<JsonElement>(), "usd"), "global_core").GetProperty("autoBuy").GetBoolean().Should().BeTrue();
+        Basket(Portfolio(await response.Content.ReadFromJsonAsync<JsonElement>(), "rub"), "liquidity").GetProperty("autoBuy").GetBoolean().Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData("usd", "global_core", 1.0, true, false)]
+    [InlineData("rub", "ru_equity", 0.0, false, true)]
+    [InlineData("rub", "bonds", 0.85, true, true)]
+    public async Task T67_Put_AutoFlagsOnNonLiquidityBasket_Returns422_AndNothingChanged(string portfolio, string code, double target, bool autoBuy, bool autoSell)
+    {
+        var (client, _) = await NewUserAsync();
+        var (id, _) = await FindAsync(client, portfolio, code);
+
+        var response = await client.PutAsJsonAsync($"/api/baskets/{id}", UpdateBody(code, (decimal)target, autoBuy: autoBuy, autoSell: autoSell));
+        response.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity, "авто-исполнение разрешено кодом только для корзины liquidity");
+
+        var batch = await client.PutAsJsonAsync("/api/baskets", new
+        {
+            items = new[] { new { id, title = code, targetWeight = (decimal)target, band = 0.05m, hardBand = 0.10m, liquidityTier = 1, fillRule = "fixed", autoBuy, autoSell, minTrade = 0m } },
+        });
+        batch.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
+
+        var after = Basket(Portfolio(await GetAsync(client), portfolio), code);
+        after.GetProperty("autoBuy").GetBoolean().Should().BeFalse();
+        after.GetProperty("autoSell").GetBoolean().Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task T67A2_Put_LegacyAutoTrueOnNonLiquidity_PassesUnchanged_ButTurningOnIs422()
+    {
+        // Решение владельца (A2, c): 422 — только когда запрос ВКЛЮЧАЕТ авто-флаг у корзины не «liquidity». Унаследованное true (до задачи 67) проходит
+        // как есть — правка заголовка/полосы не должна требовать сначала выключить флаг.
+        var (client, userId) = await NewUserAsync();
+        var (id, _) = await FindAsync(client, "usd", "global_core");
+        await using (var conn = new MySqlConnector.MySqlConnection(Conn))
+            await Dapper.SqlMapper.ExecuteAsync(conn, "UPDATE baskets SET auto_buy = 1, auto_sell = 0 WHERE id = @Id AND user_id = @UserId", new { Id = id, UserId = userId });
+
+        var keep = await client.PutAsJsonAsync($"/api/baskets/{id}", UpdateBody("Ядро (переименовано)", 1.0m, autoBuy: true, autoSell: false));
+        keep.StatusCode.Should().Be(HttpStatusCode.OK, "autoBuy = true не меняется — legacy-значение проходит");
+        var kept = Basket(Portfolio(await keep.Content.ReadFromJsonAsync<JsonElement>(), "usd"), "global_core");
+        kept.GetProperty("title").GetString().Should().Be("Ядро (переименовано)");
+        kept.GetProperty("autoBuy").GetBoolean().Should().BeTrue();
+
+        var turnOn = await client.PutAsJsonAsync($"/api/baskets/{id}", UpdateBody("Ядро", 1.0m, autoBuy: true, autoSell: true));
+        turnOn.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity, "autoSell false → true на корзине не liquidity");
+
+        var off = await client.PutAsJsonAsync($"/api/baskets/{id}", UpdateBody("Ядро", 1.0m, autoBuy: false, autoSell: false));
+        off.StatusCode.Should().Be(HttpStatusCode.OK, "выключить флаг можно всегда");
     }
 
     [Fact]
@@ -422,5 +468,62 @@ public class CapitalBasketEndpointTests
         (await client.PostAsync("/api/baskets/reset-defaults", null)).StatusCode.Should().Be(HttpStatusCode.OK);
         Basket(Portfolio(await GetAsync(client), "usd"), "global_core").GetProperty("title").GetString().Should().Be("Глобальное ядро");
         (await client.PostAsync("/api/baskets/reset-defaults?portfolio=eur", null)).StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
+    }
+
+    [Fact]
+    public async Task T67_UpdateLocked_SelectForUpdate_SecondWriterWaitsAndValidatesOnCommittedState()
+    {
+        // Задача 67 (#13): PUT /api/baskets читает, проверяет и пишет одной транзакцией с SELECT … FOR UPDATE. Второй запрос ждёт коммита первого и
+        // видит его цели (а не старое состояние), поэтому два «по отдельности правильных» PUT не дают вместе сумму целей ≠ 1.
+        var (client, userId) = await NewUserAsync();
+        await GetAsync(client); // посев стартовых корзин
+        var repo = new CapitalBasketRepository(Conn);
+
+        var firstInside = new TaskCompletionSource();
+        var releaseFirst = new TaskCompletionSource();
+        var first = repo.UpdateLockedAsync<int>(userId, async all =>
+        {
+            var liquidity = all.Single(b => b.Code == "liquidity");
+            liquidity.TargetWeight = 0.10m;
+            firstInside.SetResult();
+            await releaseFirst.Task;
+            return ([liquidity], 1);
+        });
+        await firstInside.Task;
+
+        decimal? seenBySecond = null;
+        var second = Task.Run(() => repo.UpdateLockedAsync<int>(userId, all =>
+        {
+            seenBySecond = all.Single(b => b.Code == "liquidity").TargetWeight;
+            return Task.FromResult<(IReadOnlyList<Bonds.Core.Capital.CapitalBasket>?, int)>((null, 2));
+        }));
+
+        await Task.Delay(500);
+        second.IsCompleted.Should().BeFalse("строки корзин заблокированы первым запросом до его коммита");
+        releaseFirst.SetResult();
+        (await first).Should().Be(1);
+        (await second).Should().Be(2);
+        seenBySecond.Should().Be(0.10m, "второй проверяет уже итоговое состояние первого");
+    }
+
+    [Fact]
+    public async Task T67_ConcurrentPuts_EachValidAlone_DoNotLeaveTargetsSumBroken()
+    {
+        // Сценарий аудита: A меняет liquidity 0.15 → 0.10 и ru_equity → 0.05, B — bonds 0.85 → 0.80 и ru_equity → 0.05. Каждый по отдельности держит сумму 1;
+        // без блокировки оба прошли бы проверку на старом состоянии и записали бы вместе 0.95. С FOR UPDATE второй получает 422.
+        var (client, _) = await NewUserAsync();
+        var (liquidity, _) = await FindAsync(client, "rub", "liquidity");
+        var (bonds, _) = await FindAsync(client, "rub", "bonds");
+        var (equity, _) = await FindAsync(client, "rub", "ru_equity");
+        object Item(ulong id, string title, decimal target, string fill) =>
+            new { id, title, targetWeight = target, band = 0.05m, hardBand = 0.10m, liquidityTier = 1, fillRule = fill, autoBuy = false, autoSell = false, minTrade = 0m };
+
+        var a = client.PutAsJsonAsync("/api/baskets", new { items = new[] { Item(liquidity, "Ликвидность", 0.10m, "fixed"), Item(equity, "Акции РФ", 0.05m, "fixed") } });
+        var b = client.PutAsJsonAsync("/api/baskets", new { items = new[] { Item(bonds, "Облигации", 0.80m, "engine"), Item(equity, "Акции РФ", 0.05m, "fixed") } });
+        var codes = (await Task.WhenAll(a, b)).Select(r => r.StatusCode).ToList();
+
+        codes.Should().Contain(HttpStatusCode.OK);
+        var rub = Portfolio(await GetAsync(client), "rub");
+        rub.GetProperty("targetsSum").GetDecimal().Should().Be(1.0m, "итоговое состояние всегда проходит проверку суммы целей");
     }
 }

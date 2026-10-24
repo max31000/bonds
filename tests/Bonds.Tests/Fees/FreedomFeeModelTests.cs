@@ -4,7 +4,7 @@ using Xunit;
 
 namespace Bonds.Tests.Fees;
 
-/// <summary>Задача 59: эталоны модели комиссий Freedom (из выписки; суммы в USD, допуск ±0.01 — брокер округляет итог).</summary>
+/// <summary>Задача 59: эталоны модели комиссий Freedom (из выписки; суммы в USD). Задача 67 (#9): все 9 эталонов — ТОЧНОЕ совпадение (Be, без допуска).</summary>
 public class FreedomFeeModelTests
 {
     private const int Investor = FreedomFeeModel.InvestorTariffId;
@@ -23,7 +23,7 @@ public class FreedomFeeModelTests
     {
         var amount = (decimal)unitPriceUsd * qty;
         var market = FreedomFeeModel.RouteFor(ticker, itsTwin, isFund: false);
-        FreedomFeeModel.Fee(tariff, market, amount, qty).Should().BeApproximately((decimal)expected, 0.01m);
+        FreedomFeeModel.Fee(tariff, market, amount, qty).Should().Be((decimal)expected);
     }
 
     [Fact]
@@ -31,7 +31,7 @@ public class FreedomFeeModelTests
     {
         var market = FreedomFeeModel.RouteFor("SPYM.US", itsTwin: true, isFund: true);
         market.Should().Be(FreedomMarket.KazakhstanItsFunds);
-        FreedomFeeModel.Fee(Standard, market, 89.41m, 1).Should().BeApproximately(0.45m, 0.01m);
+        FreedomFeeModel.Fee(Standard, market, 89.41m, 1).Should().Be(0.45m);
     }
 
     [Fact]

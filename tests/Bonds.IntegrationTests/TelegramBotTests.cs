@@ -1,6 +1,9 @@
+using Bonds.Core.Credentials;
+using Bonds.Core.Execution;
 using Bonds.Core.Models;
 using Bonds.Core.Policy;
 using Bonds.Core.Telegram;
+using Bonds.Infrastructure.Execution;
 using Bonds.Infrastructure.Repositories;
 using Bonds.Infrastructure.Telegram;
 using Bonds.IntegrationTests.Infrastructure;
@@ -63,16 +66,17 @@ public class TelegramBotTests
 
     private async Task<TradePlan> ReloadAsync(TradePlan plan) => (await new TradePlanRepository(Conn).GetAsync(plan.UserId, plan.Id))!;
 
-    private async Task SendAsync(BotUpdate update)
+    private async Task SendAsync(BotUpdate update, Microsoft.AspNetCore.Mvc.Testing.WebApplicationFactory<Program>? factory = null)
     {
-        using var scope = _factory.Services.CreateScope();
+        using var scope = (factory ?? _factory).Services.CreateScope();
         await scope.ServiceProvider.GetRequiredService<ITelegramUpdateHandler>().HandleAsync(update);
     }
 
     private static long _updateId = 1000;
 
-    private Task PressAsync(long fromId, string callbackId, string data, long? chatId = null, string chatType = "private") =>
-        SendAsync(new BotUpdate(Interlocked.Increment(ref _updateId), null, new BotIncomingCallback(callbackId, fromId, chatId ?? fromId, chatType, 900, data)));
+    private Task PressAsync(
+        long fromId, string callbackId, string data, long? chatId = null, string chatType = "private", Microsoft.AspNetCore.Mvc.Testing.WebApplicationFactory<Program>? factory = null) =>
+        SendAsync(new BotUpdate(Interlocked.Increment(ref _updateId), null, new BotIncomingCallback(callbackId, fromId, chatId ?? fromId, chatType, 900, data)), factory);
 
     private Task TextAsync(long fromId, string text, long? chatId = null, string chatType = "private") =>
         SendAsync(new BotUpdate(Interlocked.Increment(ref _updateId), new BotIncomingMessage(chatId ?? fromId, chatType, fromId, "T", text), null));
@@ -109,6 +113,70 @@ public class TelegramBotTests
         await PressAsync(tg, cb2, Reject(plan));
         (await ReloadAsync(plan)).Status.Should().Be(PlanStatuses.Approved);
         AnswerFor(cb2).Text.Should().Contain("уже обработан");
+    }
+
+    [Fact]
+    public async Task T67_LivePlan_TwoStepConfirm_FirstTapShowsOrders_SecondApproves_NonceOneTime()
+    {
+        var (userId, tg) = await NewUserAsync();
+        var plan = await NewPlanAsync(userId);
+        await using (var conn = new MySqlConnector.MySqlConnection(Conn))
+            await Dapper.SqlMapper.ExecuteAsync(conn, "UPDATE trade_plans SET dry_run = 0 WHERE id = @Id", new { plan.Id });
+        var firstApprove = Approve(plan);
+
+        // T-67E (M3): «живой» решается по ТЕКУЩИМ воротам (как пересчитает ApproveAsync) — открываем их: env, режим live, проверенный торговый токен.
+        var live = _factory.WithWebHostBuilder(b => b.UseSetting("Execution:Enabled", "true"));
+        await new UserSettingsRepository(Conn).SetExecutionModeAsync(userId, ExecutionModes.Live);
+        using (var scope = live.Services.CreateScope())
+            await scope.ServiceProvider.GetRequiredService<IUserCredentialStore>().SaveAsync(
+                userId, CredentialProviders.TInvestTrade, new Dictionary<string, string> { ["token"] = "t.trade-test" }, "test", TradeCredentialMeta.Build("ACC-T67E"));
+        var bot = live.Services.GetRequiredService<FakeTelegramBotClient>();
+        FakeTelegramBotClient.Answered AnswerFor(string callbackId) => bot.Answers.Single(a => a.CallbackId == callbackId);
+        Task PressAsync(long fromId, string callbackId, string data) => this.PressAsync(fromId, callbackId, data, factory: live);
+
+        // Шаг 1: «Подтвердить» — план НЕ решён, сообщение показывает реальные заявки и кнопку «Отправить заявки» с новым nonce.
+        var cb1 = "cb-" + Guid.NewGuid();
+        await PressAsync(tg, cb1, firstApprove);
+        var afterFirst = await ReloadAsync(plan);
+        afterFirst.Status.Should().Be(PlanStatuses.PendingApproval);
+        afterFirst.BotNonce.Should().NotBe(plan.BotNonce, "nonce меняется на каждом шаге");
+        var edit = bot.Edits.Last(e => e.ChatId == tg);
+        edit.Html.Should().Contain("РЕАЛЬНЫЕ ЗАЯВКИ").And.Contain("TMON@");
+        var send = BotCallback.Build(plan.Id, BotPlanAction.Send, afterFirst.BotNonce!);
+        edit.Keyboard!.Rows.SelectMany(r => r).Select(b => b.CallbackData).Should().Contain(send);
+
+        // Старая кнопка «Подтвердить» после смены nonce недействительна.
+        var cbOld = "cb-" + Guid.NewGuid();
+        await PressAsync(tg, cbOld, firstApprove);
+        AnswerFor(cbOld).Text.Should().Contain("недействительна");
+        (await ReloadAsync(plan)).Status.Should().Be(PlanStatuses.PendingApproval);
+
+        // Шаг 2: «Отправить заявки» — план подтверждён; та же кнопка второй раз не работает (nonce одноразовый).
+        var cb2 = "cb-" + Guid.NewGuid();
+        await PressAsync(tg, cb2, send);
+        var approved = await ReloadAsync(plan);
+        approved.Status.Should().Be(PlanStatuses.Approved);
+        approved.DecidedVia.Should().Be(DecidedVia.Telegram);
+        approved.BotNonce.Should().NotBe(afterFirst.BotNonce);
+
+        var cb3 = "cb-" + Guid.NewGuid();
+        await PressAsync(tg, cb3, send);
+        AnswerFor(cb3).Text.Should().Contain("недействительна");
+    }
+
+    [Fact]
+    public async Task T67_PlansList_LivePlan_HasNoApproveButtons()
+    {
+        var (userId, tg) = await NewUserAsync();
+        var plan = await NewPlanAsync(userId);
+        await using (var conn = new MySqlConnector.MySqlConnection(Conn))
+            await Dapper.SqlMapper.ExecuteAsync(conn, "UPDATE trade_plans SET dry_run = 0 WHERE id = @Id", new { plan.Id });
+
+        await TextAsync(tg, "/plans");
+
+        var message = Bot.SentTo(tg).Single();
+        message.Html.Should().Contain($"№{plan.Id}");
+        (message.Keyboard?.Rows.SelectMany(r => r).Where(b => b.CallbackData is not null) ?? []).Should().BeEmpty();
     }
 
     [Fact]
@@ -241,6 +309,77 @@ public class TelegramBotTests
         await TextAsync(tg, "/resume");
         (await settings.IsExecutionPausedAsync(userId)).Should().BeFalse();
         Bot.SentTo(tg).Select(m => m.Html).Should().Contain(h => h.Contains("Пауза включена")).And.Contain(h => h.Contains("Пауза снята"));
+    }
+
+    [Fact]
+    public async Task T67_SameUpdateIdTwice_PlanCommandHandledOnce()
+    {
+        // Задача 67 (#16): Telegram прислал тот же апдейт повторно (offset не успел сохраниться до рестарта) — /withdraw и /inflow не строят второй план.
+        var (_, tg) = await NewUserAsync();
+        var id = Interlocked.Increment(ref _updateId);
+        var update = new BotUpdate(id, new BotIncomingMessage(tg, "private", tg, "T", "/withdraw 1000"), null);
+
+        await SendAsync(update);
+        var afterFirst = Bot.SentTo(tg).Count;
+        await SendAsync(update);
+
+        afterFirst.Should().Be(1, "первый раз команда обработана (ответ — план или причина)");
+        Bot.SentTo(tg).Count.Should().Be(afterFirst, "повтор того же update_id игнорируется");
+
+        await SendAsync(new BotUpdate(Interlocked.Increment(ref _updateId), new BotIncomingMessage(tg, "private", tg, "T", "/inflow 500"), null));
+        Bot.SentTo(tg).Count.Should().Be(afterFirst + 1, "новый апдейт обрабатывается");
+    }
+
+    [Fact]
+    public async Task T67_Withdrawn_ReleasesCashHoldOfWithdrawPlans()
+    {
+        var (userId, tg) = await NewUserAsync();
+        var plan = await NewPlanAsync(userId, PlanStatuses.Done);
+        await using (var conn = new MySqlConnector.MySqlConnection(Conn))
+        {
+            await Dapper.SqlMapper.ExecuteAsync(conn, "UPDATE trade_plans SET rule = 'P5_WITHDRAW', summary_json = @J WHERE id = @Id",
+                new { Id = plan.Id, J = """{"portfolio":"rub","currency":"RUB","cashHold":100000}""" });
+        }
+
+        await TextAsync(tg, "/withdrawn");
+
+        (await ReloadAsync(plan)).CashHoldReleasedAt.Should().NotBeNull();
+        Bot.SentTo(tg).Last().Html.Should().Contain("Удержание").And.Contain("снято");
+
+        await TextAsync(tg, "/withdrawn");
+        Bot.SentTo(tg).Last().Html.Should().Contain("нет");
+    }
+
+    [Fact]
+    public async Task T67E_Withdrawn_ReleasesOnlyDoneOrPartiallyDone_UnexecutedP5KeepsHold()
+    {
+        var (userId, tg) = await NewUserAsync();
+        async Task<TradePlan> P5(string status)
+        {
+            var p = await NewPlanAsync(userId, status);
+            await using var conn = new MySqlConnector.MySqlConnection(Conn);
+            await Dapper.SqlMapper.ExecuteAsync(conn, "UPDATE trade_plans SET rule = 'P5_WITHDRAW', summary_json = @J WHERE id = @Id",
+                new { p.Id, J = """{"portfolio":"rub","currency":"RUB","cashHold":50000}""" });
+            return p;
+        }
+
+        var pending = await P5(PlanStatuses.PendingApproval);
+        var approved = await P5(PlanStatuses.Approved);
+        var submitting = await P5(PlanStatuses.Submitting);
+        var done = await P5(PlanStatuses.Done);
+        var partial = await P5(PlanStatuses.PartiallyDone);
+
+        await TextAsync(tg, "/withdrawn");
+
+        (await ReloadAsync(pending)).CashHoldReleasedAt.Should().BeNull("продажи ещё не прошли — вывести нечего");
+        (await ReloadAsync(approved)).CashHoldReleasedAt.Should().BeNull();
+        (await ReloadAsync(submitting)).CashHoldReleasedAt.Should().BeNull();
+        (await ReloadAsync(done)).CashHoldReleasedAt.Should().NotBeNull();
+        (await ReloadAsync(partial)).CashHoldReleasedAt.Should().NotBeNull();
+
+        // Веб-кнопка — тот же репозиторий: Pending по-прежнему держит.
+        (await new TradePlanRepository(Conn).ReleaseCashHoldsAsync(userId, DateTime.UtcNow)).Should().Be(0);
+        (await ReloadAsync(pending)).CashHoldReleasedAt.Should().BeNull();
     }
 
     [Fact]

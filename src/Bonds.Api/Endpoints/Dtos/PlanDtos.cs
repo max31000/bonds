@@ -83,6 +83,9 @@ public sealed record PlanDto
 
     /// <summary>Хоть одна заявка плана требует действия пользователя (<see cref="PlanOrderDto.NeedsAttention"/>). План при этом остаётся <c>Submitting</c>.</summary>
     public bool NeedsAttention { get; init; }
+
+    /// <summary>Задача 67 (#3): когда владелец отметил «деньги выведены» — удержание <c>summary.cashHold</c> снято. null — действует (если сумма есть).</summary>
+    public DateTime? CashHoldReleasedAt { get; init; }
 }
 
 public sealed record PlansResponseDto

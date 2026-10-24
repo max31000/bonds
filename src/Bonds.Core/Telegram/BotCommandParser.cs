@@ -19,6 +19,9 @@ public enum BotCommandKind
     Exit,
     Stop,
     Resume,
+
+    /// <summary><c>/withdrawn</c> — «деньги выведены»: снять удержание денег под вывод (задача 67, #3).</summary>
+    Withdrawn,
 }
 
 /// <summary>
@@ -70,6 +73,7 @@ public static partial class BotCommandParser
             "plans" => new BotCommand(BotCommandKind.Plans),
             "stop" => new BotCommand(BotCommandKind.Stop),
             "resume" => new BotCommand(BotCommandKind.Resume),
+            "withdrawn" => new BotCommand(BotCommandKind.Withdrawn),
             "inflow" => ParseMoney(args, allowFraction: false, InflowUsage, BotCommandKind.Inflow),
             "withdraw" => ParseMoney(args, allowFraction: true, WithdrawUsage, BotCommandKind.Withdraw),
             "exit" => ParseExit(args),

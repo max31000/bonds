@@ -227,6 +227,12 @@ public class UserCredentialStoreTests
             return Task.CompletedTask;
         }
 
+        public Task UpdateMetaAsync(ulong userId, string provider, string? metaJson)
+        {
+            if (Rows.TryGetValue((userId, provider), out var r)) r.MetaJson = metaJson;
+            return Task.CompletedTask;
+        }
+
         public Task<IReadOnlyList<ulong>> ListUserIdsAsync(string provider, string status) =>
             Task.FromResult<IReadOnlyList<ulong>>(
                 Rows.Values.Where(r => r.Provider == provider && r.Status == status).Select(r => r.UserId).OrderBy(x => x).ToList());
@@ -395,6 +401,23 @@ public class TInvestTokenProviderCredentialsTests
             new CredentialSecretResult(CredentialReadOutcome.Ok, new Dictionary<string, string> { ["token"] = "t.fromStore" }));
 
         (await Create().GetTokenAsync()).Should().Be("t.fromStore");
+    }
+
+    [Fact]
+    public async Task T67_UseUser_ReadsThatUsersToken_DefaultIsPrimaryUser()
+    {
+        // Задача 67 (#5): два пользователя со своими tinvest_read — скоуп, привязанный к пользователю 9, берёт ЕГО токен; без привязки — основной (5).
+        _store.Setup(s => s.GetSecretResultAsync(5UL, "tinvest_read")).ReturnsAsync(
+            new CredentialSecretResult(CredentialReadOutcome.Ok, new Dictionary<string, string> { ["token"] = "t.owner" }));
+        _store.Setup(s => s.GetSecretResultAsync(9UL, "tinvest_read")).ReturnsAsync(
+            new CredentialSecretResult(CredentialReadOutcome.Ok, new Dictionary<string, string> { ["token"] = "t.second" }));
+
+        (await Create().GetTokenAsync()).Should().Be("t.owner");
+
+        var scoped = Create();
+        scoped.UseUser(9);
+        (await scoped.GetTokenAsync()).Should().Be("t.second");
+        (await scoped.GetTokenStatusAsync()).Should().Be(TInvestTokenStatus.Valid);
     }
 
     [Fact]

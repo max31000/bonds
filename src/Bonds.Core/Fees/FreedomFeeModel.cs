@@ -15,8 +15,8 @@ public enum FreedomMarket
 }
 
 /// <summary>
-/// Модель комиссий Freedom (Tradernet), чистая функция. Формула сверена по выписке до цента:
-/// <c>fee = max(pct × amountUsd + perOrder + perUnit × qty, minTrade)</c>.
+/// Модель комиссий Freedom (Tradernet), чистая функция. Формула сверена по выписке до цента (все эталоны — точно, задача 67 #9):
+/// <c>fee = round2(max(round2(pct × amountUsd) + perOrder + perUnit × qty, minTrade))</c> — процентная часть округляется до центов ДО сложения с фиксом.
 /// <para>
 /// ЕДИНИЦЫ: <c>pct</c> — ДОЛЯ суммы сделки (0.005 = 0.5%); <c>amountUsd</c>, <c>perOrder</c>, <c>perUnit</c>,
 /// <c>minTrade</c> — доллары США; <c>qty</c> — штуки. Эталон на Python хранит проценты (0.5): граница
@@ -75,7 +75,7 @@ public static class FreedomFeeModel
         return FreedomMarket.Usa;
     }
 
-    /// <summary>Комиссия в USD, округлённая до центов (как у брокера; сверка с выпиской — допуск ±0.01).</summary>
+    /// <summary>Комиссия в USD, округлённая до центов (как у брокера; процентная часть — до центов отдельно, см. класс). Сверка с выпиской — точная.</summary>
     /// <exception cref="NotSupportedException">Тариф не из <see cref="InvestorTariffId"/>/<see cref="StandardTariffId"/>.</exception>
     public static decimal Fee(int tariffId, FreedomMarket market, decimal amountUsd, decimal qty, bool includePerOrder = true)
     {
@@ -86,7 +86,10 @@ public static class FreedomFeeModel
             _ => throw new NotSupportedException($"Тариф {tariffId} не поддержан моделью комиссий."),
         };
         var s = table[market];
-        var raw = s.Pct * Math.Abs(amountUsd) + (includePerOrder ? s.PerOrderUsd : 0m) + s.PerUnitUsd * Math.Abs(qty);
+        // Задача 67 (#9): процентная часть округляется до центов ДО сложения с фиксом за заявку и за штуку (так считает брокер — все эталоны выписки сходятся
+        // до цента, без допуска: COPX 0.7012 → 0.70 + 1.2 + 0.024 = 1.924 → 1.92, а не 1.9252 → 1.93).
+        var pct = Math.Round(s.Pct * Math.Abs(amountUsd), 2, MidpointRounding.AwayFromZero);
+        var raw = pct + (includePerOrder ? s.PerOrderUsd : 0m) + s.PerUnitUsd * Math.Abs(qty);
         return Math.Round(Math.Max(raw, s.MinTradeUsd), 2, MidpointRounding.AwayFromZero);
     }
 

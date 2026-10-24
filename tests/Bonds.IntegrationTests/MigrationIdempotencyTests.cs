@@ -88,6 +88,9 @@ public class MigrationIdempotencyTests : IAsyncLifetime
             "036_trade_orders_attention.sql",
             "037_trade_orders_broker.sql",
             "038_trade_orders_commission_currency.sql",
+            "039_trade_plans_cash_hold.sql",
+            "040_trade_orders_fk_restrict.sql",
+            "041_trade_orders_fk_restrict_add.sql",
         });
 
         var expectedTables = new[]
@@ -132,13 +135,47 @@ public class MigrationIdempotencyTests : IAsyncLifetime
         await conn.OpenAsync();
 
         var migrationCount = await conn.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM _migrations");
-        migrationCount.Should().Be(38, "повторный запуск не должен заново применять уже применённые миграции");
+        migrationCount.Should().Be(41, "повторный запуск не должен заново применять уже применённые миграции");
 
         // users.base_currency существует ровно один раз (ALTER ... ADD COLUMN IF NOT EXISTS не падает повторно).
         var columnCount = await conn.ExecuteScalarAsync<long>(
             @"SELECT COUNT(*) FROM information_schema.columns
               WHERE table_schema = DATABASE() AND table_name = 'users' AND column_name = 'base_currency'");
         columnCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task T67_Migration040_TradeOrdersPlanFk_IsRestrict()
+    {
+        // Задача 67 (NIT): удаление плана не стирает его заявки брокеру — FK trade_orders → trade_plans ON DELETE RESTRICT.
+        var connectionString = _container.GetConnectionString();
+        await new MigrationRunner(connectionString, NullLogger<MigrationRunner>.Instance).RunAsync();
+        await using var conn = new MySqlConnection(connectionString);
+        var rules = (await Dapper.SqlMapper.QueryAsync<(string Name, string Rule)>(conn,
+            @"SELECT CONSTRAINT_NAME, DELETE_RULE FROM information_schema.REFERENTIAL_CONSTRAINTS
+              WHERE CONSTRAINT_SCHEMA = DATABASE() AND TABLE_NAME = 'trade_orders' AND REFERENCED_TABLE_NAME = 'trade_plans'")).ToList();
+        rules.Should().ContainSingle().Which.Should().Be(("fk_trade_orders_plan_restrict", "RESTRICT"), "040 снимает CASCADE, 041 добавляет RESTRICT (T-67E)");
+    }
+
+    [Fact]
+    public async Task T67E_Migration041_FailedAddAfterDrop_IsReRunnable()
+    {
+        // Minor 7: DDL в MySQL не откатывается транзакцией раннера. Имитация «ADD упал после DROP»: 040 записана, ключа нет, 041 не записана — повторный
+        // запуск раннера применяет только 041 и восстанавливает ключ RESTRICT.
+        var connectionString = _container.GetConnectionString();
+        var runner = new MigrationRunner(connectionString, NullLogger<MigrationRunner>.Instance);
+        await runner.RunAsync();
+        await using var conn = new MySqlConnection(connectionString);
+        await conn.ExecuteAsync("ALTER TABLE trade_orders DROP FOREIGN KEY fk_trade_orders_plan_restrict");
+        await conn.ExecuteAsync("DELETE FROM _migrations WHERE FileName = '041_trade_orders_fk_restrict_add.sql'");
+
+        await runner.RunAsync();
+
+        var rule = await conn.ExecuteScalarAsync<string>(
+            @"SELECT DELETE_RULE FROM information_schema.REFERENTIAL_CONSTRAINTS
+              WHERE CONSTRAINT_SCHEMA = DATABASE() AND CONSTRAINT_NAME = 'fk_trade_orders_plan_restrict'");
+        rule.Should().Be("RESTRICT");
+        (await conn.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM _migrations")).Should().Be(41);
     }
 
     [Fact]

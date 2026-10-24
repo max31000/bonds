@@ -65,7 +65,10 @@ public sealed record PolicyQuote
     /// <summary>Облигация: НКД на штуку (валюта цены); для остальных 0.</summary>
     public decimal AccruedPerPiece { get; init; }
 
-    /// <summary>Облигация без рублёвого номинала: последняя известная ЧИСТАЯ цена в рублях за штуку (из оценки портфеля или банка).</summary>
+    /// <summary>
+    /// Облигация без рублёвого номинала: последняя известная ЧИСТАЯ цена за штуку в ВАЛЮТЕ ПОРТФЕЛЯ (рубли; из оценки портфеля или банка).
+    /// <see cref="LinePricer"/> переводит её в валюту цены делением на <see cref="FxToPortfolio"/> (задача 67, #8).
+    /// </summary>
     public decimal? ReferenceCleanPricePerPiece { get; init; }
 
     public decimal FxToPortfolio { get; init; } = 1m;
@@ -77,6 +80,12 @@ public sealed record PolicyQuote
 
     /// <summary>Комиссия бумаги известна: фонд управляющей компании брокера либо в журнале есть сделка и списанная по ней комиссия.</summary>
     public bool KnownCommission { get; init; } = true;
+
+    /// <summary>
+    /// Фонд: были ли выплаты за последние 12 месяцев (<c>instrument_trading_meta.pays_distributions</c>). null — неизвестно (сбой запроса или не фонд):
+    /// для белого списка авто-исполнения (<see cref="AutoWhitelist"/>) неизвестно = «платит» (консервативно).
+    /// </summary>
+    public bool? PaysDistributions { get; init; }
 }
 
 /// <summary>
@@ -171,6 +180,12 @@ public sealed record PolicyBondCandidate
     /// <summary>Рыночная стоимость уже удерживаемых бумаг этого эмитента, рубли.</summary>
     public decimal IssuerHeldValueRub { get; init; }
 
+    /// <summary>
+    /// Задача 67 (P3b «рейтинг не ниже A», дизайн §4): самый низкий из СВЕЖИХ (≤ <see cref="Bonds.Core.Analytics.ReliabilityScoreOptions.ManualRatingFreshMonths"/> мес.)
+    /// рейтингов эмитента (<c>issuer_ratings</c>, ручной ввод) не ниже категории A. null — свежего распознанного рейтинга нет.
+    /// </summary>
+    public bool? IssuerRatingAtLeastA { get; init; }
+
     public PolicyQuote? Quote { get; init; }
 }
 
@@ -217,6 +232,31 @@ public sealed record PolicyInput
 
     /// <summary>Стоимость облигационного портфеля T-Invest в рублях (база лимита эмитента).</summary>
     public decimal BondsPortfolioValueRub { get; init; }
+
+    /// <summary>
+    /// Задача 67 (#3): действует удержание денег под вывод (<see cref="WithdrawHold"/>: открыт план P5/выхода из корзины с <see cref="TradePlanSummary.CashHold"/>
+    /// либо не прошло <see cref="PolicyOptions.WithdrawHoldTtl"/> рабочих дней с его исполнения, и владелец не отметил «деньги выведены»). P1 при нём паркует только остаток (решение владельца, T-67D).
+    /// Сумма удержания уже вычтена из <see cref="FreeCash"/> (входит в <see cref="ReservedCash"/>).
+    /// </summary>
+    public bool CashHoldActive { get; init; }
+
+    /// <summary>
+    /// Задача 67 (#7): оценка портфеля неполна — нет цены хотя бы у одной позиции с ненулевым количеством или нет курса (<c>CapitalPortfolioOverview.DataIncomplete</c>).
+    /// Корзины, где именно не хватает данных, — <see cref="IncompleteBaskets"/>.
+    /// </summary>
+    public bool DataIncomplete { get; init; }
+
+    /// <summary>
+    /// Задача 67 (#7): коды строк дрейфа (корзины и системные <c>fx</c>/<c>unassigned</c>/<c>cash</c>) с неполными данными; <c>cash</c> — неизвестна сумма свободных
+    /// денег (нет курса валюты, которую вычитают из денег T-Invest, или курса остатка Freedom).
+    /// </summary>
+    public IReadOnlySet<string> IncompleteBaskets { get; init; } = new HashSet<string>(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Задача 67 (#7): последний успешный синк брокера (UTC), если он старше <see cref="PolicyOptions.MaxSyncAge"/>; <see cref="DateTime.MinValue"/> — синка не было;
+    /// null — данные свежие.
+    /// </summary>
+    public DateTime? StaleSince { get; init; }
 
     public CapitalBasket? BasketByCode(string code) => Baskets.FirstOrDefault(b => string.Equals(b.Code, code, StringComparison.Ordinal));
 

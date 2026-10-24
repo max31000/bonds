@@ -35,6 +35,7 @@ export default function App() {
             <Route path="income" element={<Income />} />
             <Route path="capital" element={<Capital />} />
             <Route path="plans" element={<Plans />} />
+            <Route path="plans/:id" element={<Plans />} />
             <Route path="cashflow" element={<Cashflow />} />
             <Route path="analytics" element={<Analytics />} />
             <Route path="recommendations" element={<Recommendations />} />

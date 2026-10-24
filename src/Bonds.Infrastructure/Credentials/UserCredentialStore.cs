@@ -137,4 +137,9 @@ public sealed class UserCredentialStore : IUserCredentialStore
 
     public async Task<bool> HasValidAsync(ulong userId, string provider) =>
         (await _repo.GetAsync(userId, provider))?.Status == CredentialStatus.Ok;
+
+    public Task UpdateMetaAsync(ulong userId, string provider, string? metaJson) => _repo.UpdateMetaAsync(userId, provider, metaJson);
+
+    public Task MarkInvalidAsync(ulong userId, string provider, string message) =>
+        _repo.UpdateStatusAsync(userId, provider, CredentialStatus.Invalid, message.Length > 255 ? message[..255] : message);
 }

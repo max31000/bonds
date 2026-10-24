@@ -41,7 +41,10 @@ public static class PlanStatuses
     /// <summary>«Открытые» планы: ещё ждут решения или (в боевом режиме) исполнения. По ним ищутся дубликаты и считается резерв денег.</summary>
     public static readonly IReadOnlyList<string> Open = [Draft, PendingApproval, AutoApproved, Approved, Submitting];
 
-    /// <summary>Планы, резервирующие деньги под покупки: Approved dry-run деньги НЕ резервирует (он никогда не исполнится).</summary>
+    /// <summary>
+    /// Статусы, резервирующие деньги под покупки при любом <c>dry_run</c>. Плюс <c>Approved</c> с <c>dry_run = 0</c> (задача 67, #2: живой план, одобренный вечером, ждёт
+    /// открытия торгов — его деньги заняты; условие по <c>dry_run</c> — в <c>SumReservedBuysAsync</c>). Approved dry-run деньги НЕ резервирует (он никогда не исполнится).
+    /// </summary>
     public static readonly IReadOnlyList<string> ReservingCash = [Draft, PendingApproval, AutoApproved, Submitting];
 }
 
@@ -123,6 +126,9 @@ public sealed class TradePlan
     /// <summary>JSON <see cref="TradePlanSummary"/> (camelCase).</summary>
     public string? SummaryJson { get; set; }
 
+    /// <summary>Когда владелец отметил «деньги выведены» (<c>/withdrawn</c> или кнопка в вебе): удержание <see cref="TradePlanSummary.CashHold"/> снято. null — действует.</summary>
+    public DateTime? CashHoldReleasedAt { get; set; }
+
     public List<TradePlanLine> Lines { get; set; } = [];
 }
 
@@ -163,6 +169,13 @@ public sealed record TradePlanSummary
 
     /// <summary>P5: сколько не хватило, если продать больше нечего (null — хватило).</summary>
     public decimal? Shortfall { get; init; }
+
+    /// <summary>
+    /// Задача 67 (#3): сколько денег план держит под ВЫВОД, валюта портфеля (P5 — запрошенная сумма за вычетом нехватки; выход из корзины — чистая выручка
+    /// продаж). Вывод в банк делается вручную, поэтому эти деньги не должен «увести» P1/P2/P4: <c>SumReservedBuysAsync</c> учитывает удержание, пока оно
+    /// действует (<see cref="WithdrawHold"/>). 0 — удержания нет.
+    /// </summary>
+    public decimal CashHold { get; init; }
 
     public IReadOnlyList<string> Warnings { get; init; } = [];
     public IReadOnlyList<string> Notes { get; init; } = [];

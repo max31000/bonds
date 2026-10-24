@@ -1,7 +1,7 @@
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { MantineProvider } from '@mantine/core';
 import { http, HttpResponse } from 'msw';
 import { server } from '../test/msw-handlers';
@@ -150,5 +150,87 @@ describe('Plans — страница «Планы» (задача 63, режим
 
     expect(await screen.findByTestId('plans-error')).toBeInTheDocument();
     expect(screen.getByTestId('dryrun-banner')).toBeInTheDocument();
+  });
+
+  it('T67: план вывода с удержанием — «Деньги выведены» снимает удержание (POST /api/plans/cash-hold/release) и перечитывает список', async () => {
+    const held = { ...withdrawPlan, status: 'Done' as const, summary: { ...withdrawPlan.summary!, cashHold: 2000 }, cashHoldReleasedAt: null };
+    let released = false;
+    server.use(
+      http.get('*/api/plans', () =>
+        HttpResponse.json(plansResponse([released ? { ...held, cashHoldReleasedAt: '2026-10-22T10:00:00Z' } : held])),
+      ),
+      http.post('*/api/plans/cash-hold/release', () => {
+        released = true;
+        return HttpResponse.json({ released: 1 });
+      }),
+    );
+    renderPlans();
+
+    expect(await screen.findByTestId('plan-13-cash-hold')).toHaveTextContent(/2\s000,00\sRUB/);
+    await userEvent.click(screen.getByTestId('plan-13-release-hold'));
+
+    await waitFor(() => expect(released).toBe(true));
+    await waitFor(() => expect(screen.queryByTestId('plan-13-release-hold')).not.toBeInTheDocument());
+  });
+
+  it('T-67E: неисполненный план вывода держит деньги — кнопки «Деньги выведены» нет', async () => {
+    const pending = { ...withdrawPlan, status: 'PendingApproval' as const, summary: { ...withdrawPlan.summary!, cashHold: 2000 }, cashHoldReleasedAt: null };
+    server.use(http.get('*/api/plans', () => HttpResponse.json(plansResponse([pending]))));
+    renderPlans();
+
+    expect(await screen.findByTestId('plan-13-cash-hold')).toBeInTheDocument();
+    expect(screen.queryByTestId('plan-13-release-hold')).not.toBeInTheDocument();
+  });
+
+  it('T-67D: план «только удержание» (P5 без строк) — вместо пустой таблицы строк «Удержание N ₽ под вывод»', async () => {
+    const holdOnly = { ...withdrawPlan, lines: [], summary: { ...withdrawPlan.summary!, cashHold: 30000 }, cashHoldReleasedAt: null };
+    server.use(http.get('*/api/plans', () => HttpResponse.json(plansResponse([holdOnly]))));
+    renderPlans();
+
+    expect(await screen.findByTestId('plan-13-hold-only')).toHaveTextContent(/^Удержание 30\s000\s₽ под вывод$/);
+    expect(screen.queryByTestId('plan-13-lines')).not.toBeInTheDocument();
+  });
+
+  it('T-67D: план вывода со строками — таблица строк, без пометки «только удержание»', async () => {
+    server.use(http.get('*/api/plans', () => HttpResponse.json(plansResponse([withdrawPlan]))));
+    renderPlans();
+
+    expect(await screen.findByTestId('plan-13-lines')).toBeInTheDocument();
+    expect(screen.queryByTestId('plan-13-hold-only')).not.toBeInTheDocument();
+  });
+});
+
+describe('Plans — ссылка на план из бота /plans/:id (задача 67, NIT)', () => {
+  beforeEach(() => {
+    usePlansStore.setState({ data: null, isLoading: false, error: null, decidingId: null });
+  });
+
+  function renderAt(path: string) {
+    return render(
+      <MantineProvider>
+        <MemoryRouter initialEntries={[path]}>
+          <Routes>
+            <Route path="/plans" element={<Plans />} />
+            <Route path="/plans/:id" element={<Plans />} />
+          </Routes>
+        </MemoryRouter>
+      </MantineProvider>,
+    );
+  }
+
+  it('/plans/11 открывает страницу планов и указывает на план #11', async () => {
+    server.use(http.get('*/api/plans', () => HttpResponse.json(plansResponse([sweepPlan]))));
+    renderAt('/plans/11');
+
+    expect(await screen.findByTestId('plan-11')).toBeInTheDocument();
+    expect(screen.getByTestId('plans-focus')).toHaveTextContent('План #11');
+    expect(screen.getByTestId('plans-focus')).toHaveTextContent('Ждут решения');
+  });
+
+  it('/plans/999 — план не найден среди последних', async () => {
+    server.use(http.get('*/api/plans', () => HttpResponse.json(plansResponse([sweepPlan]))));
+    renderAt('/plans/999');
+
+    expect(await screen.findByTestId('plans-focus')).toHaveTextContent('не найден');
   });
 });

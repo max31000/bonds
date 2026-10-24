@@ -22,7 +22,7 @@ public class TradePlanRepository : ITradePlanRepository
     private const string PlanColumns = @"
         id AS Id, user_id AS UserId, rule AS Rule, `trigger` AS `Trigger`, status AS Status, dry_run AS DryRun, created_at AS CreatedAt,
         expires_at AS ExpiresAt, decided_at AS DecidedAt, decided_via AS DecidedVia, bot_nonce AS BotNonce, cancel_requested AS CancelRequested,
-        CAST(summary_json AS CHAR) AS SummaryJson";
+        cash_hold_released_at AS CashHoldReleasedAt, CAST(summary_json AS CHAR) AS SummaryJson";
 
     private const string LineColumns = @"
         plan_id AS PlanId, line_no AS LineNo, broker AS Broker, account_id AS AccountId, instrument_key AS InstrumentKey, ticker AS Ticker,
@@ -115,11 +115,13 @@ public class TradePlanRepository : ITradePlanRepository
     {
         // Исполняемые/исполненные (Submitting, PartiallyDone, Done) + AutoApproved, ждущий исполнителя (dry_run = 0). AutoApproved dry-run НИКОГДА не исполняется —
         // его деньги не потрачены, в лимит он не входит. Внутри одного цикла раннер сам наращивает счётчик (PolicyRunner.CarryForward).
+        // Задача 67 (#12): с комиссией (est_fee строки), как PolicyKit.DecideStatus.
+        // Задача 67 (#10): только планы, решённые АВТОМАТИЧЕСКИ (decided_via = 'auto') — ручная покупка не съедает авто-лимит.
         using var conn = CreateConnection();
         return await conn.ExecuteScalarAsync<decimal>(
-            @"SELECT COALESCE(SUM(l.est_amount), 0)
+            @"SELECT COALESCE(SUM(l.est_amount + l.est_fee), 0)
               FROM trade_plans p JOIN trade_plan_lines l ON l.plan_id = p.id
-              WHERE p.user_id = @UserId AND p.decided_at >= @Since
+              WHERE p.user_id = @UserId AND p.decided_at >= @Since AND p.decided_via = 'auto'
                 AND (p.status IN ('Submitting', 'PartiallyDone', 'Done') OR (p.status = 'AutoApproved' AND p.dry_run = 0))
                 AND (@Exclude IS NULL OR p.id <> @Exclude)
                 AND l.side = 'Buy' AND l.currency = 'RUB'",
@@ -131,7 +133,7 @@ public class TradePlanRepository : ITradePlanRepository
         using var conn = CreateConnection();
         var plans = (await conn.QueryAsync<TradePlan>(
             $@"SELECT {PlanColumns} FROM trade_plans
-               WHERE user_id = @UserId AND decided_at >= @Since
+               WHERE user_id = @UserId AND decided_at >= @Since AND decided_via = 'auto'
                  AND (status IN ('Submitting', 'PartiallyDone', 'Done', 'Failed') OR (status = 'AutoApproved' AND dry_run = 0))
                ORDER BY id",
             new { UserId = userId, Since = sinceUtc })).ToList();
@@ -196,15 +198,84 @@ public class TradePlanRepository : ITradePlanRepository
         return affected > 0;
     }
 
-    public async Task<decimal> SumReservedBuysAsync(ulong userId, string broker, string currency, DateTime nowUtc)
+    public async Task<bool> RotateNonceAsync(ulong userId, ulong id, string expectedNonce, string newNonce)
+    {
+        // Сравнение-и-замена: из двух одновременных нажатий одной кнопки выигрывает одно; второе увидит уже другой nonce.
+        using var conn = CreateConnection();
+        var affected = await conn.ExecuteAsync(
+            @"UPDATE trade_plans SET bot_nonce = @New
+              WHERE id = @Id AND user_id = @UserId AND bot_nonce = @Expected AND status = 'PendingApproval'",
+            new { Id = id, UserId = userId, Expected = expectedNonce, New = newNonce });
+        return affected > 0;
+    }
+
+    public async Task<decimal> SumReservedBuysAsync(ulong userId, string broker, string currency, DateTime nowUtc, int withdrawHoldTtl = 3)
+    {
+        var hold = await GetCashHoldAsync(userId, broker, currency, nowUtc, withdrawHoldTtl);
+        return await SumReservedBuyOnlyAsync(userId, broker, currency, nowUtc) + hold.Amount;
+    }
+
+    public async Task<CashHoldState> GetCashHoldAsync(ulong userId, string broker, string currency, DateTime nowUtc, int withdrawHoldTtl)
+    {
+        // Кандидаты — планы вывода/выхода с удержанием, не снятым владельцем, у брокера портфеля (любая сторона строк); окно выборки с запасом на TTL
+        // (рабочие дни + выходные), точное решение — WithdrawHold.IsActive. План «только удержание» (задача 67, A2) строк не имеет — его брокер берём из
+        // summary.portfolio (CapitalPortfolios.BrokerOf).
+        using var conn = CreateConnection();
+        var since = nowUtc.AddDays(-(Math.Max(0, withdrawHoldTtl) * 2 + 14));
+        var plans = (await conn.QueryAsync<TradePlan>(
+            $@"SELECT {PlanColumns} FROM trade_plans p
+               WHERE p.user_id = @UserId AND p.rule IN @Rules AND p.status IN @Statuses AND p.cash_hold_released_at IS NULL AND p.created_at >= @Since
+                 AND (EXISTS (SELECT 1 FROM trade_plan_lines l WHERE l.plan_id = p.id AND l.broker = @Broker)
+                      OR NOT EXISTS (SELECT 1 FROM trade_plan_lines l WHERE l.plan_id = p.id))",
+            new { UserId = userId, Rules = WithdrawHold.Rules.ToArray(), Statuses = WithdrawHold.Statuses.ToArray(), Since = since, Broker = broker })).ToList();
+        var withLines = (await conn.QueryAsync<ulong>(
+            "SELECT DISTINCT plan_id FROM trade_plan_lines WHERE plan_id IN @Ids", new { Ids = plans.Select(p => p.Id).DefaultIfEmpty(0UL).ToArray() })).ToHashSet();
+
+        var amount = 0m;
+        var count = 0;
+        foreach (var plan in plans.Where(p => WithdrawHold.IsActive(p, nowUtc, withdrawHoldTtl)))
+        {
+            var summary = WithdrawHold.SummaryOf(plan);
+            if (summary is null || !string.Equals(summary.Currency, currency, StringComparison.OrdinalIgnoreCase)) continue;
+            if (!withLines.Contains(plan.Id)
+                && !string.Equals(Bonds.Core.Capital.CapitalPortfolios.BrokerOf(summary.Portfolio), broker, StringComparison.OrdinalIgnoreCase)) continue;
+            amount += summary.CashHold;
+            count++;
+        }
+
+        return new CashHoldState(amount, count);
+    }
+
+    public async Task<int> ReleaseCashHoldsAsync(ulong userId, DateTime nowUtc)
+    {
+        // Снимаем у ИСПОЛНЕННЫХ (Done/PartiallyDone, в т.ч. «только удержание») планов вывода/выхода, где удержание ещё не снято: «деньги выведены» — общее
+        // подтверждение владельца. Неисполненный план (Pending/Approved/Submitting) деньги ещё не освободил — его удержание остаётся (T-67E, minor 5).
+        using var conn = CreateConnection();
+        var ids = (await conn.QueryAsync<ulong>(
+            @"SELECT id FROM trade_plans
+              WHERE user_id = @UserId AND rule IN @Rules AND status IN @Statuses AND cash_hold_released_at IS NULL",
+            new { UserId = userId, Rules = WithdrawHold.Rules.ToArray(), Statuses = WithdrawHold.ReleasableStatuses.ToArray() })).ToList();
+        if (ids.Count == 0) return 0;
+
+        var candidates = (await conn.QueryAsync<TradePlan>($"SELECT {PlanColumns} FROM trade_plans WHERE id IN @Ids", new { Ids = ids })).ToList();
+        var holding = candidates.Where(p => WithdrawHold.AmountOf(p) > 0m).Select(p => p.Id).ToList();
+        if (holding.Count == 0) return 0;
+        return await conn.ExecuteAsync(
+            "UPDATE trade_plans SET cash_hold_released_at = @Now WHERE user_id = @UserId AND id IN @Ids AND cash_hold_released_at IS NULL",
+            new { Now = nowUtc, UserId = userId, Ids = holding });
+    }
+
+    private async Task<decimal> SumReservedBuyOnlyAsync(ulong userId, string broker, string currency, DateTime nowUtc)
     {
         // Строки хранятся в валюте ЦЕНЫ (EUR-строка Freedom, USD-комиссия и т.п.), складывать их напрямую нельзя: берём резерв из summary_json
         // (TradePlanSummary.ReservedBuy — уже в валюте ПОРТФЕЛЯ плана). План без поля (до введения) резервирует 0.
+        // Задача 67 (#2): живой Approved (dry_run = 0) тоже резервирует — он ждёт открытия торгов и утром отправит заявки на эти деньги.
         using var conn = CreateConnection();
         var summaries = await conn.QueryAsync<string?>(
             @"SELECT CAST(p.summary_json AS CHAR)
               FROM trade_plans p
-              WHERE p.user_id = @UserId AND p.status IN @Reserving AND p.expires_at > @Now
+              WHERE p.user_id = @UserId AND p.expires_at > @Now
+                AND (p.status IN @Reserving OR (p.status = 'Approved' AND p.dry_run = 0))
                 AND EXISTS (SELECT 1 FROM trade_plan_lines l WHERE l.plan_id = p.id AND l.side = 'Buy' AND l.broker = @Broker)",
             new { UserId = userId, Reserving = PlanStatuses.ReservingCash.ToArray(), Now = nowUtc, Broker = broker });
 
@@ -227,14 +298,20 @@ public class TradePlanRepository : ITradePlanRepository
     }
 
     public async Task<bool> TransitionAsync(
-        ulong userId, ulong id, IReadOnlyCollection<string> fromStatuses, string toStatus, string? decidedVia, DateTime decidedAtUtc, string? summaryJson)
+        ulong userId, ulong id, IReadOnlyCollection<string> fromStatuses, string toStatus, string? decidedVia, DateTime decidedAtUtc, string? summaryJson,
+        DateTime? notExpiredAt = null, bool? dryRun = null)
     {
         using var conn = CreateConnection();
         var affected = await conn.ExecuteAsync(
             @"UPDATE trade_plans
-              SET status = @To, decided_at = @DecidedAt, decided_via = @DecidedVia, summary_json = COALESCE(@SummaryJson, summary_json)
-              WHERE id = @Id AND user_id = @UserId AND status IN @From",
-            new { Id = id, UserId = userId, From = fromStatuses.ToArray(), To = toStatus, DecidedAt = decidedAtUtc, DecidedVia = decidedVia, SummaryJson = summaryJson });
+              SET status = @To, decided_at = @DecidedAt, decided_via = @DecidedVia, summary_json = COALESCE(@SummaryJson, summary_json),
+                  dry_run = COALESCE(@DryRun, dry_run)
+              WHERE id = @Id AND user_id = @UserId AND status IN @From AND (@NotExpiredAt IS NULL OR expires_at > @NotExpiredAt)",
+            new
+            {
+                Id = id, UserId = userId, From = fromStatuses.ToArray(), To = toStatus, DecidedAt = decidedAtUtc, DecidedVia = decidedVia, SummaryJson = summaryJson,
+                NotExpiredAt = notExpiredAt, DryRun = dryRun,
+            });
         return affected > 0;
     }
 

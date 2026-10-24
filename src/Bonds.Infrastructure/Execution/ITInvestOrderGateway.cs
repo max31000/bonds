@@ -13,6 +13,8 @@ public sealed record TInvestTradeAccount(string Id, bool FullAccess, bool Open);
 /// <see cref="Side"/> (<c>PlanSides</c> по <c>oper</c>: 1 — Buy, 3 — Sell, прочее — null), <see cref="LimitPrice"/> (<c>p</c>, валюта бумаги за штуку),
 /// <see cref="PlacedAtUtc"/> (<c>date</c> брокера, переведённая в UTC по <c>Freedom:OrderTimeUtcOffsetHours</c>). T-Invest их не заполняет.
 /// <see cref="MatchedByAttributes"/> — заявка опознана НЕ по номеру клиента, а по реквизитам (исполнитель шлёт об этом уведомление в бот).
+/// <see cref="BrokerStat"/> — код <c>stat</c> Tradernet; <see cref="FillsUnconfirmed"/> — окончательный код снятия без массива <c>trade</c> (T-67E, M1): исполненное
+/// неизвестно, статус — активный, пока адаптер Freedom не сверит сделки по <c>getTradesHistory</c>.
 /// </para>
 /// </summary>
 public sealed record GatewayOrderState(
@@ -30,7 +32,9 @@ public sealed record GatewayOrderState(
     string? Side = null,
     decimal? LimitPrice = null,
     DateTime? PlacedAtUtc = null,
-    bool MatchedByAttributes = false);
+    bool MatchedByAttributes = false,
+    int? BrokerStat = null,
+    bool FillsUnconfirmed = false);
 
 /// <summary>Статус торгов бумагой (<c>GetTradingStatus</c>).</summary>
 public sealed record GatewayTradingStatus(bool NormalTrading, bool LimitOrderAvailable, bool ApiTradeAvailable);

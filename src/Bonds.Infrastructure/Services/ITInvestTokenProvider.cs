@@ -25,6 +25,12 @@ public interface ITInvestTokenProvider
     /// персиста — см. plan/13 "Проблема"), не выполняя расшифровку дважды.
     /// </summary>
     Task<TInvestTokenStatus> GetTokenStatusAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// Задача 67 (#5): привязать провайдер (scoped: один экземпляр на DI-скоуп) к пользователю — дальше в этом скоупе токен (и клиент T-Invest, который
+    /// создаётся лениво по нему) берутся из <c>tinvest_read</c> ЭТОГО пользователя. Не вызван — прежнее поведение (основной пользователь).
+    /// </summary>
+    void UseUser(ulong userId);
 }
 
 /// <summary>Диагностический статус токена T-Invest для <see cref="ITInvestTokenProvider.GetTokenStatusAsync"/>.</summary>

@@ -121,6 +121,18 @@ public class CredentialsEndpointsTests
     }
 
     [Fact]
+    public async Task T67_Put_FieldLongerThan4096_Returns422_NotValidatedNorSaved()
+    {
+        // Задача 67 (#16): лимит длины поля секрета — 4096 символов (после trim) → 422, до валидатора и шифрования.
+        var (client, _) = await CreateClientAsync();
+
+        var put = await client.PutAsJsonAsync("/api/credentials/claude_code", new { fields = new { oauthToken = "sk-ant-oat01-" + new string('x', 4100) } });
+
+        put.StatusCode.Should().Be((HttpStatusCode)422);
+        (await put.Content.ReadAsStringAsync()).Should().Contain("4096");
+    }
+
+    [Fact]
     public async Task PutAndDelete_UnknownProvider_Returns404()
     {
         var (client, _) = await CreateClientAsync();

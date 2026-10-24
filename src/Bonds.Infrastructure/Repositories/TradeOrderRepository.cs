@@ -86,6 +86,16 @@ public class TradeOrderRepository : ITradeOrderRepository
             new { UserId = userId, Broker = broker })).ToList();
     }
 
+    public async Task<IReadOnlyList<TradeOrder>> ListByUserUpdatedSinceAsync(ulong userId, string broker, DateTime sinceUtc)
+    {
+        using var conn = CreateConnection();
+        return (await conn.QueryAsync<TradeOrder>(
+            $@"SELECT {Columns} FROM trade_orders
+               WHERE plan_id IN (SELECT id FROM trade_plans WHERE user_id = @UserId) AND broker = @Broker AND updated_at >= @Since
+               ORDER BY plan_id, line_no, attempt",
+            new { UserId = userId, Broker = broker, Since = sinceUtc })).ToList();
+    }
+
     public async Task<bool> IsBrokerOrderLinkedAsync(string broker, string brokerOrderId, ulong exceptOrderId)
     {
         using var conn = CreateConnection();

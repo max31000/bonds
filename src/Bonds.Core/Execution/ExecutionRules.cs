@@ -65,17 +65,16 @@ public static class OrderPricing
     /// (<c>est_amount</c> — сумма с НКД — плюс <c>est_fee</c>) пропорционально лотам и масштабированная вверх, если цена выше утверждённой
     /// (вниз не масштабируется — консервативно). Единицы цены сокращаются (пункты/пункты или рубли/рубли).
     /// </summary>
-    public static decimal RequiredMoney(TradePlanLine line, decimal brokerPrice, long lots) => Scaled(line, line.EstAmount + line.EstFee, brokerPrice, lots);
-
-    /// <summary>Сумма заявки без комиссии (<c>est_amount</c> пропорционально лотам, масштаб вверх при цене выше утверждённой) — для лимита авто на заявку, в валюте строки.</summary>
-    public static decimal OrderAmount(TradePlanLine line, decimal brokerPrice, long lots) => Scaled(line, line.EstAmount, brokerPrice, lots);
-
-    private static decimal Scaled(TradePlanLine line, decimal amount, decimal brokerPrice, long lots)
+    /// <remarks>
+    /// Та же сумма — «сумма заявки с комиссией» для лимита авто на заявку (в валюте строки, авто — только рублёвые строки), как в
+    /// <see cref="PolicyKit.DecideStatus"/> и суточной сумме (T-67D). Отдельного <c>OrderAmount</c> больше нет (T-67E, NIT: две одинаковые функции).
+    /// </remarks>
+    public static decimal RequiredMoney(TradePlanLine line, decimal brokerPrice, long lots)
     {
         if (line.QuantityLots <= 0) return 0m;
         var approved = ApprovedLimit(line);
         var priceFactor = approved > 0m ? Math.Max(1m, brokerPrice / approved) : 1m;
-        return amount * lots / line.QuantityLots * priceFactor;
+        return (line.EstAmount + line.EstFee) * lots / line.QuantityLots * priceFactor;
     }
 
     /// <summary>Порядок отправки строк: сначала продажи (освобождают деньги), затем покупки; внутри — по номеру строки.</summary>
@@ -125,7 +124,7 @@ public sealed record PreflightInput
     /// <summary>Только для <c>AutoApproved</c>: лимит ОДНОЙ заявки, рубли (<see cref="ExecutionLimitsOptions.AutoPerOrderRub"/>). null — план не авто.</summary>
     public decimal? AutoPerOrderRub { get; init; }
 
-    /// <summary>Сумма этой заявки по её цене (оценка строки пропорционально лотам, масштабированная вверх при цене выше утверждённой), в валюте строки, без комиссии.</summary>
+    /// <summary>Сумма этой заявки по её цене С КОМИССИЕЙ (<see cref="OrderPricing.RequiredMoney"/>), в валюте строки (для авто — рубли).</summary>
     public decimal OrderAmount { get; init; }
 
     public bool Paused { get; init; }
@@ -179,7 +178,7 @@ public static class PreflightChecks
             if (i.AvailableMoney is null || i.AvailableMoney.Value < i.RequiredMoney)
                 return new(InsufficientFunds, string.Create(CultureInfo.InvariantCulture, $"Не хватает денег: нужно {i.RequiredMoney:0.##}, свободно {(i.AvailableMoney ?? 0m):0.##}"));
             if (i.AutoPerOrderRub is { } cap && i.OrderAmount > cap)
-                return new(AutoOrderLimit, string.Create(CultureInfo.InvariantCulture, $"Лимит авто-исполнения на заявку: {i.OrderAmount:0.##} ₽ больше {cap:0.##} ₽"));
+                return new(AutoOrderLimit, string.Create(CultureInfo.InvariantCulture, $"Лимит авто-исполнения на заявку: {i.OrderAmount:0.##} ₽ с комиссией больше {cap:0.##} ₽"));
             if (i.AutoUsedTodayRub is { } used && used + i.AutoPlanBuysRub > i.AutoPerDayRub)
                 return new(AutoDayLimit, string.Create(CultureInfo.InvariantCulture, $"Суточный лимит авто-исполнения: уже {used:0.##} ₽ + план {i.AutoPlanBuysRub:0.##} ₽ больше {i.AutoPerDayRub:0.##} ₽"));
         }
@@ -237,7 +236,8 @@ public static class PlanExecutionOutcome
 
 /// <summary>
 /// Суточный лимит авто-исполнения по ФАКТУ (задача 65, ревью): исполненное — <c>lots_filled × lot_size × avg_fill_price</c> (рубли, цена ОДНОЙ штуки), ещё не
-/// завершённое (план ждёт исполнителя или строка в работе) — оценка <c>est_amount</c> пропорционально неисполненным лотам. Только покупки в RUB.
+/// завершённое (план ждёт исполнителя или строка в работе) — оценка <c>est_amount</c> пропорционально неисполненным лотам. Только покупки в RUB и только планы
+/// с <c>decided_via = auto</c> (задача 67, #10: ручное подтверждение лимит авто не расходует).
 /// </summary>
 public static class AutoDayUsage
 {
@@ -250,14 +250,15 @@ public static class AutoDayUsage
         foreach (var plan in plans)
         {
             if (excludePlanId is { } exclude && plan.Id == exclude) continue;
+            if (!string.Equals(plan.DecidedVia, DecidedVia.Auto, StringComparison.Ordinal)) continue; // задача 67 (#10): ручные планы авто-лимит не тратят
             var planTerminal = TerminalPlans.Contains(plan.Status);
             foreach (var line in plan.Lines.Where(l => l.Side == PlanSides.Buy && IsRub(l.Currency)))
             {
                 var lineOrders = byPlan[plan.Id].Where(o => o.LineNo == line.LineNo).ToList();
-                total += FilledAmount(line, lineOrders);
+                total += FilledAmount(line, lineOrders) + FilledCommissionRub(lineOrders);
                 var state = LineExecutionState.From(line, lineOrders);
                 if (!planTerminal && !state.Terminal && line.QuantityLots > 0)
-                    total += line.EstAmount * state.RemainingLots / line.QuantityLots;
+                    total += (line.EstAmount + line.EstFee) * state.RemainingLots / line.QuantityLots; // задача 67 (#12): лимит — с комиссией
             }
         }
 
@@ -268,6 +269,10 @@ public static class AutoDayUsage
     public static decimal FilledAmount(TradePlanLine line, IEnumerable<TradeOrder> orders) =>
         orders.Where(o => o.LotsFilled > 0).Sum(o => o.LotsFilled * line.LotSize * (o.AvgFillPrice ?? line.LimitPrice));
 
+    /// <summary>Фактическая комиссия исполненных заявок строки в рублях (валюта комиссии не указана = валюта строки, т.е. рубли).</summary>
+    public static decimal FilledCommissionRub(IEnumerable<TradeOrder> orders) =>
+        orders.Where(o => o.LotsFilled > 0 && (o.CommissionCurrency is null || IsRub(o.CommissionCurrency))).Sum(o => Math.Abs(o.ExecutedCommission ?? 0m));
+
     private static bool IsRub(string currency) => currency.Trim().ToUpperInvariant() is "RUB" or "RUR";
 }
 
@@ -275,27 +280,40 @@ public static class AutoDayUsage
 /// Повторная проверка <c>AutoApproved</c>-плана в момент исполнения (ревью задачи 65): то же, что разрешило авто-подтверждение (<see cref="PolicyKit.DecideStatus"/>),
 /// на ТЕКУЩИХ настройках — только покупки в RUB, не облигации, каждая строка ≤ лимита на заявку, бумага — член (правило «instrument», T-Invest) корзины с
 /// включённой авто-покупкой (дизайн §5: белый список — фонды корзины «Ликвидность»; авто-покупку корзин включает только владелец).
+/// Задача 67 (#1): белый список — В КОДЕ (<see cref="AutoWhitelist"/>): корзина обязана иметь код <c>liquidity</c>, бумага — фонд T-Invest по метаданным торгов
+/// (метаданные есть, цена не в пунктах) без выплат (<c>pays_distributions = false</c>) либо из <see cref="PolicyOptions.AutoFundWhitelist"/>. Исполнитель
+/// вызывает проверку для ЛЮБОГО плана в статусе <c>AutoApproved</c> или с <c>decided_via = auto</c> (подделанный в БД статус не обходит её).
 /// </summary>
 public static class AutoExecutionWhitelist
 {
-    /// <summary>null — план можно исполнять как авто; иначе причина отказа.</summary>
-    public static string? Check(TradePlan plan, IReadOnlyCollection<CapitalBasket> baskets, decimal autoPerOrderRub)
+    /// <summary>
+    /// null — план можно исполнять как авто; иначе причина отказа. <paramref name="metaOf"/> — метаданные торгов строки (null — неизвестна: отказ);
+    /// <paramref name="policy"/> — конфиг-список фондов (по умолчанию пустой).
+    /// </summary>
+    public static string? Check(
+        TradePlan plan, IReadOnlyCollection<CapitalBasket> baskets, decimal autoPerOrderRub,
+        Func<TradePlanLine, InstrumentTradingMeta?> metaOf, PolicyOptions? policy = null)
     {
-        var allowed = baskets.Where(b => b.AutoBuy)
-            .SelectMany(b => b.Members)
-            .Where(m => m.MatchRule == BasketMatchRules.Instrument && string.Equals(m.Broker, Bonds.Core.Models.Brokers.TInvest, StringComparison.OrdinalIgnoreCase))
-            .Select(m => m.InstrumentKey)
-            .ToList();
+        policy ??= new PolicyOptions();
+        if (plan.Lines.Count == 0) return "в плане нет строк";
         foreach (var line in plan.Lines)
         {
             if (line.Side != PlanSides.Buy) return $"авто-исполнение — только покупки ({line.Ticker})";
+            if (!string.Equals(line.Broker?.Trim(), Bonds.Core.Models.Brokers.TInvest, StringComparison.OrdinalIgnoreCase))
+                return $"авто-исполнение — только T-Invest ({line.Ticker})";
             if (!string.Equals(line.Currency.Trim(), "RUB", StringComparison.OrdinalIgnoreCase)) return $"авто-исполнение — только рубли ({line.Ticker})";
             if (OrderPricing.IsPointsPriced(line)) return $"облигации исполняются только после подтверждения ({line.Ticker})";
-            if (line.EstAmount > autoPerOrderRub)
-                return string.Create(CultureInfo.InvariantCulture, $"заявка {line.Ticker} на {line.EstAmount:0.##} ₽ больше лимита авто {autoPerOrderRub:0.##} ₽");
-            var keys = new[] { BasketDriftService.NormalizeKey(line.InstrumentKey), BasketDriftService.NormalizeKey(line.Ticker) };
-            if (!allowed.Any(m => keys.Any(k => BasketDriftService.KeyMatches(m, k))))
-                return $"бумага {line.Ticker} не входит в корзину с авто-покупкой";
+            // T-67D: с комиссией — как PolicyKit.DecideStatus (строка рублёвая, проверено выше, поэтому est_amount + est_fee — рубли).
+            var withFee = line.EstAmount + line.EstFee;
+            if (withFee > autoPerOrderRub)
+                return string.Create(CultureInfo.InvariantCulture, $"заявка {line.Ticker} на {withFee:0.##} ₽ с комиссией больше лимита авто {autoPerOrderRub:0.##} ₽");
+            if (!AutoWhitelist.IsLiquidityMember(baskets, line.InstrumentKey, line.Ticker))
+                return $"бумага {line.Ticker} не входит в корзину с авто-покупкой «{AutoWhitelist.BasketCode}»";
+
+            // Класс «фонд»: у T-Invest в метаданных торгов только облигации (шаг в пунктах) и фонды (EtfBy) — метаданные есть и цена не в пунктах.
+            var meta = metaOf(line);
+            if (meta is null || meta.MinPriceIncrementPoints is > 0m) return $"бумага {line.Ticker} не фонд по метаданным торгов — авто только для фондов";
+            if (AutoWhitelist.DistributionsRejection(line.Ticker, meta.PaysDistributions, policy) is { } distributions) return distributions;
         }
 
         return null;

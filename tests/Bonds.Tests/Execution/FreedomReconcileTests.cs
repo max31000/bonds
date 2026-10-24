@@ -78,7 +78,9 @@ public class FreedomReconcileTests
     {
         _gateway.Quotes["VUAA.EU"] = new FreedomMarketQuote(147.6m, 147.8m, 0.01m, "USD");
         var order = Ours();
-        Broker("900000001", p: 147.704m, userOrderId: "api:1792763201"); // в пределах шаг/2; авто-id брокера (наш номер не принят) — может быть нашей
+        // В пределах шаг/2; авто-id брокера (наш номер не принят) = unix-секунда запроса (+1 с от записи) — может быть нашей.
+        Broker("900000001", p: 147.704m, userOrderId: "api:" + new DateTimeOffset(CreatedAt.AddSeconds(1)).ToUnixTimeSeconds());
+        Broker("900000011", userOrderId: "api:" + new DateTimeOffset(CreatedAt.AddMinutes(-10)).ToUnixTimeSeconds()); // T-67E: заявка API с другой секундой (CLI владельца)
         Broker("900000002", ticker: "SPYM.US");
         Broker("900000003", side: PlanSides.Sell);
         Broker("900000004", q: 2);

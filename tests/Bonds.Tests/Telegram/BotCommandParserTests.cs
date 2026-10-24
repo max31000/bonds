@@ -14,6 +14,7 @@ public class BotCommandParserTests
     [InlineData("/STATUS@MyBonds_bot", BotCommandKind.Status)]
     [InlineData("  /plans  ", BotCommandKind.Plans)]
     [InlineData("/stop", BotCommandKind.Stop)]
+    [InlineData("/withdrawn", BotCommandKind.Withdrawn)]
     [InlineData("/resume", BotCommandKind.Resume)]
     public void SimpleCommands(string text, BotCommandKind kind) => BotCommandParser.Parse(text).Kind.Should().Be(kind);
 

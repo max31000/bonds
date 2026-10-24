@@ -100,7 +100,7 @@ public class FreedomLiveCheckTests
             FreedomExecutionVenue.ReconcileWindowAfter, "date − смещение пояса = момент выставления; иначе смещение неверно");
 
         // Ручная заявка терминала/приложения (userOrderId вида «i-6:ios:…», «web:…») НЕ должна усыновляться сервисом по реквизитам; пустой/api — должна.
-        var mayAdopt = FreedomOrderRules.MayBeOursByAttributes(mine.ClientOrderId, row.ClientOrderId);
+        var mayAdopt = FreedomOrderRules.MayBeOursByAttributes(mine.ClientOrderId, row.ClientOrderId, row.CreatedAt);
         var reconciled = await venue.StateAsync(session, UserId, row, line, true, CancellationToken.None);
         _out.WriteLine($"userOrderId {mine.ClientOrderId ?? "null"}: по правилам {(mayAdopt ? "может быть нашей" : "чужая (ручная)")}, сверка без id — " +
                        (reconciled is null ? "НЕ опознана" : $"опознана как {reconciled.BrokerOrderId} (по реквизитам: {reconciled.MatchedByAttributes})"));

@@ -23,6 +23,8 @@ public static class LinePricer
 
     private static readonly PolicyOptions DefaultOptions = new();
 
+    public const string PriceBelowStepReason = "цена меньше шага цены — заявку не построить";
+
     /// <summary>
     /// Санити-проверка стакана до построения цены: перевёрнутый (ask &lt; bid), слишком широкий спред ((ask−bid)/mid &gt; <see cref="PolicyOptions.MaxSpreadFraction"/>,
     /// для облигаций <see cref="PolicyOptions.MaxBondSpreadFraction"/>) или mid далеко от последней сделки (|mid−last|/last &gt; <see cref="PolicyOptions.MaxLastDeviationFraction"/>,
@@ -70,14 +72,22 @@ public static class LinePricer
             }
 
             var points = RoundToStep(mid, q.PriceStepPoints.Value, side);
+            if (points <= 0m)
+            {
+                skipReason = PriceBelowStepReason;
+                return null;
+            }
+
             decimal clean;
             if (q.NominalRub is > 0m)
             {
                 clean = points / 100m * q.NominalRub.Value;
             }
-            else if (q.ReferenceCleanPricePerPiece is > 0m)
+            else if (q.ReferenceCleanPricePerPiece is > 0m && q.FxToPortfolio > 0m)
             {
-                clean = q.ReferenceCleanPricePerPiece.Value; // номинал не в рублях: сумма — оценка по последней известной цене
+                // Номинал не в рублях: сумма — оценка по последней известной цене. Ориентир — в ВАЛЮТЕ ПОРТФЕЛЯ (рубли), строка и стакан — в валюте цены:
+                // делим на курс ОДИН раз (задача 67, #8: иначе CNY-облигация при Fx = 12.5 оценивалась в 12.5 раза дороже и продавалось в 12.5 раза меньше бумаг).
+                clean = q.ReferenceCleanPricePerPiece.Value / q.FxToPortfolio;
             }
             else
             {
@@ -95,6 +105,13 @@ public static class LinePricer
         }
 
         var price = RoundToStep(mid, q.PriceStep.Value, side);
+        if (price <= 0m)
+        {
+            // Задача 67 (NIT): mid меньше шага — покупка округляется вниз до 0: «бесплатный» лот зациклил бы добор лотов (BuyMembers).
+            skipReason = PriceBelowStepReason;
+            return null;
+        }
+
         return new PricedQuote(price, null, price);
     }
 }
@@ -230,7 +247,7 @@ internal static class PolicyKit
             {
                 var (_, q, p, _) = eligible[i];
                 var next = CostWithFee(input, q, p, lots[i] + 1) - spent[i];
-                if (next > left) continue;
+                if (next <= 0m || next > left) continue; // задача 67 (NIT): нулевая стоимость лота — не добираем (иначе бесконечный цикл)
                 var gap = budget * weights[i] - spent[i];
                 if (gap > bestGap)
                 {
@@ -266,12 +283,18 @@ internal static class PolicyKit
         return (amount + fee) * q.FxToPortfolio;
     }
 
+    /// <summary>Пометка строки P3b, когда у эмитента нет свежего рейтинга (кандидат допущен без проверки «не ниже A»).</summary>
+    public const string RatingNotSpecifiedNote = "рейтинг не указан";
+
     /// <summary>
     /// Покупка облигаций-кандидатов на <paramref name="budget"/> рублей через <see cref="CashAllocationService.Allocate"/> (источник «recommended»: ось сектора,
     /// не больше <see cref="PolicyOptions.MaxBondLotsPerCandidate"/> лотов на бумагу) с РЕАЛЬНЫМ лотом и ценой по стакану. Кандидат без стакана пропускается.
     /// </summary>
+    /// <param name="requireRatingAtLeastA">P3b (дизайн §4): эмитенты со свежим рейтингом ниже A исключаются; без свежего рейтинга — допускаются с пометкой
+    /// «рейтинг не указан» (<see cref="PolicyBondCandidate.IssuerRatingAtLeastA"/>).</param>
     public static List<TradePlanLine> BuyBonds(
-        PolicyInput input, decimal budget, decimal? minAfterTaxYield, string reasonPrefix, List<PlanSkip> skipped, bool applyIssuerLimit)
+        PolicyInput input, decimal budget, decimal? minAfterTaxYield, string reasonPrefix, List<PlanSkip> skipped, bool applyIssuerLimit,
+        bool requireRatingAtLeastA = false)
     {
         if (budget <= 0m) return [];
 
@@ -279,6 +302,14 @@ internal static class PolicyKit
         var byKey = new Dictionary<string, (PolicyBondCandidate Cand, PolicyQuote Quote, PricedQuote Price)>(StringComparer.Ordinal);
         foreach (var cand in input.BondCandidates)
         {
+            // Решение владельца (T-67D): свежий рейтинг есть — он должен быть не ниже A; свежего рейтинга нет (null) — кандидат ДОПУСКАЕТСЯ (прочие фильтры
+            // остаются: доходность, ликвидность/стакан, лимит эмитента, премия), а в причине строки пишется «рейтинг не указан».
+            if (requireRatingAtLeastA && cand.IssuerRatingAtLeastA == false)
+            {
+                skipped.Add(new PlanSkip(cand.Secid, "рейтинг эмитента ниже A — для перелива ликвидности нужен не ниже A"));
+                continue;
+            }
+
             if (minAfterTaxYield is { } floor && (cand.AfterTaxYieldFraction is not { } at || at < floor))
             {
                 skipped.Add(new PlanSkip(cand.Secid, $"доходность после налога ниже порога {floor:P2}"));
@@ -379,7 +410,8 @@ internal static class PolicyKit
             if (cand.IssuerKey is not null) plannedByIssuer[cand.IssuerKey] = plannedByIssuer.GetValueOrDefault(cand.IssuerKey) + lots * perLotRub;
 
             var yieldText = cand.AfterTaxYieldFraction is { } y ? $", после налога {y:P2} годовых" : string.Empty;
-            lines.Add(BuildLine(input, q, p, PlanSides.Buy, lots, $"{reasonPrefix}: кандидат {cand.Name}{yieldText}"));
+            var ratingText = requireRatingAtLeastA && cand.IssuerRatingAtLeastA is null ? $", {RatingNotSpecifiedNote}" : string.Empty;
+            lines.Add(BuildLine(input, q, p, PlanSides.Buy, lots, $"{reasonPrefix}: кандидат {cand.Name}{yieldText}{ratingText}"));
         }
 
         return lines;
@@ -436,24 +468,26 @@ internal static class PolicyKit
     /// <summary>
     /// Статус плана по лимитам авто-подтверждения. <c>AutoApproved</c>, только если <paramref name="autoAllowed"/> и ВСЕ строки — покупки, каждая заявка
     /// ≤ <see cref="ExecutionLimitsOptions.AutoPerOrderRub"/> и Σ плана + уже авто-подтверждённое за сутки ≤ <see cref="ExecutionLimitsOptions.AutoPerDayRub"/>.
-    /// Freedom: только при <see cref="ExecutionLimitsOptions.FreedomAutoUsd"/> &gt; 0 и заявке не выше него. Иначе <c>PendingApproval</c>.
+    /// Суммы — В РУБЛЯХ (валюта цены × курс) и С КОМИССИЕЙ (<see cref="WithFeeInPortfolio"/>, задача 67 #12).
+    /// Задача 67 (#1): КАЖДАЯ строка обязана пройти белый список в коде (<see cref="AutoWhitelist.LineRejection"/>: фонд T-Invest без выплат из корзины
+    /// «liquidity»), флаги корзин его только сужают. Freedom авто-подтверждения не имеет вовсе: белый список отклоняет любую строку не T-Invest (T-67E: прежняя
+    /// ветка с <see cref="ExecutionLimitsOptions.FreedomAutoUsd"/> была недостижима и удалена; исполнитель Freedom к тому же исполняет только ручные планы).
     /// </summary>
     public static string DecideStatus(PolicyInput input, IReadOnlyList<TradePlanLine> lines, bool autoAllowed)
     {
         if (!autoAllowed || lines.Count == 0 || lines.Any(l => l.Side != PlanSides.Buy)) return PlanStatuses.PendingApproval;
+        if (lines.Any(l => AutoWhitelist.LineRejection(input, l) is not null)) return PlanStatuses.PendingApproval;
 
-        if (input.Broker == BrokerIds.Freedom)
-        {
-            var limit = input.Limits.FreedomAutoUsd;
-            if (limit <= 0m) return PlanStatuses.PendingApproval;
-            return lines.All(l => l.EstAmount <= limit) ? PlanStatuses.AutoApproved : PlanStatuses.PendingApproval;
-        }
-
+        // Задача 67 (#12): лимиты сравниваются с суммой заявки В ВАЛЮТЕ ПОРТФЕЛЯ (рубли T-Invest, доллары Freedom) — строка в валюте цены × курс — и С КОМИССИЕЙ:
+        // фонд в юанях на 2 400 CNY — это 30 000 ₽, а не «2 400 ≤ 25 000»; заявка 25 000 ₽ + 75 ₽ комиссии лимит 25 000 ₽ превышает.
         if (!string.Equals(input.Currency, "RUB", StringComparison.OrdinalIgnoreCase)) return PlanStatuses.PendingApproval;
-        if (lines.Any(l => l.EstAmount > input.Limits.AutoPerOrderRub)) return PlanStatuses.PendingApproval;
-        var total = lines.Sum(l => l.EstAmount);
+        if (lines.Any(l => WithFeeInPortfolio(input, l) > input.Limits.AutoPerOrderRub)) return PlanStatuses.PendingApproval;
+        var total = lines.Sum(l => WithFeeInPortfolio(input, l));
         return input.AutoApprovedTodayRub + total <= input.Limits.AutoPerDayRub ? PlanStatuses.AutoApproved : PlanStatuses.PendingApproval;
     }
+
+    /// <summary>Сумма строки с комиссией в валюте ПОРТФЕЛЯ: (<c>EstAmount</c> + <c>EstFee</c>) в валюте цены × <see cref="PolicyQuote.FxToPortfolio"/> (задача 67, #12).</summary>
+    public static decimal WithFeeInPortfolio(PolicyInput input, TradePlanLine line) => (line.EstAmount + line.EstFee) * FxOf(input, line);
 
     /// <summary>Срок жизни плана: TTL, но не позже закрытия ближайшей сессии рынков строк (если рынок открыт и часы учитываются).</summary>
     public static DateTime ExpiresAt(PolicyInput input, IEnumerable<TradePlanLine> lines)
@@ -476,7 +510,8 @@ internal static class PolicyKit
     /// <summary>Собирает черновик плана: статус, срок, итоги (деньги до/после, комиссия, налог).</summary>
     public static PolicyOutcome Finish(
         PolicyInput input, string rule, string trigger, List<TradePlanLine> lines, bool autoAllowed, List<PlanSkip> skipped,
-        List<string> notes, List<string>? warnings = null, decimal? requestedNet = null, decimal? shortfall = null)
+        List<string> notes, List<string>? warnings = null, decimal? requestedNet = null, decimal? shortfall = null, decimal? cashHold = null,
+        bool holdSaleProceeds = false)
     {
         if (lines.Count == 0)
         {
@@ -492,6 +527,8 @@ internal static class PolicyKit
         var reservedBuy = lines.Where(l => l.Side == PlanSides.Buy).Sum(l => (l.EstAmount + l.EstFee) * FxOf(input, l)); // валюта портфеля
         var tax = lines.Sum(l => l.EstTax * FxOf(input, l));
         var cashAfter = input.FreeCash - buy + sell - fee - tax;
+        // Удержание под вывод (задача 67, #3), валюта портфеля: явная сумма (P5) или чистая выручка продаж (выход из корзины).
+        var hold = Math.Max(0m, cashHold ?? (holdSaleProceeds ? sell - fee - tax : 0m));
 
         var summary = new TradePlanSummary
         {
@@ -507,6 +544,7 @@ internal static class PolicyKit
             RequestedNet = requestedNet,
             NetToWithdraw = requestedNet is null ? null : cashAfter,
             Shortfall = shortfall,
+            CashHold = hold,
             Warnings = warnings ?? [],
             Notes = notes,
             Skipped = skipped,
@@ -516,6 +554,30 @@ internal static class PolicyKit
 
         var status = DecideStatus(input, lines, autoAllowed);
         return new PolicyOutcome(new TradePlanDraft(rule, trigger, status, ExpiresAt(input, lines), lines, summary), notes);
+    }
+
+    /// <summary>
+    /// План «только удержание» (задача 67, A2): без строк, <see cref="TradePlanSummary.CashHold"/> = <paramref name="hold"/> (валюта портфеля), всегда
+    /// <c>PendingApproval</c>. Заявок нет — подтверждение (<c>PolicyService.ApproveAsync</c>) сразу переводит его в <c>Done</c>.
+    /// </summary>
+    public static PolicyOutcome FinishHoldOnly(PolicyInput input, string rule, string trigger, decimal hold, List<string> notes, List<string>? warnings = null)
+    {
+        var summary = new TradePlanSummary
+        {
+            Portfolio = input.Portfolio,
+            Currency = input.Currency,
+            CashBefore = input.FreeCash,
+            CashAfter = input.FreeCash,
+            RequestedNet = hold,
+            NetToWithdraw = hold,
+            CashHold = Math.Max(0m, hold),
+            Warnings = warnings ?? [],
+            Notes = notes,
+            Skipped = [],
+            ExecutionNote = "удержание под вывод: заявок нет",
+        };
+        return new PolicyOutcome(
+            new TradePlanDraft(rule, trigger, PlanStatuses.PendingApproval, input.NowUtc + input.Options.PendingTtl, [], summary), notes);
     }
 
     private static decimal FxOf(PolicyInput input, TradePlanLine line) =>

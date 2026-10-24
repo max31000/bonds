@@ -20,7 +20,14 @@ public sealed record CapitalPortfolioOverview(
     decimal FreeCash,
     decimal TargetsSum,
     bool DataIncomplete,
-    DateTime? SyncedAtUtc);
+    DateTime? SyncedAtUtc)
+{
+    /// <summary>
+    /// Задача 67 (#7): ключи позиций без цены/курса (как <c>CapitalPosition.Key</c>) и <see cref="SystemBaskets.Cash"/>, если не определена сумма свободных денег.
+    /// По ним правила понимают, какой корзины касается неполнота (<c>PolicyInput.IncompleteBaskets</c>).
+    /// </summary>
+    public IReadOnlyList<string> IncompleteKeys { get; init; } = [];
+}
 
 /// <summary>
 /// Задача 62: собирает позиции каждого портфеля в его ВАЛЮТЕ и считает отклонения корзин. Только существующие точки истины:
@@ -116,21 +123,30 @@ public sealed class CapitalOverviewBuilder
 
         return new CapitalPortfolioOverview(
             portfolio, CapitalPortfolios.CurrencyOf(portfolio), true, baskets,
-            BasketDriftService.Calculate(baskets, valued.Positions, valued.FreeCash), valued.FreeCash, targetsSum, valued.Incomplete, valued.SyncedAt);
+            BasketDriftService.Calculate(baskets, valued.Positions, valued.FreeCash), valued.FreeCash, targetsSum, valued.Incomplete, valued.SyncedAt)
+        {
+            IncompleteKeys = valued.IncompleteKeys,
+        };
     }
 
-    private sealed record Valued(List<CapitalPosition> Positions, decimal FreeCash, bool Incomplete, DateTime? SyncedAt);
+    private sealed record Valued(List<CapitalPosition> Positions, decimal FreeCash, bool Incomplete, DateTime? SyncedAt, List<string> IncompleteKeys);
 
     private async Task<Valued> BuildRubAsync(Account account, CancellationToken ct, DateOnly asOf)
     {
         var positions = new List<CapitalPosition>();
         var incomplete = false;
+        var incompleteKeys = new List<string>();
 
         foreach (var h in (await _holdings.BuildForAccountAsync(account.Id, asOf, ct)).Where(h => h.Quantity > 0m))
         {
-            if (h.MarketValueRub <= 0m) incomplete = true; // нет котировки — позиция в списке, но вклада нет
-            positions.Add(new CapitalPosition(
-                Brokers.TInvest, h.Isin ?? $"instrument:{h.InstrumentId}", CapitalAssetClasses.Bond, h.Name ?? h.Issuer ?? h.Isin ?? "Облигация", h.MarketValueRub));
+            var key = h.Isin ?? $"instrument:{h.InstrumentId}";
+            if (h.MarketValueRub <= 0m)
+            {
+                incomplete = true; // нет котировки — позиция в списке, но вклада нет
+                incompleteKeys.Add(key);
+            }
+
+            positions.Add(new CapitalPosition(Brokers.TInvest, key, CapitalAssetClasses.Bond, h.Name ?? h.Issuer ?? h.Isin ?? "Облигация", h.MarketValueRub));
         }
 
         foreach (var p in (await _fundPositions.GetByAccountAsync(account.Id)).Where(p => p.Quantity > 0m))
@@ -139,10 +155,14 @@ public sealed class CapitalOverviewBuilder
             var fund = await _funds.GetByIdAsync(p.FundId);
             if (fund is null) continue;
             var price = await _income.ResolveFundPriceAsync(p, p.FundId, ct);
-            if (price is null) incomplete = true;
-            positions.Add(new CapitalPosition(
-                Brokers.TInvest, string.IsNullOrWhiteSpace(fund.Ticker) ? fund.Isin : fund.Ticker, CapitalAssetClasses.Fund,
-                fund.Name ?? fund.Ticker ?? fund.Isin, (price ?? 0m) * p.Quantity));
+            var fundKey = string.IsNullOrWhiteSpace(fund.Ticker) ? fund.Isin : fund.Ticker;
+            if (price is null)
+            {
+                incomplete = true;
+                incompleteKeys.Add(fundKey);
+            }
+
+            positions.Add(new CapitalPosition(Brokers.TInvest, fundKey, CapitalAssetClasses.Fund, fund.Name ?? fund.Ticker ?? fund.Isin, (price ?? 0m) * p.Quantity));
         }
 
         var currencyValueRub = 0m;
@@ -152,7 +172,14 @@ public sealed class CapitalOverviewBuilder
             var currency = await _currencies.GetByIdAsync(p.CurrencyId);
             if (currency is null) continue;
             var price = await _income.ResolveCurrencyPriceAsync(p, p.CurrencyId, ct);
-            if (price is null) incomplete = true;
+            if (price is null)
+            {
+                // Без курса валюты её не вычесть из cash_rub брокера: не определены ни позиция, ни сумма свободных рублей.
+                incomplete = true;
+                incompleteKeys.Add(currency.IsoCode.ToUpperInvariant());
+                incompleteKeys.Add(SystemBaskets.Cash);
+            }
+
             var value = (price ?? 0m) * p.Quantity;
             currencyValueRub += value;
             positions.Add(new CapitalPosition(Brokers.TInvest, currency.IsoCode.ToUpperInvariant(), CapitalAssetClasses.Currency, currency.IsoCode.ToUpperInvariant(), value));
@@ -160,7 +187,7 @@ public sealed class CapitalOverviewBuilder
 
         var freeCash = account.CashRub is { } cashRub ? CashBreakdown.CashRubOnly(cashRub, currencyValueRub) : 0m;
         DateTime? synced = account.BalanceSyncedAt is { } s ? DateTime.SpecifyKind(s, DateTimeKind.Utc) : null;
-        return new Valued(positions, freeCash, incomplete, synced);
+        return new Valued(positions, freeCash, incomplete, synced, incompleteKeys);
     }
 
     private async Task<Valued> BuildUsdAsync(Account account, DateOnly asOf, CancellationToken ct)
@@ -177,10 +204,16 @@ public sealed class CapitalOverviewBuilder
         }
 
         var positions = new List<CapitalPosition>();
-        foreach (var v in holdings.Positions.Where(v => v.Position.Quantity > 0m))
+        var incompleteKeys = new List<string>();
+        foreach (var v in holdings.Positions.Where(v => v.Position.Quantity != 0m)) // задача 67 (#14): шорт (qty < 0) входит с отрицательной стоимостью
         {
             var usd = ToUsd(v.Position.Currency, v.MarketValue, v.MarketValueRub);
-            if (usd is null) incomplete = true;
+            if (usd is null)
+            {
+                incomplete = true;
+                incompleteKeys.Add(v.Position.Ticker);
+            }
+
             positions.Add(new CapitalPosition(Brokers.Freedom, v.Position.Ticker, v.Position.AssetClass, v.Position.Name, usd ?? 0m));
         }
 
@@ -188,10 +221,17 @@ public sealed class CapitalOverviewBuilder
         foreach (var c in holdings.Cash)
         {
             var usd = ToUsd(c.Cash.Currency, c.Cash.Amount, c.AmountRub);
-            if (usd is null) incomplete = true;
-            else freeCash += usd.Value;
+            if (usd is null)
+            {
+                incomplete = true;
+                incompleteKeys.Add(SystemBaskets.Cash);
+            }
+            else
+            {
+                freeCash += usd.Value;
+            }
         }
 
-        return new Valued(positions, freeCash, incomplete, holdings.SyncedAtUtc);
+        return new Valued(positions, freeCash, incomplete, holdings.SyncedAtUtc, incompleteKeys);
     }
 }

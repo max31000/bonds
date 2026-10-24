@@ -53,6 +53,29 @@ public class SyncCycleServiceTests
     private readonly Mock<IInstrumentRiskLevelRepository> _riskLevels = new();
     private readonly Mock<IBondUniverseRepository> _universe = new();
     private readonly Mock<ISecurityDetailsRepository> _securityDetails = new();
+    private Mock<IUserCredentialRepository>? _credentialRecords;
+    private Bonds.Infrastructure.Policy.IPolicyCycleRunner? _policyRunner;
+
+    /// <summary>Фейковый прогон правил (T-67D): считает вызовы, может ждать сигнала (медленный прогон) или бросать.</summary>
+    private sealed class FakePolicyRunner : Bonds.Infrastructure.Policy.IPolicyCycleRunner
+    {
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public bool Slow { get; init; }
+        public bool Throw { get; init; }
+        public int Calls;
+        public bool Completed;
+
+        public async Task<Bonds.Infrastructure.Policy.PolicyRunResult> RunAllAsync(DateTime nowUtc, CancellationToken ct = default)
+        {
+            Interlocked.Increment(ref Calls);
+            Started.TrySetResult();
+            if (Slow) await Release.Task;
+            if (Throw) throw new InvalidOperationException("policy boom");
+            Completed = true;
+            return new Bonds.Infrastructure.Policy.PolicyRunResult();
+        }
+    }
 
     private void SetupNoPositionsHappyPath()
     {
@@ -114,6 +137,8 @@ public class SyncCycleServiceTests
         services.AddSingleton(_riskLevels.Object);
         services.AddSingleton(_universe.Object);
         services.AddSingleton(_securityDetails.Object);
+        if (_credentialRecords is not null) services.AddSingleton(_credentialRecords.Object);
+        if (_policyRunner is not null) services.AddSingleton(_policyRunner);
 
         services.AddSingleton(NullLoggerFactory.Instance);
         services.AddSingleton(typeof(Microsoft.Extensions.Logging.ILogger<>), typeof(NullLogger<>));
@@ -133,6 +158,32 @@ public class SyncCycleServiceTests
         services.AddSingleton<ISyncCycleRunner, SyncCycleService>();
 
         return services.BuildServiceProvider();
+    }
+
+    [Fact]
+    public async Task T67_TwoUsersWithTInvestRead_EachSyncedWithOwnTokenIntoOwnAccount_OwnerPathBoundToOwner()
+    {
+        // Задача 67 (#5): владелец (user 1, основной счёт 1 / BA-1) — как раньше, без привязки провайдера; второй пользователь с валидным tinvest_read
+        // (user 2, счёт 2 / BA-2) — в отдельном скоупе с UseUser(2): клиент T-Invest строится по ЕГО токену, синк идёт в ЕГО счёт. T-67E: путь владельца — UseUser(1).
+        SetupNoPositionsHappyPath();
+        _credentialRecords = new Mock<IUserCredentialRepository>();
+        _credentialRecords.Setup(r => r.ListUserIdsAsync("tinvest_read", "ok")).ReturnsAsync([1UL, 2UL]);
+        _accounts.Setup(a => a.GetByIdAsync(AccountId)).ReturnsAsync(new Account { Id = AccountId, UserId = 1, BrokerAccountId = BrokerAccountId });
+        _accounts.Setup(a => a.GetByIdAsync(2UL)).ReturnsAsync(new Account { Id = 2, UserId = 2, BrokerAccountId = "BA-2" });
+        _accounts.Setup(a => a.GetByUserIdAndBrokerAsync(2UL, Bonds.Core.Models.Brokers.TInvest)).ReturnsAsync([new Account { Id = 2, UserId = 2, BrokerAccountId = "BA-2" }]);
+        _tInvest.Setup(c => c.GetPortfolioAsync("BA-2", It.IsAny<CancellationToken>())).ReturnsAsync(new TInvestPortfolio { Bonds = [] });
+        _tInvest.Setup(c => c.GetOperationsAsync("BA-2", It.IsAny<DateTime?>(), It.IsAny<CancellationToken>())).ReturnsAsync(new List<TInvestOperation>());
+        _positions.Setup(p => p.GetByAccountIdAsync(2UL)).ReturnsAsync(new List<Position>());
+        _operations.Setup(o => o.GetByAccountIdAsync(2UL, null, null)).ReturnsAsync(new List<Operation>());
+
+        var result = await BuildServiceProvider().GetRequiredService<ISyncCycleRunner>().RunCycleAsync();
+
+        result.HasErrors.Should().BeFalse();
+        _tokenProvider.Verify(t => t.UseUser(2UL), Times.Once);
+        _tokenProvider.Verify(t => t.UseUser(1UL), Times.Once, "T-67E: путь владельца привязан к владельцу основного счёта — токен и счёт одного пользователя");
+        _tInvest.Verify(c => c.GetPortfolioAsync(BrokerAccountId, It.IsAny<CancellationToken>()), Times.Once);
+        _tInvest.Verify(c => c.GetPortfolioAsync("BA-2", It.IsAny<CancellationToken>()), Times.Once);
+        _accounts.Verify(a => a.CreateAsync(It.IsAny<Account>()), Times.Never, "счёт второго пользователя уже есть");
     }
 
     [Fact]
@@ -173,6 +224,115 @@ public class SyncCycleServiceTests
         await runner.RunCycleAsync();
 
         _snapshots.Verify(s => s.GetByAccountIdAsync(AccountId, null, null), Times.AtLeastOnce);
+    }
+
+    // ─── T-67D: правила — в фоне после цикла, вне критического пути ручного синка ─────────────────────
+
+    [Fact]
+    public async Task T67D_Policies_RunInBackground_AfterCycleReturnedAndGateReleased()
+    {
+        SetupNoPositionsHappyPath();
+        var fake = new FakePolicyRunner { Slow = true };
+        _policyRunner = fake;
+        var service = (SyncCycleService)BuildServiceProvider().GetRequiredService<ISyncCycleRunner>();
+
+        var result = await service.RunCycleAsync().WaitAsync(TimeSpan.FromSeconds(10)); // медленные правила НЕ держат цикл
+
+        result.HasErrors.Should().BeFalse();
+        service.GetStatus().IsRunning.Should().BeFalse("ворота синка отпущены до правил");
+        await fake.Started.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        fake.Completed.Should().BeFalse("правила ещё идут, а цикл уже вернул результат");
+
+        fake.Release.SetResult();
+        await service.BackgroundPolicies.WaitAsync(TimeSpan.FromSeconds(10));
+        fake.Completed.Should().BeTrue();
+        fake.Calls.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task T67E_NextCycle_WaitsForBackgroundPolicies_BeforeWritingData_StatusNotRunningAfterCore()
+    {
+        // Minor 4: правила читают снимок прошлого цикла — новый цикл не начинает синк (запись данных), пока они не закончат; статус после ядра — «не идёт».
+        SetupNoPositionsHappyPath();
+        var fake = new FakePolicyRunner { Slow = true };
+        _policyRunner = fake;
+        var service = (SyncCycleService)BuildServiceProvider().GetRequiredService<ISyncCycleRunner>();
+
+        await service.RunCycleAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        await fake.Started.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        service.GetStatus().IsRunning.Should().BeFalse("ядро синка закончилось — правила идут в фоне");
+        _tInvest.Invocations.Count(i => i.Method.Name == nameof(ITInvestPortfolioClient.GetPortfolioAsync)).Should().Be(1);
+
+        var second = service.RunCycleAsync();
+        await Task.Delay(300);
+        second.IsCompleted.Should().BeFalse("второй цикл ждёт окончания правил");
+        _tInvest.Invocations.Count(i => i.Method.Name == nameof(ITInvestPortfolioClient.GetPortfolioAsync)).Should().Be(1, "данные не переписываются, пока правила читают снимок");
+        (await service.RunCycleAsync()).AlreadyRunning.Should().BeTrue("ворота заняты ждущим циклом");
+
+        fake.Release.SetResult();
+        var result = await second.WaitAsync(TimeSpan.FromSeconds(10));
+        result.HasErrors.Should().BeFalse();
+        _tInvest.Invocations.Count(i => i.Method.Name == nameof(ITInvestPortfolioClient.GetPortfolioAsync)).Should().Be(2);
+        await service.BackgroundPolicies.WaitAsync(TimeSpan.FromSeconds(10));
+        fake.Calls.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task T67E_CycleFailure_ReleasesPoliciesGate_NextCycleRuns()
+    {
+        SetupNoPositionsHappyPath();
+        _accounts.SetupSequence(a => a.GetPrimaryAccountIdAsync()).ThrowsAsync(new InvalidOperationException("db down")).ReturnsAsync(AccountId);
+        _policyRunner = new FakePolicyRunner();
+        var service = (SyncCycleService)BuildServiceProvider().GetRequiredService<ISyncCycleRunner>();
+
+        await FluentActions.Invoking(() => service.RunCycleAsync()).Should().ThrowAsync<InvalidOperationException>();
+        (await service.RunCycleAsync().WaitAsync(TimeSpan.FromSeconds(10))).AlreadyRunning.Should().BeFalse("хвост ворот отпущен и при сбое ядра");
+    }
+
+    [Fact]
+    public async Task T67D_Policies_InvokedOncePerCycle()
+    {
+        SetupNoPositionsHappyPath();
+        var fake = new FakePolicyRunner();
+        _policyRunner = fake;
+        var service = (SyncCycleService)BuildServiceProvider().GetRequiredService<ISyncCycleRunner>();
+
+        await service.RunCycleAsync();
+        await service.BackgroundPolicies.WaitAsync(TimeSpan.FromSeconds(10));
+        fake.Calls.Should().Be(1);
+
+        await service.RunCycleAsync();
+        await service.BackgroundPolicies.WaitAsync(TimeSpan.FromSeconds(10));
+        fake.Calls.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task T67D_Policies_ExceptionDoesNotEscape()
+    {
+        SetupNoPositionsHappyPath();
+        var fake = new FakePolicyRunner { Throw = true };
+        _policyRunner = fake;
+        var service = (SyncCycleService)BuildServiceProvider().GetRequiredService<ISyncCycleRunner>();
+
+        var result = await service.RunCycleAsync();
+        await service.BackgroundPolicies.WaitAsync(TimeSpan.FromSeconds(10)); // не бросает
+
+        result.HasErrors.Should().BeFalse("сбой правил — только лог");
+        service.BackgroundPolicies.IsFaulted.Should().BeFalse();
+        fake.Calls.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task T67D_Policies_NotRun_WhenNoAccountConfigured()
+    {
+        _accounts.Setup(a => a.GetPrimaryAccountIdAsync()).ReturnsAsync((ulong?)null);
+        var fake = new FakePolicyRunner();
+        _policyRunner = fake;
+        var service = (SyncCycleService)BuildServiceProvider().GetRequiredService<ISyncCycleRunner>();
+
+        (await service.RunCycleAsync()).NoAccountConfigured.Should().BeTrue();
+        await service.BackgroundPolicies.WaitAsync(TimeSpan.FromSeconds(10));
+        fake.Calls.Should().Be(0);
     }
 
     [Fact]

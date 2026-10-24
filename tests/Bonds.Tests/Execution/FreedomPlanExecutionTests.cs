@@ -1,4 +1,6 @@
+using System.Text.Json;
 using Bonds.Core.Credentials;
+using Bonds.Infrastructure.Connectors.Freedom.Models;
 using Bonds.Core.Execution;
 using Bonds.Core.Interfaces.Repositories;
 using Bonds.Core.Models;
@@ -132,7 +134,7 @@ public class FreedomPlanExecutionTests
         _freedom.PostCount.Should().Be(allOpen ? 1 : 0);
         if (!allOpen)
         {
-            _plans[plan.Id].Status.Should().Be(PlanStatuses.Failed);
+            _plans[plan.Id].Status.Should().Be(PlanStatuses.Approved, "задача 67 (#11): закрытые ворота не убивают неначатый план — он ждёт до срока");
             _orders.All.Should().BeEmpty("при закрытых воротах в trade_orders ничего не пишется");
         }
     }
@@ -158,7 +160,7 @@ public class FreedomPlanExecutionTests
         await Tick(Noon);
 
         _freedom.PostCount.Should().Be(0);
-        _plans[plan.Id].Status.Should().Be(PlanStatuses.Failed);
+        _plans[plan.Id].Status.Should().Be(PlanStatuses.Approved, "задача 67 (#11): закрытые ворота не убивают неначатый план — он ждёт до срока");
         _credentialRecords.Verify(r => r.UpdateStatusAsync(UserId, CredentialProviders.FreedomTrade, CredentialStatus.Invalid, It.IsAny<string?>()), Times.Once);
     }
 
@@ -368,6 +370,131 @@ public class FreedomPlanExecutionTests
         _freedom.Posted.Single().Order.Side.Should().Be(PlanSides.Sell);
     }
 
+    [Fact]
+    public async Task T67E_TwoApprovedPlansSellSameTicker_SecondNotPosted_ActiveSellsNetted()
+    {
+        // T-67E (M2): 10 штук в портфеле, два подтверждённых плана продают по 10 — брокер может не вычитать бумаги под висящую продажу; вторая не уходит.
+        _freedom.Pieces["VUAA.EU"] = 10m;
+        var first = AddPlan(Noon, lines: FreedomLine(side: PlanSides.Sell, qty: 10));
+        var second = AddPlan(Noon, lines: FreedomLine(side: PlanSides.Sell, qty: 10));
+        Quote("VUAA.EU", 147.65m, 147.75m);
+
+        await Tick(Noon);
+
+        _freedom.PostCount.Should().Be(1);
+        OrdersOf(first).Single().Status.Should().Be(TradeOrderStatuses.Submitted);
+        var rejected = OrdersOf(second).Single();
+        rejected.ErrorCode.Should().Be(PreflightChecks.InsufficientPosition);
+        rejected.ErrorMessage.Should().Contain("доступно 0");
+    }
+
+    [Fact]
+    public async Task T67E_ActiveSellPartlyFilled_OnlyRemainderNetted()
+    {
+        // Неисполненный остаток висящей продажи: 10 в портфеле, продажа 6 исполнена на 4 (брокер уже списал 4 → в портфеле 6), висит 2 → доступно 4.
+        _freedom.Pieces["VUAA.EU"] = 10m;
+        var first = AddPlan(Noon, lines: FreedomLine(side: PlanSides.Sell, qty: 6));
+        Quote("VUAA.EU", 147.65m, 147.75m);
+        await Tick(Noon);
+        var brokerId = OrdersOf(first).Single().BrokerOrderId!;
+        _freedom.Fill(brokerId, 4, 147.70m, "853000041", null);
+        _freedom.Pieces["VUAA.EU"] = 6m;
+        await Tick(Noon.AddSeconds(20));
+
+        var second = AddPlan(Noon, lines: FreedomLine(side: PlanSides.Sell, qty: 4));
+        await Tick(Noon.AddSeconds(40));
+
+        _freedom.PostCount.Should().Be(2, "6 в портфеле − 2 висящих = 4 — хватает");
+        OrdersOf(second).Single().Status.Should().Be(TradeOrderStatuses.Submitted);
+    }
+
+    [Fact]
+    public async Task T67E_MoneyReserveOfActiveOrders_IncludesEstimatedFee()
+    {
+        // NIT: резерв висящей покупки = остаток × лимит + доля est_fee. 3 × 147.70 = 443.10 + 1.73 = 444.83; денег 444.83 + 443.10 + 1.72 — на вторую не хватает 0.01.
+        _freedom.Cash["USD"] = 444.83m + 443.10m + 1.72m;
+        AddPlan(Noon);
+        var second = AddPlan(Noon);
+        Quote("VUAA.EU", 147.65m, 147.75m);
+
+        await Tick(Noon);
+
+        _freedom.PostCount.Should().Be(1);
+        OrdersOf(second).Single().ErrorCode.Should().Be(PreflightChecks.InsufficientFunds);
+    }
+
+    // ─── T-67E (M1): снятая заявка без trade[] не «снята с нулём» ─────────────────────────
+
+    /// <summary>Состояние заявки, как его разбирает реальный шлюз из списка заявок брокера (<c>getNotifyOrderJson</c>) — без массива <c>trade</c>.</summary>
+    private static GatewayOrderState BrokerListed(string brokerId, int stat, long q) =>
+        FreedomOrderGateway.ParseOrders(JsonDocument.Parse(
+            "{\"orders\":{\"order\":[{\"order_id\":" + brokerId + ",\"stat\":" + stat + ",\"oper\":1,\"q\":" + q
+            + ",\"leaves_qty\":0,\"instr\":\"VUAA.EU\",\"p\":147.70,\"cur\":\"USD\"}]}}").RootElement, TimeSpan.Zero).Single();
+
+    [Fact]
+    public async Task T67E_Buy10_Partial6_Stat72WithoutTradeArray_RepostsAtMost4_OnlyAfterHistoryConfirms()
+    {
+        var plan = AddPlan(Noon, lines: FreedomLine(qty: 10));
+        Quote("VUAA.EU", 147.65m, 147.75m);
+        await Tick(Noon);
+        var brokerId = OrdersOf(plan).Single().BrokerOrderId!;
+
+        // Брокер исполнил 6 из 10 и снял остаток (72), в списке заявок массива trade нет; история сделок ещё пуста.
+        _freedom.Orders[brokerId] = BrokerListed(brokerId, 72, 10);
+        await Tick(Noon.AddMinutes(1));
+        _freedom.PostCount.Should().Be(1, "исполнение снятой заявки не подтверждено — перевыставлять нельзя");
+        OrdersOf(plan).Single().Status.Should().NotBe(TradeOrderStatuses.Cancelled);
+
+        // История недоступна — тоже ждём.
+        _freedom.Trades.Add(new FreedomTrade("853000077", brokerId, Noon, "VUAA.EU", FreedomTradeSide.Buy, 6, 147.70m, 6 * 147.70m, "USD", 0m, "USD"));
+        _freedom.TradesError = new FreedomGatewayException(GatewayErrorKind.Transient, "unavailable", "Freedom getTradesHistory: недоступно");
+        await Tick(Noon.AddMinutes(2));
+        _freedom.PostCount.Should().Be(1);
+
+        // История подтвердила 6 — новая попытка только на остаток 4.
+        _freedom.TradesError = null;
+        await Tick(Noon.AddMinutes(3));
+        _freedom.PostCount.Should().Be(2);
+        _freedom.Posted[1].Order.Quantity.Should().Be(4);
+        var orders = OrdersOf(plan);
+        orders[0].Status.Should().Be(TradeOrderStatuses.Cancelled);
+        orders[0].LotsFilled.Should().Be(6);
+        orders[0].AvgFillPrice.Should().Be(147.70m);
+        orders[1].LotsRequested.Should().Be(4);
+    }
+
+    [Fact]
+    public async Task T67E_OurRepriceCancel_FillsCrossCheckedWithHistory_MaxTaken()
+    {
+        // Наше снятие на перевыставлении: список заявок показал 1 исполненную, история сделок — 2 → остаток = 3 − 2 = 1.
+        var plan = AddPlan(Noon);
+        Quote("VUAA.EU", 147.65m, 147.80m);
+        await Tick(Noon);
+        var brokerId = OrdersOf(plan).Single().BrokerOrderId!;
+        _freedom.Orders[brokerId] = _freedom.Orders[brokerId] with { Status = TradeOrderStatuses.PartiallyFilled, LotsExecuted = 1 };
+        _freedom.Trades.Add(new FreedomTrade("853000078", brokerId, Noon, "VUAA.EU", FreedomTradeSide.Buy, 2, 147.70m, 2 * 147.70m, "USD", 0m, "USD"));
+
+        await Tick(Noon.Add(_options.FreedomRepriceAfter).AddSeconds(1));
+
+        OrdersOf(plan)[0].LotsFilled.Should().Be(2);
+        _freedom.Posted[1].Order.Quantity.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task T67E_Stat31WithoutTradeArray_HistoryEmpty_ConfirmedZero_RepricesFull()
+    {
+        var plan = AddPlan(Noon);
+        Quote("VUAA.EU", 147.65m, 147.75m);
+        await Tick(Noon);
+        var brokerId = OrdersOf(plan).Single().BrokerOrderId!;
+        _freedom.Orders[brokerId] = BrokerListed(brokerId, 31, 3);
+
+        await Tick(Noon.AddMinutes(1));
+
+        _freedom.PostCount.Should().Be(2, "история сделок пуста — снятие без исполнения подтверждено");
+        _freedom.Posted[1].Order.Quantity.Should().Be(3);
+    }
+
     // ─── Идемпотентность по user_order_id ─────────────────────────────────────────────────
 
     [Fact]
@@ -403,7 +530,8 @@ public class FreedomPlanExecutionTests
         var plan = AddPlan(Noon);
         Quote("VUAA.EU", 147.65m, 147.75m);
         _freedom.Clock = () => Noon.AddSeconds(1);
-        _freedom.ListedUserOrderId = _ => "api:1792763201"; // брокер не принял наш номер — показывает свой авто-id (unix-секунда)
+        // Брокер не принял наш номер — показывает свой авто-id: unix-секунда запроса размещения.
+        _freedom.ListedUserOrderId = _ => FreedomOrderRules.ApiPrefix + new DateTimeOffset(Noon.AddSeconds(1)).ToUnixTimeSeconds();
         _freedom.LoseResponse = true;
         await Tick(Noon);
         _freedom.LoseResponse = false;
@@ -418,6 +546,27 @@ public class FreedomPlanExecutionTests
 
         await Tick(Noon.AddSeconds(40));
         _notifier.Texts.Count(t => t.Contains("по реквизитам")).Should().Be(1, "id брокера уже известен — повторного предупреждения нет");
+    }
+
+    [Fact]
+    public async Task T67E_ResponseLost_OwnerCliOrderWithOtherApiSecond_NotAdoptedByAttributes()
+    {
+        // Minor 3: заявка API владельца (свой CLI) с теми же реквизитами, но авто-id api:<другая секунда> (10 мин до записи нашей) — не наша, не усыновляется.
+        var plan = AddPlan(Noon);
+        Quote("VUAA.EU", 147.65m, 147.75m);
+        _freedom.ListedUserOrderId = _ => FreedomOrderRules.ApiPrefix + new DateTimeOffset(Noon.AddMinutes(-10)).ToUnixTimeSeconds();
+        _freedom.LoseResponse = true;
+        await Tick(Noon);
+        _freedom.LoseResponse = false;
+
+        await Tick(Noon.AddSeconds(20));
+        OrdersOf(plan).Single().Status.Should().Be(TradeOrderStatuses.New, "кандидат с чужой секундой api:N отброшен — заявка не опознана");
+        OrdersOf(plan).Single().BrokerOrderId.Should().BeNull();
+        _notifier.Texts.Should().NotContain(t => t.Contains("по реквизитам"));
+
+        await Tick(Noon.Add(_options.UnconfirmedOrderTimeout).AddSeconds(1));
+        OrdersOf(plan).Single().ErrorCode.Should().Be(TradeOrderErrorCodes.UnknownState);
+        _freedom.PostCount.Should().Be(1, "повторной отправки нет");
     }
 
     [Fact]
@@ -591,6 +740,27 @@ public class FreedomPlanExecutionTests
     // ─── Комиссия ──────────────────────────────────────────────────────────────────────────
 
     [Fact]
+    public async Task T67_KnownOrderVanishesFromOrderList_FillRestoredFromTradesHistoryByOrderId()
+    {
+        // Задача 67 (#17): заявка с id брокера пропала из списка заявок (NotFound) — до закрытия как unknown_state исполнение сверяется по getTradesHistory
+        // (сделки по order_id): исполнено 3 из 3 → Filled, повторной отправки нет.
+        var plan = AddPlan(Noon);
+        Quote("VUAA.EU", 147.65m, 147.75m);
+        await Tick(Noon);
+        var brokerId = OrdersOf(plan).Single().BrokerOrderId!;
+        _freedom.Fill(brokerId, 3, 147.70m, "853000009", 1.73m, "europe", "funds");
+        _freedom.Orders.Remove(brokerId);
+
+        await Tick(Noon.AddMinutes(6));
+
+        var order = OrdersOf(plan).Single();
+        order.Status.Should().Be(TradeOrderStatuses.Filled);
+        order.LotsFilled.Should().Be(3);
+        order.AvgFillPrice.Should().Be(147.70m);
+        _freedom.PostCount.Should().Be(1);
+    }
+
+    [Fact]
     public async Task Fill_FeeMatchesModelByActualRoute_PlanDone_NoMismatch()
     {
         var plan = AddPlan(Noon);
@@ -758,7 +928,7 @@ public class FreedomPlanExecutionTests
     }
 
     [Fact]
-    public async Task MixedPlan_BothGatesClosed_PlanFailsLikeBefore()
+    public async Task MixedPlan_BothGatesClosed_PlanWaitsUntilExpiry()
     {
         _gate.TInvest = ExecutionGate.Evaluate(false, ExecutionModes.Live, true, false);
         _gate.Freedom = ExecutionGate.Evaluate(false, ExecutionModes.Live, true, false, ExecutionGate.NoFreedomTradeCredential);
@@ -768,7 +938,7 @@ public class FreedomPlanExecutionTests
 
         _tinvest.PostCount.Should().Be(0);
         _freedom.PostCount.Should().Be(0);
-        _plans[plan.Id].Status.Should().Be(PlanStatuses.Failed);
+        _plans[plan.Id].Status.Should().Be(PlanStatuses.Approved, "задача 67 (#11): закрытые ворота не убивают неначатый план — он ждёт до срока");
     }
 
     [Fact]

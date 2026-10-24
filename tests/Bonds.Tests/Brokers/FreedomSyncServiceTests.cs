@@ -78,6 +78,67 @@ public class FreedomSyncServiceTests
     }
 
     [Fact]
+    public async Task T67_Sync_RefreshesFreedomTariffInCredentialMeta_KeepsOtherFields()
+    {
+        // Задача 67 (#6): брокер перевёл счёт на Investor (1432) — meta секрета обновляется на синке (GetUserInfoAsync уже вызывается), прочие поля сохраняются.
+        _store.Setup(s => s.ListStatusesAsync(1)).ReturnsAsync(
+            [new CredentialStatusInfo("freedom", "ok", null, "7890", @"{""accountNumber"":""100001"",""tariffId"":1431,""tariffName"":""Standard"",""extra"":""x""}", null)]);
+        _api.Setup(a => a.GetUserInfoAsync(It.IsAny<FreedomCredentials>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new FreedomUserInfo("100001", 1432, "Investor"));
+        string? saved = null;
+        _store.Setup(s => s.UpdateMetaAsync(1, "freedom", It.IsAny<string?>())).Callback<ulong, string, string?>((_, _, m) => saved = m).Returns(Task.CompletedTask);
+
+        await Create().SyncAllAsync();
+
+        saved.Should().NotBeNull();
+        using var doc = System.Text.Json.JsonDocument.Parse(saved!);
+        doc.RootElement.GetProperty("tariffId").GetInt32().Should().Be(1432);
+        doc.RootElement.GetProperty("tariffName").GetString().Should().Be("Investor");
+        doc.RootElement.GetProperty("extra").GetString().Should().Be("x");
+    }
+
+    [Fact]
+    public async Task T67_Sync_SameTariff_DoesNotRewriteMeta()
+    {
+        _store.Setup(s => s.ListStatusesAsync(1)).ReturnsAsync(
+            [new CredentialStatusInfo("freedom", "ok", null, "7890", @"{""accountNumber"":""100001"",""tariffId"":1431,""tariffName"":""Standard""}", null)]);
+
+        await Create().SyncAllAsync();
+
+        _store.Verify(s => s.UpdateMetaAsync(It.IsAny<ulong>(), It.IsAny<string>(), It.IsAny<string?>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task T67_Sync_ShortPosition_IsStored_NotDropped()
+    {
+        // Задача 67 (#14): шорт (qty < 0) хранится с отрицательным количеством и стоимостью; закрытая (0) — нет.
+        SetupPortfolio(new FreedomPortfolio(
+            [new FreedomCashBalance("USD", 500m)],
+            [new FreedomPosition("TSLA.US", "Tesla", -2m, "USD", 250m, 240m, -480m), new FreedomPosition("ZERO.US", "Closed", 0m, "USD", 1m, 1m, 0m)]));
+
+        await Create().SyncAllAsync();
+
+        var shortPos = _positions.Items.Single();
+        (shortPos.Ticker, shortPos.Quantity, shortPos.MarketValue).Should().Be(("TSLA.US", -2m, -480m));
+    }
+
+    [Theory]
+    [InlineData("HTTP 401 Unauthorized", true)]
+    [InlineData("HTTP 403 Forbidden", true)]
+    [InlineData("HTTP 503 Service Unavailable", false)]
+    public async Task T67_Sync_KeyRejected401Or403_MarksCredentialInvalid_TransientDoesNot(string message, bool invalid)
+    {
+        // Задача 67 (#16): 401/403 на синке — ключ freedom помечается invalid; временный сбой (5xx) ключ не трогает.
+        _api.Setup(a => a.GetUserInfoAsync(It.IsAny<FreedomCredentials>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new FreedomApiException("getAllUserTexInfo", message));
+
+        await Create().SyncAllAsync();
+
+        _store.Verify(s => s.MarkInvalidAsync(1, "freedom", It.IsAny<string>()), invalid ? Times.Once() : Times.Never());
+        _accounts.Items.Should().BeEmpty();
+    }
+
+    [Fact]
     public async Task Sync_LegacyRurBalance_IsStoredAsRub()
     {
         SetupPortfolio(new FreedomPortfolio([new FreedomCashBalance("RUR", 1500m)], []));

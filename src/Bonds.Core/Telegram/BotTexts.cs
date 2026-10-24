@@ -12,18 +12,38 @@ public static class BotTexts
 {
     public const string NoAccess = "Нет доступа.";
 
-    public static string Help(bool paused) =>
+    /// <summary>Ответ на <c>/stop</c> (задача 67, #11): что происходит с подтверждёнными и исполняемыми планами.</summary>
+    public const string StopReply =
+        "⏸ Пауза включена: новые заявки не отправляются, авто-подтверждение выключено, новые планы ждут вашего решения.\n" +
+        "• Подтверждённые, но ещё не начатые планы НЕ отменяются — ждут до конца своего срока и исполнятся, если снять паузу (/resume) раньше.\n" +
+        "• У исполняемых планов висящие заявки снимаются, план закрывается итогом (исполнен частично / не исполнен) с причиной «пауза».\n" +
+        "Снять — /resume.";
+
+    /// <summary>Ответ на <c>/resume</c> (задача 67, #11).</summary>
+    public const string ResumeReply =
+        "▶ Пауза снята: авто-подтверждение работает в пределах лимитов; подтверждённые планы, срок которых не истёк, исполняются (в часы торгов).";
+
+    /// <summary>
+    /// Справка. Задача 67 (NIT): текст зависит от режима — в режиме наблюдения (<paramref name="dryRun"/>) — пометка «сделка не отправляется», в живом —
+    /// «подтверждённые планы исполняются: реальные заявки» и двухшаговое подтверждение; пауза — своей строкой.
+    /// </summary>
+    public static string Help(bool paused, bool dryRun = true) =>
         "<b>Команды</b>\n" +
         "/status — капитал, корзины и отклонения, свободные деньги, открытые планы\n" +
         "/plans — открытые планы\n" +
         "/inflow 50000 — построить план распределения суммы (/inflow 500 usd)\n" +
         "/withdraw 15% · /withdraw 50000 · /withdraw 200 usd — план вывода\n" +
         "/exit temporary — план выхода из корзины без цели\n" +
-        "/stop — пауза: авто-подтверждение выключено, планы ждут вашего решения\n" +
+        "/withdrawn — деньги выведены в банк: снять удержание под вывод\n" +
+        (dryRun
+            ? "/stop — пауза: авто-подтверждение выключено, планы ждут вашего решения\n"
+            : "/stop — пауза: заявки не отправляются; подтверждённые планы ждут до конца срока\n") +
         "/resume — снять паузу\n" +
         "/help — эта справка\n\n" +
-        (paused ? "Сейчас: пауза (авто-подтверждение выключено).\n" : string.Empty) +
-        $"<i>{PlanMessageFormatter.ObservationNote}</i>";
+        (paused ? (dryRun ? "Сейчас: пауза (авто-подтверждение выключено).\n" : "Сейчас: пауза — заявки не отправляются.\n") : string.Empty) +
+        (dryRun
+            ? $"<i>{PlanMessageFormatter.ObservationNote}</i>"
+            : $"<b>{PlanMessageFormatter.RealOrdersMark}</b>: подтверждённые планы исполняются — заявки уходят брокеру. Подтверждение в два шага: «Подтвердить» → «Отправить заявки».");
 
     public static string Status(IReadOnlyList<StatusPortfolio> portfolios, int openPlans, bool paused, bool dryRun)
     {
@@ -92,7 +112,15 @@ public static class BotTexts
                 _ => plan.Status,
             };
             var lines = plan.Lines.Count;
-            sb.Append($"№{plan.Id} · {BotFormat.Html(PlanMessageFormatter.RuleTitle(plan.Rule))} · {status} · строк: {lines} · до {BotFormat.MoscowTime(plan.ExpiresAt)}\n");
+            var live = plan.DryRun ? string.Empty : " · ⚠️ реальные заявки";
+            sb.Append($"№{plan.Id} · {BotFormat.Html(PlanMessageFormatter.RuleTitle(plan.Rule))} · {status}{live} · строк: {lines} · до {BotFormat.MoscowTime(plan.ExpiresAt)}\n");
+
+            if (!plan.DryRun)
+            {
+                // Задача 67 (#4): живой план из списка не подтверждается — только в сообщении плана (два шага с показом заявок) или в вебе.
+                if (PlanMessageFormatter.DetailsUrl(plan.Id, webBaseUrl) is { } detailsUrl) rows.Add([new InlineButton($"🔎 №{plan.Id}", Url: detailsUrl)]);
+                continue;
+            }
 
             if (plan.Status == PlanStatuses.PendingApproval && !string.IsNullOrEmpty(plan.BotNonce))
             {

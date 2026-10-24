@@ -50,4 +50,10 @@ public interface IUserCredentialStore
 
     /// <summary>Id всех пользователей с записью провайдера в статусе ok — фоновые синки обходят их без HTTP-контекста (задача 60).</summary>
     Task<IReadOnlyList<ulong>> ListUserIdsWithValidAsync(string provider);
+
+    /// <summary>Обновляет несекретные метаданные записи (задача 67, #6: тариф Freedom на каждом синке). Нет записи — ничего.</summary>
+    Task UpdateMetaAsync(ulong userId, string provider, string? metaJson);
+
+    /// <summary>Помечает запись невалидной с сообщением (задача 67, #16: брокер отверг ключ на синке, HTTP 401/403). Нет записи — ничего.</summary>
+    Task MarkInvalidAsync(ulong userId, string provider, string message);
 }

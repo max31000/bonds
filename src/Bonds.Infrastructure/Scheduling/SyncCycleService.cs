@@ -43,6 +43,13 @@ public sealed class SyncCycleService : ISyncCycleRunner
     private readonly ILogger<SyncCycleService> _logger;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
+    /// <summary>
+    /// T-67E (minor 4): «хвост» ворот синка. Держится ядром цикла (пока оно пишет данные) и передаётся фоновому прогону правил — тот отпускает его, дочитав
+    /// снимок. Следующий цикл ждёт его ПЕРЕД первой записью: правила никогда не читают наполовину переписанный снимок, а <c>/api/sync/status</c> после
+    /// ядра показывает «не идёт» (основные ворота <see cref="_gate"/> отпущены).
+    /// </summary>
+    private readonly SemaphoreSlim _policiesGate = new(1, 1);
+
     private readonly object _statusLock = new();
     private bool _isRunning;
     private DateTime? _lastRunStartedAtUtc;
@@ -87,6 +94,9 @@ public sealed class SyncCycleService : ISyncCycleRunner
             return new SyncCycleResult { AlreadyRunning = true };
         }
 
+        SyncCycleResult result;
+        var policiesHeld = false;
+        var handOverToPolicies = false;
         try
         {
             lock (_statusLock)
@@ -95,7 +105,12 @@ public sealed class SyncCycleService : ISyncCycleRunner
                 _lastRunStartedAtUtc = DateTime.UtcNow;
             }
 
-            var result = await RunCycleInternalAsync(ct);
+            // T-67E (minor 4): прогон правил прошлого цикла ещё читает снимок — ждём его, прежде чем переписывать данные.
+            await _policiesGate.WaitAsync(ct);
+            policiesHeld = true;
+
+            result = await RunCycleInternalAsync(ct);
+            handOverToPolicies = !result.NoAccountConfigured;
 
             lock (_statusLock)
             {
@@ -112,7 +127,6 @@ public sealed class SyncCycleService : ISyncCycleRunner
                 }
             }
 
-            return result;
         }
         finally
         {
@@ -121,8 +135,45 @@ public sealed class SyncCycleService : ISyncCycleRunner
                 _isRunning = false;
             }
 
+            if (policiesHeld && !handOverToPolicies) _policiesGate.Release();
             _gate.Release();
         }
+
+        // T-67D: правила и планы (задача 63) — ВНЕ критического пути синка. Ворота уже отпущены (/api/sync/status показывает «не идёт»), прогон идёт в фоне
+        // в своём DI-скоупе; цикл (ручной POST /api/sync и плановые суточные) возвращает результат, не дожидаясь правил. Параллельные прогоны правил одного
+        // пользователя сериализует его GET_LOCK (IPolicyUserLock). Нет счёта — правил тоже нет (как раньше: цикл пропускался целиком).
+        // T-67E (minor 4): «хвост» ворот (_policiesGate) передан прогону правил — следующий цикл не начнёт писать данные, пока правила не дочитают снимок.
+        if (handOverToPolicies) StartBackgroundPolicies();
+        return result;
+    }
+
+    private Task _backgroundPolicies = Task.CompletedTask;
+
+    /// <summary>
+    /// Последний фоновый прогон правил (T-67D). Никогда не завершается с ошибкой (исключения ловятся и пишутся в лог) — для тестов и диагностики.
+    /// </summary>
+    internal Task BackgroundPolicies => Volatile.Read(ref _backgroundPolicies);
+
+    private void StartBackgroundPolicies()
+    {
+        // CancellationToken.None: токен HTTP-запроса ручного синка отменится сразу после ответа — фоновый прогон не должен от него зависеть.
+        var task = Task.Run(async () =>
+        {
+            try
+            {
+                using var scope = _scopeFactory.CreateScope();
+                await Timed("policies (background)", () => RunPoliciesAsync(scope.ServiceProvider, CancellationToken.None));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Background policy run failed — plans keep the previous state");
+            }
+            finally
+            {
+                _policiesGate.Release(); // хвост ворот синка: следующий цикл может писать данные
+            }
+        });
+        Volatile.Write(ref _backgroundPolicies, task);
     }
 
     /// <summary>Меньше стольких снапшотов истории — история считается пустой и пересобирается бэкфиллом.</summary>
@@ -151,6 +202,10 @@ public sealed class SyncCycleService : ISyncCycleRunner
         // здоровье синка (GET /api/sync/status) отражало причину сбоя явным флагом, а не требовало
         // от фронта парсить текст ошибки. Заведённый Account уже найден выше — "пользователь есть".
         var tokenProvider = sp.GetRequiredService<ITInvestTokenProvider>();
+
+        // T-67E (minor 1): токен и счёт — ОДНОГО пользователя. Без привязки провайдер берёт «основного пользователя» (первый users.id), а основной счёт —
+        // первый счёт T-Invest: у разных пользователей это разные записи, и счёт владельца синкался бы чужим токеном. Привязка — ДО первого чтения токена в скоупе.
+        if ((await accounts.GetByIdAsync(accountId.Value))?.UserId is { } ownerUserId) tokenProvider.UseUser(ownerUserId);
         var tokenStatus = await tokenProvider.GetTokenStatusAsync(ct);
         result.TokenMissingOrInvalid = tokenStatus is TInvestTokenStatus.NotConfigured or TInvestTokenStatus.DecryptionFailed;
 
@@ -180,6 +235,10 @@ public sealed class SyncCycleService : ISyncCycleRunner
             _logger.LogError(ex, "Sync step failed for account {AccountId}", accountId);
             result.Errors.Add($"Sync: непредвиденная ошибка ({ex.GetType().Name})");
         }
+
+        // --- 1-bis. T-Invest остальных пользователей (задача 67, #5): каждый пользователь с валидным tinvest_read синкается СВОИМ токеном в свой счёт.
+        // Основной путь выше не меняется. Сбой чужого синка — только лог (цикл владельца неуспешным не помечается, как у Freedom).
+        await Timed("tinvest-other-users", () => SyncOtherTInvestUsersAsync(sp, accountId.Value, asOf, ct));
 
         // --- 1a. Watchlist: справочник/расписания/котировка бумаг без позиции.
         // Отдельный шаг, независимый от счёта/токена T-Invest — не влияет на позиции/сигналы ниже,
@@ -222,9 +281,7 @@ public sealed class SyncCycleService : ISyncCycleRunner
         // шагом: сбой Freedom (сеть, ключи) пишется в лог и НЕ добавляется в result.Errors - цикл T-Invest неуспешным не помечается.
         await Timed("freedom", () => SyncFreedomAsync(sp, ct));
 
-        // --- 1a-quinquies. Правила и планы сделок (задача 63): ПОСЛЕ синка всех брокеров. Планы - только данные (dry-run, заявки не отправляются).
-        // Необязательный шаг: сбой - только лог, цикл НЕ помечается неуспешным.
-        await Timed("policies", () => RunPoliciesAsync(sp, ct));
+        // --- 1a-quinquies. Правила и планы сделок (задача 63) — T-67D: вынесены из цикла, запускаются в фоне ПОСЛЕ его завершения (StartBackgroundPolicies).
 
         // --- 1b. Бэкфилл истории стоимости, если она пуста/почти пуста (первый запуск, или миграция
         // пересчёта истории её очистила). Строго ПОСЛЕ успешного перечитывания журнала: история
@@ -293,6 +350,60 @@ public sealed class SyncCycleService : ISyncCycleRunner
         return result;
     }
 
+    /// <summary>
+    /// Задача 67 (#5): синк T-Invest для пользователей с валидным <c>tinvest_read</c>, кроме владельца основного счёта: отдельный DI-скоуп на пользователя
+    /// (scoped <see cref="ITInvestTokenProvider"/> привязывается к нему — клиент T-Invest строится по ЕГО токену), счёт T-Invest пользователя (нет —
+    /// создаётся, брокерский счёт привяжет первый синк), затем журнал/позиции, проекция денежного потока и снимок стоимости. Сигналы (уведомления
+    /// владельцу) для чужих счетов не запускаются.
+    /// </summary>
+    private async Task SyncOtherTInvestUsersAsync(IServiceProvider sp, ulong primaryAccountId, DateOnly asOf, CancellationToken ct)
+    {
+        var credentials = sp.GetService<IUserCredentialRepository>();
+        if (credentials is null) return; // шаг не зарегистрирован (юнит-тесты цикла)
+
+        IReadOnlyList<ulong> users;
+        ulong? owner;
+        try
+        {
+            owner = (await sp.GetRequiredService<IAccountRepository>().GetByIdAsync(primaryAccountId))?.UserId;
+            users = await credentials.ListUserIdsAsync(Bonds.Core.Credentials.CredentialProviders.TInvestRead, Bonds.Core.Credentials.CredentialStatus.Ok) ?? [];
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "T-Invest users lookup failed — other users are not synced this cycle");
+            return;
+        }
+
+        foreach (var userId in users.Where(u => u != owner).Distinct())
+        {
+            ct.ThrowIfCancellationRequested();
+            try
+            {
+                using var scope = _scopeFactory.CreateScope();
+                var usp = scope.ServiceProvider;
+                usp.GetRequiredService<ITInvestTokenProvider>().UseUser(userId);
+
+                var accounts = usp.GetRequiredService<IAccountRepository>();
+                var account = (await accounts.GetByUserIdAndBrokerAsync(userId, Brokers.TInvest) ?? []).OrderBy(a => a.Id).FirstOrDefault();
+                var accountId = account?.Id ?? await accounts.CreateAsync(new Account { UserId = userId, Broker = Brokers.TInvest });
+
+                var sync = await usp.GetRequiredService<BondSyncService>().SyncAsync(accountId, ct: ct);
+                if (sync.HasErrors) _logger.LogWarning("T-Invest sync of user {UserId} finished with problems: {Errors}", userId, string.Join("; ", sync.Errors));
+
+                await usp.GetRequiredService<CashFlowProjectionOrchestrator>().ProjectAccountAsync(accountId, asOf, ct: ct);
+                await usp.GetRequiredService<PortfolioSnapshotService>().ComputeAndStoreSnapshotAsync(accountId, asOf, ct);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "T-Invest sync of user {UserId} failed — their data keeps the previous values", userId);
+            }
+        }
+    }
+
     /// <summary>Длительность шага цикла в лог (Information) — диагностика медленного синка (2026-10-24: ~60 с против ~18 с до цикла 58).</summary>
     private async Task<T> Timed<T>(string step, Func<Task<T>> run)
     {
@@ -333,7 +444,7 @@ public sealed class SyncCycleService : ISyncCycleRunner
         try
         {
             // GetService (не Required): цикл не должен падать, если шаг не зарегистрирован (юнит-тесты цикла).
-            var runner = sp.GetService<Bonds.Infrastructure.Policy.PolicyRunner>();
+            var runner = sp.GetService<Bonds.Infrastructure.Policy.IPolicyCycleRunner>();
             if (runner is null) return;
 
             var run = await runner.RunAllAsync(DateTime.UtcNow, ct);

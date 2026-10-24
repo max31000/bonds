@@ -2,6 +2,7 @@ using Bonds.Api.Auth;
 using Bonds.Api.Endpoints.Dtos;
 using Bonds.Core.Capital;
 using Bonds.Core.Interfaces.Repositories;
+using Bonds.Core.Policy;
 using Bonds.Core.Time;
 using Bonds.Infrastructure.Analytics;
 using MySqlConnector;
@@ -68,16 +69,25 @@ public static class BasketEndpoints
     {
         if (await currentUser.GetUserIdAsync() is not { } userId) return Results.NotFound();
 
-        var all = (await repo.GetByUserAsync(userId)).ToList();
+        // Задача 67 (#13): чтение, проверка и запись — одной транзакцией с SELECT … FOR UPDATE по корзинам пользователя: два параллельных PUT, каждый из
+        // которых по отдельности держит сумму целей = 1, не запишут вместе 0.95 — второй проверяется на состоянии после первого.
+        var failure = await repo.UpdateLockedAsync<IResult?>(userId, all => Task.FromResult(Validate(all, updates)));
+        return failure ?? Results.Ok(await BuildResponseAsync(builder, userId, ct));
+    }
+
+    /// <summary>Применяет запросы к загруженным (заблокированным) корзинам. Ошибка — (null, 4xx), иначе (изменённые корзины, null).</summary>
+    private static (IReadOnlyList<CapitalBasket>? Changed, IResult? Failure) Validate(
+        IReadOnlyList<CapitalBasket> all, IReadOnlyList<(long Id, BasketUpdateRequest Request)> updates)
+    {
         var targetsChanged = new HashSet<string>();
         var changed = new List<CapitalBasket>();
         foreach (var (id, request) in updates)
         {
             var basket = all.FirstOrDefault(b => (long)b.Id == id);
-            if (basket is null) return Results.NotFound();
+            if (basket is null) return (null, Results.NotFound());
 
             var before = basket.TargetWeight;
-            if (ApplyRequest(basket, request) is { } error) return AnalyticsSupport.ValidationError($"{basket.Code}: {error}");
+            if (ApplyRequest(basket, request) is { } error) return (null, AnalyticsSupport.ValidationError($"{basket.Code}: {error}"));
             if (before != basket.TargetWeight) targetsChanged.Add(basket.Portfolio);
             changed.Add(basket);
         }
@@ -85,11 +95,10 @@ public static class BasketEndpoints
         foreach (var portfolio in targetsChanged)
         {
             if (BasketValidation.ValidateTargetsSum(portfolio, all.Where(b => b.Portfolio == portfolio)) is { } sumError)
-                return AnalyticsSupport.ValidationError(sumError);
+                return (null, AnalyticsSupport.ValidationError(sumError));
         }
 
-        await repo.UpdateManyAsync(userId, changed);
-        return Results.Ok(await BuildResponseAsync(builder, userId, ct));
+        return (changed, null);
     }
 
     /// <summary>Переносит поля запроса на (уже загруженную) корзину и проверяет их. Возвращает текст ошибки или null.</summary>
@@ -98,6 +107,7 @@ public static class BasketEndpoints
         if (request.Band is null || request.HardBand is null || request.LiquidityTier is null || request.FillRule is null || request.MinTrade is null)
             return "band, hardBand, liquidityTier, fillRule и minTrade обязательны.";
 
+        var (wasAutoBuy, wasAutoSell) = (basket.AutoBuy, basket.AutoSell);
         basket.Title = request.Title?.Trim() ?? string.Empty;
         basket.TargetWeight = request.TargetWeight;
         basket.Band = request.Band.Value;
@@ -107,6 +117,12 @@ public static class BasketEndpoints
         basket.AutoBuy = request.AutoBuy;
         basket.AutoSell = request.AutoSell;
         basket.MinTrade = request.MinTrade.Value;
+
+        // Задача 67 (#1): авто-исполнение разрешено КОДОМ только для корзины «liquidity» (AutoWhitelist); флаг на другой корзине — ошибка, а не тихо
+        // игнорируемая настройка (иначе владелец думал бы, что авто включено). Ошибка — только когда запрос ВКЛЮЧАЕТ флаг (false → true, решение владельца A2):
+        // унаследованное true на старой корзине проходит как есть (без авто по коду оно ничего не делает), выключить его можно всегда.
+        if (((request.AutoBuy && !wasAutoBuy) || (request.AutoSell && !wasAutoSell)) && !string.Equals(basket.Code, AutoWhitelist.BasketCode, StringComparison.Ordinal))
+            return $"autoBuy/autoSell можно включить только у корзины «{AutoWhitelist.BasketCode}» (авто-исполнение — только фонды ликвидности).";
         return BasketValidation.ValidateFields(basket);
     }
 

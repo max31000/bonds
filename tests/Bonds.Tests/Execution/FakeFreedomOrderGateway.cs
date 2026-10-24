@@ -19,6 +19,9 @@ public sealed class FakeFreedomOrderGateway : IFreedomOrderGateway
     public Dictionary<string, decimal> Cash { get; } = new(StringComparer.OrdinalIgnoreCase) { ["USD"] = 10_000m };
     public Dictionary<string, decimal> Pieces { get; } = new(StringComparer.OrdinalIgnoreCase);
     public List<FreedomTrade> Trades { get; } = [];
+
+    /// <summary>Ошибка чтения истории сделок (<c>getTradesHistory</c>); null — читается.</summary>
+    public Exception? TradesError { get; set; }
     public List<FreedomCashFlow> CashFlows { get; } = [];
 
     public List<(ulong UserId, FreedomLimitOrder Order)> Posted { get; } = [];
@@ -131,6 +134,7 @@ public sealed class FakeFreedomOrderGateway : IFreedomOrderGateway
 
     public Task<IReadOnlyList<FreedomTrade>> GetTradesAsync(ulong userId, DateOnly from, DateOnly to, CancellationToken ct = default)
     {
+        if (TradesError is { } e) return Task.FromException<IReadOnlyList<FreedomTrade>>(e);
         lock (_lock) return Task.FromResult<IReadOnlyList<FreedomTrade>>(Trades.ToList());
     }
 

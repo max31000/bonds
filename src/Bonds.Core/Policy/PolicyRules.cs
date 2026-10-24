@@ -30,7 +30,14 @@ public static class SweepRule
         var basket = input.BasketByCode(PolicyNames.Liquidity);
         if (basket is null) return PolicyOutcome.None("P1: нет корзины «liquidity»");
         if (basket.FillRule == BasketFillRules.Hold) return PolicyOutcome.None("P1: корзина «liquidity» в режиме hold");
-        if (input.FreeCash <= 0m) return PolicyOutcome.None("P1: свободных рублей нет");
+        // Задача 67 (#7): устаревшие данные или неполная оценка ликвидности/свободных денег — решение «выше цели или нет» и сама сумма ненадёжны.
+        if (PolicyDataGate.LiquidityProblem(input) is { } p1Data) return PolicyOutcome.None($"P1: {p1Data} — кэш не паркуется");
+        // Задача 67 (#3) + решение владельца (T-67D): удержание под вывод НЕ блокирует P1. Сумма удержания уже вычтена из FreeCash (PolicyInputBuilder:
+        // FreeCash = свободные − SumReservedBuysAsync, куда входит удержание), поэтому P1 паркует только остаток сверх удержанных денег.
+        if (input.FreeCash <= 0m)
+            return PolicyOutcome.None(input.CashHoldActive
+                ? "P1: свободные рубли удержаны под вывод (открыт план вывода или он исполнен недавно) — парковать нечего; снять удержание: /withdrawn или «Деньги выведены»"
+                : "P1: свободных рублей нет");
 
         // Корзина уже выше цели (Above/HardAbove): парковать в неё дальше нельзя — кэш остаётся свободным (его разберёт P2/P3b/P4 или владелец).
         if (input.RowByCode(PolicyNames.Liquidity) is { State: BasketState.Above or BasketState.HardAbove } liquidityRow)
@@ -60,6 +67,8 @@ public static class InflowRule
         var notes = new List<string>();
         var skipped = new List<PlanSkip>();
         if (amount <= 0m) return PolicyOutcome.None("P2: сумма должна быть положительной");
+        // Задача 67 (#7): деление по дефициту требует полной и свежей оценки корзин.
+        if (PolicyDataGate.Problem(input) is { } p2Data) return PolicyOutcome.None($"P2: {p2Data} — распределение по дефициту корзин не строится");
 
         var budget = Math.Min(amount, input.FreeCash);
         if (budget <= 0m) return PolicyOutcome.None("P2: свободных денег нет");
@@ -197,6 +206,7 @@ public static class LiquidityToBondsRule
         var notes = new List<string>();
         var skipped = new List<PlanSkip>();
         if (input.Portfolio != CapitalPortfolios.Rub) return PolicyOutcome.None("P3b — только рублёвый портфель");
+        if (PolicyDataGate.Problem(input) is { } p3Data) return PolicyOutcome.None($"P3b: {p3Data} — перелив не строится");
 
         var row = input.RowByCode(PolicyNames.Liquidity);
         var basket = input.BasketByCode(PolicyNames.Liquidity);
@@ -214,7 +224,8 @@ public static class LiquidityToBondsRule
         var (sells, net, taxUnknown) = BasketSell.Sell(input, PolicyNames.Liquidity, excess, "P3b: излишек ликвидности сверх цели", skipped);
         if (sells.Count == 0) return PolicyOutcome.None(notes.Append("P3b: нечего продавать из ликвидности (нет цены или лота)").ToArray());
 
-        var buys = PolicyKit.BuyBonds(input, net, floor, "P3b замена ликвидности", skipped, applyIssuerLimit: true);
+        // Безопасность по дизайну §4: «рейтинг не ниже A» — по свежим ручным рейтингам эмитента (issuer_ratings); без свежего рейтинга кандидат допускается с пометкой «рейтинг не указан» (решение владельца, T-67D).
+        var buys = PolicyKit.BuyBonds(input, net, floor, "P3b замена ликвидности", skipped, applyIssuerLimit: true, requireRatingAtLeastA: true);
         if (buys.Count == 0)
         {
             return PolicyOutcome.None(notes.Append($"P3b: замены нет — нет облигаций с доходностью после налога ≥ {floor:P2} (фонд {fundYield:P2} + премия {input.Options.LiquidityPremiumFraction:P2})").ToArray());
@@ -228,7 +239,7 @@ public static class LiquidityToBondsRule
     }
 }
 
-/// <summary>P4 — ребаланс: только корзины в HardAbove/HardBelow без hold. Продаём излишек (если у корзины включён auto_sell) и докупаем дефицит. Всегда PendingApproval.</summary>
+/// <summary>P4 — ребаланс: только корзины в HardAbove/HardBelow без hold. Продаём излишек (независимо от auto_sell, задача 67 A2) и докупаем дефицит. Всегда PendingApproval.</summary>
 public static class RebalanceRule
 {
     public static string TriggerFor(IEnumerable<string> codes) => $"Жёсткое отклонение корзин: {string.Join(", ", codes.OrderBy(c => c, StringComparer.Ordinal))}";
@@ -258,20 +269,17 @@ public static class RebalanceRule
     {
         var notes = new List<string>();
         var skipped = new List<PlanSkip>();
+        if (PolicyDataGate.Problem(input) is { } p4Data) return PolicyOutcome.None($"P4: {p4Data} — ребаланс не строится");
         var rows = HardRows(input);
         if (rows.Count == 0) return PolicyOutcome.None("P4: жёстких отклонений нет");
 
         var lines = new List<TradePlanLine>();
         var net = 0m;
         var taxUnknown = false;
+        // Задача 67 (A2, решение владельца): продажа излишка НЕ зависит от auto_sell (флаг — только про авто-исполнение, а P4 всегда ждёт подтверждения):
+        // предлагается у любой корзины не hold в HardAbove.
         foreach (var (row, basket) in rows.Where(r => r.Row.State == BasketState.HardAbove))
         {
-            if (!basket.AutoSell)
-            {
-                notes.Add($"«{basket.Title}»: выше цели, но продажа излишка не разрешена (auto_sell выключен)");
-                continue;
-            }
-
             var excess = -(row.DeficitToTarget ?? 0m);
             var (sells, sellNet, unknown) = BasketSell.Sell(input, basket.Code, excess, $"P4 ребаланс «{basket.Title}»: излишек", skipped);
             lines.AddRange(sells);
@@ -391,11 +399,15 @@ public static class WithdrawRule
 
         if (lines.Count == 0 && remaining <= 0m)
         {
-            notes.Add("Вся сумма покрывается свободными деньгами — продажи не нужны");
-            return new PolicyOutcome(null, notes);
+            // Задача 67 (A2, решение владельца): вывод целиком из свободных денег всё равно удерживает их — план «только удержание» без строк
+            // (summary.cashHold = сумма). Подтверждение переводит его сразу в Done (заявок нет) — удержание живёт WithdrawHoldTtl рабочих дней или до /withdrawn.
+            notes.Add("Вся сумма покрывается свободными деньгами — продажи не нужны; деньги удерживаются под вывод (P1 их не паркует)");
+            return PolicyKit.FinishHoldOnly(input, PlanRules.P5Withdraw, trigger, requested, notes, warnings);
         }
 
-        return PolicyKit.Finish(input, PlanRules.P5Withdraw, trigger, lines, autoAllowed: false, skipped, notes, warnings, requested, shortfall);
+        // Удержание под вывод (задача 67, #3) — сумма, которую владелец выведет: запрошенное за вычетом нехватки.
+        var cashHold = Math.Max(0m, requested - (shortfall ?? 0m));
+        return PolicyKit.Finish(input, PlanRules.P5Withdraw, trigger, lines, autoAllowed: false, skipped, notes, warnings, requested, shortfall, cashHold);
     }
 }
 
@@ -436,7 +448,8 @@ public static class ExitBasketRule
         var warnings = new List<string>();
         if (taxUnknown) warnings.Add("Налог оценён сверху (журнал сделок по части позиций неполон)");
         warnings.Add("Налог — оценка по средней цене входа (не FIFO), плоские 13%, без сальдирования и ЛДВ");
-        return PolicyKit.Finish(input, PlanRules.Manual, $"Выход из корзины «{basket.Title}»", lines, autoAllowed: false, skipped, notes, warnings);
+        // Задача 67 (#3, «P5 / exit-basket»): чистая выручка выхода удерживается под вывод — P1 не паркует её обратно, пока владелец не отметит «деньги выведены».
+        return PolicyKit.Finish(input, PlanRules.Manual, $"Выход из корзины «{basket.Title}»", lines, autoAllowed: false, skipped, notes, warnings, holdSaleProceeds: true);
     }
 }
 

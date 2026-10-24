@@ -17,6 +17,15 @@ public sealed class PolicyRunResult
 }
 
 /// <summary>
+/// Прогон правил по всем пользователям — шаг после цикла синка (T-67D: запускается <see cref="Bonds.Infrastructure.Scheduling.SyncCycleService"/> В ФОНЕ, в своём DI-скоупе,
+/// после освобождения ворот синка). Интерфейс — ради подмены в юнит-тестах цикла (медленный/падающий прогон).
+/// </summary>
+public interface IPolicyCycleRunner
+{
+    Task<PolicyRunResult> RunAllAsync(DateTime nowUtc, CancellationToken ct = default);
+}
+
+/// <summary>
 /// Шаг <c>SyncCycleService</c> ПОСЛЕ синка всех брокеров (задача 63). Для каждого пользователя: просроченные <c>PendingApproval</c> и <c>AutoApproved</c> → <c>Expired</c>, затем правила
 /// P2 (по НОВЫМ пополнениям), P1, P7, P3b (в день недели из опций, по умолчанию понедельник), P4. Порядок P2 до P1 намеренный: пополнение сначала делится по
 /// дефициту корзин, и только оставшиеся свободные деньги паркует P1 (иначе P1 увёл бы всё в «ликвидность»). Дубликат не создаётся, если открыт план того же
@@ -25,7 +34,7 @@ public sealed class PolicyRunResult
 /// Пауза пользователя (<c>user_settings.execution_paused</c>, команда <c>/stop</c>) — AutoApproved не создаётся, только PendingApproval. Каждый сохранённый план уходит в
 /// <see cref="IPlanNotifier"/> (Telegram: PendingApproval — с кнопками, AutoApproved — информационно).
 /// </summary>
-public sealed class PolicyRunner
+public sealed class PolicyRunner : IPolicyCycleRunner
 {
     private readonly PolicyInputBuilder _builder;
     private readonly PolicyService _service;
@@ -37,6 +46,10 @@ public sealed class PolicyRunner
     private readonly IPlanNotifier _notifier;
     private readonly PolicyOptions _options;
     private readonly ILogger<PolicyRunner> _logger;
+    private readonly IPolicyUserLock? _userLock;
+
+    /// <summary>Сколько прогон ждёт блокировку пользователя (ручной план в работе); не дождался — пользователь пропускается до следующего цикла.</summary>
+    internal static readonly TimeSpan UserLockWait = TimeSpan.FromSeconds(30);
 
     public PolicyRunner(
         PolicyInputBuilder builder,
@@ -48,8 +61,10 @@ public sealed class PolicyRunner
         IUserSettingsRepository settings,
         IPlanNotifier notifier,
         IOptions<PolicyOptions> options,
-        ILogger<PolicyRunner> logger)
+        ILogger<PolicyRunner> logger,
+        IPolicyUserLock? userLock = null)
     {
+        _userLock = userLock;
         _builder = builder;
         _service = service;
         _plans = plans;
@@ -70,6 +85,8 @@ public sealed class PolicyRunner
         var userIds = new HashSet<ulong>();
         if (await _users.GetPrimaryUserIdAsync() is { } primary) userIds.Add(primary);
         foreach (var id in await _credentials.ListUserIdsWithValidAsync(CredentialProviders.Freedom)) userIds.Add(id);
+        // Задача 67 (#5): владельцы tinvest_read (их счета синкаются своими токенами).
+        foreach (var id in await _credentials.ListUserIdsWithValidAsync(CredentialProviders.TInvestRead) ?? []) userIds.Add(id);
 
         foreach (var userId in userIds)
         {
@@ -90,6 +107,19 @@ public sealed class PolicyRunner
 
     public async Task RunForUserAsync(ulong userId, DateTime nowUtc, PolicyRunResult result, CancellationToken ct = default)
     {
+        // Задача 67 (#13): прогон и ручные планы одного пользователя сериализуются (оба читают свободные деньги за вычетом резерва и сохраняют план).
+        await using var held = _userLock is null ? null : await _userLock.TryAcquireAsync(userId, UserLockWait, ct);
+        if (_userLock is not null && held is null)
+        {
+            result.Notes.Add($"user {userId}: plans are being built by another request — skipped this cycle");
+            return;
+        }
+
+        await RunLockedAsync(userId, nowUtc, result, ct);
+    }
+
+    private async Task RunLockedAsync(ulong userId, DateTime nowUtc, PolicyRunResult result, CancellationToken ct)
+    {
         var inputs = new Dictionary<string, PolicyInput>(await _builder.BuildAsync(userId, nowUtc, ignoreHours: false, ct), StringComparer.Ordinal);
 
         // Пауза (/stop в Telegram): авто-подтверждение выключено, все планы остаются PendingApproval и ждут решения человека.
@@ -105,7 +135,9 @@ public sealed class PolicyRunner
                 if (await _plans.ExistsAsync(userId, PlanRules.P2Inflow, trigger, openOnly: false, nowUtc)) continue;
 
                 var input = inputs[CapitalPortfolios.Rub];
-                if (input.Baskets.Any(b => b.FillRule == BasketFillRules.Engine)) input = await _builder.WithBondDataAsync(userId, input, ct);
+                // Неполные/устаревшие данные (задача 67, #7): правило само откажет с причиной — дорогие облигационные данные не собираем.
+                if (PolicyDataGate.Problem(input) is null && input.Baskets.Any(b => b.FillRule == BasketFillRules.Engine))
+                    input = await _builder.WithBondDataAsync(userId, input, ct);
                 var outcome = InflowRule.Evaluate(input, deposit.Amount, trigger);
                 inputs[CapitalPortfolios.Rub] = await ApplyAsync(userId, outcome, nowUtc, inputs[CapitalPortfolios.Rub], result, paused, dedupe: false, ct);
             }
@@ -127,7 +159,12 @@ public sealed class PolicyRunner
         {
             // Дубликат проверяем ДО сбора облигационных данных (кандидаты, стаканы, метаданные брокера — дорого): открытый план или пауза повтора — выходим сразу.
             var isCheckDay = TradingHours.ToMoscow(nowUtc).DayOfWeek == _options.LiquidityCheckDay;
-            if (isCheckDay && LiquidityLooksOverfilled(rubWeekly))
+            var dataProblem = PolicyDataGate.Problem(rubWeekly); // задача 67 (#7): P3b и P4 на неполных/устаревших данных не строятся
+            if (isCheckDay && LiquidityLooksOverfilled(rubWeekly) && dataProblem is not null)
+            {
+                Note(result, $"{PlanRules.P3bLiqToBonds}: {dataProblem} — перелив не строится");
+            }
+            else if (isCheckDay && LiquidityLooksOverfilled(rubWeekly))
             {
                 if (await IsDuplicateAsync(userId, PlanRules.P3bLiqToBonds, LiquidityToBondsRule.TriggerFor(nowUtc), nowUtc))
                 {
@@ -142,7 +179,11 @@ public sealed class PolicyRunner
             }
 
             // P4 не дублирует P3b: пока открыт перелив ликвидности, продажа той же корзины ребалансом не предлагается.
-            if (RebalanceRule.TriggerFor(inputs[CapitalPortfolios.Rub]) is { } p4Trigger
+            if (RebalanceRule.TriggerFor(inputs[CapitalPortfolios.Rub]) is not null && dataProblem is not null)
+            {
+                Note(result, $"{PlanRules.P4Rebalance}: {dataProblem} — ребаланс не строится");
+            }
+            else if (RebalanceRule.TriggerFor(inputs[CapitalPortfolios.Rub]) is { } p4Trigger
                 && !await _plans.HasOpenRuleAsync(userId, PlanRules.P3bLiqToBonds, nowUtc))
             {
                 if (await IsDuplicateAsync(userId, PlanRules.P4Rebalance, p4Trigger, nowUtc))
@@ -163,6 +204,12 @@ public sealed class PolicyRunner
             var outcome = RebalanceRule.Evaluate(usdRebalance);
             inputs[CapitalPortfolios.Usd] = await ApplyAsync(userId, outcome, nowUtc, usdRebalance, result, paused, dedupe: true, ct);
         }
+    }
+
+    private void Note(PolicyRunResult result, string note)
+    {
+        _logger.LogInformation("Policy: {Note}", note);
+        result.Notes.Add(note);
     }
 
     private bool LiquidityLooksOverfilled(PolicyInput input)
@@ -219,8 +266,9 @@ public sealed class PolicyRunner
     internal static PolicyInput CarryForward(PolicyInput input, TradePlanDraft draft, string savedStatus)
     {
         var spent = draft.Summary.ReservedBuy;
-        var autoRub = savedStatus == PlanStatuses.AutoApproved
-            ? draft.Lines.Where(l => l.Side == PlanSides.Buy && string.Equals(l.Currency, "RUB", StringComparison.OrdinalIgnoreCase)).Sum(l => l.EstAmount)
+        // Задача 67 (#12): как в PolicyKit.DecideStatus — рубли с комиссией (покупки + комиссия в валюте портфеля = ReservedBuy рублёвого портфеля).
+        var autoRub = savedStatus == PlanStatuses.AutoApproved && string.Equals(input.Currency, "RUB", StringComparison.OrdinalIgnoreCase)
+            ? draft.Summary.ReservedBuy
             : 0m;
         return input with
         {

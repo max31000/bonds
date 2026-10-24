@@ -107,7 +107,9 @@ public class PlansEndpointTests
             await meta.UpsertAsync(new InstrumentTradingMeta
             {
                 Broker = BrokerIds.TInvest, InstrumentKey = $"ISIN{ticker}", Ticker = ticker, Figi = figi, ClassCode = "TQBR", Lot = 1m,
-                MinPriceIncrement = step, Currency = "RUB", ApiTradeAvailable = true, BuyAvailable = true, SellAvailable = true, UpdatedAt = DateTime.UtcNow,
+                MinPriceIncrement = step, Currency = "RUB", ApiTradeAvailable = true, BuyAvailable = true, SellAvailable = true,
+                PaysDistributions = false, // фонды без выплат — проходят белый список авто (задача 67)
+                UpdatedAt = DateTime.UtcNow,
             });
         }
 
@@ -622,13 +624,37 @@ public class PlansEndpointTests
         var repo = new TradePlanRepository(Conn);
         var now = DateTime.UtcNow;
         await repo.InsertAsync(NewPlan(userId, PlanStatuses.AutoApproved, now, amount: 10_000m)); // в dry-run никогда не исполняется — деньги не потрачены
-        await repo.InsertAsync(NewPlan(userId, PlanStatuses.Done, now, amount: 5_000m));
-        await repo.InsertAsync(NewPlan(userId, PlanStatuses.Submitting, now, amount: 1_000m));
+        await repo.InsertAsync(Auto(NewPlan(userId, PlanStatuses.Done, now, amount: 5_000m)));
+        await repo.InsertAsync(Auto(NewPlan(userId, PlanStatuses.Submitting, now, amount: 1_000m)));
         await repo.InsertAsync(NewPlan(userId, PlanStatuses.PendingApproval, now, amount: 77_000m));
 
         var sum = await repo.SumAutoApprovedRubSinceAsync(userId, now.AddHours(-1));
 
         sum.Should().Be(6_000m, "только Submitting/Done; AutoApproved в dry-run не считается");
+    }
+
+    private static TradePlan Auto(TradePlan plan)
+    {
+        plan.DecidedVia = DecidedVia.Auto;
+        return plan;
+    }
+
+    [Fact]
+    public async Task T67_DayLimit_ManualBuy200k_DoesNotEatAutoLimit()
+    {
+        // Задача 67 (#10): ручная покупка на 200 000 ₽ (подтверждена в вебе, исполнена) не входит в суточный авто-лимит — ни в оценку раннера, ни в факт исполнителя.
+        var (factory, _) = NewFactory();
+        var (userId, _) = await NewUserAsync(factory);
+        var repo = new TradePlanRepository(Conn);
+        var now = DateTime.UtcNow;
+        var manual = NewPlan(userId, PlanStatuses.Done, now, rule: PlanRules.P2Inflow, amount: 200_000m);
+        manual.DecidedVia = DecidedVia.Web;
+        manual.DryRun = false;
+        await repo.InsertAsync(manual);
+        await repo.InsertAsync(Auto(NewPlan(userId, PlanStatuses.Done, now, amount: 3_000m)));
+
+        (await repo.SumAutoApprovedRubSinceAsync(userId, now.AddHours(-1))).Should().Be(3_000m);
+        (await repo.ListAutoDayPlansAsync(userId, now.AddHours(-1))).Should().ContainSingle().Which.DecidedVia.Should().Be(DecidedVia.Auto);
     }
 
     [Fact]
@@ -649,6 +675,190 @@ public class PlansEndpointTests
         (await repo.SumReservedBuysAsync(userId, BrokerIds.Freedom, "USD", now)).Should().Be(331.666m);
         (await repo.SumReservedBuysAsync(userId, BrokerIds.Freedom, "RUB", now)).Should().Be(0m, "другая валюта портфеля");
         (await repo.SumReservedBuysAsync(userId, BrokerIds.TInvest, "USD", now)).Should().Be(0m, "другой брокер");
+    }
+
+    [Fact]
+    public async Task T67_ApprovedLivePlanFromEvening_ReservesCash_P1At10SeesFreeCashMinusReserve()
+    {
+        // Вечером (вторник 22:00 МСК) одобрен живой план облигаций на 50 000 ₽ — он ждёт открытия торгов в Approved до 18:30 среды. В среду 10:00 МСК P1 видит
+        // свободные 60 000 − 50 000 = 10 000 ₽, а не все 60 000 (иначе P1 «увёл» бы деньги, под которые утром пойдут заявки облигаций).
+        var (userId, _, _, _, _, _, factory) = await SeedRubAsync(cashRub: 60_000m, aQuantity: 0m);
+        var wednesdayNoon = OpenNowUtc();
+        var evening = wednesdayNoon.AddDays(-1).AddHours(10); // вторник 19:00 UTC = 22:00 МСК
+        var at10 = wednesdayNoon.AddHours(-2); // среда 07:00 UTC = 10:00 МСК
+        var repo = new TradePlanRepository(Conn);
+
+        var live = NewPlan(userId, PlanStatuses.Approved, evening, expiresAt: wednesdayNoon.AddHours(6.5), rule: PlanRules.P2Inflow, trigger: "облигации",
+            summary: new TradePlanSummary { Currency = "RUB", ReservedBuy = 50_000m });
+        live.DryRun = false;
+        live.DecidedAt = evening;
+        live.DecidedVia = DecidedVia.Web;
+        await repo.InsertAsync(live);
+
+        // Approved dry-run не исполнится никогда — резерва нет.
+        var dry = NewPlan(userId, PlanStatuses.Approved, evening, expiresAt: wednesdayNoon.AddHours(6.5), rule: PlanRules.P2Inflow, trigger: "dry",
+            summary: new TradePlanSummary { Currency = "RUB", ReservedBuy = 7_000m });
+        dry.DecidedAt = evening;
+        await repo.InsertAsync(dry);
+
+        (await repo.SumReservedBuysAsync(userId, BrokerIds.TInvest, "RUB", at10)).Should().Be(50_000m);
+
+        using (var scope = factory.Services.CreateScope())
+            await scope.ServiceProvider.GetRequiredService<PolicyRunner>().RunForUserAsync(userId, at10, new PolicyRunResult());
+
+        var p1 = (await PlansOfAsync(userId)).Single(p => p.Rule == PlanRules.P1Sweep);
+        var summary = JsonSerializer.Deserialize<TradePlanSummary>(p1.SummaryJson!, WebJson)!;
+        summary.CashBefore.Should().Be(10_000m);
+        summary.ReservedBuy.Should().BeLessThanOrEqualTo(10_000m);
+    }
+
+    [Fact]
+    public async Task T67_Withdraw100k_With40kFree_NextP1ParksNothing_UntilMoneyWithdrawnReleased()
+    {
+        // Свободно 40 000 ₽, вывод 100 000 ₽: 40 000 из денег + продажа фонда A. Вывод в банк ручной — пока план вывода открыт, P1 ничего не паркует, а резерв
+        // учитывает всю сумму к выводу. «Деньги выведены» (веб) снимает удержание — следующий P1 снова паркует свободные рубли.
+        var (userId, client, _, _, _, _, factory) = await SeedRubAsync(cashRub: 40_000m, aQuantity: 1_000m);
+        var now = OpenNowUtc();
+
+        TradePlan withdraw;
+        using (var scope = factory.Services.CreateScope())
+        {
+            var (plan, _) = await scope.ServiceProvider.GetRequiredService<PolicyService>()
+                .CreateManualAsync(userId, PlanRules.P5Withdraw, new PlanParams(Amount: 100_000m), now);
+            withdraw = plan!;
+        }
+
+        JsonSerializer.Deserialize<TradePlanSummary>(withdraw.SummaryJson!, WebJson)!.CashHold.Should().Be(100_000m);
+        (await new TradePlanRepository(Conn).SumReservedBuysAsync(userId, BrokerIds.TInvest, "RUB", now)).Should().Be(100_000m);
+
+        var result = new PolicyRunResult();
+        using (var scope = factory.Services.CreateScope())
+            await scope.ServiceProvider.GetRequiredService<PolicyRunner>().RunForUserAsync(userId, now, result);
+        (await PlansOfAsync(userId)).Should().NotContain(p => p.Rule == PlanRules.P1Sweep);
+        result.Notes.Should().Contain(n => n.Contains("удержан"));
+
+        // T-67E (minor 5): неисполненный план вывода удержание не отдаёт — продажи ещё не прошли.
+        var early = await client.PostAsync("/api/plans/cash-hold/release", null);
+        (await ReadAsync(early)).GetProperty("released").GetInt32().Should().Be(0);
+
+        // План исполнен (продажа прошла, деньги ушли в банк) — «Деньги выведены» снимает удержание.
+        await using (var conn = new MySqlConnector.MySqlConnection(Conn))
+            await Dapper.SqlMapper.ExecuteAsync(conn, "UPDATE trade_plans SET status = 'Done' WHERE id = @Id", new { withdraw.Id });
+        var release = await client.PostAsync("/api/plans/cash-hold/release", null);
+        release.StatusCode.Should().Be(HttpStatusCode.OK);
+        (await ReadAsync(release)).GetProperty("released").GetInt32().Should().Be(1);
+        (await new TradePlanRepository(Conn).SumReservedBuysAsync(userId, BrokerIds.TInvest, "RUB", now)).Should().Be(0m);
+
+        // Удержание снято: P1 решает по своим обычным правилам (здесь ликвидность фондом A и так выше цели — паркует ли, решает уже не удержание).
+        var after = new PolicyRunResult();
+        using (var scope = factory.Services.CreateScope())
+            await scope.ServiceProvider.GetRequiredService<PolicyRunner>().RunForUserAsync(userId, now.AddMinutes(1), after);
+        after.Notes.Should().NotContain(n => n.Contains("удержан"));
+    }
+
+    private sealed class BusyUserLock : IPolicyUserLock
+    {
+        public Task<IAsyncDisposable?> TryAcquireAsync(ulong userId, TimeSpan wait, CancellationToken ct = default) => Task.FromResult<IAsyncDisposable?>(null);
+    }
+
+    [Fact]
+    public async Task T67D_ManualPlan_UserLockBusy_Returns409_WithBusyMessage()
+    {
+        // Решение владельца (T-67D): замок пользователя занят прогоном правил — это конфликт состояния (повторить позже), а не ошибка ввода: 409, не 422.
+        var (factory, _) = NewFactory(configure: s =>
+        {
+            s.RemoveAll<IPolicyUserLock>();
+            s.AddSingleton<IPolicyUserLock>(new BusyUserLock());
+        });
+        var (_, client) = await NewUserAsync(factory);
+
+        foreach (var (url, body) in new (string, object)[]
+                 {
+                     ("/api/plans/inflow", new { amount = 5_000m }),
+                     ("/api/plans/withdraw", new { amount = 5_000m }),
+                     ("/api/plans/exit-basket", new { code = "temporary" }),
+                 })
+        {
+            var response = await client.PostAsJsonAsync(url, body);
+            response.StatusCode.Should().Be(HttpStatusCode.Conflict, url);
+            (await ReadAsync(response)).GetProperty("error").GetString().Should().Be(PolicyService.BusyMessage);
+        }
+    }
+
+    [Fact]
+    public async Task T67_IncompleteOrStaleData_StopsRules_WithReasonInRunAndPreview()
+    {
+        // Фонд B корзины «liquidity» без цены (ни в позиции, ни в истории) — оценка неполна: P1 не паркует, причина в заметках прогона.
+        var (userId, client, accountId, _, b, _, factory) = await SeedRubAsync(cashRub: 7_340m, aQuantity: 0m);
+        var sfx = b[2..];
+        var now = OpenNowUtc();
+        var fundB = await new FundRepository(Conn).UpsertAsync(new Fund { Figi = $"FIGIB{sfx}", Isin = $"RUB{sfx}", Ticker = b, Name = "Фонд B" });
+        await new FundPositionRepository(Conn).UpsertAsync(new FundPosition { AccountId = accountId, FundId = fundB, Quantity = 10m, AvgPurchasePriceRub = 900m });
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var input = (await scope.ServiceProvider.GetRequiredService<PolicyInputBuilder>().BuildAsync(userId, now, ignoreHours: false))[CapitalPortfolios.Rub];
+            input.DataIncomplete.Should().BeTrue();
+            input.IncompleteBaskets.Should().Contain("liquidity");
+            input.StaleSince.Should().BeNull("синк свежий");
+
+            var result = new PolicyRunResult();
+            await scope.ServiceProvider.GetRequiredService<PolicyRunner>().RunForUserAsync(userId, now, result);
+            result.Notes.Should().Contain(n => n.StartsWith("P1: данные неполные"));
+        }
+
+        (await PlansOfAsync(userId)).Should().NotContain(p => p.Rule == PlanRules.P1Sweep);
+
+        // Синк брокера старше 26 ч: StaleSince выставлен, предпросмотр распределения суммы объясняет, почему плана нет.
+        var syncedAt = DateTime.UtcNow.AddHours(-30);
+        await new AccountRepository(Conn).UpdateBalanceAsync(accountId, 7_340m, 7_340m + 16_658m, syncedAt);
+        using (var scope = factory.Services.CreateScope())
+        {
+            var input = (await scope.ServiceProvider.GetRequiredService<PolicyInputBuilder>().BuildAsync(userId, DateTime.UtcNow, ignoreHours: true))[CapitalPortfolios.Rub];
+            input.StaleSince.Should().BeCloseTo(syncedAt, TimeSpan.FromSeconds(2));
+        }
+
+        var preview = await client.PostAsJsonAsync("/api/plans/preview", new { rule = PlanRules.P2Inflow, @params = new { amount = 5_000m } });
+        preview.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await ReadAsync(preview);
+        body.GetProperty("plan").ValueKind.Should().Be(JsonValueKind.Null);
+        body.GetProperty("notes").EnumerateArray().Select(n => n.GetString()).Should().Contain(n => n!.Contains("устарели"));
+    }
+
+    [Fact]
+    public async Task T67A2_Withdraw30k_FullyCoveredBy40kFree_HoldOnlyPlan_NextP1ParksAtMost10k()
+    {
+        // Вывод 30 000 ₽ при свободных 40 000 ₽ — продажи не нужны, но деньги всё равно удерживаются планом «только удержание» (без строк, cashHold = 30 000).
+        // Подтверждение переводит его сразу в Done (заявок нет), удержание продолжает действовать — P1 не паркует удержанные деньги.
+        var (userId, _, _, _, _, _, factory) = await SeedRubAsync(cashRub: 40_000m, aQuantity: 0m);
+        var now = OpenNowUtc();
+        var repo = new TradePlanRepository(Conn);
+
+        TradePlan withdraw;
+        using (var scope = factory.Services.CreateScope())
+        {
+            var (plan, _) = await scope.ServiceProvider.GetRequiredService<PolicyService>()
+                .CreateManualAsync(userId, PlanRules.P5Withdraw, new PlanParams(Amount: 30_000m), now);
+            plan.Should().NotBeNull("вывод из свободных денег — тоже план (удержание)");
+            withdraw = plan!;
+        }
+
+        withdraw.Lines.Should().BeEmpty();
+        withdraw.Status.Should().Be(PlanStatuses.PendingApproval);
+        JsonSerializer.Deserialize<TradePlanSummary>(withdraw.SummaryJson!, WebJson)!.CashHold.Should().Be(30_000m);
+        (await repo.SumReservedBuysAsync(userId, BrokerIds.TInvest, "RUB", now)).Should().Be(30_000m);
+
+        using (var scope = factory.Services.CreateScope())
+            (await scope.ServiceProvider.GetRequiredService<PolicyService>().ApproveAsync(userId, withdraw.Id, DecidedVia.Web, now)).Kind.Should().Be(PlanDecisionKind.Ok);
+        (await repo.GetAsync(userId, withdraw.Id))!.Status.Should().Be(PlanStatuses.Done);
+        (await repo.SumReservedBuysAsync(userId, BrokerIds.TInvest, "RUB", now.AddMinutes(1))).Should().Be(30_000m, "удержание живёт после подтверждения");
+
+        using (var scope = factory.Services.CreateScope())
+            await scope.ServiceProvider.GetRequiredService<PolicyRunner>().RunForUserAsync(userId, now.AddMinutes(1), new PolicyRunResult());
+
+        // Решение владельца (T-67D): удержание не блокирует P1 — он паркует только остаток (40 000 − 30 000), и лоты фондов в него помещаются.
+        var p1 = (await PlansOfAsync(userId)).Single(p => p.Rule == PlanRules.P1Sweep);
+        JsonSerializer.Deserialize<TradePlanSummary>(p1.SummaryJson!, WebJson)!.ReservedBuy.Should().BeGreaterThan(0m).And.BeLessThanOrEqualTo(10_000m);
     }
 
     [Fact]
@@ -749,5 +959,38 @@ public class PlansEndpointTests
 
         calls().Should().Be(afterFirst, "второй прогон: план P4 с той же причиной уже есть — кандидатов не собираем");
         second.Notes.Should().Contain(n => n.Contains("P4_REBALANCE") && n.Contains("не собирались"));
+    }
+
+    [Fact]
+    public async Task T67_PolicyUserLock_SerializesRunnerAndManualPlansPerUser()
+    {
+        // Задача 67 (#13): прогон правил и ручной план одного пользователя — под одним GET_LOCK на пользователя; другой пользователь не блокируется.
+        var userLock = new Bonds.Infrastructure.Policy.MySqlPolicyUserLock(Conn);
+        await using (var held = await userLock.TryAcquireAsync(9_000_001, TimeSpan.Zero))
+        {
+            held.Should().NotBeNull();
+            (await userLock.TryAcquireAsync(9_000_001, TimeSpan.Zero)).Should().BeNull("тот же пользователь занят");
+            await using var other = await userLock.TryAcquireAsync(9_000_002, TimeSpan.Zero);
+            other.Should().NotBeNull("другой пользователь независим");
+        }
+
+        await using var again = await userLock.TryAcquireAsync(9_000_001, TimeSpan.Zero);
+        again.Should().NotBeNull("освобождено после Dispose");
+    }
+
+    [Fact]
+    public async Task T67_TransitionSql_ChecksExpiresAt()
+    {
+        // Задача 67 (NIT): переход с notExpiredAt не срабатывает у плана, чей срок истёк к моменту решения (проверка в самом UPDATE).
+        var (factory, _) = NewFactory();
+        var (userId, _) = await NewUserAsync(factory);
+        var repo = new TradePlanRepository(Conn);
+        var now = DateTime.UtcNow;
+        var expired = await repo.InsertAsync(NewPlan(userId, PlanStatuses.PendingApproval, now.AddMinutes(-40), expiresAt: now.AddMinutes(-10)));
+        var alive = await repo.InsertAsync(NewPlan(userId, PlanStatuses.PendingApproval, now, expiresAt: now.AddMinutes(10)));
+
+        (await repo.TransitionAsync(userId, expired, [PlanStatuses.PendingApproval], PlanStatuses.Approved, DecidedVia.Web, now, null, notExpiredAt: now)).Should().BeFalse();
+        (await repo.GetAsync(userId, expired))!.Status.Should().Be(PlanStatuses.PendingApproval);
+        (await repo.TransitionAsync(userId, alive, [PlanStatuses.PendingApproval], PlanStatuses.Approved, DecidedVia.Web, now, null, notExpiredAt: now)).Should().BeTrue();
     }
 }

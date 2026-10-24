@@ -313,19 +313,21 @@ public class PolicyRulesTests
     }
 
     [Fact]
-    public void P4_HardAbove_SellsOnlyWhereAutoSellEnabled_ThenBuysDeficit()
+    public void T67A2_P4_HardAbove_SellsRegardlessOfAutoSell_ThenBuysDeficit_AlwaysPending()
     {
+        // Решение владельца (A2, d): P4 не зависит от auto_sell — продажа излишка предлагается у любой корзины не hold в HardAbove (план всегда PendingApproval).
         var holdings = new[] { Holding("TMON@", 1_800m, 299_844m, 150m, "liquidity") };
         var positions = new[] { Pos("TMON@", "fund", 299_844m), Pos("RU000A", "bond", 700_156m) };
         var candidates = new[] { Candidate("RU000A1", 0.12m, 0.13m) };
 
-        var withSell = RebalanceRule.Evaluate(Input([Liquidity(autoSell: true), Bonds()], positions, 0m, [Tmon, Tsav], holdings, candidates)).Plan!;
-        withSell.Lines.Should().Contain(l => l.Side == PlanSides.Sell && l.Ticker == "TMON@");
-        withSell.Lines.Should().Contain(l => l.Side == PlanSides.Buy && l.Ticker == "RU000A1");
-
-        var noSell = RebalanceRule.Evaluate(Input([Liquidity(autoSell: false), Bonds()], positions, 0m, [Tmon, Tsav], holdings, candidates));
-        noSell.Plan.Should().BeNull("auto_sell выключен, свободных денег нет — продавать и покупать не на что");
-        noSell.Notes.Should().Contain(n => n.Contains("auto_sell"));
+        foreach (var autoSell in new[] { true, false })
+        {
+            var plan = RebalanceRule.Evaluate(Input([Liquidity(autoSell: autoSell), Bonds()], positions, 0m, [Tmon, Tsav], holdings, candidates)).Plan!;
+            plan.Should().NotBeNull($"auto_sell = {autoSell} не влияет на P4");
+            plan.Lines.Should().Contain(l => l.Side == PlanSides.Sell && l.Ticker == "TMON@");
+            plan.Lines.Should().Contain(l => l.Side == PlanSides.Buy && l.Ticker == "RU000A1");
+            plan.Status.Should().Be(PlanStatuses.PendingApproval);
+        }
     }
 
     [Fact]
@@ -397,7 +399,10 @@ public class PolicyRulesTests
     [Fact]
     public void P5_FreeCashGoesFirst_NoSalesWhenItCoversTheAmount()
     {
-        WithdrawRule.Evaluate(WithdrawInput(freeCash: 8_000m), 5_000m, null, null).Plan.Should().BeNull("хватает свободных денег");
+        // Хватает свободных денег — продаж нет, но план «только удержание» (задача 67, A2) держит сумму вывода.
+        var holdOnly = WithdrawRule.Evaluate(WithdrawInput(freeCash: 8_000m), 5_000m, null, null).Plan!;
+        holdOnly.Lines.Should().BeEmpty("хватает свободных денег");
+        holdOnly.Summary.CashHold.Should().Be(5_000m);
 
         var plan = WithdrawRule.Evaluate(WithdrawInput(freeCash: 3_000m), 5_000m, null, null).Plan!;
         plan.Lines.Single().QuantityLots.Should().Be(2, "нужно продать на 2 000: 2 лота TSAV");

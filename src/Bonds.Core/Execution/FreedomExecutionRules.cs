@@ -101,14 +101,28 @@ public static class FreedomOrderRules
     /// диапазон <see cref="MinUserOrderId"/>…, отличный от <paramref name="ours"/>, — это другая строка <c>trade_orders</c>). Любой иной формат (ручные заявки терминала/приложения:
     /// <c>i-6:ios:…</c>, <c>web:…</c>) — чужая, НИКОГДА не усыновляется.
     /// </summary>
-    public static bool MayBeOursByAttributes(string? brokerValue, string ours)
+    /// <remarks>
+    /// T-67E (minor 3): авто-id брокера <c>api:N</c> — это unix-секунда ЗАПРОСА размещения; он принимается, только если N в окне
+    /// [<paramref name="createdAtUtc"/> − <see cref="AutoIdWindowBefore"/>, <paramref name="createdAtUtc"/> + <see cref="AutoIdWindowAfter"/>] (запрос уходит сразу после
+    /// записи строки). Заявка API с другой секундой (например, выставленная владельцем через свой CLI в другое время) — чужая. Пустой <c>userOrderId</c> — как раньше.
+    /// </remarks>
+    public static bool MayBeOursByAttributes(string? brokerValue, string ours, DateTime createdAtUtc)
     {
         if (string.IsNullOrWhiteSpace(brokerValue)) return true;
         var v = brokerValue.Trim();
         var digits = v.StartsWith(ApiPrefix, StringComparison.OrdinalIgnoreCase) ? v[ApiPrefix.Length..] : v;
         if (digits.Length == 0 || !digits.All(char.IsAsciiDigit)) return false;
-        return !IsValidUserOrderId(digits) || string.Equals(digits, ours?.Trim(), StringComparison.Ordinal);
+        if (IsValidUserOrderId(digits)) return string.Equals(digits, ours?.Trim(), StringComparison.Ordinal);
+        if (!long.TryParse(digits, NumberStyles.None, CultureInfo.InvariantCulture, out var unixSeconds)) return false;
+        var created = new DateTimeOffset(DateTime.SpecifyKind(createdAtUtc, DateTimeKind.Utc)).ToUnixTimeSeconds();
+        return unixSeconds >= created - (long)AutoIdWindowBefore.TotalSeconds && unixSeconds <= created + (long)AutoIdWindowAfter.TotalSeconds;
     }
+
+    /// <summary>Окно авто-id <c>api:N</c> до момента записи заявки (расхождение часов) — как окно сверки по реквизитам.</summary>
+    public static readonly TimeSpan AutoIdWindowBefore = TimeSpan.FromSeconds(30);
+
+    /// <summary>Окно авто-id <c>api:N</c> после момента записи заявки.</summary>
+    public static readonly TimeSpan AutoIdWindowAfter = TimeSpan.FromMinutes(2);
 }
 
 /// <summary>Класс кода статуса заявки Tradernet (<c>stat</c>).</summary>
@@ -133,8 +147,12 @@ public enum FreedomStatClass
     Rejected,
 }
 
-/// <summary>Итог разбора статуса заявки Freedom: статус исполнителя, исполненные ШТУКИ (= лоты, лот 1) и признак, что код официальный.</summary>
-public sealed record FreedomOrderResolution(string Status, long Executed, bool KnownCode);
+/// <summary>
+/// Итог разбора статуса заявки Freedom: статус исполнителя, исполненные ШТУКИ (= лоты, лот 1) и признак, что код официальный. <see cref="FillsUnconfirmed"/> —
+/// T-67E (M1): окончательный код снятия (30/31/71/72) пришёл БЕЗ массива <c>trade</c> — исполненное неизвестно, заявка считается активной (<c>Submitted</c>), пока
+/// исполнитель не сверит сделки по <c>getTradesHistory</c>.
+/// </summary>
+public sealed record FreedomOrderResolution(string Status, long Executed, bool KnownCode, bool FillsUnconfirmed = false);
 
 /// <summary>
 /// Статусы заявки Tradernet (<c>stat</c>, официальный список tradernet.global/tradernet-api/order-statuses) → <see cref="TradeOrderStatuses"/>.
@@ -143,7 +161,9 @@ public sealed record FreedomOrderResolution(string Status, long Executed, bool K
 /// <list type="bullet">
 /// <item>21 исполнен — <c>Filled</c>, исполнено = <c>q</c> (код окончательный и однозначный).</item>
 /// <item>30 частично отменен, 31 отменен, 71 истек, 72 частично исполнен и истек — <c>Cancelled</c> (снята не нами: движок перевыставит остаток или закроет строку),
-/// исполнено = Σ <c>trade[].q</c> (нет сделок — 0); сделки покрыли всё — <c>Filled</c>.</item>
+/// исполнено = Σ <c>trade[].q</c> (пустой массив — 0); сделки покрыли всё — <c>Filled</c>. <b>Массива <c>trade</c> в ответе нет вовсе</b> (T-67E, M1) — исполненное
+/// НЕИЗВЕСТНО: НЕ «окончательно с нулём» (иначе перевыставление купило бы уже купленное), а <c>Submitted</c> с
+/// <see cref="FreedomOrderResolution.FillsUnconfirmed"/>; окончательным заявку делает исполнитель после сверки с <c>getTradesHistory</c>.</item>
 /// <item>0 проигнорирован, 70 отклонен, 74 ошибка отправки — <c>Rejected</c>, исполнено 0; если сделки всё же есть — <c>Cancelled</c> с их количеством (окончательно,
 /// исполненное учитывается). «Rejected → Filled по <c>leaves_qty</c>» больше нет.</item>
 /// <item>1 получен, 2 в процессе отмены, 10 активен, 11 отправлен, 75 ошибка отмены — <c>Submitted</c> (с исполнением — <c>PartiallyFilled</c>).</item>
@@ -183,6 +203,9 @@ public static class FreedomOrderStatusMap
 
     public static bool IsKnown(int? stat) => Classify(stat) != FreedomStatClass.Unknown;
 
+    /// <summary>Код сам говорит о частичном исполнении (30 частично отменен, 72 частично исполнен и истек): история сделок, не показавшая ни одной, — не подтверждение.</summary>
+    public static bool IsPartialClosed(int? stat) => stat is PartiallyCancelled or PartiallyFilledExpired;
+
     /// <summary>
     /// Статус и исполненное по <c>stat</c>, запрошенным <paramref name="requested"/> (<c>q</c>), остатку <paramref name="leaves"/> (<c>leaves_qty</c>; null — поля нет) и
     /// Σ <c>trade[].q</c> <paramref name="tradedQty"/> (null — массива <c>trade</c> в ответе нет; пустой массив — 0). Штуки = лоты (у Freedom лот = 1); дробные — вниз.
@@ -202,6 +225,8 @@ public static class FreedomOrderStatusMap
             case FreedomStatClass.Filled:
                 return new(TradeOrderStatuses.Filled, requested, true);
             case FreedomStatClass.Closed:
+                // Нет массива trade — исполненное неизвестно: активна до сверки по истории сделок (T-67E, M1).
+                if (tradedQty is null) return new(TradeOrderStatuses.Submitted, 0, true, FillsUnconfirmed: true);
                 return new(requested > 0 && traded >= requested ? TradeOrderStatuses.Filled : TradeOrderStatuses.Cancelled, traded, true);
             case FreedomStatClass.Rejected:
                 return traded > 0 ? new(TradeOrderStatuses.Cancelled, traded, true) : new(TradeOrderStatuses.Rejected, 0, true);

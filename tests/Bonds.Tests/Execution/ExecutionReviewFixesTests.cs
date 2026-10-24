@@ -1,6 +1,7 @@
 using Bonds.Core.Capital;
 using Bonds.Core.Credentials;
 using Bonds.Core.Execution;
+using Bonds.Core.Models;
 using Bonds.Core.Policy;
 using Bonds.Infrastructure.Execution;
 using FluentAssertions;
@@ -152,12 +153,12 @@ public class ExecutionReviewFixesTests
     [Fact]
     public void AutoDayUsage_FilledByFact_InFlightByEstimate_ExcludesPlan()
     {
-        var done = new TradePlan { Id = 1, Status = PlanStatuses.Done, Lines = [Buy(1, 10, 100m)] }; // оценка 1 000, факт 10 × 110 = 1 100
-        var partial = new TradePlan { Id = 2, Status = PlanStatuses.PartiallyDone, Lines = [Buy(1, 10, 100m)] }; // факт 4 × 100, остаток не считается (план завершён)
-        var running = new TradePlan { Id = 3, Status = PlanStatuses.Submitting, Lines = [Buy(1, 10, 100m), Buy(2, 5, 200m)] }; // 3 × 105 + 7/10 × 1 000 + 1 000 (не начата)
-        var waiting = new TradePlan { Id = 4, Status = PlanStatuses.AutoApproved, Lines = [Buy(1, 2, 500m)] }; // 1 000 — оценка
-        var usd = new TradePlan { Id = 5, Status = PlanStatuses.Done, Lines = [Buy(1, 1, 100m, currency: "USD")] }; // не рубли
-        var self = new TradePlan { Id = 6, Status = PlanStatuses.Submitting, Lines = [Buy(1, 1, 9_999m)] };
+        var done = new TradePlan { Id = 1, Status = PlanStatuses.Done, DecidedVia = DecidedVia.Auto, Lines = [Buy(1, 10, 100m)] }; // оценка 1 000, факт 10 × 110 = 1 100
+        var partial = new TradePlan { Id = 2, Status = PlanStatuses.PartiallyDone, DecidedVia = DecidedVia.Auto, Lines = [Buy(1, 10, 100m)] }; // факт 4 × 100, остаток не считается (план завершён)
+        var running = new TradePlan { Id = 3, Status = PlanStatuses.Submitting, DecidedVia = DecidedVia.Auto, Lines = [Buy(1, 10, 100m), Buy(2, 5, 200m)] }; // 3 × 105 + 7/10 × 1 000 + 1 000 (не начата)
+        var waiting = new TradePlan { Id = 4, Status = PlanStatuses.AutoApproved, DecidedVia = DecidedVia.Auto, Lines = [Buy(1, 2, 500m)] }; // 1 000 — оценка
+        var usd = new TradePlan { Id = 5, Status = PlanStatuses.Done, DecidedVia = DecidedVia.Auto, Lines = [Buy(1, 1, 100m, currency: "USD")] }; // не рубли
+        var self = new TradePlan { Id = 6, Status = PlanStatuses.Submitting, DecidedVia = DecidedVia.Auto, Lines = [Buy(1, 1, 9_999m)] };
         var orders = new List<TradeOrder>
         {
             Order(1, 1, 1, TradeOrderStatuses.Filled, 10, 10, 110m),
@@ -171,6 +172,22 @@ public class ExecutionReviewFixesTests
         spent.Should().Be(1_100m + 400m + (315m + 700m + 1_000m) + 1_000m);
     }
 
+    [Fact]
+    public void T67_AutoDayUsage_ManualBuy200k_DoesNotEatAutoLimit()
+    {
+        // Задача 67 (#10): ручная (web/telegram) покупка на 200 000 ₽ исполнена сегодня — в авто-лимит она не входит, считается только авто-план.
+        var manual = new TradePlan { Id = 1, Status = PlanStatuses.Done, DecidedVia = DecidedVia.Web, Lines = [Buy(1, 1, 200_000m)] };
+        var viaBot = new TradePlan { Id = 2, Status = PlanStatuses.Submitting, DecidedVia = DecidedVia.Telegram, Lines = [Buy(1, 1, 50_000m)] };
+        var auto = new TradePlan { Id = 3, Status = PlanStatuses.Done, DecidedVia = DecidedVia.Auto, Lines = [Buy(1, 10, 100m)] };
+        var orders = new List<TradeOrder>
+        {
+            Order(1, 1, 1, TradeOrderStatuses.Filled, 1, 1, 200_000m),
+            Order(3, 1, 1, TradeOrderStatuses.Filled, 10, 10, 100m),
+        };
+
+        AutoDayUsage.SpentRub([manual, viaBot, auto], orders).Should().Be(1_000m);
+    }
+
     private static List<CapitalBasket> Baskets(bool autoBuy, string member = "TMON") =>
     [
         new()
@@ -180,22 +197,26 @@ public class ExecutionReviewFixesTests
         },
     ];
 
+    /// <summary>Метаданные фонда без выплат (задача 67: класс «фонд» и pays_distributions = false — условия белого списка в коде).</summary>
+    private static InstrumentTradingMeta? FundMeta(TradePlanLine line) =>
+        new() { Broker = BrokerIds.TInvest, InstrumentKey = line.InstrumentKey, Ticker = line.Ticker, MinPriceIncrement = 0.01m, Currency = "RUB", PaysDistributions = false };
+
     [Fact]
     public void AutoWhitelist_AllowsOnlyAutoBuyBasketFundBuysUnderCap()
     {
         var ok = new TradePlan { Lines = [Buy(1, 10, 166m)] };
-        AutoExecutionWhitelist.Check(ok, Baskets(true), 25_000m).Should().BeNull();
-        AutoExecutionWhitelist.Check(ok, Baskets(false), 25_000m).Should().Contain("не входит в корзину");
-        AutoExecutionWhitelist.Check(ok, Baskets(true, "TSAV"), 25_000m).Should().Contain("не входит в корзину");
-        AutoExecutionWhitelist.Check(new TradePlan { Lines = [Buy(1, 200, 166m)] }, Baskets(true), 25_000m).Should().Contain("больше лимита авто");
+        AutoExecutionWhitelist.Check(ok, Baskets(true), 25_000m, FundMeta).Should().BeNull();
+        AutoExecutionWhitelist.Check(ok, Baskets(false), 25_000m, FundMeta).Should().Contain("не входит в корзину");
+        AutoExecutionWhitelist.Check(ok, Baskets(true, "TSAV"), 25_000m, FundMeta).Should().Contain("не входит в корзину");
+        AutoExecutionWhitelist.Check(new TradePlan { Lines = [Buy(1, 200, 166m)] }, Baskets(true), 25_000m, FundMeta).Should().Contain("больше лимита авто");
 
         var sell = Buy(1, 1, 166m);
         sell.Side = PlanSides.Sell;
-        AutoExecutionWhitelist.Check(new TradePlan { Lines = [sell] }, Baskets(true), 25_000m).Should().Contain("только покупки");
+        AutoExecutionWhitelist.Check(new TradePlan { Lines = [sell] }, Baskets(true), 25_000m, FundMeta).Should().Contain("только покупки");
 
         var bond = Buy(1, 1, 927m);
         bond.LimitPricePoints = 92.7m;
-        AutoExecutionWhitelist.Check(new TradePlan { Lines = [bond] }, Baskets(true), 25_000m).Should().Contain("облигации");
+        AutoExecutionWhitelist.Check(new TradePlan { Lines = [bond] }, Baskets(true), 25_000m, FundMeta).Should().Contain("облигации");
     }
 
     [Fact]

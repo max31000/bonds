@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Badge, Button, Group, List, Modal, SimpleGrid, Stack, Text } from '@mantine/core';
 import type { Plan, PlanLine } from '../../api/types';
 import type { PlanDecisionResult } from '../../store/usePlansStore';
-import { formatDateTime } from '../../utils/format';
+import { formatDateTime, formatRub } from '../../utils/format';
 import {
   formatLimitPrice,
   formatOrderPrice,
@@ -92,6 +92,27 @@ function LineRow({ planId, line }: { planId: number; line: PlanLine }) {
   );
 }
 
+/** Удержание под вывод действует: сумма есть, владелец не отметил «деньги выведены», план не отклонён/просрочен/не провален (задача 67). */
+function hasActiveCashHold(plan: Plan): boolean {
+  if (!plan.summary?.cashHold || plan.summary.cashHold <= 0 || plan.cashHoldReleasedAt) return false;
+  return plan.status !== 'Rejected' && plan.status !== 'Expired' && plan.status !== 'Failed';
+}
+
+/** «Деньги выведены» снимает удержание только у исполненных планов (T-67E): неисполненный вывод деньги ещё не освободил. */
+function canReleaseCashHold(plan: Plan): boolean {
+  return plan.status === 'Done' || plan.status === 'PartiallyDone';
+}
+
+/** План «только удержание» (T-67D): вывод целиком из свободных денег — строк нет, есть сумма удержания `summary.cashHold`. */
+function isHoldOnly(plan: Plan): boolean {
+  return plan.lines.length === 0 && (plan.summary?.cashHold ?? 0) > 0;
+}
+
+/** Сумма удержания: рубли — со знаком ₽ без копеек («30 000 ₽»), прочие валюты — с кодом валюты (знак ₽ был бы ложью). Валюта — портфеля. */
+function formatHoldAmount(value: number, currency: string): string {
+  return currency.toUpperCase() === 'RUB' ? formatRub(value) : formatPlanMoney(value, currency);
+}
+
 /**
  * Карточка плана (задача 63): правило, причина, строки (лимитные заявки), итоги, статус. Dry-run план — «Подтвердить» лишь помечает его («не исполнен: dry-run»).
  * План с `dryRun = false` (задача 65) исполняет сервер: статусы заявок по строкам и «Отменить заявки». Суммы строк — в валюте строки, итоги — в валюте портфеля.
@@ -102,12 +123,15 @@ export function PlanCard({
   onApprove,
   onReject,
   onCancelExecution,
+  onReleaseCashHold,
 }: {
   plan: Plan;
   busy: boolean;
   onApprove: (id: number) => Promise<PlanDecisionResult>;
   onReject: (id: number) => Promise<PlanDecisionResult>;
   onCancelExecution?: (id: number) => Promise<PlanDecisionResult>;
+  /** «Деньги выведены» (задача 67): снять удержание денег под вывод у планов вывода. */
+  onReleaseCashHold?: () => Promise<PlanDecisionResult>;
 }) {
   const [error, setError] = useState<string | null>(null);
   const [confirmLive, setConfirmLive] = useState(false);
@@ -182,11 +206,17 @@ export function PlanCard({
         </Text>
       )}
 
-      <Stack gap={0}>
-        {plan.lines.map((line) => (
-          <LineRow key={line.lineNo} planId={plan.id} line={line} />
-        ))}
-      </Stack>
+      {isHoldOnly(plan) ? (
+        <Text size="sm" fw={500} data-testid={`plan-${plan.id}-hold-only`}>
+          Удержание {formatHoldAmount(summary?.cashHold ?? 0, currency)} под вывод
+        </Text>
+      ) : (
+        <Stack gap={0} data-testid={`plan-${plan.id}-lines`}>
+          {plan.lines.map((line) => (
+            <LineRow key={line.lineNo} planId={plan.id} line={line} />
+          ))}
+        </Stack>
+      )}
 
       {!plan.dryRun && (
         <Text size="xs" c="dimmed" data-testid={`plan-${plan.id}-live`}>
@@ -197,6 +227,28 @@ export function PlanCard({
         <Text size="sm" c="dimmed" data-testid={`plan-${plan.id}-note`}>
           {summary.executionNote}
         </Text>
+      )}
+      {hasActiveCashHold(plan) && (
+        <Group gap="xs" wrap="wrap" data-testid={`plan-${plan.id}-cash-hold`}>
+          <Text size="sm">
+            Удержано под вывод: <b>{formatPlanMoney(summary?.cashHold ?? 0, currency)}</b> — правила не трогают эти деньги, пока вы не выведете их в банк.
+          </Text>
+          {onReleaseCashHold && canReleaseCashHold(plan) && (
+            <Button
+              size="xs"
+              variant="light"
+              disabled={busy}
+              onClick={() =>
+                void onReleaseCashHold().then((r) => {
+                  if (!r.ok) setError(r.error);
+                })
+              }
+              data-testid={`plan-${plan.id}-release-hold`}
+            >
+              Деньги выведены
+            </Button>
+          )}
+        </Group>
       )}
       {plan.needsAttention && (
         <Text size="sm" c="red" fw={600} data-testid={`plan-${plan.id}-attention`}>

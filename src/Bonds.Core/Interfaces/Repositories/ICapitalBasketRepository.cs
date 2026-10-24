@@ -26,6 +26,14 @@ public interface ICapitalBasketRepository
     /// </summary>
     Task UpdateManyAsync(ulong userId, IReadOnlyList<CapitalBasket> baskets);
 
+    /// <summary>
+    /// Задача 67 (#13): чтение, проверка и запись ОДНОЙ транзакцией — корзины пользователя читаются <c>SELECT … FOR UPDATE</c> (параллельный запрос ждёт
+    /// коммита и проверяет уже итоговое состояние), <paramref name="apply"/> меняет загруженные корзины и возвращает изменённые (null — ничего не писать,
+    /// например ошибка проверки) и результат. Запись — редактируемые поля, как <see cref="UpdateManyAsync"/>.
+    /// </summary>
+    Task<TResult> UpdateLockedAsync<TResult>(
+        ulong userId, Func<IReadOnlyList<CapitalBasket>, Task<(IReadOnlyList<CapitalBasket>? Changed, TResult Result)>> apply);
+
     /// <summary>Добавляет члена; возвращает его id. Корзина должна принадлежать пользователю, иначе — 0.</summary>
     Task<ulong> AddMemberAsync(ulong userId, ulong basketId, CapitalBasketMember member);
 

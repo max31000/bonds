@@ -204,8 +204,19 @@ public sealed class PolicyInputBuilder
             if (quote is not null) quotes.Add(quote);
         }
 
+        // Задача 67 (#8): средняя цена входа облигаций T-Invest — в рублях, а налог продажи считается в валюте цены строки: для облигации с ценой не в
+        // рублях переводим по текущему курсу (оценка: налог РФ считается по курсам дат сделок — расхождение с фактом брокера возможно).
+        for (var i = 0; i < held.Holdings.Count; i++)
+        {
+            var h = held.Holdings[i];
+            var q = quotes.FirstOrDefault(x => x.Kind == PolicyAssetKind.Bond && x.FxToPortfolio is > 0m and not 1m
+                                               && BasketDriftService.KeyMatches(h.InstrumentKey, BasketDriftService.NormalizeKey(x.InstrumentKey)));
+            if (q is not null && h.AvgCostPerPiece is { } avg) held.Holdings[i] = h with { AvgCostPerPiece = avg / q.FxToPortfolio };
+        }
+
         // Деньги: свободные минус резерв под открытые планы; лимит суток по МОСКОВСКОЙ дате.
-        var reserved = await _plans.SumReservedBuysAsync(userId, broker, currency, nowUtc);
+        var reserved = await _plans.SumReservedBuysAsync(userId, broker, currency, nowUtc, _options.WithdrawHoldTtl); // покупки открытых планов + удержание под вывод
+        var cashHold = await _plans.GetCashHoldAsync(userId, broker, currency, nowUtc, _options.WithdrawHoldTtl);
         var mskDayStartUtc = DateTime.SpecifyKind(TradingHours.ToMoscow(nowUtc).Date - TimeSpan.FromHours(3), DateTimeKind.Utc);
         var autoToday = await _plans.SumAutoApprovedRubSinceAsync(userId, mskDayStartUtc);
 
@@ -219,6 +230,10 @@ public sealed class PolicyInputBuilder
             FreeCash = Math.Max(0m, portfolio.FreeCash - reserved),
             ReservedCash = reserved,
             AutoApprovedTodayRub = autoToday,
+            CashHoldActive = cashHold.Active,
+            DataIncomplete = portfolio.DataIncomplete,
+            IncompleteBaskets = IncompleteBasketsOf(portfolio),
+            StaleSince = StaleSinceOf(portfolio, nowUtc),
             Baskets = portfolio.Baskets,
             Drift = portfolio.Drift,
             Quotes = quotes,
@@ -229,6 +244,38 @@ public sealed class PolicyInputBuilder
             IgnoreTradingHours = ignoreHours,
         };
         return new Built(input, held.Bonds);
+    }
+
+    /// <summary>
+    /// Задача 67 (#7): последний успешный синк брокера, если он старше <see cref="PolicyOptions.MaxSyncAge"/> (<see cref="DateTime.MinValue"/> — синка не было), иначе null.
+    /// T-Invest — <c>accounts.balance_synced_at</c>, Freedom — время синка позиций (<c>CapitalPortfolioOverview.SyncedAtUtc</c>).
+    /// </summary>
+    private DateTime? StaleSinceOf(CapitalPortfolioOverview portfolio, DateTime nowUtc)
+    {
+        if (portfolio.SyncedAtUtc is not { } synced) return DateTime.MinValue;
+        return nowUtc - synced > _options.MaxSyncAge ? synced : null;
+    }
+
+    /// <summary>Коды строк дрейфа с неполными данными: позиция без цены/курса → её строка; <c>cash</c> — сумма свободных денег не определена.</summary>
+    private static IReadOnlySet<string> IncompleteBasketsOf(CapitalPortfolioOverview portfolio)
+    {
+        var codes = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var key in portfolio.IncompleteKeys)
+        {
+            if (key == SystemBaskets.Cash)
+            {
+                codes.Add(SystemBaskets.Cash);
+                continue;
+            }
+
+            var normalized = BasketDriftService.NormalizeKey(key);
+            var row = portfolio.Drift.Rows.FirstOrDefault(r => r.Positions.Any(p => BasketDriftService.NormalizeKey(p.Key) == normalized));
+            codes.Add(row?.Code ?? SystemBaskets.Unassigned);
+        }
+
+        // Неполнота без ключа (например, сбой оценки позиций Freedom) — корзина неизвестна, считаем «не распределено».
+        if (portfolio.DataIncomplete && codes.Count == 0) codes.Add(SystemBaskets.Unassigned);
+        return codes;
     }
 
     private sealed record HeldSet(List<PolicyHolding> Holdings, List<HeldBondValue> Bonds, Dictionary<string, (decimal AccruedPerPiece, decimal? CleanPerPiece)> BondPrices);
@@ -350,7 +397,9 @@ public sealed class PolicyInputBuilder
         decimal? reference = null;
         if (isBond && held.BondPrices.TryGetValue(meta.InstrumentKey, out var prices))
         {
-            accrued = prices.AccruedPerPiece;
+            // Задача 67 (#8): НКД держания — рубли; в котировке он в ВАЛЮТЕ ЦЕНЫ (CNY-облигация: рубли ÷ курс). Ориентир чистой цены остаётся в рублях
+            // (валюта портфеля) — его переводит LinePricer.
+            accrued = prices.AccruedPerPiece / fx.Value;
             reference = prices.CleanPerPiece;
         }
 
@@ -384,6 +433,7 @@ public sealed class PolicyInputBuilder
             SellAvailable = meta.SellAvailable && meta.ApiTradeAvailable,
             ItsTwin = meta.ItsTwin ?? false,
             KnownCommission = known,
+            PaysDistributions = meta.PaysDistributions, // белый список авто (задача 67): null — неизвестно = не проходит
         };
     }
 

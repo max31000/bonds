@@ -111,7 +111,8 @@ public sealed class PlanExecutionEngine
         IOptions<ExecutionLimitsOptions> limits,
         IOptions<PolicyOptions> policy,
         ILogger<PlanExecutionEngine> logger,
-        IFreedomOrderGateway? freedomGateway = null)
+        IFreedomOrderGateway? freedomGateway = null,
+        ITInvestFillHistory? tinvestFills = null)
     {
         _plans = plans;
         _orders = orders;
@@ -127,8 +128,8 @@ public sealed class PlanExecutionEngine
         _limits = limits.Value;
         _policy = policy.Value;
         _logger = logger;
-        _venues[Brokers.TInvest] = new TInvestExecutionVenue(gateway, gate, accounts, credentialRecords, logger);
-        if (freedomGateway is not null) _venues[Brokers.Freedom] = new FreedomExecutionVenue(freedomGateway, gate, accounts, credentialRecords, orders, logger);
+        _venues[Brokers.TInvest] = new TInvestExecutionVenue(gateway, gate, accounts, credentialRecords, logger, meta, tinvestFills, orders, plans);
+        if (freedomGateway is not null) _venues[Brokers.Freedom] = new FreedomExecutionVenue(freedomGateway, gate, accounts, credentialRecords, orders, logger, plans);
     }
 
     private ExecutionOptions Opt => _options.CurrentValue;
@@ -266,8 +267,8 @@ public sealed class PlanExecutionEngine
         {
             reject = "некорректное количество лотов";
         }
-        else if (plan.DecidedVia == DecidedVia.Auto
-                 && AutoExecutionWhitelist.Check(plan, await _baskets.GetByUserAsync(ctx.UserId), _limits.AutoPerOrderRub) is { } notAllowed)
+        else if ((plan.Status == PlanStatuses.AutoApproved || plan.DecidedVia == DecidedVia.Auto)
+                 && await AutoRejectionAsync(plan, ctx.UserId) is { } notAllowed)
         {
             reject = "авто-исполнение не разрешено: " + notAllowed;
         }
@@ -343,6 +344,19 @@ public sealed class PlanExecutionEngine
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Белый список авто в коде (задача 67, #1) на ТЕКУЩИХ корзинах и метаданных торгов: вызывается для любого <c>AutoApproved</c> или <c>decided_via = auto</c>
+    /// (статус мог быть подделан в БД — флаги корзин его не расширяют).
+    /// </summary>
+    private async Task<string?> AutoRejectionAsync(TradePlan plan, ulong userId)
+    {
+        // AutoApproved ставит только PolicyService.SaveAsync и всегда с decided_via = auto; иное сочетание — запись правили в обход сервиса
+        // (дальше лимиты авто на заявку/день опираются на decided_via, поэтому такой план не исполняется вовсе).
+        if (plan.Status == PlanStatuses.AutoApproved && plan.DecidedVia != DecidedVia.Auto) return "статус AutoApproved без авто-решения правил (decided_via ≠ auto)";
+        var metas = await MetasAsync(plan);
+        return AutoExecutionWhitelist.Check(plan, await _baskets.GetByUserAsync(userId), _limits.AutoPerOrderRub, l => MetaOf(metas, l), _policy);
     }
 
     private static InstrumentTradingMeta? MetaOf(Dictionary<string, InstrumentTradingMeta> metas, TradePlanLine line) =>
@@ -486,6 +500,7 @@ public sealed class PlanExecutionEngine
         var drift = Opt.DriftFor(isBond);
         var price = OrderPricing.PriceForAttempt(line.Side, approved, market.Bid, market.Ask, step.Value, drift, attempt, limits.MaxAttempts, state.Last?.LimitPrice);
         var lots = state.RemainingLots;
+        var amountWithFee = OrderPricing.RequiredMoney(line, price, lots); // и деньги под заявку, и лимит авто на заявку
 
         // AutoApproved: суточный лимит по ФАКТУ — исполненное других планов дня (лоты × средняя цена) + оценка ещё не исполненного, плюс этот план так же.
         decimal? autoUsed = null;
@@ -518,13 +533,13 @@ public sealed class PlanExecutionEngine
             ApiTradeAvailable = market.ApiTradeAvailable,
             SideAvailable = line.Side == PlanSides.Sell ? meta.SellAvailable : meta.BuyAvailable,
             AvailableMoney = market.AvailableMoney,
-            RequiredMoney = OrderPricing.RequiredMoney(line, price, lots),
+            RequiredMoney = amountWithFee,
             AvailablePieces = market.AvailablePieces,
             AutoUsedTodayRub = autoUsed,
             AutoPlanBuysRub = autoPlanBuys,
             AutoPerDayRub = _limits.AutoPerDayRub,
             AutoPerOrderRub = autoPerOrder,
-            OrderAmount = OrderPricing.OrderAmount(line, price, lots),
+            OrderAmount = amountWithFee,
             Paused = gate.Paused,
             SessionOpenForNewOrders = !closing,
         });
@@ -651,10 +666,43 @@ public sealed class PlanExecutionEngine
             if (ctx.NowUtc - since < Opt.UnconfirmedOrderTimeout) return RefreshOutcome.Pending;
 
             // Брокер заявку не знает: отправки не было или она потеряна. Повторно НЕ отправляем — закрываем строку и просим проверить вручную.
+            // Задача 67 (#17): сначала — история сделок: исполненное по ней восстанавливает lots_filled (иначе строка «докупила» бы уже купленное).
+            HistoryFill? fill = null;
+            try
+            {
+                fill = await venue.FillsFromHistoryAsync(session, ctx.UserId, order, line, ctx.NowUtc, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogWarning("Execution: trades history unavailable for {ClientOrderId} ({Error}) — closing as unknown state", order.ClientOrderId, ex.GetType().Name);
+            }
+
+            order.UpdatedAt = ctx.NowUtc;
+            if (fill is { Lots: > 0 } f)
+            {
+                order.LotsFilled = Math.Max(order.LotsFilled, Math.Min(f.Lots, order.LotsRequested));
+                if (f.AvgPricePerPiece is { } avg) order.AvgFillPrice = avg;
+                if (order.LotsFilled >= order.LotsRequested)
+                {
+                    order.Status = TradeOrderStatuses.Filled;
+                    order.ErrorCode = null;
+                    order.ErrorMessage = "Состояние заявки у брокера не найдено — исполнение восстановлено по истории сделок";
+                }
+                else
+                {
+                    order.Status = TradeOrderStatuses.Failed;
+                    order.ErrorCode = TradeOrderErrorCodes.UnknownState;
+                    order.ErrorMessage = $"Состояние заявки не подтвердилось у брокера; по истории сделок исполнено {order.LotsFilled} из {order.LotsRequested} лот(ов) — проверьте терминал";
+                }
+
+                _logger.LogWarning("Execution: order {ClientOrderId} unknown to broker — {Lots} lot(s) restored from trades history", order.ClientOrderId, order.LotsFilled);
+                await _orders.UpdateAsync(order);
+                return RefreshOutcome.Updated;
+            }
+
             order.Status = TradeOrderStatuses.Failed;
             order.ErrorCode = TradeOrderErrorCodes.UnknownState;
             order.ErrorMessage = "Состояние заявки не подтвердилось у брокера — повторно не отправлялась, проверьте терминал";
-            order.UpdatedAt = ctx.NowUtc;
             await _orders.UpdateAsync(order);
             return RefreshOutcome.Updated;
         }
@@ -902,7 +950,8 @@ public sealed class PlanExecutionEngine
         await OnLineTerminalAsync(plan, line, orders, filled < line.QuantityLots ? last?.ErrorMessage ?? "исполнено не полностью" : null, ctx, ct);
     }
 
-    private async Task FinalizeAsync(TradePlan plan, List<TradeOrder> orders, Ctx ctx, CancellationToken ct)
+    /// <param name="reason">Причина остановки (ворота закрылись во время исполнения, задача 67 #11) — дописывается к итогу плана.</param>
+    private async Task FinalizeAsync(TradePlan plan, List<TradeOrder> orders, Ctx ctx, CancellationToken ct, string? reason = null)
     {
         var states = plan.Lines.Select(l => (Line: l, State: LineState(l, orders))).ToList();
         if (states.Any(s => !s.State.Terminal) || plan.Lines.Any(l => FeePending(l, orders))) return;
@@ -914,6 +963,7 @@ public sealed class PlanExecutionEngine
             PlanStatuses.PartiallyDone => "исполнен частично",
             _ => "не исполнен",
         };
+        if (reason is not null && outcome != PlanStatuses.Done) note += ": остановлен — " + reason;
         if (!await _plans.SetExecutionStatusAsync(ctx.UserId, plan.Id, [PlanStatuses.Submitting], outcome, WithNote(plan.SummaryJson, note))) return;
         plan.Status = outcome;
         ctx.Result.PlansFinished++;
@@ -923,21 +973,50 @@ public sealed class PlanExecutionEngine
     }
 
     /// <summary>
-    /// Ворота ВСЕХ брокеров плана закрыты (или ключ не прошёл сверку): НИЧЕГО не отправляем. Неначатый план → Failed с причиной; у исполняемого висящие заявки
-    /// снимаются (снятие — не отправка, оно уменьшает риск), неначатые строки → Failed, план закрывается итогом. Снять нельзя (нет ключа, чужой счёт, брокер отказал) —
-    /// одно уведомление на заявку «снимите её в терминале брокера», план остаётся Submitting и попытки повторяются каждый тик.
+    /// Ворота ВСЕХ брокеров плана закрыты (или ключ не прошёл сверку): НИЧЕГО не отправляем. Задача 67 (#11): неначатый план (Approved/AutoApproved) НЕ убивается —
+    /// он ждёт в своём статусе до <c>expires_at</c> (пауза /stop → /resume в пределах срока — план исполнится), по истечении → Expired; владельцу ОДНО уведомление
+    /// «ждёт» (повтор — только при смене причины: заметка плана хранит её). У исполняемого висящие заявки снимаются (снятие — не отправка, оно уменьшает риск),
+    /// неначатые строки → Failed, план закрывается итогом (PartiallyDone/Failed) с причиной. Снять нельзя (нет ключа, чужой счёт, брокер отказал) — одно уведомление
+    /// на заявку «снимите её в терминале брокера», план остаётся Submitting и попытки повторяются каждый тик.
     /// </summary>
     private async Task HaltPlanAsync(TradePlan plan, string reason, Ctx ctx, CancellationToken ct)
     {
         if (plan.Status != PlanStatuses.Submitting)
         {
-            if (await _plans.SetExecutionStatusAsync(ctx.UserId, plan.Id, Startable, PlanStatuses.Failed, WithNote(plan.SummaryJson, "не исполнен: " + reason)))
-                await _notifier.NotifyAsync(ctx.UserId, new BotMessage(ExecutionMessages.PlanNotStarted(plan, reason)), ct);
+            if (plan.ExpiresAt <= ctx.NowUtc)
+            {
+                if (await _plans.SetExecutionStatusAsync(ctx.UserId, plan.Id, Startable, PlanStatuses.Expired,
+                        WithNote(plan.SummaryJson, "не исполнен: срок истёк, пока исполнение было закрыто — " + reason)))
+                    await _notifier.NotifyAsync(ctx.UserId, new BotMessage(ExecutionMessages.PlanNotStarted(plan, "срок истёк, пока исполнение было закрыто — " + reason)), ct);
+                return;
+            }
+
+            ctx.Result.Notes.Add($"plan {plan.Id}: waiting — execution closed");
+            var waiting = WaitingNotePrefix + reason;
+            if (string.Equals(NoteOf(plan.SummaryJson), waiting, StringComparison.Ordinal)) return;
+            if (await _plans.SetExecutionStatusAsync(ctx.UserId, plan.Id, [plan.Status], plan.Status, WithNote(plan.SummaryJson, waiting)))
+                await _notifier.NotifyAsync(ctx.UserId, new BotMessage(ExecutionMessages.PlanWaiting(plan, reason)), ct);
             return;
         }
 
         var orders = (await _orders.ListByPlanAsync(plan.Id)).ToList();
-        if (await StopLinesAsync(plan, orders, TradeOrderErrorCodes.Halted, reason, ctx, ct)) await FinalizeAsync(plan, orders, ctx, ct);
+        if (await StopLinesAsync(plan, orders, TradeOrderErrorCodes.Halted, reason, ctx, ct)) await FinalizeAsync(plan, orders, ctx, ct, reason);
+    }
+
+    /// <summary>Заметка неначатого плана, ждущего открытия ворот (задача 67, #11).</summary>
+    internal const string WaitingNotePrefix = "ждёт: исполнение сейчас закрыто — ";
+
+    private static string? NoteOf(string? summaryJson)
+    {
+        if (string.IsNullOrWhiteSpace(summaryJson)) return null;
+        try
+        {
+            return JsonSerializer.Deserialize<TradePlanSummary>(summaryJson, Json)?.ExecutionNote;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 
     /// <summary>Снимает активные заявки и закрывает незавершённые строки кодом <paramref name="code"/>. false — что-то снять не удалось (повтор на следующем тике).</summary>

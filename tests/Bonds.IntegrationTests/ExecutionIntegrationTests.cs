@@ -140,7 +140,7 @@ public class ExecutionIntegrationTests
 
         var expected = enabled && live && token && !paused;
         gateway.PostCount.Should().Be(expected ? 1 : 0);
-        (await ReloadAsync(plan)).Status.Should().Be(expected ? PlanStatuses.Submitting : PlanStatuses.Failed);
+        (await ReloadAsync(plan)).Status.Should().Be(expected ? PlanStatuses.Submitting : PlanStatuses.Approved);
         var orders = await new TradeOrderRepository(Conn).ListByPlanAsync(plan.Id);
         if (expected) orders.Should().ContainSingle(o => o.Status == TradeOrderStatuses.Submitted && o.ClientOrderId == gateway.Posted[0].Order.ClientOrderId);
         else orders.Should().BeEmpty("при закрытых воротах заявки даже не создаются");
@@ -191,7 +191,10 @@ public class ExecutionIntegrationTests
         await engine.RunForUserAsync(s.UserId, Noon.AddSeconds(40));
         gateway.PostCount.Should().Be(1);
 
-        // Суточный лимит авто учитывает исполненное (Done) — и только RUB-покупки.
+        // Суточный лимит авто учитывает исполненное (Done) — но только решённое автоматически (задача 67, #10): этот план подтверждён в вебе.
+        (await new TradePlanRepository(Conn).SumAutoApprovedRubSinceAsync(s.UserId, Noon.AddHours(-1))).Should().Be(0m);
+        await using (var conn = new MySqlConnector.MySqlConnection(Conn))
+            await Dapper.SqlMapper.ExecuteAsync(conn, "UPDATE trade_plans SET decided_via = 'auto' WHERE id = @Id", new { Id = plan.Id });
         (await new TradePlanRepository(Conn).SumAutoApprovedRubSinceAsync(s.UserId, Noon.AddHours(-1))).Should().Be(166.57m * 3);
         (await new TradePlanRepository(Conn).SumAutoApprovedRubSinceAsync(s.UserId, Noon.AddHours(-1), plan.Id)).Should().Be(0m);
     }
@@ -214,6 +217,27 @@ public class ExecutionIntegrationTests
         var sameAttempt = Row(1);
         sameAttempt.ClientOrderId = Guid.NewGuid().ToString("D");
         await FluentActions.Invoking(() => repo.InsertAsync(sameAttempt)).Should().ThrowAsync<MySqlException>("одна попытка строки — одна заявка");
+    }
+
+    [Fact]
+    public async Task T67E_ListByUserUpdatedSince_FiltersUserBrokerAndUpdatedAt_AnyStatus()
+    {
+        var s = await SeedAsync();
+        var plan = await InsertPlanAsync(s, PlanStatuses.Submitting);
+        var repo = new TradeOrderRepository(Conn);
+        TradeOrder Row(int attempt, string status, DateTime updated, string broker = BrokerIds.TInvest) => new()
+        {
+            PlanId = plan.Id, LineNo = 1, Attempt = attempt, ClientOrderId = Guid.NewGuid().ToString("D"), Status = status, LimitPrice = 1m, PriceUnit = OrderPriceUnits.Currency,
+            LotsRequested = 1, Currency = "RUB", CreatedAt = updated, UpdatedAt = updated, Broker = broker,
+        };
+        await repo.InsertAsync(Row(1, TradeOrderStatuses.Cancelled, Noon.AddMinutes(-10)));
+        await repo.InsertAsync(Row(2, TradeOrderStatuses.Cancelled, Noon.AddMinutes(-1)));
+        await repo.InsertAsync(Row(3, TradeOrderStatuses.Filled, Noon));
+        await repo.InsertAsync(Row(4, TradeOrderStatuses.Filled, Noon, BrokerIds.Freedom));
+
+        var since = await repo.ListByUserUpdatedSinceAsync(s.UserId, BrokerIds.TInvest, Noon.AddMinutes(-2));
+        since.Select(o => o.Attempt).Should().Equal(2, 3);
+        (await repo.ListByUserUpdatedSinceAsync(s.UserId + 100_000, BrokerIds.TInvest, Noon.AddMinutes(-2))).Should().BeEmpty();
     }
 
     [Fact]
@@ -312,6 +336,93 @@ public class ExecutionIntegrationTests
             var service = scope.ServiceProvider.GetRequiredService<Bonds.Infrastructure.Policy.PolicyService>();
             (await service.SaveAsync(s.UserId, draft, Noon, forcePending: false)).DryRun.Should().BeTrue("Execution:Enabled=false");
         }
+    }
+
+    private TradePlanDraft ExecutableDraft(Seed s) => new(PlanRules.Manual, "m3 " + Guid.NewGuid().ToString("N")[..6], PlanStatuses.PendingApproval, Noon.AddMinutes(30),
+        [new TradePlanLine
+        {
+            LineNo = 1, Broker = BrokerIds.TInvest, AccountId = s.AccountId, InstrumentKey = s.Key, Ticker = s.Key, Side = PlanSides.Buy, QuantityLots = 3, LotSize = 1m,
+            LimitPrice = 166.57m, EstAmount = 166.57m * 3, EstFee = 0m, Currency = "RUB", Reason = "тест",
+        }],
+        new TradePlanSummary { Portfolio = "rub", Currency = "RUB" });
+
+    [Fact]
+    public async Task T67E_PlanSavedWhilePaused_Resume_Approve_Executes()
+    {
+        // M3: пауза не замораживает dry_run — её перепроверяет исполнитель; после /resume и подтверждения план исполняется.
+        var s = await SeedAsync();
+        var settings = new UserSettingsRepository(Conn);
+        await settings.SetExecutionModeAsync(s.UserId, ExecutionModes.Live);
+        await SaveTradeTokenAsync(s.UserId);
+        await settings.SetExecutionPausedAsync(s.UserId, true);
+
+        var enabledFactory = _factory.WithWebHostBuilder(b => b.UseSetting("Execution:Enabled", "true"));
+        using var scope = enabledFactory.Services.CreateScope();
+        var service = scope.ServiceProvider.GetRequiredService<Bonds.Infrastructure.Policy.PolicyService>();
+        var plan = await service.SaveAsync(s.UserId, ExecutableDraft(s), Noon, forcePending: true);
+        plan.DryRun.Should().BeFalse("пауза — временное состояние, dry_run решают env/режим/ключ");
+
+        await settings.SetExecutionPausedAsync(s.UserId, false); // /resume
+        var decision = await service.ApproveAsync(s.UserId, plan.Id, DecidedVia.Web, Noon);
+        decision.Kind.Should().Be(Bonds.Infrastructure.Policy.PlanDecisionKind.Ok);
+        decision.Plan!.DryRun.Should().BeFalse();
+
+        var (engine, gateway) = NewEngine(scope, enabled: true, s);
+        await engine.RunForUserAsync(s.UserId, Noon.AddSeconds(5));
+        gateway.PostCount.Should().Be(1);
+        (await ReloadAsync(plan)).Status.Should().Be(PlanStatuses.Submitting);
+    }
+
+    [Fact]
+    public async Task T67E_PausedDuringApproval_PlanWaits_ExecutesAfterResume()
+    {
+        var s = await SeedAsync();
+        var settings = new UserSettingsRepository(Conn);
+        await settings.SetExecutionModeAsync(s.UserId, ExecutionModes.Live);
+        await SaveTradeTokenAsync(s.UserId);
+        await settings.SetExecutionPausedAsync(s.UserId, true);
+
+        var enabledFactory = _factory.WithWebHostBuilder(b => b.UseSetting("Execution:Enabled", "true"));
+        using var scope = enabledFactory.Services.CreateScope();
+        var service = scope.ServiceProvider.GetRequiredService<Bonds.Infrastructure.Policy.PolicyService>();
+        var plan = await service.SaveAsync(s.UserId, ExecutableDraft(s), Noon, forcePending: true);
+        var decision = await service.ApproveAsync(s.UserId, plan.Id, DecidedVia.Web, Noon);
+        decision.Plan!.DryRun.Should().BeFalse("подтверждение на паузе не делает план dry-run");
+
+        var (engine, gateway) = NewEngine(scope, enabled: true, s);
+        await engine.RunForUserAsync(s.UserId, Noon.AddSeconds(5));
+        gateway.PostCount.Should().Be(0, "на паузе исполнитель ничего не отправляет");
+        (await ReloadAsync(plan)).Status.Should().Be(PlanStatuses.Approved, "неначатый план ждёт /resume до expires_at");
+
+        await settings.SetExecutionPausedAsync(s.UserId, false);
+        await engine.RunForUserAsync(s.UserId, Noon.AddSeconds(25));
+        gateway.PostCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task T67E_DryRunReevaluatedAtApproval_ObserveToLiveExecutes_LiveToObserveDoesNot()
+    {
+        var s = await SeedAsync();
+        var settings = new UserSettingsRepository(Conn);
+        await SaveTradeTokenAsync(s.UserId);
+        var enabledFactory = _factory.WithWebHostBuilder(b => b.UseSetting("Execution:Enabled", "true"));
+        using var scope = enabledFactory.Services.CreateScope();
+        var service = scope.ServiceProvider.GetRequiredService<Bonds.Infrastructure.Policy.PolicyService>();
+
+        // Построен в observe → подтверждён после включения live — исполняется.
+        await settings.SetExecutionModeAsync(s.UserId, ExecutionModes.Observe);
+        var observed = await service.SaveAsync(s.UserId, ExecutableDraft(s), Noon, forcePending: true);
+        observed.DryRun.Should().BeTrue();
+        await settings.SetExecutionModeAsync(s.UserId, ExecutionModes.Live);
+        (await service.ApproveAsync(s.UserId, observed.Id, DecidedVia.Web, Noon)).Plan!.DryRun.Should().BeFalse("live включён к моменту подтверждения");
+
+        // Построен в live → подтверждён после возврата в observe — НЕ исполняется.
+        var live = await service.SaveAsync(s.UserId, ExecutableDraft(s), Noon, forcePending: true);
+        live.DryRun.Should().BeFalse();
+        await settings.SetExecutionModeAsync(s.UserId, ExecutionModes.Observe);
+        var decided = (await service.ApproveAsync(s.UserId, live.Id, DecidedVia.Web, Noon)).Plan!;
+        decided.DryRun.Should().BeTrue("в момент подтверждения исполнение выключено");
+        decided.SummaryJson.Should().Contain(Bonds.Infrastructure.Policy.PolicyService.DryRunNote);
     }
 
     // ─── Торговый токен: сетевая проверка ──────────────────────────────────────────────────

@@ -93,22 +93,30 @@ public sealed class FreedomOrderGateway : IFreedomOrderGateway
     }
 
     /// <summary>
-    /// Момент котировки (UTC) для <c>Execution:MaxQuoteAge</c>: самая поздняя из <c>ltt</c>/<c>bbt</c>/<c>bat</c> (МСК без пояса − <paramref name="offset"/>), отбрасывая
-    /// метки позже <paramref name="nowUtc"/> + 1 мин (мусор/расхождение часов). Нет ни одной — null (preflight: «несвежая котировка»). Застывшие <c>bbt</c>/<c>bat</c>
-    /// (у валют — 2023 год) на результат не влияют — берётся максимум.
+    /// Момент котировки (UTC) для <c>Execution:MaxQuoteAge</c> — свежесть СТАКАНА: самая поздняя из <c>bbt</c>/<c>bat</c> (лучшие bid/ask; МСК без пояса −
+    /// <paramref name="offset"/>); <c>ltt</c> (последняя сделка) — ТОЛЬКО если обеих меток стакана нет (T-67E, minor 6: свежая сделка при застывшем стакане не делает
+    /// bid/ask свежими). Метки позже <paramref name="nowUtc"/> + 1 мин отбрасываются (мусор/расхождение часов). Нет ни одной годной — null (preflight: «несвежая
+    /// котировка»).
     /// </summary>
     internal static DateTime? QuoteTimeUtc(FreedomQuote q, TimeSpan offset, DateTime nowUtc)
     {
-        DateTime? best = null;
-        foreach (var local in new[] { q.LastTradeLocal, q.BidTimeLocal, q.AskTimeLocal })
+        DateTime? Latest(IEnumerable<DateTime?> marks)
         {
-            if (local is not { } l) continue;
-            var utc = DateTime.SpecifyKind(l - offset, DateTimeKind.Utc);
-            if (utc > nowUtc.AddMinutes(1)) continue;
-            if (best is null || utc > best) best = utc;
+            DateTime? best = null;
+            foreach (var local in marks)
+            {
+                if (local is not { } l) continue;
+                var utc = DateTime.SpecifyKind(l - offset, DateTimeKind.Utc);
+                if (utc > nowUtc.AddMinutes(1)) continue;
+                if (best is null || utc > best) best = utc;
+            }
+
+            return best;
         }
 
-        return best;
+        return q.BidTimeLocal is null && q.AskTimeLocal is null
+            ? Latest([q.LastTradeLocal])
+            : Latest([q.BidTimeLocal, q.AskTimeLocal]);
     }
 
     public async Task<FreedomAccountSnapshot> GetAccountSnapshotAsync(ulong userId, CancellationToken ct = default)
@@ -349,7 +357,8 @@ public sealed class FreedomOrderGateway : IFreedomOrderGateway
         return new GatewayOrderState(
             id.Trim(), string.IsNullOrWhiteSpace(userOrderId) ? null : userOrderId.Trim(), status, q, executed, executed > 0 ? fills?.Vwap : null, null,
             BrokerAssetClassifier.NormalizeCurrency(Str(e, "cur")), message,
-            Ticker: Str(e, "instr")?.Trim().ToUpperInvariant(), Side: side, LimitPrice: Dec(e, "p"), PlacedAtUtc: placedUtc);
+            Ticker: Str(e, "instr")?.Trim().ToUpperInvariant(), Side: side, LimitPrice: Dec(e, "p"), PlacedAtUtc: placedUtc,
+            BrokerStat: stat, FillsUnconfirmed: resolution.FillsUnconfirmed);
     }
 
     /// <summary>

@@ -63,6 +63,14 @@ public class UserCredentialRepository : IUserCredentialRepository
             new { UserId = userId, Provider = provider, Status = status, StatusMessage = statusMessage });
     }
 
+    public async Task UpdateMetaAsync(ulong userId, string provider, string? metaJson)
+    {
+        using var conn = CreateConnection();
+        await conn.ExecuteAsync(
+            "UPDATE user_credentials SET meta_json = @MetaJson WHERE user_id = @UserId AND provider = @Provider",
+            new { UserId = userId, Provider = provider, MetaJson = metaJson });
+    }
+
     public async Task<IReadOnlyList<ulong>> ListUserIdsAsync(string provider, string status)
     {
         using var conn = CreateConnection();
