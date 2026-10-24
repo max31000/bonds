@@ -642,7 +642,7 @@ public sealed class FreedomExecutionVenue : IExecutionVenue
     {
         var tolerance = step is > 0m ? step.Value / 2m : 0m;
         return orders.Where(o =>
-                FreedomOrderRules.MayBeOursByAttributes(o.ClientOrderId, order.ClientOrderId)
+                FreedomOrderRules.MayBeOursByAttributes(o.ClientOrderId, order.ClientOrderId, order.CreatedAt)
                 && string.Equals(o.Ticker, ticker, StringComparison.OrdinalIgnoreCase)
                 && string.Equals(o.Side, side, StringComparison.Ordinal)
                 && o.LotsRequested == order.LotsRequested

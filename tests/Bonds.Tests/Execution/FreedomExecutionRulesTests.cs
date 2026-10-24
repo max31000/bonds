@@ -84,17 +84,25 @@ public class FreedomExecutionRulesTests
     public void UserOrderIdMatches_ExactOrApiPrefixed(string? broker, string ours, bool match) =>
         FreedomOrderRules.UserOrderIdMatches(broker, ours).Should().Be(match);
 
+    /// <summary>Момент записи заявки: unix 1792763201 (живой счёт: <c>api:1792763201</c>).</summary>
+    private static readonly DateTime Created = DateTimeOffset.FromUnixTimeSeconds(1792763201).UtcDateTime;
+
     [Theory]
     [InlineData(null, true)]
     [InlineData("", true)]
-    [InlineData("api:1792763201", true)] // авто-id брокера (наш номер не принят) — может быть нашей
+    [InlineData("api:1792763201", true)] // авто-id брокера (наш номер не принят) — секунда запроса = момент записи
+    [InlineData("api:1792763171", true)] // −30 с — граница окна
+    [InlineData("api:1792763321", true)] // +2 мин — граница окна
+    [InlineData("api:1792763170", false)] // −31 с — другая заявка API (например, CLI владельца)
+    [InlineData("api:1792763322", false)] // +2 мин 1 с
+    [InlineData("api:1792700000", false)] // CLI владельца давно
     [InlineData("api:712345678", true)] // наш
     [InlineData("api:798765432", false)] // другой НАШ номер — другая строка trade_orders
     [InlineData("i-6:ios:terminal_exchange_currency", false)] // ручная заявка из приложения
     [InlineData("web:terminal", false)]
     [InlineData("api:", false)]
-    public void MayBeOursByAttributes_OnlyEmptyOrApiForm(string? broker, bool may) =>
-        FreedomOrderRules.MayBeOursByAttributes(broker, "712345678").Should().Be(may);
+    public void MayBeOursByAttributes_OnlyEmptyOrApiFormInTimeWindow(string? broker, bool may) =>
+        FreedomOrderRules.MayBeOursByAttributes(broker, "712345678", Created).Should().Be(may);
 
     /// <summary>Официальный список кодов tradernet.global/tradernet-api/order-statuses; leaves/traded = -1 — поля нет (traded — массива <c>trade</c>).</summary>
     [Theory]

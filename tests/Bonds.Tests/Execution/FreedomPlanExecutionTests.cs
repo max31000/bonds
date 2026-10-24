@@ -530,7 +530,8 @@ public class FreedomPlanExecutionTests
         var plan = AddPlan(Noon);
         Quote("VUAA.EU", 147.65m, 147.75m);
         _freedom.Clock = () => Noon.AddSeconds(1);
-        _freedom.ListedUserOrderId = _ => "api:1792763201"; // брокер не принял наш номер — показывает свой авто-id (unix-секунда)
+        // Брокер не принял наш номер — показывает свой авто-id: unix-секунда запроса размещения.
+        _freedom.ListedUserOrderId = _ => FreedomOrderRules.ApiPrefix + new DateTimeOffset(Noon.AddSeconds(1)).ToUnixTimeSeconds();
         _freedom.LoseResponse = true;
         await Tick(Noon);
         _freedom.LoseResponse = false;
@@ -545,6 +546,27 @@ public class FreedomPlanExecutionTests
 
         await Tick(Noon.AddSeconds(40));
         _notifier.Texts.Count(t => t.Contains("по реквизитам")).Should().Be(1, "id брокера уже известен — повторного предупреждения нет");
+    }
+
+    [Fact]
+    public async Task T67E_ResponseLost_OwnerCliOrderWithOtherApiSecond_NotAdoptedByAttributes()
+    {
+        // Minor 3: заявка API владельца (свой CLI) с теми же реквизитами, но авто-id api:<другая секунда> (10 мин до записи нашей) — не наша, не усыновляется.
+        var plan = AddPlan(Noon);
+        Quote("VUAA.EU", 147.65m, 147.75m);
+        _freedom.ListedUserOrderId = _ => FreedomOrderRules.ApiPrefix + new DateTimeOffset(Noon.AddMinutes(-10)).ToUnixTimeSeconds();
+        _freedom.LoseResponse = true;
+        await Tick(Noon);
+        _freedom.LoseResponse = false;
+
+        await Tick(Noon.AddSeconds(20));
+        OrdersOf(plan).Single().Status.Should().Be(TradeOrderStatuses.New, "кандидат с чужой секундой api:N отброшен — заявка не опознана");
+        OrdersOf(plan).Single().BrokerOrderId.Should().BeNull();
+        _notifier.Texts.Should().NotContain(t => t.Contains("по реквизитам"));
+
+        await Tick(Noon.Add(_options.UnconfirmedOrderTimeout).AddSeconds(1));
+        OrdersOf(plan).Single().ErrorCode.Should().Be(TradeOrderErrorCodes.UnknownState);
+        _freedom.PostCount.Should().Be(1, "повторной отправки нет");
     }
 
     [Fact]

@@ -101,14 +101,28 @@ public static class FreedomOrderRules
     /// диапазон <see cref="MinUserOrderId"/>…, отличный от <paramref name="ours"/>, — это другая строка <c>trade_orders</c>). Любой иной формат (ручные заявки терминала/приложения:
     /// <c>i-6:ios:…</c>, <c>web:…</c>) — чужая, НИКОГДА не усыновляется.
     /// </summary>
-    public static bool MayBeOursByAttributes(string? brokerValue, string ours)
+    /// <remarks>
+    /// T-67E (minor 3): авто-id брокера <c>api:N</c> — это unix-секунда ЗАПРОСА размещения; он принимается, только если N в окне
+    /// [<paramref name="createdAtUtc"/> − <see cref="AutoIdWindowBefore"/>, <paramref name="createdAtUtc"/> + <see cref="AutoIdWindowAfter"/>] (запрос уходит сразу после
+    /// записи строки). Заявка API с другой секундой (например, выставленная владельцем через свой CLI в другое время) — чужая. Пустой <c>userOrderId</c> — как раньше.
+    /// </remarks>
+    public static bool MayBeOursByAttributes(string? brokerValue, string ours, DateTime createdAtUtc)
     {
         if (string.IsNullOrWhiteSpace(brokerValue)) return true;
         var v = brokerValue.Trim();
         var digits = v.StartsWith(ApiPrefix, StringComparison.OrdinalIgnoreCase) ? v[ApiPrefix.Length..] : v;
         if (digits.Length == 0 || !digits.All(char.IsAsciiDigit)) return false;
-        return !IsValidUserOrderId(digits) || string.Equals(digits, ours?.Trim(), StringComparison.Ordinal);
+        if (IsValidUserOrderId(digits)) return string.Equals(digits, ours?.Trim(), StringComparison.Ordinal);
+        if (!long.TryParse(digits, NumberStyles.None, CultureInfo.InvariantCulture, out var unixSeconds)) return false;
+        var created = new DateTimeOffset(DateTime.SpecifyKind(createdAtUtc, DateTimeKind.Utc)).ToUnixTimeSeconds();
+        return unixSeconds >= created - (long)AutoIdWindowBefore.TotalSeconds && unixSeconds <= created + (long)AutoIdWindowAfter.TotalSeconds;
     }
+
+    /// <summary>Окно авто-id <c>api:N</c> до момента записи заявки (расхождение часов) — как окно сверки по реквизитам.</summary>
+    public static readonly TimeSpan AutoIdWindowBefore = TimeSpan.FromSeconds(30);
+
+    /// <summary>Окно авто-id <c>api:N</c> после момента записи заявки.</summary>
+    public static readonly TimeSpan AutoIdWindowAfter = TimeSpan.FromMinutes(2);
 }
 
 /// <summary>Класс кода статуса заявки Tradernet (<c>stat</c>).</summary>
