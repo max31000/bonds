@@ -131,6 +131,33 @@ public class CapitalBasketRepository : ICapitalBasketRepository
         using var conn = CreateConnection();
         await conn.OpenAsync();
         using var tx = await conn.BeginTransactionAsync();
+        await WriteFieldsAsync(conn, tx, userId, baskets);
+        await tx.CommitAsync();
+    }
+
+    public async Task<TResult> UpdateLockedAsync<TResult>(
+        ulong userId, Func<IReadOnlyList<CapitalBasket>, Task<(IReadOnlyList<CapitalBasket>? Changed, TResult Result)>> apply)
+    {
+        using var conn = CreateConnection();
+        await conn.OpenAsync();
+        using var tx = await conn.BeginTransactionAsync();
+        // FOR UPDATE: строки корзин пользователя заблокированы до коммита — второй PUT ждёт и проверяет сумму целей уже на итоговом состоянии первого.
+        var baskets = (await conn.QueryAsync<CapitalBasket>(
+            $"SELECT {BasketColumns} FROM baskets WHERE user_id = @UserId ORDER BY portfolio, sort_order, id FOR UPDATE", new { UserId = userId }, tx)).ToList();
+        var members = (await conn.QueryAsync<CapitalBasketMember>(
+            $@"SELECT {MemberColumns} FROM basket_members m JOIN baskets b ON b.id = m.basket_id WHERE b.user_id = @UserId ORDER BY m.id",
+            new { UserId = userId }, tx)).ToList();
+        var byBasket = members.GroupBy(m => m.BasketId).ToDictionary(g => g.Key, g => g.ToList());
+        foreach (var basket in baskets) basket.Members = byBasket.TryGetValue(basket.Id, out var list) ? list : [];
+
+        var (changed, result) = await apply(baskets);
+        if (changed is { Count: > 0 }) await WriteFieldsAsync(conn, tx, userId, changed);
+        await tx.CommitAsync();
+        return result;
+    }
+
+    private static async Task WriteFieldsAsync(MySqlConnection conn, MySqlTransaction tx, ulong userId, IReadOnlyList<CapitalBasket> baskets)
+    {
         foreach (var b in baskets)
         {
             await conn.ExecuteAsync(
@@ -139,8 +166,6 @@ public class CapitalBasketRepository : ICapitalBasketRepository
                   WHERE id = @Id AND user_id = @UserId",
                 new { b.Id, UserId = userId, b.Title, b.TargetWeight, b.Band, b.HardBand, b.LiquidityTier, b.FillRule, b.AutoBuy, b.AutoSell, b.MinTrade }, tx);
         }
-
-        await tx.CommitAsync();
     }
 
     public async Task<ulong> AddMemberAsync(ulong userId, ulong basketId, CapitalBasketMember member)

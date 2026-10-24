@@ -924,4 +924,21 @@ public class PlansEndpointTests
         calls().Should().Be(afterFirst, "второй прогон: план P4 с той же причиной уже есть — кандидатов не собираем");
         second.Notes.Should().Contain(n => n.Contains("P4_REBALANCE") && n.Contains("не собирались"));
     }
+
+    [Fact]
+    public async Task T67_PolicyUserLock_SerializesRunnerAndManualPlansPerUser()
+    {
+        // Задача 67 (#13): прогон правил и ручной план одного пользователя — под одним GET_LOCK на пользователя; другой пользователь не блокируется.
+        var userLock = new Bonds.Infrastructure.Policy.MySqlPolicyUserLock(Conn);
+        await using (var held = await userLock.TryAcquireAsync(9_000_001, TimeSpan.Zero))
+        {
+            held.Should().NotBeNull();
+            (await userLock.TryAcquireAsync(9_000_001, TimeSpan.Zero)).Should().BeNull("тот же пользователь занят");
+            await using var other = await userLock.TryAcquireAsync(9_000_002, TimeSpan.Zero);
+            other.Should().NotBeNull("другой пользователь независим");
+        }
+
+        await using var again = await userLock.TryAcquireAsync(9_000_001, TimeSpan.Zero);
+        again.Should().NotBeNull("освобождено после Dispose");
+    }
 }

@@ -469,4 +469,61 @@ public class CapitalBasketEndpointTests
         Basket(Portfolio(await GetAsync(client), "usd"), "global_core").GetProperty("title").GetString().Should().Be("Глобальное ядро");
         (await client.PostAsync("/api/baskets/reset-defaults?portfolio=eur", null)).StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
     }
+
+    [Fact]
+    public async Task T67_UpdateLocked_SelectForUpdate_SecondWriterWaitsAndValidatesOnCommittedState()
+    {
+        // Задача 67 (#13): PUT /api/baskets читает, проверяет и пишет одной транзакцией с SELECT … FOR UPDATE. Второй запрос ждёт коммита первого и
+        // видит его цели (а не старое состояние), поэтому два «по отдельности правильных» PUT не дают вместе сумму целей ≠ 1.
+        var (client, userId) = await NewUserAsync();
+        await GetAsync(client); // посев стартовых корзин
+        var repo = new CapitalBasketRepository(Conn);
+
+        var firstInside = new TaskCompletionSource();
+        var releaseFirst = new TaskCompletionSource();
+        var first = repo.UpdateLockedAsync<int>(userId, async all =>
+        {
+            var liquidity = all.Single(b => b.Code == "liquidity");
+            liquidity.TargetWeight = 0.10m;
+            firstInside.SetResult();
+            await releaseFirst.Task;
+            return ([liquidity], 1);
+        });
+        await firstInside.Task;
+
+        decimal? seenBySecond = null;
+        var second = Task.Run(() => repo.UpdateLockedAsync<int>(userId, all =>
+        {
+            seenBySecond = all.Single(b => b.Code == "liquidity").TargetWeight;
+            return Task.FromResult<(IReadOnlyList<Bonds.Core.Capital.CapitalBasket>?, int)>((null, 2));
+        }));
+
+        await Task.Delay(500);
+        second.IsCompleted.Should().BeFalse("строки корзин заблокированы первым запросом до его коммита");
+        releaseFirst.SetResult();
+        (await first).Should().Be(1);
+        (await second).Should().Be(2);
+        seenBySecond.Should().Be(0.10m, "второй проверяет уже итоговое состояние первого");
+    }
+
+    [Fact]
+    public async Task T67_ConcurrentPuts_EachValidAlone_DoNotLeaveTargetsSumBroken()
+    {
+        // Сценарий аудита: A меняет liquidity 0.15 → 0.10 и ru_equity → 0.05, B — bonds 0.85 → 0.80 и ru_equity → 0.05. Каждый по отдельности держит сумму 1;
+        // без блокировки оба прошли бы проверку на старом состоянии и записали бы вместе 0.95. С FOR UPDATE второй получает 422.
+        var (client, _) = await NewUserAsync();
+        var (liquidity, _) = await FindAsync(client, "rub", "liquidity");
+        var (bonds, _) = await FindAsync(client, "rub", "bonds");
+        var (equity, _) = await FindAsync(client, "rub", "ru_equity");
+        object Item(ulong id, string title, decimal target, string fill) =>
+            new { id, title, targetWeight = target, band = 0.05m, hardBand = 0.10m, liquidityTier = 1, fillRule = fill, autoBuy = false, autoSell = false, minTrade = 0m };
+
+        var a = client.PutAsJsonAsync("/api/baskets", new { items = new[] { Item(liquidity, "Ликвидность", 0.10m, "fixed"), Item(equity, "Акции РФ", 0.05m, "fixed") } });
+        var b = client.PutAsJsonAsync("/api/baskets", new { items = new[] { Item(bonds, "Облигации", 0.80m, "engine"), Item(equity, "Акции РФ", 0.05m, "fixed") } });
+        var codes = (await Task.WhenAll(a, b)).Select(r => r.StatusCode).ToList();
+
+        codes.Should().Contain(HttpStatusCode.OK);
+        var rub = Portfolio(await GetAsync(client), "rub");
+        rub.GetProperty("targetsSum").GetDecimal().Should().Be(1.0m, "итоговое состояние всегда проходит проверку суммы целей");
+    }
 }

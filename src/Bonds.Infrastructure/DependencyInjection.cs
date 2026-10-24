@@ -271,6 +271,7 @@ public static class DependencyInjection
         services.AddScoped<Bonds.Infrastructure.Execution.PlanExecutionEngine>();
         // Взаимоисключение тиков между экземплярами и со сменой торгового токена: MySQL GET_LOCK на отдельном соединении.
         services.AddSingleton<Bonds.Infrastructure.Execution.IPlanExecutorLock>(sp => new Bonds.Infrastructure.Execution.MySqlPlanExecutorLock(GetConnStr(sp)));
+        services.AddSingleton<Bonds.Infrastructure.Policy.IPolicyUserLock>(sp => new Bonds.Infrastructure.Policy.MySqlPolicyUserLock(GetConnStr(sp))); // задача 67 (#13)
         services.AddScoped<Bonds.Infrastructure.Execution.TradeTokenChangeGuard>();
         services.AddHostedService<Bonds.Infrastructure.Execution.PlanExecutorService>();
 

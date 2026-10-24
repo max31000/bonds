@@ -37,6 +37,10 @@ public sealed class PolicyRunner
     private readonly IPlanNotifier _notifier;
     private readonly PolicyOptions _options;
     private readonly ILogger<PolicyRunner> _logger;
+    private readonly IPolicyUserLock? _userLock;
+
+    /// <summary>Сколько прогон ждёт блокировку пользователя (ручной план в работе); не дождался — пользователь пропускается до следующего цикла.</summary>
+    internal static readonly TimeSpan UserLockWait = TimeSpan.FromSeconds(30);
 
     public PolicyRunner(
         PolicyInputBuilder builder,
@@ -48,8 +52,10 @@ public sealed class PolicyRunner
         IUserSettingsRepository settings,
         IPlanNotifier notifier,
         IOptions<PolicyOptions> options,
-        ILogger<PolicyRunner> logger)
+        ILogger<PolicyRunner> logger,
+        IPolicyUserLock? userLock = null)
     {
+        _userLock = userLock;
         _builder = builder;
         _service = service;
         _plans = plans;
@@ -91,6 +97,19 @@ public sealed class PolicyRunner
     }
 
     public async Task RunForUserAsync(ulong userId, DateTime nowUtc, PolicyRunResult result, CancellationToken ct = default)
+    {
+        // Задача 67 (#13): прогон и ручные планы одного пользователя сериализуются (оба читают свободные деньги за вычетом резерва и сохраняют план).
+        await using var held = _userLock is null ? null : await _userLock.TryAcquireAsync(userId, UserLockWait, ct);
+        if (_userLock is not null && held is null)
+        {
+            result.Notes.Add($"user {userId}: plans are being built by another request — skipped this cycle");
+            return;
+        }
+
+        await RunLockedAsync(userId, nowUtc, result, ct);
+    }
+
+    private async Task RunLockedAsync(ulong userId, DateTime nowUtc, PolicyRunResult result, CancellationToken ct)
     {
         var inputs = new Dictionary<string, PolicyInput>(await _builder.BuildAsync(userId, nowUtc, ignoreHours: false, ct), StringComparer.Ordinal);
 

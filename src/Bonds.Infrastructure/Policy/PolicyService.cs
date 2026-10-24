@@ -62,11 +62,18 @@ public sealed class PolicyService
     private readonly PolicyOptions _policy;
     private readonly IOptionsMonitor<ExecutionOptions> _execution;
     private readonly ILogger<PolicyService> _logger;
+    private readonly IPolicyUserLock? _userLock;
+
+    /// <summary>Сколько ручной запрос ждёт идущий прогон правил пользователя (задача 67, #13).</summary>
+    internal static readonly TimeSpan UserLockWait = TimeSpan.FromSeconds(20);
+
+    public const string BusyMessage = "Планы пользователя сейчас пересчитываются — повторите запрос через минуту";
 
     public PolicyService(
         PolicyInputBuilder builder, ITradePlanRepository plans, IExecutionGateResolver gate, IOptions<PolicyOptions> policy, IOptionsMonitor<ExecutionOptions> execution,
-        ILogger<PolicyService> logger)
+        ILogger<PolicyService> logger, IPolicyUserLock? userLock = null)
     {
+        _userLock = userLock;
         _builder = builder;
         _plans = plans;
         _gate = gate;
@@ -83,6 +90,10 @@ public sealed class PolicyService
     public async Task<(TradePlan? Plan, PolicyOutcome Outcome)> CreateManualAsync(
         ulong userId, string rule, PlanParams p, DateTime nowUtc, CancellationToken ct = default)
     {
+        // Задача 67 (#13): тот же замок пользователя, что у прогона правил — ручной inflow/withdraw не строится на тех же свободных деньгах параллельно с ним.
+        await using var held = _userLock is null ? null : await _userLock.TryAcquireAsync(userId, UserLockWait, ct);
+        if (_userLock is not null && held is null) throw new PolicyValidationException(BusyMessage);
+
         var outcome = await EvaluateAsync(userId, rule, p, nowUtc, ignoreHours: true, ct);
         if (outcome.Plan is null) return (null, outcome);
 
