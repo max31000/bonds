@@ -180,6 +180,11 @@ public sealed class PolicyOptions
     public int WithdrawHoldTtl { get; set; } = 3;
 
     /// <summary>
+    /// Задача 67 (#7): данные брокера старше этого (последний успешный синк) — «устарели»: P3b, P4 и распределение по дефициту (P2) не строятся, P1 не паркует.
+    /// </summary>
+    public TimeSpan MaxSyncAge { get; set; } = TimeSpan.FromHours(26);
+
+    /// <summary>
     /// Санити-проверка стакана (<see cref="LinePricer"/>): бумага пропускается, если (ask−bid)/mid больше этой ДОЛИ — фонды, акции, ETF (0.02 = 2%). Широкий спред =
     /// пустой/«дырявый» стакан, mid по нему не цена.
     /// </summary>

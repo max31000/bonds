@@ -132,4 +132,67 @@ public class AuditWaveATests
         plan.Status = PlanStatuses.Failed;
         WithdrawHold.IsActive(plan, friday.AddHours(2), 3).Should().BeFalse("ничего не продано — держать нечего");
     }
+
+    // ─── #7 неполные или устаревшие данные ─────────────────────────────────────────────────
+
+    private static CapitalBasket Bonds() => Basket("bonds", 0.85m, tier: 2, fill: BasketFillRules.Engine, members: [ClassMember("bond")]);
+
+    private static PolicyInput Incomplete(PolicyInput input, params string[] baskets) =>
+        input with { DataIncomplete = true, IncompleteBaskets = new HashSet<string>(baskets, StringComparer.Ordinal) };
+
+    private static PolicyInput Stale(PolicyInput input) => input with { StaleSince = input.NowUtc.AddHours(-30) };
+
+    private static PolicyInput P3bInput()
+    {
+        var positions = new[] { Pos("TMON@", "fund", 299_844m), Pos("RU000A", "bond", 700_156m) };
+        return Input([Liquidity(), Bonds()], positions, 0m, [Tmon, Tsav], holdings: [Holding("TMON@", 1_800m, 299_844m, 150m, "liquidity")],
+            candidates: [Candidate("RU000A1", 0.14m, 0.15m)], fundYield: 0.10m);
+    }
+
+    private static PolicyInput P4Input() => Input([Liquidity(), Bonds()], [Pos("RU000A", "bond", 800_000m)], 200_000m, [Tmon, Tsav]);
+
+    [Fact]
+    public void T67_P3b_And_P4_NotBuilt_WhenDataIncompleteOrStale()
+    {
+        LiquidityToBondsRule.Evaluate(P3bInput()).Plan.Should().NotBeNull("контроль: на полных данных план есть");
+        RebalanceRule.Evaluate(P4Input()).Plan.Should().NotBeNull("контроль: на полных данных план есть");
+
+        foreach (var input in new[] { Incomplete(P3bInput(), "bonds"), Stale(P3bInput()) })
+        {
+            var outcome = LiquidityToBondsRule.Evaluate(input);
+            outcome.Plan.Should().BeNull();
+            outcome.Notes.Should().Contain(n => n.Contains("P3b") && (n.Contains("неполн") || n.Contains("устарел")));
+        }
+
+        foreach (var input in new[] { Incomplete(P4Input(), "bonds"), Stale(P4Input()) })
+        {
+            var outcome = RebalanceRule.Evaluate(input);
+            outcome.Plan.Should().BeNull();
+            outcome.Notes.Should().Contain(n => n.Contains("P4") && (n.Contains("неполн") || n.Contains("устарел")));
+        }
+    }
+
+    [Fact]
+    public void T67_P2_DeficitSplit_NotBuilt_WhenDataIncompleteOrStale()
+    {
+        var input = Input([Liquidity()], [], 20_000m, [Tmon, Tsav]);
+        InflowRule.Evaluate(input, 20_000m, "Пополнение").Plan.Should().NotBeNull("контроль");
+
+        InflowRule.Evaluate(Incomplete(input, "bonds"), 20_000m, "Пополнение").Notes.Should().Contain(n => n.Contains("неполн"));
+        InflowRule.Evaluate(Incomplete(input, "bonds"), 20_000m, "Пополнение").Plan.Should().BeNull();
+        InflowRule.Evaluate(Stale(input), 20_000m, "Пополнение").Plan.Should().BeNull();
+    }
+
+    [Fact]
+    public void T67_P1_StopsOnStaleOrLiquidityIncomplete_ButNotOnOtherBasketIncomplete()
+    {
+        var input = Input([Liquidity(), Bonds()], [Pos("RU000A", "bond", 800_000m)], 7_340m, [Tmon, Tsav]);
+        SweepRule.Evaluate(input).Plan.Should().NotBeNull("контроль");
+
+        SweepRule.Evaluate(Stale(input)).Plan.Should().BeNull();
+        SweepRule.Evaluate(Incomplete(input, "liquidity")).Plan.Should().BeNull();
+        SweepRule.Evaluate(Incomplete(input, "cash")).Plan.Should().BeNull("сумма свободных денег не определена (нет курса валюты)");
+        SweepRule.Evaluate(Incomplete(input, "liquidity")).Notes.Should().Contain(n => n.Contains("P1") && n.Contains("неполн"));
+        SweepRule.Evaluate(Incomplete(input, "bonds")).Plan.Should().NotBeNull("неполнота другой корзины не мешает парковке");
+    }
 }

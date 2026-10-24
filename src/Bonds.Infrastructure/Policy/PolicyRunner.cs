@@ -105,7 +105,9 @@ public sealed class PolicyRunner
                 if (await _plans.ExistsAsync(userId, PlanRules.P2Inflow, trigger, openOnly: false, nowUtc)) continue;
 
                 var input = inputs[CapitalPortfolios.Rub];
-                if (input.Baskets.Any(b => b.FillRule == BasketFillRules.Engine)) input = await _builder.WithBondDataAsync(userId, input, ct);
+                // Неполные/устаревшие данные (задача 67, #7): правило само откажет с причиной — дорогие облигационные данные не собираем.
+                if (PolicyDataGate.Problem(input) is null && input.Baskets.Any(b => b.FillRule == BasketFillRules.Engine))
+                    input = await _builder.WithBondDataAsync(userId, input, ct);
                 var outcome = InflowRule.Evaluate(input, deposit.Amount, trigger);
                 inputs[CapitalPortfolios.Rub] = await ApplyAsync(userId, outcome, nowUtc, inputs[CapitalPortfolios.Rub], result, paused, dedupe: false, ct);
             }
@@ -127,7 +129,12 @@ public sealed class PolicyRunner
         {
             // Дубликат проверяем ДО сбора облигационных данных (кандидаты, стаканы, метаданные брокера — дорого): открытый план или пауза повтора — выходим сразу.
             var isCheckDay = TradingHours.ToMoscow(nowUtc).DayOfWeek == _options.LiquidityCheckDay;
-            if (isCheckDay && LiquidityLooksOverfilled(rubWeekly))
+            var dataProblem = PolicyDataGate.Problem(rubWeekly); // задача 67 (#7): P3b и P4 на неполных/устаревших данных не строятся
+            if (isCheckDay && LiquidityLooksOverfilled(rubWeekly) && dataProblem is not null)
+            {
+                Note(result, $"{PlanRules.P3bLiqToBonds}: {dataProblem} — перелив не строится");
+            }
+            else if (isCheckDay && LiquidityLooksOverfilled(rubWeekly))
             {
                 if (await IsDuplicateAsync(userId, PlanRules.P3bLiqToBonds, LiquidityToBondsRule.TriggerFor(nowUtc), nowUtc))
                 {
@@ -142,7 +149,11 @@ public sealed class PolicyRunner
             }
 
             // P4 не дублирует P3b: пока открыт перелив ликвидности, продажа той же корзины ребалансом не предлагается.
-            if (RebalanceRule.TriggerFor(inputs[CapitalPortfolios.Rub]) is { } p4Trigger
+            if (RebalanceRule.TriggerFor(inputs[CapitalPortfolios.Rub]) is not null && dataProblem is not null)
+            {
+                Note(result, $"{PlanRules.P4Rebalance}: {dataProblem} — ребаланс не строится");
+            }
+            else if (RebalanceRule.TriggerFor(inputs[CapitalPortfolios.Rub]) is { } p4Trigger
                 && !await _plans.HasOpenRuleAsync(userId, PlanRules.P3bLiqToBonds, nowUtc))
             {
                 if (await IsDuplicateAsync(userId, PlanRules.P4Rebalance, p4Trigger, nowUtc))
@@ -163,6 +174,12 @@ public sealed class PolicyRunner
             var outcome = RebalanceRule.Evaluate(usdRebalance);
             inputs[CapitalPortfolios.Usd] = await ApplyAsync(userId, outcome, nowUtc, usdRebalance, result, paused, dedupe: true, ct);
         }
+    }
+
+    private void Note(PolicyRunResult result, string note)
+    {
+        _logger.LogInformation("Policy: {Note}", note);
+        result.Notes.Add(note);
     }
 
     private bool LiquidityLooksOverfilled(PolicyInput input)

@@ -30,6 +30,8 @@ public static class SweepRule
         var basket = input.BasketByCode(PolicyNames.Liquidity);
         if (basket is null) return PolicyOutcome.None("P1: нет корзины «liquidity»");
         if (basket.FillRule == BasketFillRules.Hold) return PolicyOutcome.None("P1: корзина «liquidity» в режиме hold");
+        // Задача 67 (#7): устаревшие данные или неполная оценка ликвидности/свободных денег — решение «выше цели или нет» и сама сумма ненадёжны.
+        if (PolicyDataGate.LiquidityProblem(input) is { } p1Data) return PolicyOutcome.None($"P1: {p1Data} — кэш не паркуется");
         // Задача 67 (#3): открыт план вывода (или не прошло WithdrawHoldTtl с его исполнения) — деньги ждут ручного вывода в банк, парковать нельзя.
         if (input.CashHoldActive)
             return PolicyOutcome.None("P1: деньги удержаны под вывод (открыт план вывода или он исполнен недавно) — не паркуются; снять удержание: /withdrawn или «Деньги выведены»");
@@ -63,6 +65,8 @@ public static class InflowRule
         var notes = new List<string>();
         var skipped = new List<PlanSkip>();
         if (amount <= 0m) return PolicyOutcome.None("P2: сумма должна быть положительной");
+        // Задача 67 (#7): деление по дефициту требует полной и свежей оценки корзин.
+        if (PolicyDataGate.Problem(input) is { } p2Data) return PolicyOutcome.None($"P2: {p2Data} — распределение по дефициту корзин не строится");
 
         var budget = Math.Min(amount, input.FreeCash);
         if (budget <= 0m) return PolicyOutcome.None("P2: свободных денег нет");
@@ -200,6 +204,7 @@ public static class LiquidityToBondsRule
         var notes = new List<string>();
         var skipped = new List<PlanSkip>();
         if (input.Portfolio != CapitalPortfolios.Rub) return PolicyOutcome.None("P3b — только рублёвый портфель");
+        if (PolicyDataGate.Problem(input) is { } p3Data) return PolicyOutcome.None($"P3b: {p3Data} — перелив не строится");
 
         var row = input.RowByCode(PolicyNames.Liquidity);
         var basket = input.BasketByCode(PolicyNames.Liquidity);
@@ -261,6 +266,7 @@ public static class RebalanceRule
     {
         var notes = new List<string>();
         var skipped = new List<PlanSkip>();
+        if (PolicyDataGate.Problem(input) is { } p4Data) return PolicyOutcome.None($"P4: {p4Data} — ребаланс не строится");
         var rows = HardRows(input);
         if (rows.Count == 0) return PolicyOutcome.None("P4: жёстких отклонений нет");
 

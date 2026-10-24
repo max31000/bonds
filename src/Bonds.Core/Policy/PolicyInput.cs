@@ -231,6 +231,24 @@ public sealed record PolicyInput
     /// </summary>
     public bool CashHoldActive { get; init; }
 
+    /// <summary>
+    /// Задача 67 (#7): оценка портфеля неполна — нет цены хотя бы у одной позиции с ненулевым количеством или нет курса (<c>CapitalPortfolioOverview.DataIncomplete</c>).
+    /// Корзины, где именно не хватает данных, — <see cref="IncompleteBaskets"/>.
+    /// </summary>
+    public bool DataIncomplete { get; init; }
+
+    /// <summary>
+    /// Задача 67 (#7): коды строк дрейфа (корзины и системные <c>fx</c>/<c>unassigned</c>/<c>cash</c>) с неполными данными; <c>cash</c> — неизвестна сумма свободных
+    /// денег (нет курса валюты, которую вычитают из денег T-Invest, или курса остатка Freedom).
+    /// </summary>
+    public IReadOnlySet<string> IncompleteBaskets { get; init; } = new HashSet<string>(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Задача 67 (#7): последний успешный синк брокера (UTC), если он старше <see cref="PolicyOptions.MaxSyncAge"/>; <see cref="DateTime.MinValue"/> — синка не было;
+    /// null — данные свежие.
+    /// </summary>
+    public DateTime? StaleSince { get; init; }
+
     public CapitalBasket? BasketByCode(string code) => Baskets.FirstOrDefault(b => string.Equals(b.Code, code, StringComparison.Ordinal));
 
     public BasketDriftRow? RowByCode(string code) => Drift.Rows.FirstOrDefault(r => string.Equals(r.Code, code, StringComparison.Ordinal));

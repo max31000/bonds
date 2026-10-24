@@ -726,6 +726,46 @@ public class PlansEndpointTests
     }
 
     [Fact]
+    public async Task T67_IncompleteOrStaleData_StopsRules_WithReasonInRunAndPreview()
+    {
+        // Фонд B корзины «liquidity» без цены (ни в позиции, ни в истории) — оценка неполна: P1 не паркует, причина в заметках прогона.
+        var (userId, client, accountId, _, b, _, factory) = await SeedRubAsync(cashRub: 7_340m, aQuantity: 0m);
+        var sfx = b[2..];
+        var now = OpenNowUtc();
+        var fundB = await new FundRepository(Conn).UpsertAsync(new Fund { Figi = $"FIGIB{sfx}", Isin = $"RUB{sfx}", Ticker = b, Name = "Фонд B" });
+        await new FundPositionRepository(Conn).UpsertAsync(new FundPosition { AccountId = accountId, FundId = fundB, Quantity = 10m, AvgPurchasePriceRub = 900m });
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var input = (await scope.ServiceProvider.GetRequiredService<PolicyInputBuilder>().BuildAsync(userId, now, ignoreHours: false))[CapitalPortfolios.Rub];
+            input.DataIncomplete.Should().BeTrue();
+            input.IncompleteBaskets.Should().Contain("liquidity");
+            input.StaleSince.Should().BeNull("синк свежий");
+
+            var result = new PolicyRunResult();
+            await scope.ServiceProvider.GetRequiredService<PolicyRunner>().RunForUserAsync(userId, now, result);
+            result.Notes.Should().Contain(n => n.StartsWith("P1: данные неполные"));
+        }
+
+        (await PlansOfAsync(userId)).Should().NotContain(p => p.Rule == PlanRules.P1Sweep);
+
+        // Синк брокера старше 26 ч: StaleSince выставлен, предпросмотр распределения суммы объясняет, почему плана нет.
+        var syncedAt = DateTime.UtcNow.AddHours(-30);
+        await new AccountRepository(Conn).UpdateBalanceAsync(accountId, 7_340m, 7_340m + 16_658m, syncedAt);
+        using (var scope = factory.Services.CreateScope())
+        {
+            var input = (await scope.ServiceProvider.GetRequiredService<PolicyInputBuilder>().BuildAsync(userId, DateTime.UtcNow, ignoreHours: true))[CapitalPortfolios.Rub];
+            input.StaleSince.Should().BeCloseTo(syncedAt, TimeSpan.FromSeconds(2));
+        }
+
+        var preview = await client.PostAsJsonAsync("/api/plans/preview", new { rule = PlanRules.P2Inflow, @params = new { amount = 5_000m } });
+        preview.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await ReadAsync(preview);
+        body.GetProperty("plan").ValueKind.Should().Be(JsonValueKind.Null);
+        body.GetProperty("notes").EnumerateArray().Select(n => n.GetString()).Should().Contain(n => n!.Contains("устарели"));
+    }
+
+    [Fact]
     public async Task Runner_RealPlan_SavesReservedBuy_ThatTheRepositoryReserves()
     {
         var (userId, _, _, _, _, _, factory) = await SeedRubAsync(cashRub: 7_340m, aQuantity: 0m);

@@ -252,7 +252,8 @@ public sealed class PolicyService
                 var input = Require(portfolio);
                 var amount = p.Amount ?? input.FreeCash;
                 if (amount <= 0m) throw new PolicyValidationException("amount должен быть положительным");
-                if (input.Baskets.Any(b => b.FillRule == BasketFillRules.Engine)) input = await _builder.WithBondDataAsync(userId, input, ct);
+                if (PolicyDataGate.Problem(input) is null && input.Baskets.Any(b => b.FillRule == BasketFillRules.Engine))
+                    input = await _builder.WithBondDataAsync(userId, input, ct);
                 return InflowRule.Evaluate(input, amount, $"Распределение суммы {amount:0.##} {input.Currency}");
             }
 
