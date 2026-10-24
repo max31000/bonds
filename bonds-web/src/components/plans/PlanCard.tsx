@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Badge, Button, Group, List, Modal, SimpleGrid, Stack, Text } from '@mantine/core';
 import type { Plan, PlanLine } from '../../api/types';
 import type { PlanDecisionResult } from '../../store/usePlansStore';
-import { formatDateTime } from '../../utils/format';
+import { formatDateTime, formatRub } from '../../utils/format';
 import {
   formatLimitPrice,
   formatOrderPrice,
@@ -98,6 +98,16 @@ function hasActiveCashHold(plan: Plan): boolean {
   return plan.status !== 'Rejected' && plan.status !== 'Expired' && plan.status !== 'Failed';
 }
 
+/** План «только удержание» (T-67D): вывод целиком из свободных денег — строк нет, есть сумма удержания `summary.cashHold`. */
+function isHoldOnly(plan: Plan): boolean {
+  return plan.lines.length === 0 && (plan.summary?.cashHold ?? 0) > 0;
+}
+
+/** Сумма удержания: рубли — со знаком ₽ без копеек («30 000 ₽»), прочие валюты — с кодом валюты (знак ₽ был бы ложью). Валюта — портфеля. */
+function formatHoldAmount(value: number, currency: string): string {
+  return currency.toUpperCase() === 'RUB' ? formatRub(value) : formatPlanMoney(value, currency);
+}
+
 /**
  * Карточка плана (задача 63): правило, причина, строки (лимитные заявки), итоги, статус. Dry-run план — «Подтвердить» лишь помечает его («не исполнен: dry-run»).
  * План с `dryRun = false` (задача 65) исполняет сервер: статусы заявок по строкам и «Отменить заявки». Суммы строк — в валюте строки, итоги — в валюте портфеля.
@@ -191,11 +201,17 @@ export function PlanCard({
         </Text>
       )}
 
-      <Stack gap={0}>
-        {plan.lines.map((line) => (
-          <LineRow key={line.lineNo} planId={plan.id} line={line} />
-        ))}
-      </Stack>
+      {isHoldOnly(plan) ? (
+        <Text size="sm" fw={500} data-testid={`plan-${plan.id}-hold-only`}>
+          Удержание {formatHoldAmount(summary?.cashHold ?? 0, currency)} под вывод
+        </Text>
+      ) : (
+        <Stack gap={0} data-testid={`plan-${plan.id}-lines`}>
+          {plan.lines.map((line) => (
+            <LineRow key={line.lineNo} planId={plan.id} line={line} />
+          ))}
+        </Stack>
+      )}
 
       {!plan.dryRun && (
         <Text size="xs" c="dimmed" data-testid={`plan-${plan.id}-live`}>

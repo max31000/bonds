@@ -172,6 +172,23 @@ describe('Plans — страница «Планы» (задача 63, режим
     await waitFor(() => expect(released).toBe(true));
     await waitFor(() => expect(screen.queryByTestId('plan-13-release-hold')).not.toBeInTheDocument());
   });
+
+  it('T-67D: план «только удержание» (P5 без строк) — вместо пустой таблицы строк «Удержание N ₽ под вывод»', async () => {
+    const holdOnly = { ...withdrawPlan, lines: [], summary: { ...withdrawPlan.summary!, cashHold: 30000 }, cashHoldReleasedAt: null };
+    server.use(http.get('*/api/plans', () => HttpResponse.json(plansResponse([holdOnly]))));
+    renderPlans();
+
+    expect(await screen.findByTestId('plan-13-hold-only')).toHaveTextContent(/^Удержание 30\s000\s₽ под вывод$/);
+    expect(screen.queryByTestId('plan-13-lines')).not.toBeInTheDocument();
+  });
+
+  it('T-67D: план вывода со строками — таблица строк, без пометки «только удержание»', async () => {
+    server.use(http.get('*/api/plans', () => HttpResponse.json(plansResponse([withdrawPlan]))));
+    renderPlans();
+
+    expect(await screen.findByTestId('plan-13-lines')).toBeInTheDocument();
+    expect(screen.queryByTestId('plan-13-hold-only')).not.toBeInTheDocument();
+  });
 });
 
 describe('Plans — ссылка на план из бота /plans/:id (задача 67, NIT)', () => {
