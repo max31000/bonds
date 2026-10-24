@@ -16,7 +16,7 @@ export const PLANS_DISCLAIMER =
  * исполняет сервер: на карточке — статусы заявок по строкам и «Отменить заявки», в баннере — «Остановить» (пауза). Расчёт и исполнение — только на бэкенде.
  */
 export function Plans() {
-  const { data, isLoading, error, decidingId, load, approve, reject, cancelExecution, stop } = usePlansStore();
+  const { data, isLoading, error, decidingId, load, approve, reject, cancelExecution, stop, releaseCashHold } = usePlansStore();
 
   useEffect(() => {
     void load();
@@ -52,14 +52,14 @@ export function Plans() {
       {waiting.length > 0 && (
         <Section title="Ждут решения" padding="none" data-testid="plans-waiting">
           {waiting.map((plan) => (
-            <PlanCard key={plan.id} plan={plan} busy={decidingId === plan.id} onApprove={approve} onReject={reject} onCancelExecution={cancelExecution} />
+            <PlanCard key={plan.id} plan={plan} busy={decidingId === plan.id} onApprove={approve} onReject={reject} onCancelExecution={cancelExecution} onReleaseCashHold={releaseCashHold} />
           ))}
         </Section>
       )}
       {history.length > 0 && (
         <Section title="История" padding="none" data-testid="plans-history">
           {history.map((plan) => (
-            <PlanCard key={plan.id} plan={plan} busy={decidingId === plan.id} onApprove={approve} onReject={reject} onCancelExecution={cancelExecution} />
+            <PlanCard key={plan.id} plan={plan} busy={decidingId === plan.id} onApprove={approve} onReject={reject} onCancelExecution={cancelExecution} onReleaseCashHold={releaseCashHold} />
           ))}
         </Section>
       )}

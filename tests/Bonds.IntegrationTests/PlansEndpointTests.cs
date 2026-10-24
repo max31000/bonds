@@ -689,6 +689,43 @@ public class PlansEndpointTests
     }
 
     [Fact]
+    public async Task T67_Withdraw100k_With40kFree_NextP1ParksNothing_UntilMoneyWithdrawnReleased()
+    {
+        // Свободно 40 000 ₽, вывод 100 000 ₽: 40 000 из денег + продажа фонда A. Вывод в банк ручной — пока план вывода открыт, P1 ничего не паркует, а резерв
+        // учитывает всю сумму к выводу. «Деньги выведены» (веб) снимает удержание — следующий P1 снова паркует свободные рубли.
+        var (userId, client, _, _, _, _, factory) = await SeedRubAsync(cashRub: 40_000m, aQuantity: 1_000m);
+        var now = OpenNowUtc();
+
+        TradePlan withdraw;
+        using (var scope = factory.Services.CreateScope())
+        {
+            var (plan, _) = await scope.ServiceProvider.GetRequiredService<PolicyService>()
+                .CreateManualAsync(userId, PlanRules.P5Withdraw, new PlanParams(Amount: 100_000m), now);
+            withdraw = plan!;
+        }
+
+        JsonSerializer.Deserialize<TradePlanSummary>(withdraw.SummaryJson!, WebJson)!.CashHold.Should().Be(100_000m);
+        (await new TradePlanRepository(Conn).SumReservedBuysAsync(userId, BrokerIds.TInvest, "RUB", now)).Should().Be(100_000m);
+
+        var result = new PolicyRunResult();
+        using (var scope = factory.Services.CreateScope())
+            await scope.ServiceProvider.GetRequiredService<PolicyRunner>().RunForUserAsync(userId, now, result);
+        (await PlansOfAsync(userId)).Should().NotContain(p => p.Rule == PlanRules.P1Sweep);
+        result.Notes.Should().Contain(n => n.Contains("удержан"));
+
+        var release = await client.PostAsync("/api/plans/cash-hold/release", null);
+        release.StatusCode.Should().Be(HttpStatusCode.OK);
+        (await ReadAsync(release)).GetProperty("released").GetInt32().Should().Be(1);
+        (await new TradePlanRepository(Conn).SumReservedBuysAsync(userId, BrokerIds.TInvest, "RUB", now)).Should().Be(0m);
+
+        // Удержание снято: P1 решает по своим обычным правилам (здесь ликвидность фондом A и так выше цели — паркует ли, решает уже не удержание).
+        var after = new PolicyRunResult();
+        using (var scope = factory.Services.CreateScope())
+            await scope.ServiceProvider.GetRequiredService<PolicyRunner>().RunForUserAsync(userId, now.AddMinutes(1), after);
+        after.Notes.Should().NotContain(n => n.Contains("удержан"));
+    }
+
+    [Fact]
     public async Task Runner_RealPlan_SavesReservedBuy_ThatTheRepositoryReserves()
     {
         var (userId, _, _, _, _, _, factory) = await SeedRubAsync(cashRub: 7_340m, aQuantity: 0m);

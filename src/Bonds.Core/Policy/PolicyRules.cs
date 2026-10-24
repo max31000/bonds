@@ -30,6 +30,9 @@ public static class SweepRule
         var basket = input.BasketByCode(PolicyNames.Liquidity);
         if (basket is null) return PolicyOutcome.None("P1: нет корзины «liquidity»");
         if (basket.FillRule == BasketFillRules.Hold) return PolicyOutcome.None("P1: корзина «liquidity» в режиме hold");
+        // Задача 67 (#3): открыт план вывода (или не прошло WithdrawHoldTtl с его исполнения) — деньги ждут ручного вывода в банк, парковать нельзя.
+        if (input.CashHoldActive)
+            return PolicyOutcome.None("P1: деньги удержаны под вывод (открыт план вывода или он исполнен недавно) — не паркуются; снять удержание: /withdrawn или «Деньги выведены»");
         if (input.FreeCash <= 0m) return PolicyOutcome.None("P1: свободных рублей нет");
 
         // Корзина уже выше цели (Above/HardAbove): парковать в неё дальше нельзя — кэш остаётся свободным (его разберёт P2/P3b/P4 или владелец).
@@ -395,7 +398,9 @@ public static class WithdrawRule
             return new PolicyOutcome(null, notes);
         }
 
-        return PolicyKit.Finish(input, PlanRules.P5Withdraw, trigger, lines, autoAllowed: false, skipped, notes, warnings, requested, shortfall);
+        // Удержание под вывод (задача 67, #3) — сумма, которую владелец выведет: запрошенное за вычетом нехватки.
+        var cashHold = Math.Max(0m, requested - (shortfall ?? 0m));
+        return PolicyKit.Finish(input, PlanRules.P5Withdraw, trigger, lines, autoAllowed: false, skipped, notes, warnings, requested, shortfall, cashHold);
     }
 }
 
@@ -436,7 +441,8 @@ public static class ExitBasketRule
         var warnings = new List<string>();
         if (taxUnknown) warnings.Add("Налог оценён сверху (журнал сделок по части позиций неполон)");
         warnings.Add("Налог — оценка по средней цене входа (не FIFO), плоские 13%, без сальдирования и ЛДВ");
-        return PolicyKit.Finish(input, PlanRules.Manual, $"Выход из корзины «{basket.Title}»", lines, autoAllowed: false, skipped, notes, warnings);
+        // Задача 67 (#3, «P5 / exit-basket»): чистая выручка выхода удерживается под вывод — P1 не паркует её обратно, пока владелец не отметит «деньги выведены».
+        return PolicyKit.Finish(input, PlanRules.Manual, $"Выход из корзины «{basket.Title}»", lines, autoAllowed: false, skipped, notes, warnings, holdSaleProceeds: true);
     }
 }
 

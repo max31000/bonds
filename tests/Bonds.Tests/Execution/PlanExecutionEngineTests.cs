@@ -859,7 +859,9 @@ public sealed class InMemoryPlans : ITradePlanRepository
     public Task<IReadOnlyList<TradePlan>> ListAsync(ulong userId, string? status, int limit) => throw new NotSupportedException();
     public Task<bool> ExistsAsync(ulong userId, string rule, string trigger, bool openOnly, DateTime nowUtc, DateTime? createdSince = null) => throw new NotSupportedException();
     public Task<bool> HasOpenRuleAsync(ulong userId, string rule, DateTime nowUtc) => throw new NotSupportedException();
-    public Task<decimal> SumReservedBuysAsync(ulong userId, string broker, string currency, DateTime nowUtc) => throw new NotSupportedException();
+    public Task<decimal> SumReservedBuysAsync(ulong userId, string broker, string currency, DateTime nowUtc, int withdrawHoldTtl = 3) => throw new NotSupportedException();
+    public Task<CashHoldState> GetCashHoldAsync(ulong userId, string broker, string currency, DateTime nowUtc, int withdrawHoldTtl) => throw new NotSupportedException();
+    public Task<int> ReleaseCashHoldsAsync(ulong userId, DateTime nowUtc) => throw new NotSupportedException();
     public Task<bool> TransitionAsync(ulong userId, ulong id, IReadOnlyCollection<string> fromStatuses, string toStatus, string? decidedVia, DateTime decidedAtUtc, string? summaryJson) =>
         throw new NotSupportedException();
     public Task<int> ExpirePendingAsync(DateTime nowUtc) => throw new NotSupportedException();

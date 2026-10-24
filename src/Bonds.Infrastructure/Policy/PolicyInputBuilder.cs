@@ -205,7 +205,8 @@ public sealed class PolicyInputBuilder
         }
 
         // Деньги: свободные минус резерв под открытые планы; лимит суток по МОСКОВСКОЙ дате.
-        var reserved = await _plans.SumReservedBuysAsync(userId, broker, currency, nowUtc);
+        var reserved = await _plans.SumReservedBuysAsync(userId, broker, currency, nowUtc, _options.WithdrawHoldTtl); // покупки открытых планов + удержание под вывод
+        var cashHold = await _plans.GetCashHoldAsync(userId, broker, currency, nowUtc, _options.WithdrawHoldTtl);
         var mskDayStartUtc = DateTime.SpecifyKind(TradingHours.ToMoscow(nowUtc).Date - TimeSpan.FromHours(3), DateTimeKind.Utc);
         var autoToday = await _plans.SumAutoApprovedRubSinceAsync(userId, mskDayStartUtc);
 
@@ -219,6 +220,7 @@ public sealed class PolicyInputBuilder
             FreeCash = Math.Max(0m, portfolio.FreeCash - reserved),
             ReservedCash = reserved,
             AutoApprovedTodayRub = autoToday,
+            CashHoldActive = cashHold.Active,
             Baskets = portfolio.Baskets,
             Drift = portfolio.Drift,
             Quotes = quotes,

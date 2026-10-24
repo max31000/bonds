@@ -479,7 +479,8 @@ internal static class PolicyKit
     /// <summary>Собирает черновик плана: статус, срок, итоги (деньги до/после, комиссия, налог).</summary>
     public static PolicyOutcome Finish(
         PolicyInput input, string rule, string trigger, List<TradePlanLine> lines, bool autoAllowed, List<PlanSkip> skipped,
-        List<string> notes, List<string>? warnings = null, decimal? requestedNet = null, decimal? shortfall = null)
+        List<string> notes, List<string>? warnings = null, decimal? requestedNet = null, decimal? shortfall = null, decimal? cashHold = null,
+        bool holdSaleProceeds = false)
     {
         if (lines.Count == 0)
         {
@@ -495,6 +496,8 @@ internal static class PolicyKit
         var reservedBuy = lines.Where(l => l.Side == PlanSides.Buy).Sum(l => (l.EstAmount + l.EstFee) * FxOf(input, l)); // валюта портфеля
         var tax = lines.Sum(l => l.EstTax * FxOf(input, l));
         var cashAfter = input.FreeCash - buy + sell - fee - tax;
+        // Удержание под вывод (задача 67, #3), валюта портфеля: явная сумма (P5) или чистая выручка продаж (выход из корзины).
+        var hold = Math.Max(0m, cashHold ?? (holdSaleProceeds ? sell - fee - tax : 0m));
 
         var summary = new TradePlanSummary
         {
@@ -510,6 +513,7 @@ internal static class PolicyKit
             RequestedNet = requestedNet,
             NetToWithdraw = requestedNet is null ? null : cashAfter,
             Shortfall = shortfall,
+            CashHold = hold,
             Warnings = warnings ?? [],
             Notes = notes,
             Skipped = skipped,

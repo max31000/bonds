@@ -62,8 +62,19 @@ public interface ITradePlanRepository
     /// Σ <c>TradePlanSummary.ReservedBuy</c> (покупки + комиссия в валюте ПОРТФЕЛЯ) открытых, не просроченных планов, РЕЗЕРВИРУЮЩИХ деньги
     /// (<see cref="PlanStatuses.ReservingCash"/>), с покупками у брокера <paramref name="broker"/> и валютой портфеля <paramref name="currency"/>.
     /// плюс живые <c>Approved</c> (<c>dry_run = 0</c>, задача 67). Деньги Approved dry-run не резервируются.
+    /// Задача 67 (#3): плюс действующие удержания под вывод (<see cref="GetCashHoldAsync"/>, <paramref name="withdrawHoldTtl"/> — рабочие дни
+    /// <see cref="PolicyOptions.WithdrawHoldTtl"/>).
     /// </summary>
-    Task<decimal> SumReservedBuysAsync(ulong userId, string broker, string currency, DateTime nowUtc);
+    Task<decimal> SumReservedBuysAsync(ulong userId, string broker, string currency, DateTime nowUtc, int withdrawHoldTtl = 3);
+
+    /// <summary>
+    /// Действующие удержания денег под вывод (задача 67, #3): Σ <see cref="TradePlanSummary.CashHold"/> планов P5/выхода из корзины брокера <paramref name="broker"/>
+    /// с валютой портфеля <paramref name="currency"/>, по которым <see cref="WithdrawHold.IsActive"/>.
+    /// </summary>
+    Task<CashHoldState> GetCashHoldAsync(ulong userId, string broker, string currency, DateTime nowUtc, int withdrawHoldTtl);
+
+    /// <summary>«Деньги выведены» (<c>/withdrawn</c>, кнопка в вебе): снимает удержание у всех планов вывода/выхода пользователя. Возвращает число планов.</summary>
+    Task<int> ReleaseCashHoldsAsync(ulong userId, DateTime nowUtc);
 
     /// <summary>
     /// Атомарно переводит план из одного из <paramref name="fromStatuses"/> в <paramref name="toStatus"/> (с <c>decided_at</c>, <c>decided_via</c> и, если задан, новым

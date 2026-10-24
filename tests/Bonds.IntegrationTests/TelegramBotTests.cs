@@ -244,6 +244,26 @@ public class TelegramBotTests
     }
 
     [Fact]
+    public async Task T67_Withdrawn_ReleasesCashHoldOfWithdrawPlans()
+    {
+        var (userId, tg) = await NewUserAsync();
+        var plan = await NewPlanAsync(userId, PlanStatuses.Done);
+        await using (var conn = new MySqlConnector.MySqlConnection(Conn))
+        {
+            await Dapper.SqlMapper.ExecuteAsync(conn, "UPDATE trade_plans SET rule = 'P5_WITHDRAW', summary_json = @J WHERE id = @Id",
+                new { Id = plan.Id, J = """{"portfolio":"rub","currency":"RUB","cashHold":100000}""" });
+        }
+
+        await TextAsync(tg, "/withdrawn");
+
+        (await ReloadAsync(plan)).CashHoldReleasedAt.Should().NotBeNull();
+        Bot.SentTo(tg).Last().Html.Should().Contain("Удержание").And.Contain("снято");
+
+        await TextAsync(tg, "/withdrawn");
+        Bot.SentTo(tg).Last().Html.Should().Contain("нет");
+    }
+
+    [Fact]
     public async Task Plans_ListsOnlyOwnOpenPlans_WithButtons()
     {
         var (userId, tg) = await NewUserAsync();

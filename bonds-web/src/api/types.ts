@@ -2165,6 +2165,8 @@ export interface PlanSummary {
   netToWithdraw: number | null;
   /** P5: сколько не хватило, если продавать больше нечего. */
   shortfall: number | null;
+  /** Задача 67: сколько денег план держит под ручной вывод в банк (валюта портфеля); 0/нет — удержания нет. P1 и другие правила эти деньги не трогают. */
+  cashHold?: number;
   warnings: string[];
   notes: string[];
   skipped: PlanSkip[];
@@ -2187,6 +2189,8 @@ export interface Plan {
   lines: PlanLine[];
   /** Есть заявка, которую исполнитель не смог снять (план при этом остаётся `Submitting`). */
   needsAttention?: boolean;
+  /** Задача 67: когда владелец отметил «деньги выведены» (удержание снято); null — удержание действует (если есть). */
+  cashHoldReleasedAt?: string | null;
 }
 
 export interface PlansResponse {

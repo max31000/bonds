@@ -224,6 +224,13 @@ public sealed record PolicyInput
     /// <summary>Стоимость облигационного портфеля T-Invest в рублях (база лимита эмитента).</summary>
     public decimal BondsPortfolioValueRub { get; init; }
 
+    /// <summary>
+    /// Задача 67 (#3): действует удержание денег под вывод (<see cref="WithdrawHold"/>: открыт план P5/выхода из корзины с <see cref="TradePlanSummary.CashHold"/>
+    /// либо не прошло <see cref="PolicyOptions.WithdrawHoldTtl"/> рабочих дней с его исполнения, и владелец не отметил «деньги выведены»). P1 при нём не паркует кэш.
+    /// Сумма удержания уже вычтена из <see cref="FreeCash"/> (входит в <see cref="ReservedCash"/>).
+    /// </summary>
+    public bool CashHoldActive { get; init; }
+
     public CapitalBasket? BasketByCode(string code) => Baskets.FirstOrDefault(b => string.Equals(b.Code, code, StringComparison.Ordinal));
 
     public BasketDriftRow? RowByCode(string code) => Drift.Rows.FirstOrDefault(r => string.Equals(r.Code, code, StringComparison.Ordinal));

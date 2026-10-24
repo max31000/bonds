@@ -35,6 +35,7 @@ public static class PlansEndpoints
         app.MapPost("/api/plans/exit-basket", CreateExitBasket);
         app.MapPost("/api/plans/preview", Preview);
         app.MapPost("/api/plans/{id:long}/cancel-execution", CancelExecution);
+        app.MapPost("/api/plans/cash-hold/release", ReleaseCashHold);
     }
 
     private static async Task<IResult> ListPlans(
@@ -76,6 +77,16 @@ public static class PlansEndpoints
             return Results.Json(new { error = "План не исполняется — отменять нечего.", type = "PlanConflict" }, statusCode: StatusCodes.Status409Conflict);
         var current = await repo.GetAsync(userId, plan.Id);
         return Results.Ok(ToDto(current!, await orders.ListByPlanAsync(plan.Id)));
+    }
+
+    /// <summary>
+    /// «Деньги выведены» (задача 67, #3; то же, что <c>/withdrawn</c> в боте): снимает удержание денег под вывод у всех планов вывода/выхода пользователя —
+    /// P1 и остальные правила снова видят эти деньги свободными. Брокеров не вызывает. Ответ: <c>{ released: N }</c>.
+    /// </summary>
+    private static async Task<IResult> ReleaseCashHold(ICurrentUser currentUser, ITradePlanRepository repo)
+    {
+        if (await currentUser.GetUserIdAsync() is not { } userId) return Results.NotFound();
+        return Results.Ok(new { released = await repo.ReleaseCashHoldsAsync(userId, DateTime.UtcNow) });
     }
 
     private static Task<IResult> Approve(long id, ICurrentUser currentUser, PolicyService service) =>
@@ -177,6 +188,7 @@ public static class PlansEndpoints
         Summary = ParseSummary(plan.SummaryJson),
         Lines = plan.Lines.Select(l => ToDto(l, orders.Where(o => o.LineNo == l.LineNo).OrderBy(o => o.Attempt).ToList())).ToList(),
         NeedsAttention = orders.Any(NeedsAttention),
+        CashHoldReleasedAt = plan.CashHoldReleasedAt is { } released ? DateTime.SpecifyKind(released, DateTimeKind.Utc) : null,
     };
 
     /// <summary>Заявка активна, а исполнитель уже сообщил, что снять её автоматически нельзя (<c>halt_alerted_at</c>).</summary>

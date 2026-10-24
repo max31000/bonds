@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { approvePlan, fetchPlans, rejectPlan } from '../api/plans';
+import { approvePlan, fetchPlans, rejectPlan, releaseCashHold } from '../api/plans';
 import { cancelPlanExecution, setExecutionPaused } from '../api/execution';
 import type { Plan, PlansResponse } from '../api/types';
 
@@ -19,6 +19,8 @@ interface PlansStore {
   cancelExecution: (id: number) => Promise<PlanDecisionResult>;
   /** «Остановить» = пауза (/stop): исполнитель снимает висящие заявки и не отправляет новые; список перечитывается. */
   stop: () => Promise<void>;
+  /** «Деньги выведены» (задача 67): снять удержание денег под вывод, затем перечитать список. */
+  releaseCashHold: () => Promise<PlanDecisionResult>;
 }
 
 let loadSeq = 0;
@@ -55,6 +57,15 @@ export const usePlansStore = create<PlansStore>()((set, get) => ({
   stop: async () => {
     await setExecutionPaused(true);
     await get().load();
+  },
+  releaseCashHold: async () => {
+    try {
+      await releaseCashHold();
+      await get().load();
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : 'Не удалось снять удержание' };
+    }
   },
 }));
 

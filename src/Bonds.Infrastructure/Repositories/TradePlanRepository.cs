@@ -22,7 +22,7 @@ public class TradePlanRepository : ITradePlanRepository
     private const string PlanColumns = @"
         id AS Id, user_id AS UserId, rule AS Rule, `trigger` AS `Trigger`, status AS Status, dry_run AS DryRun, created_at AS CreatedAt,
         expires_at AS ExpiresAt, decided_at AS DecidedAt, decided_via AS DecidedVia, bot_nonce AS BotNonce, cancel_requested AS CancelRequested,
-        CAST(summary_json AS CHAR) AS SummaryJson";
+        cash_hold_released_at AS CashHoldReleasedAt, CAST(summary_json AS CHAR) AS SummaryJson";
 
     private const string LineColumns = @"
         plan_id AS PlanId, line_no AS LineNo, broker AS Broker, account_id AS AccountId, instrument_key AS InstrumentKey, ticker AS Ticker,
@@ -196,7 +196,56 @@ public class TradePlanRepository : ITradePlanRepository
         return affected > 0;
     }
 
-    public async Task<decimal> SumReservedBuysAsync(ulong userId, string broker, string currency, DateTime nowUtc)
+    public async Task<decimal> SumReservedBuysAsync(ulong userId, string broker, string currency, DateTime nowUtc, int withdrawHoldTtl = 3)
+    {
+        var hold = await GetCashHoldAsync(userId, broker, currency, nowUtc, withdrawHoldTtl);
+        return await SumReservedBuyOnlyAsync(userId, broker, currency, nowUtc) + hold.Amount;
+    }
+
+    public async Task<CashHoldState> GetCashHoldAsync(ulong userId, string broker, string currency, DateTime nowUtc, int withdrawHoldTtl)
+    {
+        // Кандидаты — планы вывода/выхода с удержанием, не снятым владельцем, у брокера портфеля (любая сторона строк); окно выборки с запасом на TTL
+        // (рабочие дни + выходные), точное решение — WithdrawHold.IsActive.
+        using var conn = CreateConnection();
+        var since = nowUtc.AddDays(-(Math.Max(0, withdrawHoldTtl) * 2 + 14));
+        var plans = (await conn.QueryAsync<TradePlan>(
+            $@"SELECT {PlanColumns} FROM trade_plans p
+               WHERE p.user_id = @UserId AND p.rule IN @Rules AND p.status IN @Statuses AND p.cash_hold_released_at IS NULL AND p.created_at >= @Since
+                 AND EXISTS (SELECT 1 FROM trade_plan_lines l WHERE l.plan_id = p.id AND l.broker = @Broker)",
+            new { UserId = userId, Rules = WithdrawHold.Rules.ToArray(), Statuses = WithdrawHold.Statuses.ToArray(), Since = since, Broker = broker })).ToList();
+
+        var amount = 0m;
+        var count = 0;
+        foreach (var plan in plans.Where(p => WithdrawHold.IsActive(p, nowUtc, withdrawHoldTtl)))
+        {
+            var summary = WithdrawHold.SummaryOf(plan);
+            if (summary is null || !string.Equals(summary.Currency, currency, StringComparison.OrdinalIgnoreCase)) continue;
+            amount += summary.CashHold;
+            count++;
+        }
+
+        return new CashHoldState(amount, count);
+    }
+
+    public async Task<int> ReleaseCashHoldsAsync(ulong userId, DateTime nowUtc)
+    {
+        // Снимаем у ВСЕХ планов вывода/выхода пользователя, где удержание ещё не снято: «деньги выведены» — общее подтверждение владельца.
+        using var conn = CreateConnection();
+        var ids = (await conn.QueryAsync<ulong>(
+            @"SELECT id FROM trade_plans
+              WHERE user_id = @UserId AND rule IN @Rules AND status IN @Statuses AND cash_hold_released_at IS NULL",
+            new { UserId = userId, Rules = WithdrawHold.Rules.ToArray(), Statuses = WithdrawHold.Statuses.ToArray() })).ToList();
+        if (ids.Count == 0) return 0;
+
+        var candidates = (await conn.QueryAsync<TradePlan>($"SELECT {PlanColumns} FROM trade_plans WHERE id IN @Ids", new { Ids = ids })).ToList();
+        var holding = candidates.Where(p => WithdrawHold.AmountOf(p) > 0m).Select(p => p.Id).ToList();
+        if (holding.Count == 0) return 0;
+        return await conn.ExecuteAsync(
+            "UPDATE trade_plans SET cash_hold_released_at = @Now WHERE user_id = @UserId AND id IN @Ids AND cash_hold_released_at IS NULL",
+            new { Now = nowUtc, UserId = userId, Ids = holding });
+    }
+
+    private async Task<decimal> SumReservedBuyOnlyAsync(ulong userId, string broker, string currency, DateTime nowUtc)
     {
         // Строки хранятся в валюте ЦЕНЫ (EUR-строка Freedom, USD-комиссия и т.п.), складывать их напрямую нельзя: берём резерв из summary_json
         // (TradePlanSummary.ReservedBuy — уже в валюте ПОРТФЕЛЯ плана). План без поля (до введения) резервирует 0.

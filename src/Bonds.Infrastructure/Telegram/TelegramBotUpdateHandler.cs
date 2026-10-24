@@ -128,6 +128,15 @@ public sealed class TelegramBotUpdateHandler : ITelegramUpdateHandler
                     await _settings.SetExecutionPausedAsync(user.Id, false);
                     await ReplyAsync(message.ChatId, "▶ Пауза снята: авто-подтверждение работает в пределах лимитов.", null, ct);
                     break;
+                case BotCommandKind.Withdrawn:
+                {
+                    // «Деньги выведены» (задача 67, #3): снять удержание денег под вывод — P1 и остальные правила снова видят их свободными.
+                    var released = await _plans.ReleaseCashHoldsAsync(user.Id, now);
+                    await ReplyAsync(message.ChatId, released > 0
+                        ? $"✅ Удержание денег под вывод снято (планов: {released}). Свободные деньги снова участвуют в правилах."
+                        : "Удержаний денег под вывод нет.", null, ct);
+                    break;
+                }
                 case BotCommandKind.Invalid:
                     await ReplyAsync(message.ChatId, BotFormat.Html(command.Error), null, ct);
                     break;

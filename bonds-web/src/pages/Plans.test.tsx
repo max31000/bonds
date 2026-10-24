@@ -151,4 +151,25 @@ describe('Plans — страница «Планы» (задача 63, режим
     expect(await screen.findByTestId('plans-error')).toBeInTheDocument();
     expect(screen.getByTestId('dryrun-banner')).toBeInTheDocument();
   });
+
+  it('T67: план вывода с удержанием — «Деньги выведены» снимает удержание (POST /api/plans/cash-hold/release) и перечитывает список', async () => {
+    const held = { ...withdrawPlan, status: 'Done' as const, summary: { ...withdrawPlan.summary!, cashHold: 2000 }, cashHoldReleasedAt: null };
+    let released = false;
+    server.use(
+      http.get('*/api/plans', () =>
+        HttpResponse.json(plansResponse([released ? { ...held, cashHoldReleasedAt: '2026-10-22T10:00:00Z' } : held])),
+      ),
+      http.post('*/api/plans/cash-hold/release', () => {
+        released = true;
+        return HttpResponse.json({ released: 1 });
+      }),
+    );
+    renderPlans();
+
+    expect(await screen.findByTestId('plan-13-cash-hold')).toHaveTextContent(/2\s000,00\sRUB/);
+    await userEvent.click(screen.getByTestId('plan-13-release-hold'));
+
+    await waitFor(() => expect(released).toBe(true));
+    await waitFor(() => expect(screen.queryByTestId('plan-13-release-hold')).not.toBeInTheDocument());
+  });
 });

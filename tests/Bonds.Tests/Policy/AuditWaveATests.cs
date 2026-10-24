@@ -67,4 +67,69 @@ public class AuditWaveATests
     {
         SweepRule.Evaluate(Input([Liquidity()], [], 7_340m, [Tmon, Tsav])).Plan!.Status.Should().Be(PlanStatuses.AutoApproved);
     }
+
+    // ─── #3 удержание денег под вывод ──────────────────────────────────────────────────────
+
+    [Fact]
+    public void T67_P1_CashHoldActive_ParksNothing()
+    {
+        var input = Input([Liquidity()], [], 40_000m, [Tmon, Tsav]) with { CashHoldActive = true };
+
+        var outcome = SweepRule.Evaluate(input);
+
+        outcome.Plan.Should().BeNull();
+        outcome.Notes.Should().Contain(n => n.Contains("вывод"));
+    }
+
+    [Fact]
+    public void T67_P5_SummaryCashHold_IsAmountToWithdraw()
+    {
+        // Свободно 40 000, вывод 100 000: 40 000 из денег, остальное — продажа TMON@. Удержание = сумма к выводу (100 000), а не только свободный остаток.
+        var holding = Holding("TMON@", 1_000m, 166_580m, 150m, "liquidity");
+        var input = Input([Liquidity()], [Pos("TMON@", "fund", 166_580m)], 40_000m, [Tmon, Tsav], holdings: [holding]);
+
+        var plan = WithdrawRule.Evaluate(input, 100_000m, null, null).Plan!;
+
+        plan.Summary.Shortfall.Should().BeNull();
+        plan.Summary.CashHold.Should().Be(100_000m);
+    }
+
+    [Fact]
+    public void T67_ExitBasket_SummaryCashHold_IsNetProceeds()
+    {
+        var temp = Basket("temporary", null, fill: BasketFillRules.Hold, members: [Member("TPAY")]);
+        var tpay = Fund("TPAY", 99.9m, 100.1m);
+        var input = Input([temp], [Pos("TPAY", "fund", 1_000m)], 0m, [tpay], holdings: [Holding("TPAY", 10m, 1_000m, 100m, "temporary")]);
+
+        var plan = ExitBasketRule.Evaluate(input, "temporary").Plan!;
+
+        plan.Summary.CashHold.Should().Be(plan.Summary.SellTotal - plan.Summary.FeeTotal - plan.Summary.TaxTotal).And.BeGreaterThan(0m);
+    }
+
+    [Fact]
+    public void T67_WithdrawHold_OpenPlan_Done_WithinThreeBusinessDays_Released()
+    {
+        // Пятница 15:00 МСК: исполненный P5 держит деньги до среды 15:00 МСК (3 рабочих дня, выходные не считаются).
+        var friday = OpenNowUtc().AddDays(2).AddHours(3); // среда 09:00 UTC + 2 дня = пятница 12:00 UTC = 15:00 МСК
+        var plan = new TradePlan
+        {
+            Rule = PlanRules.P5Withdraw, Status = PlanStatuses.Done, ExpiresAt = friday, SummaryJson = "{\"currency\":\"RUB\",\"cashHold\":100000}",
+        };
+
+        WithdrawHold.IsActive(plan, friday.AddDays(5).AddHours(-1), 3).Should().BeTrue("среда 14:00 МСК — ещё в пределах 3 рабочих дней");
+        WithdrawHold.IsActive(plan, friday.AddDays(5).AddHours(1), 3).Should().BeFalse("среда 16:00 МСК — удержание истекло");
+
+        plan.Status = PlanStatuses.PendingApproval;
+        plan.ExpiresAt = friday.AddMinutes(30);
+        WithdrawHold.IsActive(plan, friday, 3).Should().BeTrue("открытый план вывода держит деньги");
+        WithdrawHold.IsActive(plan, friday.AddHours(1), 3).Should().BeFalse("просроченный неисполненный план — нет");
+
+        plan.Status = PlanStatuses.Done;
+        plan.CashHoldReleasedAt = friday.AddHours(1);
+        WithdrawHold.IsActive(plan, friday.AddHours(2), 3).Should().BeFalse("снято командой /withdrawn или кнопкой «Деньги выведены»");
+
+        plan.CashHoldReleasedAt = null;
+        plan.Status = PlanStatuses.Failed;
+        WithdrawHold.IsActive(plan, friday.AddHours(2), 3).Should().BeFalse("ничего не продано — держать нечего");
+    }
 }
