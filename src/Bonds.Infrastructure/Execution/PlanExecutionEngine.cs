@@ -500,6 +500,7 @@ public sealed class PlanExecutionEngine
         var drift = Opt.DriftFor(isBond);
         var price = OrderPricing.PriceForAttempt(line.Side, approved, market.Bid, market.Ask, step.Value, drift, attempt, limits.MaxAttempts, state.Last?.LimitPrice);
         var lots = state.RemainingLots;
+        var amountWithFee = OrderPricing.RequiredMoney(line, price, lots); // и деньги под заявку, и лимит авто на заявку
 
         // AutoApproved: суточный лимит по ФАКТУ — исполненное других планов дня (лоты × средняя цена) + оценка ещё не исполненного, плюс этот план так же.
         decimal? autoUsed = null;
@@ -532,13 +533,13 @@ public sealed class PlanExecutionEngine
             ApiTradeAvailable = market.ApiTradeAvailable,
             SideAvailable = line.Side == PlanSides.Sell ? meta.SellAvailable : meta.BuyAvailable,
             AvailableMoney = market.AvailableMoney,
-            RequiredMoney = OrderPricing.RequiredMoney(line, price, lots),
+            RequiredMoney = amountWithFee,
             AvailablePieces = market.AvailablePieces,
             AutoUsedTodayRub = autoUsed,
             AutoPlanBuysRub = autoPlanBuys,
             AutoPerDayRub = _limits.AutoPerDayRub,
             AutoPerOrderRub = autoPerOrder,
-            OrderAmount = OrderPricing.OrderAmount(line, price, lots),
+            OrderAmount = amountWithFee,
             Paused = gate.Paused,
             SessionOpenForNewOrders = !closing,
         });

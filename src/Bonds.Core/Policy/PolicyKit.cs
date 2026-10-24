@@ -469,9 +469,9 @@ internal static class PolicyKit
     /// Статус плана по лимитам авто-подтверждения. <c>AutoApproved</c>, только если <paramref name="autoAllowed"/> и ВСЕ строки — покупки, каждая заявка
     /// ≤ <see cref="ExecutionLimitsOptions.AutoPerOrderRub"/> и Σ плана + уже авто-подтверждённое за сутки ≤ <see cref="ExecutionLimitsOptions.AutoPerDayRub"/>.
     /// Суммы — В РУБЛЯХ (валюта цены × курс) и С КОМИССИЕЙ (<see cref="WithFeeInPortfolio"/>, задача 67 #12).
-    /// Freedom: только при <see cref="ExecutionLimitsOptions.FreedomAutoUsd"/> &gt; 0 и заявке не выше него. Иначе <c>PendingApproval</c>.
-    /// Задача 67 (#1): КАЖДАЯ строка обязана пройти белый список в коде (<see cref="AutoWhitelist.LineRejection"/>: фонд без выплат из корзины «liquidity»),
-    /// флаги корзин его только сужают.
+    /// Задача 67 (#1): КАЖДАЯ строка обязана пройти белый список в коде (<see cref="AutoWhitelist.LineRejection"/>: фонд T-Invest без выплат из корзины
+    /// «liquidity»), флаги корзин его только сужают. Freedom авто-подтверждения не имеет вовсе: белый список отклоняет любую строку не T-Invest (T-67E: прежняя
+    /// ветка с <see cref="ExecutionLimitsOptions.FreedomAutoUsd"/> была недостижима и удалена; исполнитель Freedom к тому же исполняет только ручные планы).
     /// </summary>
     public static string DecideStatus(PolicyInput input, IReadOnlyList<TradePlanLine> lines, bool autoAllowed)
     {
@@ -480,13 +480,6 @@ internal static class PolicyKit
 
         // Задача 67 (#12): лимиты сравниваются с суммой заявки В ВАЛЮТЕ ПОРТФЕЛЯ (рубли T-Invest, доллары Freedom) — строка в валюте цены × курс — и С КОМИССИЕЙ:
         // фонд в юанях на 2 400 CNY — это 30 000 ₽, а не «2 400 ≤ 25 000»; заявка 25 000 ₽ + 75 ₽ комиссии лимит 25 000 ₽ превышает.
-        if (input.Broker == BrokerIds.Freedom)
-        {
-            var limit = input.Limits.FreedomAutoUsd;
-            if (limit <= 0m) return PlanStatuses.PendingApproval;
-            return lines.All(l => WithFeeInPortfolio(input, l) <= limit) ? PlanStatuses.AutoApproved : PlanStatuses.PendingApproval;
-        }
-
         if (!string.Equals(input.Currency, "RUB", StringComparison.OrdinalIgnoreCase)) return PlanStatuses.PendingApproval;
         if (lines.Any(l => WithFeeInPortfolio(input, l) > input.Limits.AutoPerOrderRub)) return PlanStatuses.PendingApproval;
         var total = lines.Sum(l => WithFeeInPortfolio(input, l));

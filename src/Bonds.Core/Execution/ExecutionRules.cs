@@ -65,20 +65,16 @@ public static class OrderPricing
     /// (<c>est_amount</c> — сумма с НКД — плюс <c>est_fee</c>) пропорционально лотам и масштабированная вверх, если цена выше утверждённой
     /// (вниз не масштабируется — консервативно). Единицы цены сокращаются (пункты/пункты или рубли/рубли).
     /// </summary>
-    public static decimal RequiredMoney(TradePlanLine line, decimal brokerPrice, long lots) => Scaled(line, line.EstAmount + line.EstFee, brokerPrice, lots);
-
-    /// <summary>
-    /// Сумма заявки С КОМИССИЕЙ (<c>est_amount + est_fee</c> пропорционально лотам, масштаб вверх при цене выше утверждённой) — для лимита авто на заявку, в валюте
-    /// строки (авто — только рублёвые строки, т.е. рубли). Комиссия включена так же, как в <see cref="PolicyKit.DecideStatus"/> и суточной сумме (T-67D).
-    /// </summary>
-    public static decimal OrderAmount(TradePlanLine line, decimal brokerPrice, long lots) => Scaled(line, line.EstAmount + line.EstFee, brokerPrice, lots);
-
-    private static decimal Scaled(TradePlanLine line, decimal amount, decimal brokerPrice, long lots)
+    /// <remarks>
+    /// Та же сумма — «сумма заявки с комиссией» для лимита авто на заявку (в валюте строки, авто — только рублёвые строки), как в
+    /// <see cref="PolicyKit.DecideStatus"/> и суточной сумме (T-67D). Отдельного <c>OrderAmount</c> больше нет (T-67E, NIT: две одинаковые функции).
+    /// </remarks>
+    public static decimal RequiredMoney(TradePlanLine line, decimal brokerPrice, long lots)
     {
         if (line.QuantityLots <= 0) return 0m;
         var approved = ApprovedLimit(line);
         var priceFactor = approved > 0m ? Math.Max(1m, brokerPrice / approved) : 1m;
-        return amount * lots / line.QuantityLots * priceFactor;
+        return (line.EstAmount + line.EstFee) * lots / line.QuantityLots * priceFactor;
     }
 
     /// <summary>Порядок отправки строк: сначала продажи (освобождают деньги), затем покупки; внутри — по номеру строки.</summary>
@@ -128,7 +124,7 @@ public sealed record PreflightInput
     /// <summary>Только для <c>AutoApproved</c>: лимит ОДНОЙ заявки, рубли (<see cref="ExecutionLimitsOptions.AutoPerOrderRub"/>). null — план не авто.</summary>
     public decimal? AutoPerOrderRub { get; init; }
 
-    /// <summary>Сумма этой заявки по её цене С КОМИССИЕЙ (<see cref="OrderPricing.OrderAmount"/>), в валюте строки (для авто — рубли).</summary>
+    /// <summary>Сумма этой заявки по её цене С КОМИССИЕЙ (<see cref="OrderPricing.RequiredMoney"/>), в валюте строки (для авто — рубли).</summary>
     public decimal OrderAmount { get; init; }
 
     public bool Paused { get; init; }
