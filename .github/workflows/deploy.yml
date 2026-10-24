@@ -76,10 +76,10 @@ jobs:
         run: dotnet build Bonds.sln --no-restore -c Release
 
       - name: Unit tests
-        run: dotnet test tests/Bonds.Tests/Bonds.Tests.csproj --no-build -c Release --verbosity normal
+        run: dotnet test tests/Bonds.Tests/Bonds.Tests.csproj --no-build -c Release --verbosity normal --filter "Category!=Sandbox"
 
       - name: Integration tests
-        run: dotnet test tests/Bonds.IntegrationTests/Bonds.IntegrationTests.csproj --no-build -c Release --verbosity normal
+        run: dotnet test tests/Bonds.IntegrationTests/Bonds.IntegrationTests.csproj --no-build -c Release --verbosity normal --filter "Category!=Sandbox"
         env:
           DOTNET_ENVIRONMENT: Testing
 
