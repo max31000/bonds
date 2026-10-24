@@ -28,7 +28,7 @@ export function Plans() {
 
   return (
     <Page title="Планы" description="Какие сделки сервис рассчитал как кандидаты по правилам: оценка по ценам стакана, не рекомендация" width="wide" data-testid="plans-page">
-      <DryRunBanner live={data?.dryRun === false} onStop={stop} />
+      <DryRunBanner live={data?.dryRun === false} brokers={data?.brokers} onStop={stop} />
       <ActiveOrdersBanner count={data?.activeOrders ?? 0} />
       {isLoading && !data && (
         <Section>

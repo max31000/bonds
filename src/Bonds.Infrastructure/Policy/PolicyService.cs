@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Bonds.Core.Capital;
+using Bonds.Core.Execution;
 using Bonds.Core.Interfaces.Repositories;
 using Bonds.Core.Policy;
 using Bonds.Core.Telegram;
@@ -37,8 +38,9 @@ public sealed record PlanDecisionResult(PlanDecisionKind Kind, TradePlan? Plan);
 /// <summary>
 /// Построение, сохранение и решения по планам (задача 63). Здесь брокеров не вызывают: <c>approve</c> переводит план в <c>Approved</c>. <c>dry_run</c> плана
 /// (задача 65) = НЕ живой режим пользователя в момент сохранения (<see cref="IExecutionGateResolver"/>: env + режим live + проверенный торговый токен + нет паузы)
-/// ИЛИ в плане есть не-T-Invest строки (Freedom не исполняется). dry-run план после approve помечается «не исполнен: dry-run»; план с <c>dry_run = 0</c>
-/// исполняет <c>PlanExecutionEngine</c>, который перепроверяет ворота сам.
+/// по КАЖДОМУ брокеру строк плана (задача 66: T-Invest — <c>tinvest_trade</c>, Freedom — <c>freedom_trade</c>), ИЛИ в плане есть строки брокера без исполнителя,
+/// ИЛИ это <c>AutoApproved</c>-план со строками Freedom (Freedom исполняется только после ручного подтверждения). dry-run план после approve помечается
+/// «не исполнен: dry-run»; план с <c>dry_run = 0</c> исполняет <c>PlanExecutionEngine</c>, который перепроверяет ворота сам.
 /// <para>
 /// Ручные запросы (inflow/withdraw/exit-basket) и предпросмотр игнорируют часы торгов, но помечают цены «возможно устарели»; план, созданный вручную, всегда
 /// <c>PendingApproval</c> (решение по нему принимает пользователь, а не лимиты авто-подтверждения).
@@ -48,7 +50,7 @@ public sealed class PolicyService
 {
     public const string DryRunNote = "не исполнен: dry-run";
     public const string QueuedNote = "передан исполнителю";
-    public const string LiveNote = "исполнение включено: после подтверждения заявки уйдут брокеру T-Invest";
+    public const string LiveNote = "исполнение включено: после подтверждения заявки уйдут брокеру (T-Invest или Freedom — по строкам плана)";
     public const string NotExecutedExpiredNote = "не исполнен: срок действия истёк";
 
     internal static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
@@ -93,10 +95,10 @@ public sealed class PolicyService
     /// </summary>
     public async Task<TradePlan> SaveAsync(ulong userId, TradePlanDraft draft, DateTime nowUtc, bool forcePending)
     {
-        var gate = await _gate.ResolveAsync(userId);
-        var dryRun = !gate.Live || draft.Lines.Count == 0 || draft.Lines.Any(l => !string.Equals(l.Broker, Bonds.Core.Models.Brokers.TInvest, StringComparison.OrdinalIgnoreCase));
         var status = forcePending && draft.Status == PlanStatuses.AutoApproved ? PlanStatuses.PendingApproval : draft.Status;
         var auto = status == PlanStatuses.AutoApproved;
+        var gate = await CombinedGateAsync(userId, draft.Lines);
+        var dryRun = !gate.Live || draft.Lines.Count == 0 || (auto && draft.Lines.Any(l => IsBroker(l, Bonds.Core.Models.Brokers.Freedom)));
         var plan = new TradePlan
         {
             UserId = userId,
@@ -116,6 +118,33 @@ public sealed class PolicyService
         foreach (var line in plan.Lines) line.PlanId = plan.Id;
         _logger.LogInformation("Trade plan {PlanId} created: rule {Rule}, status {Status}, {Lines} line(s), dry-run {DryRun}", plan.Id, plan.Rule, plan.Status, plan.Lines.Count, plan.DryRun);
         return plan;
+    }
+
+    private static readonly string[] ExecutableBrokers = [Bonds.Core.Models.Brokers.TInvest, Bonds.Core.Models.Brokers.Freedom];
+
+    private static bool IsBroker(TradePlanLine line, string broker) => string.Equals(line.Broker?.Trim(), broker, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Ворота плана = ворота КАЖДОГО его брокера (задача 66): живой — только если открыты все; причины — с префиксом брокера, когда брокеров несколько.
+    /// Строка брокера без исполнителя — закрыто. Без строк — ворота T-Invest (для заметки).
+    /// </summary>
+    private async Task<ExecutionGateResult> CombinedGateAsync(ulong userId, IReadOnlyCollection<TradePlanLine> lines)
+    {
+        var brokers = lines.Select(l => (l.Broker ?? string.Empty).Trim().ToLowerInvariant()).Distinct(StringComparer.Ordinal).ToList();
+        if (brokers.Count == 0) return await _gate.ResolveAsync(userId);
+        var results = new List<(string Broker, ExecutionGateResult Gate)>();
+        foreach (var b in brokers)
+        {
+            var g = ExecutableBrokers.Contains(b, StringComparer.Ordinal)
+                ? await _gate.ResolveForBrokerAsync(userId, b)
+                : ExecutionGate.Evaluate(false, null, false, false, "Исполнение для брокера " + b + " не настроено");
+            results.Add((b, g));
+        }
+
+        if (results.Count == 1) return results[0].Gate;
+        var reasons = results.SelectMany(r => r.Gate.Reasons.Select(x => $"{r.Broker}: {x}")).ToList();
+        var first = results[0].Gate;
+        return new ExecutionGateResult(reasons.Count == 0, first.GlobalEnabled, first.Mode, results.All(r => r.Gate.TradeCredentialOk), first.Paused, reasons);
     }
 
     public async Task<PlanDecisionResult> ApproveAsync(ulong userId, ulong id, string via, DateTime nowUtc)
@@ -140,7 +169,7 @@ public sealed class PolicyService
         }
         else
         {
-            var gate = await _gate.ResolveAsync(userId);
+            var gate = await CombinedGateAsync(userId, plan.Lines);
             extendTo = ExecutionDeadline(plan, nowUtc);
             note = !gate.Live
                 ? "не будет исполнен: исполнение сейчас закрыто — " + string.Join("; ", gate.Reasons)

@@ -82,7 +82,7 @@ describe('ServiceLayout', () => {
     server.use(
       http.get('*/api/capabilities', () => {
         calls += 1;
-        return HttpResponse.json({ tinvestRead: true, tinvestTrade: false, freedom: false, aiAgents: true });
+        return HttpResponse.json({ tinvestRead: true, tinvestTrade: false, freedom: false, freedomTrade: false, aiAgents: true });
       }),
     );
 

@@ -274,6 +274,8 @@ public static class DependencyInjection
         services.AddScoped<Bonds.Infrastructure.Execution.IExecutionGateResolver, Bonds.Infrastructure.Execution.ExecutionGateResolver>();
         services.AddSingleton<Bonds.Infrastructure.Execution.TInvestTradeClientCache>();
         services.AddScoped<Bonds.Infrastructure.Execution.ITInvestOrderGateway, Bonds.Infrastructure.Execution.TInvestOrderGateway>();
+        // Задача 66: IFreedomOrderGateway — ЕДИНСТВЕННОЕ место команд заявок Freedom (архитектурный тест); торговый ключ freedom_trade читается только внутри.
+        services.AddScoped<Bonds.Infrastructure.Execution.IFreedomOrderGateway, Bonds.Infrastructure.Execution.FreedomOrderGateway>();
         services.AddScoped<Bonds.Infrastructure.Execution.IExecutionNotifier, Bonds.Infrastructure.Telegram.TelegramExecutionNotifier>();
         services.AddSingleton<Bonds.Infrastructure.Execution.IPortfolioSyncTrigger, Bonds.Infrastructure.Execution.PortfolioSyncTrigger>();
         services.AddScoped<Bonds.Infrastructure.Execution.PlanExecutionEngine>();
@@ -318,6 +320,7 @@ public static class DependencyInjection
         services.AddScoped<ICredentialValidator, Bonds.Infrastructure.Credentials.TInvestTradeCredentialValidator>();
         services.AddScoped<ICredentialValidator, Bonds.Infrastructure.Credentials.ClaudeCodeCredentialValidator>();
         services.AddScoped<ICredentialValidator, Bonds.Infrastructure.Credentials.FreedomCredentialValidator>();
+        services.AddScoped<ICredentialValidator, Bonds.Infrastructure.Credentials.FreedomTradeCredentialValidator>();
 
         // Signals Engine + Scheduler — options читаются из конфига с дефолтами
         // самого класса опций, если секция не задана (см. doc-comment SignalEngineOptions/SchedulerOptions).

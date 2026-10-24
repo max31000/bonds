@@ -8,6 +8,12 @@ public sealed record TInvestTradeAccount(string Id, bool FullAccess, bool Open);
 /// <see cref="AvgFillPrice"/> — средняя цена исполнения ОДНОЙ штуки в <see cref="Currency"/> (MoneyValue брокера), <see cref="ExecutedCommission"/> — комиссия заявки;
 /// <see cref="ExecutedAmount"/> — ИТОГОВАЯ исполненная сумма заявки в валюте (без комиссии), если брокер её отдаёт (<c>OrderState</c>), иначе null. Есть сумма —
 /// исполнитель считает цену штуки сам: сумма / (лоты × лотность) (<see cref="Bonds.Core.Execution.FillPrice"/>).
+/// <para>
+/// Реквизиты заявки (задача 66, только Freedom — для сверки заявки без id брокера после потерянного ответа): <see cref="Ticker"/> (<c>instr</c>, верхний регистр),
+/// <see cref="Side"/> (<c>PlanSides</c> по <c>oper</c>: 1 — Buy, 3 — Sell, прочее — null), <see cref="LimitPrice"/> (<c>p</c>, валюта бумаги за штуку),
+/// <see cref="PlacedAtUtc"/> (<c>date</c> брокера, переведённая в UTC по <c>Freedom:OrderTimeUtcOffsetHours</c>). T-Invest их не заполняет.
+/// <see cref="MatchedByAttributes"/> — заявка опознана НЕ по номеру клиента, а по реквизитам (исполнитель шлёт об этом уведомление в бот).
+/// </para>
 /// </summary>
 public sealed record GatewayOrderState(
     string BrokerOrderId,
@@ -19,7 +25,12 @@ public sealed record GatewayOrderState(
     decimal? ExecutedCommission,
     string? Currency,
     string? Message,
-    decimal? ExecutedAmount = null);
+    decimal? ExecutedAmount = null,
+    string? Ticker = null,
+    string? Side = null,
+    decimal? LimitPrice = null,
+    DateTime? PlacedAtUtc = null,
+    bool MatchedByAttributes = false);
 
 /// <summary>Статус торгов бумагой (<c>GetTradingStatus</c>).</summary>
 public sealed record GatewayTradingStatus(bool NormalTrading, bool LimitOrderAvailable, bool ApiTradeAvailable);
@@ -48,10 +59,10 @@ public enum GatewayErrorKind
     Transient,
 }
 
-/// <summary>Ошибка шлюза. Сообщение — без токена (только код gRPC и текст брокера, обрезанный).</summary>
-public sealed class TInvestGatewayException : Exception
+/// <summary>Ошибка торгового шлюза любого брокера (задача 66: общий тип для исполнителя). Сообщение — без секретов.</summary>
+public class ExecutionGatewayException : Exception
 {
-    public TInvestGatewayException(GatewayErrorKind kind, string code, string message) : base(message)
+    public ExecutionGatewayException(GatewayErrorKind kind, string code, string message) : base(message)
     {
         Kind = kind;
         Code = code;
@@ -59,6 +70,14 @@ public sealed class TInvestGatewayException : Exception
 
     public GatewayErrorKind Kind { get; }
     public string Code { get; }
+}
+
+/// <summary>Ошибка шлюза T-Invest. Сообщение — без токена (только код gRPC и текст брокера, обрезанный).</summary>
+public sealed class TInvestGatewayException : ExecutionGatewayException
+{
+    public TInvestGatewayException(GatewayErrorKind kind, string code, string message) : base(kind, code, message)
+    {
+    }
 }
 
 /// <summary>

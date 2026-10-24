@@ -39,7 +39,8 @@ public sealed record PlanLineDto
 
 /// <summary>
 /// Заявка исполнителя (одна попытка). <b>Единицы:</b> <see cref="LimitPrice"/> — как отправлена брокеру: <see cref="PriceUnit"/> = <c>points</c> (облигации, процент номинала) или
-/// <c>currency</c> (валюта за штуку); <see cref="AvgFillPrice"/>/<see cref="ExecutedCommission"/> — в <see cref="Currency"/>. Внутренние id брокера не отдаются.
+/// <c>currency</c> (валюта за штуку); <see cref="AvgFillPrice"/> — в <see cref="Currency"/>; <see cref="ExecutedCommission"/> — в <see cref="CommissionCurrency"/>
+/// (у Freedom комиссия обычно в USD даже для сделки в EUR; НЕ пересчитывается). Внутренние id брокера не отдаются.
 /// </summary>
 public sealed record PlanOrderDto
 {
@@ -51,6 +52,10 @@ public sealed record PlanOrderDto
     public required long LotsFilled { get; init; }
     public decimal? AvgFillPrice { get; init; }
     public decimal? ExecutedCommission { get; init; }
+
+    /// <summary>Валюта <see cref="ExecutedCommission"/> (ISO); совпадает с <see cref="Currency"/>, если брокер не указал иную.</summary>
+    public required string CommissionCurrency { get; init; }
+
     public required string Currency { get; init; }
     public string? ErrorCode { get; init; }
     public string? ErrorMessage { get; init; }
@@ -84,13 +89,24 @@ public sealed record PlansResponseDto
 {
     public required IReadOnlyList<PlanDto> Items { get; init; }
 
-    /// <summary>Режим наблюдения пользователя: true — сделки не отправляются (ворота исполнения закрыты, задача 65).</summary>
+    /// <summary>Режим наблюдения пользователя: true — сделки не отправляются НИ одному брокеру (ворота исполнения закрыты, задачи 65/66).</summary>
     public required bool DryRun { get; init; }
+
+    /// <summary>Ворота по брокерам (задача 66): true — заявки этого брокера отправляются.</summary>
+    public required PlansBrokerLiveDto Brokers { get; init; }
 
     /// <summary>Сколько заявок пользователя активно у брокера (<c>New</c>/<c>Submitted</c>/<c>PartiallyFilled</c>) — НЕЗАВИСИМО от ворот и режима (баннер «Есть активные заявки у брокера»).</summary>
     public int ActiveOrders { get; init; }
 
     public required string Disclaimer { get; init; }
+}
+
+/// <summary>Открыты ли ворота исполнения брокера.</summary>
+public sealed record PlansBrokerLiveDto
+{
+    [System.Text.Json.Serialization.JsonPropertyName("tinvest")]
+    public required bool TInvest { get; init; }
+    public required bool Freedom { get; init; }
 }
 
 /// <summary>Ответ на создание плана / предпросмотр: <see cref="Plan"/> = null, если правило плана не дало; причины — в <see cref="Notes"/>.</summary>

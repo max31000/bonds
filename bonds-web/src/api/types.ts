@@ -1196,6 +1196,8 @@ export interface Capabilities {
   tinvestRead: boolean;
   tinvestTrade: boolean;
   freedom: boolean;
+  /** Торговый ключ Freedom (задача 66) проверен; бэкенд отдаёт ключ всегда. */
+  freedomTrade: boolean;
   aiAgents: boolean;
 }
 
@@ -2072,7 +2074,8 @@ export type PlanLineExecutionStatus = 'Pending' | TradeOrderStatus;
 
 /**
  * Заявка исполнителя (одна попытка строки). ЕДИНИЦЫ: `limitPrice` — как отправлена брокеру: `priceUnit` = 'points' (облигации, ПУНКТЫ — процент номинала) или
- * 'currency' (валюта цены за штуку); `avgFillPrice` (за штуку) и `executedCommission` — в `currency`.
+ * 'currency' (валюта цены за штуку); `avgFillPrice` (за штуку) — в `currency`; `executedCommission` — в `commissionCurrency` (Freedom: обычно USD даже для
+ * сделки в EUR, не пересчитывается; нет поля — в `currency`).
  */
 export interface PlanOrder {
   attempt: number;
@@ -2083,6 +2086,8 @@ export interface PlanOrder {
   lotsFilled: number;
   avgFillPrice: number | null;
   executedCommission: number | null;
+  /** Валюта комиссии (ISO); отсутствует у старых ответов — тогда `currency`. */
+  commissionCurrency?: string;
   currency: string;
   errorCode: string | null;
   errorMessage: string | null;
@@ -2092,7 +2097,17 @@ export interface PlanOrder {
   needsAttention?: boolean;
 }
 
-/** GET /api/settings/execution — ворота исполнения: `live` только при ВСЕХ условиях, иначе причины в `reasons`. */
+/** Ворота исполнения одного брокера (задача 66): `live` — заявки этого брокера отправляются. */
+export interface BrokerExecutionState {
+  live: boolean;
+  tradeCredentialOk: boolean;
+  reasons: string[];
+}
+
+/**
+ * GET /api/settings/execution — ворота исполнения. Режим, env и пауза общие; ключ и итог — по брокеру (`brokers`, задача 66). Верхний уровень — сводка:
+ * `live`/`tradeCredentialOk` — хотя бы у одного брокера, `reasons` — причины закрытых брокеров («T-Invest: …», «Freedom: …»).
+ */
 export interface ExecutionState {
   mode: 'observe' | 'live';
   globalEnabled: boolean;
@@ -2102,6 +2117,7 @@ export interface ExecutionState {
   reasons: string[];
   /** Активные заявки у брокера — независимо от режима и ворот (только в GET; в ответах PUT — 0). */
   activeOrders?: number;
+  brokers?: { tinvest: BrokerExecutionState; freedom: BrokerExecutionState };
 }
 
 export type PlanRule = 'P1_SWEEP' | 'P2_INFLOW' | 'P3B_LIQ_TO_BONDS' | 'P4_REBALANCE' | 'P5_WITHDRAW' | 'P7_FREEDOM_TOPUP' | 'MANUAL';
@@ -2175,8 +2191,10 @@ export interface Plan {
 
 export interface PlansResponse {
   items: Plan[];
-  /** Режим наблюдения пользователя: true — сделки не отправляются; false — исполнение включено (все ворота открыты, задача 65). */
+  /** Режим наблюдения пользователя: true — сделки не отправляются ни одному брокеру; false — ворота открыты хотя бы у одного (задачи 65/66). */
   dryRun: boolean;
+  /** Ворота по брокерам (задача 66): true — заявки этого брокера отправляются. */
+  brokers?: { tinvest: boolean; freedom: boolean };
   /** Сколько заявок пользователя активно у брокера — НЕЗАВИСИМО от режима и ворот (баннер «Есть активные заявки у брокера»). */
   activeOrders?: number;
   disclaimer: string;

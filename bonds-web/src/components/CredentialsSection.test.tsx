@@ -57,7 +57,7 @@ describe('CredentialsSection', () => {
       http.get('*/api/credentials', () =>
         HttpResponse.json([
           tinvestRead({ status: 'ok', last4: '1234', verifiedAt: '2026-10-01T09:30:00Z' }),
-          missing({ provider: 'tinvest_trade', title: 'T-Invest (торговля)', experimental: true, unlocks: 'исполнение сделок, фаза 3' }),
+          missing({ provider: 'tinvest_trade', title: 'T-Invest (торговля)', experimental: true, unlocks: 'исполнение подтверждённых планов T-Invest (выключено по умолчанию)' }),
           claude({ status: 'invalid', statusMessage: 'Нужно ввести заново', last4: 'ZZ99' }),
         ]),
       ),
@@ -192,5 +192,39 @@ describe('CredentialsSection', () => {
     await userEvent.click(screen.getByTestId('credential-freedom-edit'));
     expect(screen.getByTestId('credential-freedom-input-publicKey')).toBeInTheDocument();
     expect(screen.getByTestId('credential-freedom-input-privateKey')).toBeInTheDocument();
+  });
+
+  it('freedom_trade card says the trade right is verified on the first order', async () => {
+    server.use(
+      http.get('*/api/credentials', () =>
+        HttpResponse.json([
+          missing({
+            provider: 'freedom_trade',
+            title: 'Freedom (торговля)',
+            experimental: true,
+            fields: [
+              { name: 'publicKey', title: 'Публичный ключ', isSecret: true },
+              { name: 'privateKey', title: 'Секретный ключ', isSecret: true },
+            ],
+          }),
+        ]),
+      ),
+    );
+    renderSection();
+    expect(await screen.findByText(/Торговое право проверится на первой заявке/)).toBeInTheDocument();
+    expect(screen.getByText(/\.ITS исполнитель не отправляет никогда/)).toBeInTheDocument();
+  });
+
+  it('tinvest_trade hint describes the executor, not the stale «phase 3, unused» text', async () => {
+    server.use(
+      http.get('*/api/credentials', () =>
+        HttpResponse.json([missing({ provider: 'tinvest_trade', title: 'T-Invest (торговля)', experimental: true, unlocks: 'исполнение подтверждённых планов T-Invest' })]),
+      ),
+    );
+    renderSection();
+    const card = await screen.findByTestId('credential-tinvest_trade');
+    expect(card).toHaveTextContent('только для исполнителя подтверждённых планов T-Invest');
+    expect(card).not.toHaveTextContent('нигде не используется');
+    expect(card).not.toHaveTextContent('фазе 3');
   });
 });

@@ -76,6 +76,27 @@ public sealed class ExecutionOptions
     /// </summary>
     public int MaxFeeRechecks { get; set; } = 3;
 
+    /// <summary>
+    /// То же для Freedom (задача 66): комиссия есть только в выписке движений денег (<c>commission_for_trades</c>) и появляется с задержкой — сверка откладывается,
+    /// пока по всем сделкам строки не придут строки комиссии, но не больше стольких тиков (90 × 20 с ≈ 30 мин). Окно исчерпано, а комиссии нет — строка закрывается
+    /// с пометкой «комиссия не сверена» (без ложного предупреждения о расхождении); план закрывается после этого.
+    /// </summary>
+    public int FreedomMaxFeeRechecks { get; set; } = 90;
+
+    /// <summary>
+    /// Freedom: максимум попыток (выставлений) строки, включая первую (T-Invest — <see cref="MaxAttempts"/>). Меньше, чем у T-Invest: у Freedom на US/EU есть ФИКСИРОВАННАЯ
+    /// комиссия за заявку ($1.2 в тарифах Standard/Investor, <c>FreedomFeeModel</c>) — она берётся с КАЖДОЙ заявки, по которой было исполнение, поэтому каждое
+    /// перевыставление частично исполненной строки стоит ещё $1.2 (на сумме ~$100 это ~1.2%). Две попытки — первая по утверждённому лимиту, вторая ближе к
+    /// противоположной стороне (в пределах дрейфа).
+    /// </summary>
+    public int FreedomMaxAttempts { get; set; } = 2;
+
+    /// <summary>
+    /// Freedom: ожидание исполнения до перевыставления (T-Invest — <see cref="RepriceAfter"/>). Дольше, чем у T-Invest: по той же причине (фикс за заявку) выгоднее
+    /// дольше ждать исполнения по лимиту, чем платить за новую заявку; стакан UCITS-фондов на EU тонкий, исполнение по лимиту приходит минутами.
+    /// </summary>
+    public TimeSpan FreedomRepriceAfter { get; set; } = TimeSpan.FromMinutes(10);
+
     /// <summary>Предел дрейфа для строки: облигации (цена в пунктах) — <see cref="MaxBondPriceDriftFraction"/>, остальное — <see cref="MaxPriceDriftFraction"/>.</summary>
     public decimal DriftFor(bool isBond) => isBond ? MaxBondPriceDriftFraction : MaxPriceDriftFraction;
 }

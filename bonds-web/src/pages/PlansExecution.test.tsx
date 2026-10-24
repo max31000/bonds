@@ -55,6 +55,28 @@ describe('Plans — исполнение (задача 65)', () => {
     expect(await screen.findByTestId('dryrun-banner')).toBeInTheDocument();
   });
 
+  it('live только у Freedom — баннер называет брокеров отдельно', async () => {
+    server.use(http.get('*/api/plans', () => HttpResponse.json({ ...livePlansResponse([sweepPlan]), brokers: { tinvest: false, freedom: true } })));
+    renderPlans();
+    const banner = await screen.findByTestId('live-banner');
+    expect(banner).toHaveTextContent('отправляются брокеру Freedom');
+    expect(banner).toHaveTextContent('T-Invest — заявки не отправляются');
+  });
+
+  it('live у обоих брокеров — оба в баннере; только T-Invest — Freedom не отправляется', async () => {
+    server.use(http.get('*/api/plans', () => HttpResponse.json({ ...livePlansResponse([sweepPlan]), brokers: { tinvest: true, freedom: true } })));
+    const { unmount } = renderPlans();
+    expect(await screen.findByTestId('live-banner')).toHaveTextContent('брокерам T-Invest и Freedom');
+    unmount();
+
+    usePlansStore.setState({ data: null, isLoading: false, error: null, decidingId: null });
+    server.use(http.get('*/api/plans', () => HttpResponse.json({ ...livePlansResponse([sweepPlan]), brokers: { tinvest: true, freedom: false } })));
+    renderPlans();
+    const banner = await screen.findByTestId('live-banner');
+    expect(banner).toHaveTextContent('брокеру T-Invest');
+    expect(banner).toHaveTextContent('Freedom — заявки не отправляются');
+  });
+
   it('показывает статусы заявок по строкам: исполнено N из M, попытка; ошибка проверки — с причиной; облигация — в пунктах', async () => {
     server.use(http.get('*/api/plans', () => HttpResponse.json(livePlansResponse([executingPlan(), failedBondPlan()]))));
     renderPlans();
@@ -67,6 +89,22 @@ describe('Plans — исполнение (задача 65)', () => {
     expect(screen.getByTestId('plan-22-line-2-exec-error')).toHaveTextContent('Нет свежей котировки');
     expect(screen.getByTestId('plan-22-line-2-exec')).toHaveTextContent(/99,95\sп\./);
     expect(screen.getByTestId('plan-22-status')).toHaveTextContent('Не исполнен');
+  });
+
+  it('комиссия в своей валюте: сделка в EUR, комиссия Freedom в USD — показана в USD', async () => {
+    const plan = executingPlan();
+    const base = plan.lines[0].orders[1];
+    const eur: Plan = {
+      ...plan,
+      id: 25,
+      lines: [{ ...plan.lines[0], orders: [{ ...base, currency: 'EUR', avgFillPrice: 38.32, executedCommission: 1.2, commissionCurrency: 'USD' }] }],
+    };
+    server.use(http.get('*/api/plans', () => HttpResponse.json(livePlansResponse([eur]))));
+    renderPlans();
+
+    const exec = await screen.findByTestId('plan-25-line-1-exec');
+    expect(exec).toHaveTextContent(/средняя 38,32\sEUR/);
+    expect(exec).toHaveTextContent(/комиссия 1,20\sUSD/);
   });
 
   it('активные заявки у брокера — баннер даже в режиме наблюдения', async () => {

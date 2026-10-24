@@ -41,7 +41,7 @@ function LineExecution({ planId, line }: { planId: number; line: PlanLine }) {
         исполнено {line.filledLots} из {line.quantityLots} лот.
         {last && ` · попытка ${last.attempt}, заявка ${formatOrderPrice(last)}`}
         {last?.avgFillPrice != null && ` · средняя ${formatPlanMoney(last.avgFillPrice, last.currency)}`}
-        {last?.executedCommission != null && ` · комиссия ${formatPlanMoney(last.executedCommission, last.currency)}`}
+        {last?.executedCommission != null && ` · комиссия ${formatPlanMoney(last.executedCommission, last.commissionCurrency ?? last.currency)}`}
       </Text>
       {last?.needsAttention && (
         <Text size="xs" c="red" fw={600} data-testid={`plan-${planId}-line-${line.lineNo}-exec-attention`}>

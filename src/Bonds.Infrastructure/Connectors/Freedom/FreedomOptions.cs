@@ -9,6 +9,15 @@ public sealed class FreedomOptions
     public string BaseUrl { get; set; } = "https://tradernet.global";
 
     public int TimeoutSeconds { get; set; } = 30;
+
+    /// <summary>
+    /// Смещение часового пояса меток времени Tradernet БЕЗ пояса от UTC, ЧАСЫ: UTC = метка − смещение. 3 = МСК — ПОДТВЕРЖДЕНО на живом счёте: <c>date</c>/<c>stat_d</c>
+    /// и <c>trade[].date</c> в списке заявок, <c>ltt</c> в <c>getStockQuotesJson</c> (BTC/USD: <c>ltt</c> = текущее UTC + 3 ч), время <c>getMarketStatus</c>.
+    /// ВНИМАНИЕ: <c>getTradesHistory</c> отдаёт <c>date</c> в другом поясе (на 2 ч позже — UTC+5) — исполнитель время сделок из истории не сравнивает, только связь по
+    /// <c>order_id</c>. Неверное смещение безопасно: сверка заявки без номера ищет её в окне [−30 с, +2 мин] от записи <c>trade_orders</c>, промах окна →
+    /// <c>unknown_state</c> (без повторной отправки); свежесть котировки — промах в сторону «несвежая».
+    /// </summary>
+    public double OrderTimeUtcOffsetHours { get; set; } = 3;
 }
 
 /// <summary>

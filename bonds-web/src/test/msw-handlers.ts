@@ -167,7 +167,18 @@ export const handlers = [
     }),
   ),
   http.get('*/api/settings/execution', () =>
-    HttpResponse.json({ mode: 'observe', globalEnabled: false, tradeCredentialOk: false, paused: false, live: false, reasons: ['Режим наблюдения (observe)'] }),
+    HttpResponse.json({
+      mode: 'observe',
+      globalEnabled: false,
+      tradeCredentialOk: false,
+      paused: false,
+      live: false,
+      reasons: ['T-Invest: Режим наблюдения (observe)', 'Freedom: Режим наблюдения (observe)'],
+      brokers: {
+        tinvest: { live: false, tradeCredentialOk: false, reasons: ['Режим наблюдения (observe)'] },
+        freedom: { live: false, tradeCredentialOk: false, reasons: ['Режим наблюдения (observe)'] },
+      },
+    }),
   ),
   http.get('*/api/settings', () =>
     HttpResponse.json({
@@ -197,7 +208,7 @@ export const handlers = [
   // Задача 58: «Подключения» — по умолчанию ничего не подключено; сценарии переопределяются через server.use.
   http.get('*/api/credentials', () => HttpResponse.json([])),
   http.get('*/api/capabilities', () =>
-    HttpResponse.json({ tinvestRead: false, tinvestTrade: false, freedom: false, aiAgents: false }),
+    HttpResponse.json({ tinvestRead: false, tinvestTrade: false, freedom: false, freedomTrade: false, aiAgents: false }),
   ),
   // Задача 53: фонды и общий баланс — по умолчанию «фондов нет» / нулевой баланс; сценарии переопределяются через server.use.
   http.get('*/api/funds', () =>

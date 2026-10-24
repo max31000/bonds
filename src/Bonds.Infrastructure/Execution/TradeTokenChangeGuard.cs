@@ -3,6 +3,7 @@ using Bonds.Core.Interfaces.Repositories;
 using Bonds.Core.Models;
 using Bonds.Core.Policy;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace Bonds.Infrastructure.Execution;
 
@@ -45,6 +46,10 @@ public sealed record TokenChangeOutcome(bool Ok, string? Error, int ActiveOrders
 /// <item><c>cancelActive = true</c> — СНАЧАЛА синхронно снимает каждую заявку ТЕКУЩИМ (ещё не заменённым) токеном через шлюз и подтверждает снятие
 /// <c>GetOrderState</c>; планы этих заявок получают <c>cancel_requested</c> (исполнитель закроет остальные строки). Хоть одна не снята — 409, токен не меняется.</item>
 /// </list>
+/// Задача 66: то же для торгового ключа Freedom (<c>freedom_trade</c>) — параметр <c>broker</c>; учитываются и снимаются ТОЛЬКО заявки этого брокера
+/// (<c>trade_orders.broker</c>), снятие — через его шлюз (<see cref="IExecutionVenue"/>). Заявка Freedom в статусе <c>New</c> (ответа на размещение не было), которую
+/// брокер ещё не показал и которой меньше <c>Execution:UnconfirmedOrderTimeout</c>, — 409 «заявка ещё не сверена» (а не <c>Failed</c>): она могла дойти до брокера, и
+/// без текущего ключа снять её будет нечем.
 /// Scoped.
 /// </summary>
 public sealed class TradeTokenChangeGuard
@@ -54,29 +59,40 @@ public sealed class TradeTokenChangeGuard
     private readonly ITradeOrderRepository _orders;
     private readonly ITradePlanRepository _plans;
     private readonly IAccountRepository _accounts;
-    private readonly ITInvestOrderGateway _gateway;
     private readonly IPlanExecutorLock _lock;
     private readonly ILogger<TradeTokenChangeGuard> _logger;
+    private readonly Dictionary<string, IExecutionVenue> _venues = new(StringComparer.OrdinalIgnoreCase);
+    private readonly IOptionsMonitor<ExecutionOptions>? _options;
+
+    /// <summary>Сколько ждать сверки заявки без ответа брокера (<c>Execution:UnconfirmedOrderTimeout</c>).</summary>
+    private TimeSpan UnconfirmedTimeout => _options?.CurrentValue.UnconfirmedOrderTimeout ?? new ExecutionOptions().UnconfirmedOrderTimeout;
 
     public TradeTokenChangeGuard(
         ITradeOrderRepository orders, ITradePlanRepository plans, IAccountRepository accounts, ITInvestOrderGateway gateway, IPlanExecutorLock executorLock,
-        ILogger<TradeTokenChangeGuard> logger)
+        ILogger<TradeTokenChangeGuard> logger, IExecutionGateResolver gate, IUserCredentialRepository credentialRecords,
+        IFreedomOrderGateway? freedomGateway = null, IOptionsMonitor<ExecutionOptions>? options = null)
     {
+        _options = options;
         _orders = orders;
         _plans = plans;
         _accounts = accounts;
-        _gateway = gateway;
         _lock = executorLock;
         _logger = logger;
+
+        // Снятие заявок воротами не ограничено: сессия брокера здесь — только счёт (OpenForManagementAsync), ворота и статусы секретов не трогаются.
+        _venues[Brokers.TInvest] = new TInvestExecutionVenue(gateway, gate, accounts, credentialRecords, logger);
+        if (freedomGateway is not null) _venues[Brokers.Freedom] = new FreedomExecutionVenue(freedomGateway, gate, accounts, credentialRecords, orders, logger);
     }
 
     /// <summary>Выполняет <paramref name="change"/> (удаление/сохранение токена), только если активных заявок нет или все сняты (<paramref name="cancelActive"/>).</summary>
-    public async Task<TokenChangeOutcome> RunAsync(ulong userId, bool cancelActive, Func<Task> change, DateTime nowUtc, CancellationToken ct = default)
+    /// <param name="broker">Брокер ключа: <c>tinvest</c> (по умолчанию, <c>tinvest_trade</c>) или <c>freedom</c> (<c>freedom_trade</c>).</param>
+    public async Task<TokenChangeOutcome> RunAsync(
+        ulong userId, bool cancelActive, Func<Task> change, DateTime nowUtc, CancellationToken ct = default, string broker = Brokers.TInvest)
     {
         await using var held = await _lock.TryAcquireAsync(LockWait, ct);
         if (held is null) return new TokenChangeOutcome(false, "Исполнитель сейчас занят — повторите через минуту.", 0);
 
-        var active = await _orders.ListActiveByUserAsync(userId);
+        var active = await _orders.ListActiveByUserAsync(userId, broker);
         if (active.Count > 0)
         {
             if (!cancelActive)
@@ -87,7 +103,7 @@ public sealed class TradeTokenChangeGuard
                     active.Count);
             }
 
-            var errors = await StopAllAsync(userId, active, nowUtc, ct);
+            var errors = await StopAllAsync(userId, broker, active, nowUtc, ct);
             if (errors.Count > 0)
                 return new TokenChangeOutcome(false, "Не все заявки удалось снять — токен не изменён: " + string.Join("; ", errors), errors.Count);
         }
@@ -96,13 +112,21 @@ public sealed class TradeTokenChangeGuard
         return TokenChangeOutcome.Done;
     }
 
-    private async Task<List<string>> StopAllAsync(ulong userId, IReadOnlyList<TradeOrder> active, DateTime nowUtc, CancellationToken ct)
+    private async Task<List<string>> StopAllAsync(ulong userId, string broker, IReadOnlyList<TradeOrder> active, DateTime nowUtc, CancellationToken ct)
     {
         var errors = new List<string>();
-        var brokerAccountId = (await _accounts.GetByUserIdAndBrokerAsync(userId, Brokers.TInvest)).OrderBy(a => a.Id).FirstOrDefault()?.BrokerAccountId;
-        if (string.IsNullOrWhiteSpace(brokerAccountId))
+        if (!_venues.TryGetValue(broker, out var venue))
         {
-            errors.Add("основной счёт T-Invest не привязан — снимите заявки в терминале брокера");
+            errors.Add($"брокер {broker} не поддерживается исполнителем — снимите заявки в терминале брокера");
+            return errors;
+        }
+
+        var session = await venue.OpenForManagementAsync(userId);
+        if (!session.CanManageOrders)
+        {
+            errors.Add(broker == Brokers.TInvest
+                ? "основной счёт T-Invest не привязан — снимите заявки в терминале брокера"
+                : $"счёт {venue.Title} не привязан — снимите заявки в терминале брокера");
             return errors;
         }
 
@@ -118,16 +142,40 @@ public sealed class TradeTokenChangeGuard
 
             var line = plan?.Lines.FirstOrDefault(l => l.LineNo == order.LineNo);
             var label = line?.Ticker ?? $"план #{order.PlanId}, строка {order.LineNo}";
+            if (order.Status == TradeOrderStatuses.New && string.IsNullOrEmpty(order.BrokerOrderId) && broker != Brokers.TInvest)
+            {
+                // Freedom: ответа на размещение не было — сначала опознать заявку у брокера по реквизитам (снять можно только по id брокера).
+                GatewayOrderState? found;
+                try
+                {
+                    found = await venue.StateAsync(session, userId, order, line, true, ct);
+                }
+                catch (ExecutionGatewayException ex)
+                {
+                    errors.Add($"{label}: {venue.Title} недоступен ({ex.Code})");
+                    continue;
+                }
+
+                if (found is null && nowUtc - order.CreatedAt < UnconfirmedTimeout)
+                {
+                    // Заявка могла дойти до брокера, но ещё не опознана: закрыть её как «не дошла» нельзя — после смены ключа снять её будет нечем.
+                    errors.Add($"{label}: заявка ещё не сверена с брокером — повторите смену ключа через несколько минут");
+                    continue;
+                }
+
+                if (found is not null) OrderStateMapping.Apply(order, found, line?.LotSize ?? 1m, nowUtc);
+            }
+
             try
             {
-                await _gateway.CancelOrderAsync(userId, brokerAccountId, order.ClientOrderId, ct);
+                if (broker == Brokers.TInvest || !string.IsNullOrEmpty(order.BrokerOrderId)) await venue.CancelAsync(session, userId, order, ct);
             }
-            catch (TInvestGatewayException ex) when (ex.Kind == GatewayErrorKind.Transient)
+            catch (ExecutionGatewayException ex) when (ex.Kind == GatewayErrorKind.Transient)
             {
-                errors.Add($"{label}: T-Invest недоступен ({ex.Code})");
+                errors.Add($"{label}: {venue.Title} недоступен ({ex.Code})");
                 continue;
             }
-            catch (TInvestGatewayException ex)
+            catch (ExecutionGatewayException ex)
             {
                 // Отказ снять (уже исполнена/снята) — истину покажет сверка ниже.
                 _logger.LogInformation("Token change: cancel of {ClientOrderId} refused ({Code})", order.ClientOrderId, ex.Code);
@@ -136,9 +184,9 @@ public sealed class TradeTokenChangeGuard
             GatewayOrderState? state;
             try
             {
-                state = await _gateway.GetOrderStateAsync(userId, brokerAccountId, order.ClientOrderId, ct);
+                state = await venue.StateAsync(session, userId, order, line, false, ct);
             }
-            catch (TInvestGatewayException ex)
+            catch (ExecutionGatewayException ex)
             {
                 errors.Add($"{label}: состояние заявки недоступно ({ex.Code})");
                 continue;

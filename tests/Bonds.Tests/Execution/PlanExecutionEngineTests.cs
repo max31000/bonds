@@ -749,6 +749,12 @@ public sealed class InMemoryOrders : ITradeOrderRepository
     /// <summary>Один пользователь в тестах — все активные.</summary>
     public Task<IReadOnlyList<TradeOrder>> ListActiveByUserAsync(ulong userId) =>
         Task.FromResult<IReadOnlyList<TradeOrder>>(All.Where(o => TradeOrderStatuses.IsActive(o.Status)).ToList());
+
+    public Task<IReadOnlyList<TradeOrder>> ListActiveByUserAsync(ulong userId, string broker) =>
+        Task.FromResult<IReadOnlyList<TradeOrder>>(All.Where(o => TradeOrderStatuses.IsActive(o.Status) && o.Broker == broker).ToList());
+
+    public Task<bool> IsBrokerOrderLinkedAsync(string broker, string brokerOrderId, ulong exceptOrderId) =>
+        Task.FromResult(All.Any(o => o.Broker == broker && o.BrokerOrderId == brokerOrderId && o.Id != exceptOrderId));
 }
 
 /// <summary>In-memory <see cref="ITradePlanRepository"/> — только методы, нужные исполнителю.</summary>

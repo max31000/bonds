@@ -11,6 +11,9 @@ public static class CredentialProviders
     public const string ClaudeCode = "claude_code";
     public const string Freedom = "freedom";
 
+    /// <summary>Торговый ключ Freedom (задача 66): отдельная пара ключей только для исполнителя; ключ на чтение <see cref="Freedom"/> продолжает служить синку.</summary>
+    public const string FreedomTrade = "freedom_trade";
+
     public static IReadOnlyList<CredentialProviderDescriptor> All { get; } = new[]
     {
         new CredentialProviderDescriptor(
@@ -20,7 +23,7 @@ public static class CredentialProviders
         new CredentialProviderDescriptor(
             TInvestTrade, "T-Invest (торговля)", CredentialCategory.Broker,
             new[] { new CredentialField("token", "Торговый токен", IsSecret: true, IsMaskSource: true) },
-            Unlocks: "исполнение сделок, фаза 3",
+            Unlocks: "исполнение подтверждённых планов T-Invest (выключено по умолчанию)",
             Experimental: true),
         new CredentialProviderDescriptor(
             Freedom, "Freedom (Tradernet)", CredentialCategory.Broker,
@@ -30,6 +33,15 @@ public static class CredentialProviders
                 new CredentialField("privateKey", "Секретный ключ (Secret key)", IsSecret: true, IsMaskSource: false),
             },
             Unlocks: "синхронизация портфеля Freedom (только чтение)"),
+        new CredentialProviderDescriptor(
+            FreedomTrade, "Freedom (торговля)", CredentialCategory.Broker,
+            new[]
+            {
+                new CredentialField("publicKey", "Публичный ключ (API key) с правом торговли", IsSecret: true, IsMaskSource: true),
+                new CredentialField("privateKey", "Секретный ключ (Secret key)", IsSecret: true, IsMaskSource: false),
+            },
+            Unlocks: "исполнение подтверждённых вручную планов Freedom (выключено по умолчанию). Проверяется, что ключ от того же счёта, что ключ на чтение; торговое право проверится на первой заявке",
+            Experimental: true),
         new CredentialProviderDescriptor(
             ClaudeCode, "Claude Code", CredentialCategory.Ai,
             new[] { new CredentialField("oauthToken", "OAuth-токен", IsSecret: true, IsMaskSource: true) },

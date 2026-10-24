@@ -1,7 +1,7 @@
 import type { BrokerHoldingsResponse, BrokerPositionRow, Capabilities } from '../api/types';
 
-export const capsFreedomOn: Capabilities = { tinvestRead: true, tinvestTrade: false, freedom: true, aiAgents: false };
-export const capsFreedomOff: Capabilities = { tinvestRead: true, tinvestTrade: false, freedom: false, aiAgents: false };
+export const capsFreedomOn: Capabilities = { tinvestRead: true, tinvestTrade: false, freedom: true, freedomTrade: false, aiAgents: false };
+export const capsFreedomOff: Capabilities = { tinvestRead: true, tinvestTrade: false, freedom: false, freedomTrade: false, aiAgents: false };
 
 export const luvUsd: BrokerPositionRow = {
   ticker: 'LUV.US',

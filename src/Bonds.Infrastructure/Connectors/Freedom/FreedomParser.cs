@@ -75,7 +75,8 @@ public static class FreedomParser
         var holder = Obj(root, "result") ?? root;
         return Items(holder, "q")
             .Select(q => new FreedomQuote(
-                Str(q, "c") ?? string.Empty, Dec(q, "bbp"), Dec(q, "bap"), Dec(q, "ltp"), Str(q, "x_curr"), Dec(q, "min_step")))
+                Str(q, "c") ?? string.Empty, Dec(q, "bbp"), Dec(q, "bap"), Dec(q, "ltp"), Str(q, "x_curr"), Dec(q, "min_step"),
+                LocalTime(q, "ltt"), LocalTime(q, "bbt"), LocalTime(q, "bat"), Str(q, "marketStatus")))
             .ToList();
     }
 
@@ -177,6 +178,12 @@ public static class FreedomParser
     }
 
     private static int? Int(JsonElement o, string name) => Dec(o, name) is { } d ? (int)d : null;
+
+    /// <summary>Метка времени брокера без пояса (Unspecified); нет/не разобралась/с поясом — null.</summary>
+    private static DateTime? LocalTime(JsonElement o, string name) =>
+        Str(o, name) is { } s && DateTime.TryParse(s, CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces, out var dt) && dt.Kind == DateTimeKind.Unspecified
+            ? dt
+            : null;
 
     private static DateTime Date(JsonElement o, params string[] names)
     {

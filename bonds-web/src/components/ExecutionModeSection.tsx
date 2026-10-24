@@ -8,9 +8,10 @@ import type { ExecutionState } from '../api/types';
 export const LIVE_CONFIRMATION_WORD = 'LIVE';
 
 /**
- * «Исполнение сделок» (задача 65) на странице настроек. По умолчанию — режим наблюдения. Включение исполнения: нужен проверенный торговый токен
- * («Подключения» → «T-Invest (торговля)») и повторный ввод слова «LIVE»; реальная отправка заявок начнётся, только если исполнение разрешено и на сервере
- * (переменная окружения владельца) и нет паузы. Все условия и итог показываются как есть — расчёт только на бэкенде.
+ * «Исполнение сделок» (задачи 65/66) на странице настроек. По умолчанию — режим наблюдения. Включение исполнения: нужен проверенный торговый ключ хотя бы одного
+ * брокера («Подключения» → «T-Invest (торговля)» / «Freedom (торговля)») и повторный ввод слова «LIVE»; реальная отправка заявок брокеру начнётся, только если
+ * исполнение разрешено и на сервере (переменная окружения владельца), нет паузы и проверен ключ ЭТОГО брокера. Состояние каждого брокера показывается отдельно —
+ * расчёт только на бэкенде.
  */
 export function ExecutionModeSection() {
   const [state, setState] = useState<ExecutionState | null>(null);
@@ -76,6 +77,30 @@ export function ExecutionModeSection() {
               {state.live ? 'Заявки отправляются' : 'Заявки не отправляются'}
             </Badge>
           </Group>
+          {state.brokers && (
+            <Stack gap={4} data-testid="execution-brokers">
+              {(
+                [
+                  ['tinvest', 'T-Invest', state.brokers.tinvest],
+                  ['freedom', 'Freedom', state.brokers.freedom],
+                ] as const
+              ).map(([key, title, b]) => (
+                <Group key={key} gap="xs" data-testid={`execution-broker-${key}`}>
+                  <Text size="sm" fw={500}>
+                    {title}:
+                  </Text>
+                  <Badge variant="light" color={b.live ? 'green' : 'gray'}>
+                    {b.live ? 'заявки отправляются' : 'заявки не отправляются'}
+                  </Badge>
+                  {!b.tradeCredentialOk && (
+                    <Text size="xs" c="dimmed">
+                      нет проверенного торгового ключа
+                    </Text>
+                  )}
+                </Group>
+              ))}
+            </Stack>
+          )}
           {state.reasons.length > 0 && (
             <List size="sm" data-testid="execution-reasons">
               {state.reasons.map((r) => (
@@ -88,7 +113,8 @@ export function ExecutionModeSection() {
             <Stack gap="xs">
               {!state.tradeCredentialOk && (
                 <Text size="sm" c="dimmed" data-testid="execution-need-token">
-                  Чтобы включить исполнение, добавьте и проверьте торговый токен T-Invest в «Подключениях» (токен на один основной счёт, с правом торговли).
+                  Чтобы включить исполнение, добавьте и проверьте торговый ключ брокера в «Подключениях»: «T-Invest (торговля)» (токен на один основной счёт, с
+                  правом торговли) или «Freedom (торговля)» (отдельная пара ключей с правом торговли).
                 </Text>
               )}
               <Group align="end" gap="xs">

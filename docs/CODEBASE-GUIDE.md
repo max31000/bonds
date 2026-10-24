@@ -49,6 +49,7 @@ MySQL для интеграционных), vitest + Testing Library + MSW.
 | T-Invest `OperationItem.Payment` операций `Input`/`Output` (пополнение/вывод) → `account_cash_movements` (миграция 031) | вход → БД | `amount` — в СВОЕЙ валюте СО ЗНАКОМ брокера (+ пополнение / − вывод), без пересчёта; `amount_rub` — рубль как есть, иначе по курсу дня (`ICurrencyRateLookup`), нет курса — `NULL`. Валюта ISO ВЕРХНИМ регистром (RUR → RUB). DTO `/api/cash`: `amount` в валюте, `amountRub` — рубли |
 | T-Invest `Bond.MinPriceIncrement` (шаг цены облигации) → `instrument_trading_meta` | вход → БД | брокер отдаёт в **ПУНКТАХ** (% номинала, как цены `GetLastPrices`) → `min_price_increment` = `пункты ÷ 100 × текущий номинал` в **РУБЛЯХ за бумагу** (`BondPriceStep.PointsToRub`: 0.01 пункта при номинале 1000 = 0.1 ₽) — ТОЛЬКО при номинале в RUB; при нерублёвом номинале (напр. 100 USD, шаг 0.0001) — **NULL**. Сырой шаг — в `min_price_increment_points` (все облигации). Сетка цен облигации T-Invest — в пунктах: заявки по облигациям (фаза 2) округлять в пунктах. `Etf.MinPriceIncrement` — рубли за пай, как есть. Freedom — `min_step` котировки в валюте котировки |
 | Заявки исполнителя T-Invest (задача 65): `trade_orders.limit_price` + `price_unit`, `PostOrderRequest.Price` | БД → выход | облигации — **ПУНКТЫ** (`price_unit=points`, `PriceType.Point`, сетка `min_price_increment_points`), остальное — валюта за штуку (`currency`, `PriceType.Currency`); `decimal → Quotation` ровно один раз — `TInvestNumeric.ToQuotation` (Units = целая часть, Nano = дробная × 10⁹, тот же знак). `avg_fill_price`/`executed_commission` — MoneyValue брокера в валюте (облигация — рубли за штуку, не пункты); ВНИМАНИЕ: `PostOrderResponse.executed_order_price` — цена ОДНОЙ штуки, а `OrderState.executed_order_price` — ИТОГО (средняя × количество) → `GatewayOrderState.ExecutedAmount`, цена штуки = итог / (лоты × лотность) (`FillPrice.PerPiece`). Дрейфы `Execution:Max*PriceDriftFraction` — ДОЛИ от утверждённого лимита (фонды 0.002, облигации 0.005 — дизайн §5, симметрично) |
+| Заявки исполнителя Freedom (задача 66): `putTradeOrder` `limit_price`/`qty`, `trade_orders` с `broker = freedom` | БД → выход | `limit_price` — **ВАЛЮТА БУМАГИ за 1 штуку** (`price_unit=currency`, источник — `TradePlanLine.LimitPrice`), сетка — `min_step` из `instrument_trading_meta.min_price_increment` (покупка вниз, продажа вверх); `qty` — **ШТУКИ** (лот Freedom = 1, иная лотность — отказ до сети); число в теле — JSON-число без хвостовых нулей (`FreedomRequestSigner.BuildBody`, decimal). Дрейф — та же ДОЛЯ 0.002 от утверждённого лимита. `client_order_id` = числовой `user_order_id` (9 цифр 7xxxxxxxx — вне диапазона авто-id брокера `api:<unix-секунда>`; эхо — `N` или `api:N`). `getNotifyOrderJson` `date`, `trade[].date`, котировка `ltt`/`bbt`/`bat` — **МСК БЕЗ пояса** (подтверждено на счёте) → UTC = метка − `Freedom:OrderTimeUtcOffsetHours` (3); `getTradesHistory` `date` — в ДРУГОМ поясе (UTC+5), с временем заявок не сравнивать. Исполнено — Σ `trade[].q` ШТУК (не `q − leaves_qty`). Комиссия — из `getUserCashFlows` (`sumRaw` по модулю) в СВОЕЙ валюте (`trade_orders.commission_currency`, миграция 038; обычно USD даже для сделки в EUR — НЕ пересчитывается, со сметой в другой валюте не сравнивается), модель — `FreedomFeeModel` (ДОЛИ, USD) по ФАКТИЧЕСКОМУ маршруту из комментария строки комиссии |
 | ЦБ РФ `XML_dynamic.asp` (`VunitRate`/`Value`/`Nominal`) | вход | десятичная ЗАПЯТАЯ; `VunitRate` — рубли за 1 единицу (нет — `Value ÷ Nominal`) → `currency_rate_history.close_rub` как есть, второй конверсии нет (`CbrRatesParser`) |
 | `MarketQuote.CleanPrice/DirtyPrice/Accrued`, `intraday_quotes.dirty_price_rub` | БД | всегда рубли за бумагу (контракт в doc-comment модели) |
 | `Position.Accrued` | БД | НКД на ОДНУ бумагу (не на позицию) |
@@ -328,7 +329,8 @@ instrument|asset_class); таблица `target_allocations` **удалена** 
 ### Движок правил и планы сделок (задача 63) — по умолчанию РЕЖИМ НАБЛЮДЕНИЯ
 
 **Инвариант (переписан задачей 65):** заявки T-Invest отправляет ТОЛЬКО `ITInvestOrderGateway` (`Bonds.Infrastructure/Execution/TInvestOrderGateway.cs`) по команде исполнителя — см. раздел
-задачи 65 ниже; заявки Freedom (`putTradeOrder` и т.п.) запрещены везде (задача 66). Закреплено `NoOrderPlacementArchitectureTests` (скан исходников + рефлексия; даже комментарии краснят тест).
+задачи 65 ниже; заявки Freedom (размещение, снятие, список заявок Tradernet) — ТОЛЬКО `IFreedomOrderGateway` (`Bonds.Infrastructure/Execution/FreedomOrderGateway.cs`, задача 66), стоп-заявки Freedom — нигде.
+Закреплено `NoOrderPlacementArchitectureTests` (скан исходников + рефлексия; даже комментарии краснят тест).
 Планы — данные: `trade_plans`/`trade_plan_lines` (миграция 033); `dry_run` = НЕ живой режим пользователя на момент сохранения (задача 65), `approve` dry-run плана ставит `Approved` и пометку «не исполнен: dry-run».
 
 **Слои.** `Bonds.Core/Policy`: правила — чистые функции `(PolicyInput) → PolicyOutcome` (`SweepRule` P1, `InflowRule` P2, `LiquidityToBondsRule` P3b, `RebalanceRule` P4, `WithdrawRule` P5, `ExitBasketRule`,
@@ -375,7 +377,7 @@ approve/reject — тот же `PolicyService`, что веб, `decided_via=tele
 `Execution__Enabled=true` (appsettings — false, тест `AppSettings_NeverEnableExecution`), `user_settings.execution_mode = live` (миграция 035, дефолт `observe`), секрет `tinvest_trade` в статусе ok С ОТМЕТКОЙ
 сетевой проверки в meta (`TradeCredentialMeta`: `verification=network`, `accessLevel=full`; старые формальные записи миграция 035 перевела в `unverified`), нет паузы `/stop`. Валидатор `tinvest_trade` —
 `GetAccounts` по токену: ровно один счёт, `ACCOUNT_ACCESS_LEVEL_FULL_ACCESS`, открыт, = `accounts.broker_account_id` основного счёта (контекст — `ICredentialValidator.ValidateAsync(fields, context)`); в meta только last4.
-`PolicyService.SaveAsync` пишет `dry_run = 0` только при открытых воротах и всех строках T-Invest. **Шлюз** `ITInvestOrderGateway` (Scoped, единственный вызыватель торгового сервиса SDK): торговый токен читает сам,
+`PolicyService.SaveAsync` пишет `dry_run = 0` только при открытых воротах ВСЕХ брокеров строк (задача 66 — см. ниже). **Шлюз** `ITInvestOrderGateway` (Scoped, единственный вызыватель торгового сервиса SDK): торговый токен читает сам,
 read-only токен не трогает, `PostLimitOrderAsync` ПЕРЕПРОВЕРЯЕТ ворота и отказывает (`gate_closed`); цена → `Quotation` один раз (`TInvestNumeric.ToQuotation`), `PriceType.Point` для облигаций (ПУНКТЫ) и
 `PriceType.Currency` для остального; `order_id = client_order_id`. gRPC-ошибки → `TInvestGatewayException` (`Transient` — исход неизвестен, `Rejected` — определённый отказ). **Движок** `PlanExecutionEngine`
 (`PlanExecutorService`, тик `Execution:TickInterval` 20 с): по пользователям с `Submitting` или `Approved/AutoApproved` + `dry_run = 0`: ворота → сверка токена у брокера на КАЖДОМ тике (не прошла — секрет `invalid`,
@@ -400,6 +402,80 @@ API: `GET /api/settings/execution`, `PUT /api/settings/execution-mode {mode, con
 `POST /api/plans/{id}/cancel-execution` (флаг, 409 — не исполняется); строки `/api/plans` несут `executionStatus`/`filledLots`/`orders[]` (id брокера наружу не отдаётся), `dryRun` списка — ворота пользователя.
 Фронт: `ExecutionModeSection` (Настройки, ввод «LIVE»), баннер `DryRunBanner live` + «Остановить» (= пауза), статусы заявок на `PlanCard`. Песочница — `TInvestSandboxTests` (`[Trait("Category","Sandbox")]`,
 env `TINVEST_SANDBOX_TOKEN`), исключена фильтром `Category!=Sandbox` в CI и `pre-push-check.sh`. В тестах шлюз всегда `FakeOrderGateway` (сети нет).
+
+**Исполнитель Freedom (задача 66) — ВЫКЛЮЧЕН по умолчанию, та же архитектура, что у T-Invest.** Движок один (`PlanExecutionEngine`); брокер-специфика — адаптеры `IExecutionVenue`
+(`TInvestExecutionVenue` — поведение задачи 65 без изменений, `FreedomExecutionVenue`) поверх ЕДИНСТВЕННЫХ шлюзов (`ITInvestOrderGateway`, `IFreedomOrderGateway`). **Ворота — по брокеру**
+(`IExecutionGateResolver.ResolveForBrokerAsync`): для строк Freedom те же env `Execution__Enabled`, режим `live` и пауза, но ключ — `freedom_trade` (ok + `verification=network` в meta И его `accountNumber` =
+`accountNumber` ПРОВЕРЕННОГО ключа на чтение `freedom`). Ключ на чтение остаётся у синка. Валидатор `freedom_trade` (`FreedomTradeCredentialValidator`): `GetAllUserTexInfo` с ТОРГОВЫМИ ключами → тот же
+`trader_systems_id`, что у ключа на чтение (контекст `CredentialValidationContext.FreedomReadAccountNumber`); право торговать без заявки не проверить — в meta `tradeRight: "unverified"`, в UI «торговое право
+проверится на первой заявке». На каждом тике торговый ключ сверяется у брокера (счёт = `accounts.broker_account_id` Freedom; иначе секрет `invalid` и остановка Freedom). `PolicyService.SaveAsync`: `dry_run = 0`
+только если открыты ворота ВСЕХ брокеров строк; `AutoApproved` со строками Freedom — всегда dry-run. **Смешанный план:** у плана с закрытыми воротами всех брокеров — остановка как в задаче 65; иначе строки брокера
+с закрытыми воротами закрываются (`halted`, висящие снимаются), строки брокера с открытыми — исполняются по общим правилам (продажи раньше покупок, по одной). **Только ручные:** план со строками Freedom стартует
+лишь из `Approved` с `decided_via` ≠ `auto` (`FreedomAutoUsd = 0`); защита в глубину — `FreedomExecutionVenue.LineRejection`.
+**Шлюз Freedom** (`FreedomOrderGateway`, Scoped): ключ `freedom_trade` читает сам; чтение (профиль, котировки, портфель, сделки, движения денег) — через `IFreedomApiClient` торговым ключом; команды заявок — через
+общий подписанный транспорт `FreedomSignedHttp` (HttpClient `freedom`, ретраев нет). `PostLimitOrderAsync` ДО сети: ворота Freedom (`gate_closed`), сторона → `action_id` ТОЛЬКО из белого списка
+`FreedomOrderRules.AllowedActionIds` {1 покупка, 3 продажа} — 2/4 (маржа) невозможны (`margin_forbidden`), тикер только `.US`/`.EU` (`.ITS` — `its_forbidden`, прочее — `ticker_forbidden`), qty/цена/`user_order_id`
+корректны. Тело: `{instr_name, action_id, order_type_id: 2 (limit), qty, limit_price, expiration_id: 1 (day), user_order_id}`. Ответ: `error`/`errMsg` или HTTP 4xx — `Rejected` (заявки нет); сеть, таймаут,
+HTTP 5xx/408/429, текст «too many requests»/«rate limit», не-JSON, нет `order_id` — `Transient` (исход неизвестен → только сверка). Те же 5xx/408/429/«too many requests» при сверке торгового ключа
+на тике и в валидаторах ключей — временный сбой (`FreedomApiException.IsTransient`), ключ НЕ инвалидируется. Статусы `stat` (`FreedomOrderStatusMap`, официальный список
+tradernet.global/tradernet-api/order-statuses). **Исполненное — Σ `trade[].q` сделок заявки** (массив `trade: [{id, p, q, v, date}]` в `getNotifyOrderJson`; средняя цена — VWAP по нему); `leaves_qty` для
+окончательных кодов НЕ используется (по FIX у снятой заявки он 0 — `q − leaves_qty` дал бы ложное «исполнено всё»), для активных — только если массива `trade` нет вовсе. 21 исполнен — `Filled`;
+30 частично отменен / 31 отменен / 71 истек / 72 частично исполнен и истек — `Cancelled` с исполненным по сделкам (снята не нами: перевыставление остатка или закрытие; сделки покрыли всё — `Filled`);
+0 проигнорирован / 70 отклонен / 74 ошибка отправки — `Rejected` (сделки есть — `Cancelled` с их количеством); 1 / 2 / 10 / 11 / 75 — активна (`Submitted`); 12 / 20 — `PartiallyFilled`.
+**Неизвестный код — активна + `LogWarning`, НИКОГДА не окончательна.** Живые наблюдения: свежая лимитная заявка — `stat 10`, `leaves_qty = q`; после исполнения — `stat 21`, `leaves_qty = 0`.
+Ответ подписанного v3 `getNotifyOrderJson` — `{result: {orders: {key, order: [...]}}}` (С обёрткой `result`, проверено; поддержаны и ответ без обёртки, и `order` одним объектом); id — `order_id`
+(= `id`), номер клиента — **`userOrderId` (camelCase)**: `api:<unix-секунда запроса>` у заявок через API без номера (две заявки в одну секунду получают ОДИНАКОВЫЙ `api:N`), `i-6:ios:terminal_…` и подобное
+у ручных заявок приложения/терминала; парсер читает `userOrderId ?? user_order_id`. **Идемпотентность:** `user_order_id` (`NewUserOrderId`: 9 цифр, 7xxxxxxxx = unix-секунды 1992 года — с авто-id брокера
+не совпадает никогда) пишется в `trade_orders.client_order_id` ДО отправки (`trade_orders.broker = freedom`, миграция 037) и уходит брокеру; эхо в ответе принимается как `N` или `api:N`
+(`UserOrderIdMatches`), иное — только предупреждение (заявка привязывается по `order_id` ответа). Заявка с потерянным ответом (`New` без id) — `FreedomExecutionVenue.StateAsync` по
+`getNotifyOrderJson {active_only: 0}`: (1) ТОЧНОЕ совпадение `userOrderId` = `N`/`api:N`; (2) иначе по РЕКВИЗИТАМ (`Candidates`) — ТОЛЬКО среди заявок с пустым `userOrderId` или в форме API
+(`MayBeOursByAttributes`: ручные `i-6:ios:…` и заявки с ДРУГИМ нашим номером исключены), тот же `instr`, `oper` (1 покупка / 3 продажа), `q`, `p` в пределах шаг/2 (`min_step` котировки; нет шага — точно),
+`date` в окне [`created_at` − 30 с, `created_at` + 2 мин] (`ReconcileWindowBefore/After`); принятая по реквизитам заявка помечается `MatchedByAttributes` — исполнитель шлёт уведомление «найдена по
+реквизитам — проверьте терминал». Кандидаты, уже привязанные к другой строке (`ITradeOrderRepository.IsBrokerOrderLinkedAsync`), исключаются. Ровно один — принимается его id; ноль или несколько — ждём,
+по `UnconfirmedOrderTimeout` — `Failed`/`unknown_state`, повторно НЕ отправляется НИКОГДА. При завершении строки исполненное перепроверяется по `getTradesHistory` (связь по `order_id`): история показала
+больше — берётся она. **Рынок:** котировка `getStockQuotesJson` (bid/ask); момент котировки — самая поздняя из меток `ltt`/`bbt`/`bat` (МСК → UTC; позже «сейчас + 1 мин» — отбрасывается; у валют
+`bbt`/`bat` застыли в 2023 — на максимум не влияют) против `Execution:MaxQuoteAge`; «обычные торги» — `marketStatus = OPEN` бумаги (иначе/нет поля — `not_normal_trading`); валюта котировки ≠ валюта
+строки — «нет котировки»; деньги — остаток валюты из `getPositionJson` МИНУС все активные заявки Freedom пользователя
+в этой валюте (консервативно); продажа — остаток бумаги по тикеру. Часы: `.US` 17:30–23:00 МСК, `.EU` 11:00–18:30 МСК (`PolicyOptions.FreedomUs/FreedomEu`), снятие за `CancelBeforeClose` (10 мин); снятие —
+`delTradeOrder` по id брокера. **Комиссия** (`FeesFromStatement`): при завершении строки и на каждом отложенном тике — сделки заявки (`getTradesHistory`, связь по `order_id`; средняя цена штуки = Σ p·q / Σ q)
+→ строки `commission_for_trades` «(Trade N buy TICKER) Рынок: …, тип бумаги: …» (`FreedomCommissionParser`) → факт = Σ |sum|, модель = `FreedomFeeModel.Fee` по ФАКТИЧЕСКОМУ маршруту (europe / kazakhstan_its
+(funds — отдельная ставка) / usa), `perOrder` один раз на заявку (`FreedomFeeReconciliation`), тариф — из `GetAllUserTexInfo` торгового ключа. Нет строк комиссии по всем сделкам — сверка откладывается до
+`Execution:FreedomMaxFeeRechecks` (90 тиков ≈ 30 мин); окно исчерпано — строка закрывается с пометкой «комиссия не сверена» БЕЗ сравнения (нет ложного «расхождения»), план закрывается после
+этого; расхождение > `FeeMismatchThreshold` — уведомление с маршрутом. Комиссия хранится в СВОЕЙ валюте (`commission_currency`, обычно USD); валюта комиссии ≠ валюта строки (сделка в EUR) — со сметой
+НЕ сравнивается (курс не применяется), только информационное уведомление. Модель только для USD-заявок (иначе — оценка плана). **Перевыставление Freedom** — свои `FreedomMaxAttempts` (2) и
+`FreedomRepriceAfter` (10 мин) через `IExecutionVenue.Limits`: фикс $1.2 за КАЖДУЮ заявку с исполнением на US/EU делает лишнюю попытку дорогой (≈1.2% на сумме $100), выгоднее дольше ждать лимита.
+**Часы смешанного плана:** план стартует только в ПЕРЕСЕЧЕНИИ окон рынков строк с открытыми воротами (MOEX + `.EU` → 11:00–18:20 МСК, MOEX + `.US` → 17:30–18:30 с учётом `CancelBeforeClose`);
+нет пересечения — ждёт до `expires_at`.
+**Смена ключа:** удаление/замена ДРУГИМ `freedom_trade` при активных заявках Freedom — 409 `ActiveOrders` (заявки T-Invest не мешают и наоборот: `ITradeOrderRepository.ListActiveByUserAsync(user, broker)`),
+`?cancelActive=true` — `TradeTokenChangeGuard.RunAsync(..., broker: freedom)` снимает их ТЕКУЩИМ ключом (заявку без id брокера сначала опознаёт, как выше); заявка `New`, которую брокер ещё не показал и
+которой меньше `UnconfirmedOrderTimeout`, — 409 «заявка ещё не сверена» (не `Failed`: она могла дойти до брокера). `GET /api/capabilities` отдаёт `freedomTrade` всегда (как остальные ключи реестра).
+**Ворота в API/UI — по брокеру:** `GET /api/settings/execution` → `brokers.tinvest` / `brokers.freedom` (`live`, `tradeCredentialOk`, `reasons`), верхний уровень — сводка (`live`/`tradeCredentialOk` —
+хотя бы у одного брокера, `reasons` с префиксом «T-Invest: »/«Freedom: »); `GET /api/plans` → `brokers: {tinvest, freedom}` (bool), `dryRun` = закрыты все. Баннер «Планов» (`liveBannerText`) и
+`ExecutionModeSection` показывают T-Invest и Freedom отдельно. «Снять нельзя» — то же одно уведомление
+`halt_alerted_at`, что у T-Invest.
+
+**Боевая проверка Freedom — делает ВЛАДЕЛЕЦ, один раз (песочницы у Freedom нет; агенты её НЕ запускают).** Предпочтительный вариант — **заявку ставит сам владелец в терминале Freedom, сервис её
+только сверяет и снимает**: без SQL-вставок планов и без переопределения допуска дрейфа на проде, исполнитель на сервере остаётся выключенным. Цель — подтвердить на живом счёте разбор `getNotifyOrderJson`
+(коды `stat`, `oper`, `p`, `q`, `date`, `userOrderId`, `trade[]`), смещение пояса `Freedom:OrderTimeUtcOffsetHours` (МСК уже подтверждено по `date`/`ltt` на счёте), что ручная заявка НЕ
+усыновляется сверкой, и снятие `delTradeOrder` торговым ключом. Харнесс —
+`tests/Bonds.Tests/Execution/FreedomLiveCheckTests.cs` (`[Trait("Category","Sandbox")]`, в CI и pre-push исключён; без env ничего не делает; ворота в нём закрыты — разместить заявку он не может).
+1. Создать в веб-терминале Freedom ОТДЕЛЬНУЮ пару API-ключей с правом торговли; в «Подключениях» сохранить её как «Freedom (торговля)» — статус «Подключено» (счёт совпал с ключом на чтение).
+   `Execution__Enabled` на сервере НЕ менять (исполнитель остаётся выключенным).
+2. В торговые часы `.US` (17:30–23:00 МСК, будни) выставить в терминале ОДНУ лимитную заявку на день: покупка 1 шт. `SPYM.US`, лимит ≈ 50% рынка (не исполнится), без маржи. Записать номер заявки и
+   момент выставления (UTC).
+3. Сразу (в пределах 2 минут — окно сверки) на своём компьютере запустить харнесс, ключи — только в env текущей сессии, в файлы не записывать:
+   ```bash
+   FREEDOM_TRADE_PUBLIC_KEY=… FREEDOM_TRADE_PRIVATE_KEY=… FREEDOM_LIVE_ORDER_ID=<номер> FREEDOM_LIVE_PLACED_AT_UTC=<ISO UTC> FREEDOM_LIVE_CANCEL=1 \
+     dotnet test tests/Bonds.Tests --filter "FullyQualifiedName~FreedomLiveCheckTests" --logger "console;verbosity=detailed"
+   ```
+   Харнесс: находит заявку в `getNotifyOrderJson` → печатает разбор (ожидается `Submitted` по `stat 10`, сторона, лимит, `userOrderId`, `placedAtUtc` ≈ записанному моменту — проверка смещения
+   пояса) → проверяет, что сверка БЕЗ id брокера НЕ усыновляет ручную заявку терминала (`userOrderId` вида `i-6:…`/`web:…`; пустой или `api:` — наоборот, должна опознать) → снимает её через шлюз →
+   перечитывает (ожидается `Cancelled`, `stat 31`, исполнено 0 по `trade[]`). Без `FREEDOM_LIVE_CANCEL=1` — только чтение и сверка.
+4. Убедиться в терминале, что заявка снята (если харнесс упал до снятия — снять вручную). Если `placedAtUtc` расходится с моментом выставления на целое число часов — смещение пояса другое: повторить
+   с `FREEDOM_LIVE_UTC_OFFSET_HOURS=<N>` и задать на сервере `Freedom__OrderTimeUtcOffsetHours=<N>`. Если коды `stat`/форма ответа отличаются от `FreedomOrderStatusMap` — НЕ включать исполнитель Freedom,
+   завести задачу на правку маппинга. Реальные ответы брокера в репозиторий НЕ коммитить (публичный репо) — только синтетические фикстуры.
+5. Право торговать у ключа и форма эха `user_order_id` в ответе `putTradeOrder` подтвердятся на первой заявке исполнителя (первый ручной план Freedom после включения): `Rejected` с текстом брокера о
+   правах — ключ без права торговли; эхо — в логе `Freedom putTradeOrder: broker echoed another user_order_id` (если брокер не принял наш номер — это не ошибка, заявка привязана по `order_id`).
 
 **Кандидаты-облигации (P2/P3b/P4).** Отбор как у `source=recommended` (гигиена, не флоатер, ликвидность не Caution), но светофор — только Green; ранг — доходность к худшему после налога
 (`CandidateYieldRanking`), стакан и метаданные брокера запрашиваются только у верхушки пула (`BondCandidatePool` 25; недостающие метаданные — `TradingMetaRefresher.EnsureTInvestAsync`). Покупка — тот же
