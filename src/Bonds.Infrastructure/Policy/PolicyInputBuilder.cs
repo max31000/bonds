@@ -384,6 +384,7 @@ public sealed class PolicyInputBuilder
             SellAvailable = meta.SellAvailable && meta.ApiTradeAvailable,
             ItsTwin = meta.ItsTwin ?? false,
             KnownCommission = known,
+            PaysDistributions = meta.PaysDistributions, // белый список авто (задача 67): null — неизвестно = не проходит
         };
     }
 

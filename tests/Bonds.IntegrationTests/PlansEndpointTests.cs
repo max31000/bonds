@@ -107,7 +107,9 @@ public class PlansEndpointTests
             await meta.UpsertAsync(new InstrumentTradingMeta
             {
                 Broker = BrokerIds.TInvest, InstrumentKey = $"ISIN{ticker}", Ticker = ticker, Figi = figi, ClassCode = "TQBR", Lot = 1m,
-                MinPriceIncrement = step, Currency = "RUB", ApiTradeAvailable = true, BuyAvailable = true, SellAvailable = true, UpdatedAt = DateTime.UtcNow,
+                MinPriceIncrement = step, Currency = "RUB", ApiTradeAvailable = true, BuyAvailable = true, SellAvailable = true,
+                PaysDistributions = false, // фонды без выплат — проходят белый список авто (задача 67)
+                UpdatedAt = DateTime.UtcNow,
             });
         }
 

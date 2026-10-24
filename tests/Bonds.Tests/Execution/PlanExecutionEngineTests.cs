@@ -58,7 +58,7 @@ public class PlanExecutionEngineTests
 
     private readonly List<InstrumentTradingMeta> _meta =
     [
-        new() { Broker = BrokerIds.TInvest, InstrumentKey = "TMON", Uid = FundUid, Ticker = "TMON@", ClassCode = "TQTF", Lot = 1, MinPriceIncrement = 0.01m, Currency = "RUB", ApiTradeAvailable = true, BuyAvailable = true, SellAvailable = true },
+        new() { Broker = BrokerIds.TInvest, InstrumentKey = "TMON", Uid = FundUid, Ticker = "TMON@", ClassCode = "TQTF", Lot = 1, MinPriceIncrement = 0.01m, Currency = "RUB", ApiTradeAvailable = true, BuyAvailable = true, SellAvailable = true, PaysDistributions = false },
         new() { Broker = BrokerIds.TInvest, InstrumentKey = "RU000OFZ", Uid = BondUid, Ticker = "SU26238", ClassCode = "TQOB", Lot = 1, MinPriceIncrement = 0.1m, MinPriceIncrementPoints = 0.01m, Currency = "RUB", ApiTradeAvailable = true, BuyAvailable = true, SellAvailable = true },
     ];
 
@@ -372,6 +372,37 @@ public class PlanExecutionEngineTests
         _gateway.PostCount.Should().Be(0);
         _plans[plan.Id].Status.Should().Be(PlanStatuses.Failed);
         _notifier.Texts.Should().Contain(t => t.Contains("не входит в корзину с авто-покупкой"));
+    }
+
+    [Theory]
+    [InlineData(DecidedVia.Auto)]
+    [InlineData(null)]
+    public async Task T67_ForgedAutoApproved_InNonLiquidityBasket_RejectedByExecutor(string? via)
+    {
+        // Статус AutoApproved «подделан» в БД (с decided_via = auto или без него), корзина не «liquidity», хоть и с auto_buy: исполнитель проверяет белый список сам.
+        _baskets[0].Code = "ru_equity";
+        var plan = AddPlan(PlanStatuses.AutoApproved, via!, FundBuy());
+        Book(FundUid, 166.50m, 166.60m, Noon);
+
+        await Engine().RunTickAsync(Noon);
+
+        _gateway.PostCount.Should().Be(0);
+        _plans[plan.Id].Status.Should().Be(PlanStatuses.Failed);
+        _notifier.Texts.Should().Contain(t => t.Contains("авто-исполнение не разрешено"));
+    }
+
+    [Fact]
+    public async Task T67_AutoApproved_FundPayingDistributions_RejectedByExecutor()
+    {
+        _meta[0].PaysDistributions = true;
+        var plan = AddPlan(PlanStatuses.AutoApproved, DecidedVia.Auto, FundBuy());
+        Book(FundUid, 166.50m, 166.60m, Noon);
+
+        await Engine().RunTickAsync(Noon);
+
+        _gateway.PostCount.Should().Be(0);
+        _plans[plan.Id].Status.Should().Be(PlanStatuses.Failed);
+        _notifier.Texts.Should().Contain(t => t.Contains("выплат"));
     }
 
     [Fact]

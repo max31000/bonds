@@ -64,8 +64,8 @@ public class CapitalBasketEndpointTests
     }
 
     private static object UpdateBody(
-        string title, decimal? target, decimal band = 0.05m, decimal hard = 0.10m, string fillRule = "fixed", bool autoBuy = false) =>
-        new { title, targetWeight = target, band, hardBand = hard, liquidityTier = 1, fillRule, autoBuy, autoSell = false, minTrade = 0m };
+        string title, decimal? target, decimal band = 0.05m, decimal hard = 0.10m, string fillRule = "fixed", bool autoBuy = false, bool autoSell = false) =>
+        new { title, targetWeight = target, band, hardBand = hard, liquidityTier = 1, fillRule, autoBuy, autoSell, minTrade = 0m };
 
     // --- посев ---
 
@@ -285,12 +285,35 @@ public class CapitalBasketEndpointTests
     public async Task Put_FlagsOnly_DoesNotRecheckTargetsSum()
     {
         var (client, _) = await NewUserAsync();
-        var (id, _) = await FindAsync(client, "usd", "global_core"); // стартовая цель usd 1.0, Σ = 1
+        var (id, _) = await FindAsync(client, "rub", "liquidity"); // стартовая цель 0.15, авто-флаги включены
 
-        var response = await client.PutAsJsonAsync($"/api/baskets/{id}", UpdateBody("Глобальное ядро", 1.0m, autoBuy: true));
+        var response = await client.PutAsJsonAsync($"/api/baskets/{id}", UpdateBody("Ликвидность", 0.15m, autoBuy: false));
 
         response.StatusCode.Should().Be(HttpStatusCode.OK, "цель не менялась — сумма не проверяется");
-        Basket(Portfolio(await response.Content.ReadFromJsonAsync<JsonElement>(), "usd"), "global_core").GetProperty("autoBuy").GetBoolean().Should().BeTrue();
+        Basket(Portfolio(await response.Content.ReadFromJsonAsync<JsonElement>(), "rub"), "liquidity").GetProperty("autoBuy").GetBoolean().Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData("usd", "global_core", 1.0, true, false)]
+    [InlineData("rub", "ru_equity", 0.0, false, true)]
+    [InlineData("rub", "bonds", 0.85, true, true)]
+    public async Task T67_Put_AutoFlagsOnNonLiquidityBasket_Returns422_AndNothingChanged(string portfolio, string code, double target, bool autoBuy, bool autoSell)
+    {
+        var (client, _) = await NewUserAsync();
+        var (id, _) = await FindAsync(client, portfolio, code);
+
+        var response = await client.PutAsJsonAsync($"/api/baskets/{id}", UpdateBody(code, (decimal)target, autoBuy: autoBuy, autoSell: autoSell));
+        response.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity, "авто-исполнение разрешено кодом только для корзины liquidity");
+
+        var batch = await client.PutAsJsonAsync("/api/baskets", new
+        {
+            items = new[] { new { id, title = code, targetWeight = (decimal)target, band = 0.05m, hardBand = 0.10m, liquidityTier = 1, fillRule = "fixed", autoBuy, autoSell, minTrade = 0m } },
+        });
+        batch.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
+
+        var after = Basket(Portfolio(await GetAsync(client), portfolio), code);
+        after.GetProperty("autoBuy").GetBoolean().Should().BeFalse();
+        after.GetProperty("autoSell").GetBoolean().Should().BeFalse();
     }
 
     [Fact]

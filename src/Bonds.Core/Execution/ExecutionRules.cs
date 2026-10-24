@@ -275,27 +275,38 @@ public static class AutoDayUsage
 /// Повторная проверка <c>AutoApproved</c>-плана в момент исполнения (ревью задачи 65): то же, что разрешило авто-подтверждение (<see cref="PolicyKit.DecideStatus"/>),
 /// на ТЕКУЩИХ настройках — только покупки в RUB, не облигации, каждая строка ≤ лимита на заявку, бумага — член (правило «instrument», T-Invest) корзины с
 /// включённой авто-покупкой (дизайн §5: белый список — фонды корзины «Ликвидность»; авто-покупку корзин включает только владелец).
+/// Задача 67 (#1): белый список — В КОДЕ (<see cref="AutoWhitelist"/>): корзина обязана иметь код <c>liquidity</c>, бумага — фонд T-Invest по метаданным торгов
+/// (метаданные есть, цена не в пунктах) без выплат (<c>pays_distributions = false</c>) либо из <see cref="PolicyOptions.AutoFundWhitelist"/>. Исполнитель
+/// вызывает проверку для ЛЮБОГО плана в статусе <c>AutoApproved</c> или с <c>decided_via = auto</c> (подделанный в БД статус не обходит её).
 /// </summary>
 public static class AutoExecutionWhitelist
 {
-    /// <summary>null — план можно исполнять как авто; иначе причина отказа.</summary>
-    public static string? Check(TradePlan plan, IReadOnlyCollection<CapitalBasket> baskets, decimal autoPerOrderRub)
+    /// <summary>
+    /// null — план можно исполнять как авто; иначе причина отказа. <paramref name="metaOf"/> — метаданные торгов строки (null — неизвестна: отказ);
+    /// <paramref name="policy"/> — конфиг-список фондов (по умолчанию пустой).
+    /// </summary>
+    public static string? Check(
+        TradePlan plan, IReadOnlyCollection<CapitalBasket> baskets, decimal autoPerOrderRub,
+        Func<TradePlanLine, InstrumentTradingMeta?> metaOf, PolicyOptions? policy = null)
     {
-        var allowed = baskets.Where(b => b.AutoBuy)
-            .SelectMany(b => b.Members)
-            .Where(m => m.MatchRule == BasketMatchRules.Instrument && string.Equals(m.Broker, Bonds.Core.Models.Brokers.TInvest, StringComparison.OrdinalIgnoreCase))
-            .Select(m => m.InstrumentKey)
-            .ToList();
+        policy ??= new PolicyOptions();
+        if (plan.Lines.Count == 0) return "в плане нет строк";
         foreach (var line in plan.Lines)
         {
             if (line.Side != PlanSides.Buy) return $"авто-исполнение — только покупки ({line.Ticker})";
+            if (!string.Equals(line.Broker?.Trim(), Bonds.Core.Models.Brokers.TInvest, StringComparison.OrdinalIgnoreCase))
+                return $"авто-исполнение — только T-Invest ({line.Ticker})";
             if (!string.Equals(line.Currency.Trim(), "RUB", StringComparison.OrdinalIgnoreCase)) return $"авто-исполнение — только рубли ({line.Ticker})";
             if (OrderPricing.IsPointsPriced(line)) return $"облигации исполняются только после подтверждения ({line.Ticker})";
             if (line.EstAmount > autoPerOrderRub)
                 return string.Create(CultureInfo.InvariantCulture, $"заявка {line.Ticker} на {line.EstAmount:0.##} ₽ больше лимита авто {autoPerOrderRub:0.##} ₽");
-            var keys = new[] { BasketDriftService.NormalizeKey(line.InstrumentKey), BasketDriftService.NormalizeKey(line.Ticker) };
-            if (!allowed.Any(m => keys.Any(k => BasketDriftService.KeyMatches(m, k))))
-                return $"бумага {line.Ticker} не входит в корзину с авто-покупкой";
+            if (!AutoWhitelist.IsLiquidityMember(baskets, line.InstrumentKey, line.Ticker))
+                return $"бумага {line.Ticker} не входит в корзину с авто-покупкой «{AutoWhitelist.BasketCode}»";
+
+            // Класс «фонд»: у T-Invest в метаданных торгов только облигации (шаг в пунктах) и фонды (EtfBy) — метаданные есть и цена не в пунктах.
+            var meta = metaOf(line);
+            if (meta is null || meta.MinPriceIncrementPoints is > 0m) return $"бумага {line.Ticker} не фонд по метаданным торгов — авто только для фондов";
+            if (AutoWhitelist.DistributionsRejection(line.Ticker, meta.PaysDistributions, policy) is { } distributions) return distributions;
         }
 
         return null;

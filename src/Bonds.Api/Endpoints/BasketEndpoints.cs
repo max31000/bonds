@@ -2,6 +2,7 @@ using Bonds.Api.Auth;
 using Bonds.Api.Endpoints.Dtos;
 using Bonds.Core.Capital;
 using Bonds.Core.Interfaces.Repositories;
+using Bonds.Core.Policy;
 using Bonds.Core.Time;
 using Bonds.Infrastructure.Analytics;
 using MySqlConnector;
@@ -107,6 +108,11 @@ public static class BasketEndpoints
         basket.AutoBuy = request.AutoBuy;
         basket.AutoSell = request.AutoSell;
         basket.MinTrade = request.MinTrade.Value;
+
+        // Задача 67 (#1): авто-исполнение разрешено КОДОМ только для корзины «liquidity» (AutoWhitelist); флаг на другой корзине — ошибка, а не тихо
+        // игнорируемая настройка (иначе владелец думал бы, что авто включено).
+        if ((request.AutoBuy || request.AutoSell) && !string.Equals(basket.Code, AutoWhitelist.BasketCode, StringComparison.Ordinal))
+            return $"autoBuy/autoSell можно включить только у корзины «{AutoWhitelist.BasketCode}» (авто-исполнение — только фонды ликвидности).";
         return BasketValidation.ValidateFields(basket);
     }
 

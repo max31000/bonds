@@ -266,8 +266,8 @@ public sealed class PlanExecutionEngine
         {
             reject = "некорректное количество лотов";
         }
-        else if (plan.DecidedVia == DecidedVia.Auto
-                 && AutoExecutionWhitelist.Check(plan, await _baskets.GetByUserAsync(ctx.UserId), _limits.AutoPerOrderRub) is { } notAllowed)
+        else if ((plan.Status == PlanStatuses.AutoApproved || plan.DecidedVia == DecidedVia.Auto)
+                 && await AutoRejectionAsync(plan, ctx.UserId) is { } notAllowed)
         {
             reject = "авто-исполнение не разрешено: " + notAllowed;
         }
@@ -343,6 +343,19 @@ public sealed class PlanExecutionEngine
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Белый список авто в коде (задача 67, #1) на ТЕКУЩИХ корзинах и метаданных торгов: вызывается для любого <c>AutoApproved</c> или <c>decided_via = auto</c>
+    /// (статус мог быть подделан в БД — флаги корзин его не расширяют).
+    /// </summary>
+    private async Task<string?> AutoRejectionAsync(TradePlan plan, ulong userId)
+    {
+        // AutoApproved ставит только PolicyService.SaveAsync и всегда с decided_via = auto; иное сочетание — запись правили в обход сервиса
+        // (дальше лимиты авто на заявку/день опираются на decided_via, поэтому такой план не исполняется вовсе).
+        if (plan.Status == PlanStatuses.AutoApproved && plan.DecidedVia != DecidedVia.Auto) return "статус AutoApproved без авто-решения правил (decided_via ≠ auto)";
+        var metas = await MetasAsync(plan);
+        return AutoExecutionWhitelist.Check(plan, await _baskets.GetByUserAsync(userId), _limits.AutoPerOrderRub, l => MetaOf(metas, l), _policy);
     }
 
     private static InstrumentTradingMeta? MetaOf(Dictionary<string, InstrumentTradingMeta> metas, TradePlanLine line) =>

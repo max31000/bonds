@@ -167,6 +167,13 @@ public sealed class PolicyOptions
     public List<string> OwnFunds { get; set; } = ["TMON", "TSAV", "TBRU", "TOFZ", "TPAY"];
 
     /// <summary>
+    /// Задача 67 (#1): тикеры фондов (без «@», регистр не важен), которым авто-исполнение разрешено, даже если признак «без выплат» неизвестен или фонд
+    /// платит (решение владельца в конфиге, НЕ в БД). Класс бумаги (фонд) и корзина «liquidity» проверяются всё равно — см. <see cref="AutoWhitelist"/>.
+    /// По умолчанию пусто: авто — только фонды с <c>pays_distributions = false</c>.
+    /// </summary>
+    public List<string> AutoFundWhitelist { get; set; } = [];
+
+    /// <summary>
     /// Санити-проверка стакана (<see cref="LinePricer"/>): бумага пропускается, если (ask−bid)/mid больше этой ДОЛИ — фонды, акции, ETF (0.02 = 2%). Широкий спред =
     /// пустой/«дырявый» стакан, mid по нему не цена.
     /// </summary>

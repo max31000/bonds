@@ -1,6 +1,7 @@
 using Bonds.Core.Capital;
 using Bonds.Core.Credentials;
 using Bonds.Core.Execution;
+using Bonds.Core.Models;
 using Bonds.Core.Policy;
 using Bonds.Infrastructure.Execution;
 using FluentAssertions;
@@ -180,22 +181,26 @@ public class ExecutionReviewFixesTests
         },
     ];
 
+    /// <summary>Метаданные фонда без выплат (задача 67: класс «фонд» и pays_distributions = false — условия белого списка в коде).</summary>
+    private static InstrumentTradingMeta? FundMeta(TradePlanLine line) =>
+        new() { Broker = BrokerIds.TInvest, InstrumentKey = line.InstrumentKey, Ticker = line.Ticker, MinPriceIncrement = 0.01m, Currency = "RUB", PaysDistributions = false };
+
     [Fact]
     public void AutoWhitelist_AllowsOnlyAutoBuyBasketFundBuysUnderCap()
     {
         var ok = new TradePlan { Lines = [Buy(1, 10, 166m)] };
-        AutoExecutionWhitelist.Check(ok, Baskets(true), 25_000m).Should().BeNull();
-        AutoExecutionWhitelist.Check(ok, Baskets(false), 25_000m).Should().Contain("не входит в корзину");
-        AutoExecutionWhitelist.Check(ok, Baskets(true, "TSAV"), 25_000m).Should().Contain("не входит в корзину");
-        AutoExecutionWhitelist.Check(new TradePlan { Lines = [Buy(1, 200, 166m)] }, Baskets(true), 25_000m).Should().Contain("больше лимита авто");
+        AutoExecutionWhitelist.Check(ok, Baskets(true), 25_000m, FundMeta).Should().BeNull();
+        AutoExecutionWhitelist.Check(ok, Baskets(false), 25_000m, FundMeta).Should().Contain("не входит в корзину");
+        AutoExecutionWhitelist.Check(ok, Baskets(true, "TSAV"), 25_000m, FundMeta).Should().Contain("не входит в корзину");
+        AutoExecutionWhitelist.Check(new TradePlan { Lines = [Buy(1, 200, 166m)] }, Baskets(true), 25_000m, FundMeta).Should().Contain("больше лимита авто");
 
         var sell = Buy(1, 1, 166m);
         sell.Side = PlanSides.Sell;
-        AutoExecutionWhitelist.Check(new TradePlan { Lines = [sell] }, Baskets(true), 25_000m).Should().Contain("только покупки");
+        AutoExecutionWhitelist.Check(new TradePlan { Lines = [sell] }, Baskets(true), 25_000m, FundMeta).Should().Contain("только покупки");
 
         var bond = Buy(1, 1, 927m);
         bond.LimitPricePoints = 92.7m;
-        AutoExecutionWhitelist.Check(new TradePlan { Lines = [bond] }, Baskets(true), 25_000m).Should().Contain("облигации");
+        AutoExecutionWhitelist.Check(new TradePlan { Lines = [bond] }, Baskets(true), 25_000m, FundMeta).Should().Contain("облигации");
     }
 
     [Fact]

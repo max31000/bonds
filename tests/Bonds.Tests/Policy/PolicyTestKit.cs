@@ -37,11 +37,11 @@ internal static class PolicyTestKit
     public static CapitalBasketMember ClassMember(string cls) =>
         new() { Broker = BrokerIds.TInvest, InstrumentKey = cls, MatchRule = BasketMatchRules.AssetClass };
 
-    /// <summary>Фонд T-Invest: цена bid/ask, шаг 0.01, лот 1.</summary>
-    public static PolicyQuote Fund(string ticker, decimal bid, decimal ask, decimal step = 0.01m, decimal lot = 1m, bool known = true) => new()
+    /// <summary>Фонд T-Invest: цена bid/ask, шаг 0.01, лот 1; по умолчанию без выплат (<paramref name="pays"/> = false — проходит белый список авто, задача 67).</summary>
+    public static PolicyQuote Fund(string ticker, decimal bid, decimal ask, decimal step = 0.01m, decimal lot = 1m, bool known = true, bool? pays = false) => new()
     {
         Broker = BrokerIds.TInvest, AccountId = AccountId, InstrumentKey = ticker, Ticker = ticker, Name = ticker, Kind = PolicyAssetKind.Fund,
-        Market = PolicyMarket.Moex, Currency = "RUB", Lot = lot, PriceStep = step, Bid = bid, Ask = ask, KnownCommission = known,
+        Market = PolicyMarket.Moex, Currency = "RUB", Lot = lot, PriceStep = step, Bid = bid, Ask = ask, KnownCommission = known, PaysDistributions = pays,
     };
 
     /// <summary>Облигация T-Invest: цена в ПУНКТАХ, шаг в пунктах, номинал 1000 ₽, НКД на штуку.</summary>

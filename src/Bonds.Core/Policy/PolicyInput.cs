@@ -77,6 +77,12 @@ public sealed record PolicyQuote
 
     /// <summary>Комиссия бумаги известна: фонд управляющей компании брокера либо в журнале есть сделка и списанная по ней комиссия.</summary>
     public bool KnownCommission { get; init; } = true;
+
+    /// <summary>
+    /// Фонд: были ли выплаты за последние 12 месяцев (<c>instrument_trading_meta.pays_distributions</c>). null — неизвестно (сбой запроса или не фонд):
+    /// для белого списка авто-исполнения (<see cref="AutoWhitelist"/>) неизвестно = «платит» (консервативно).
+    /// </summary>
+    public bool? PaysDistributions { get; init; }
 }
 
 /// <summary>

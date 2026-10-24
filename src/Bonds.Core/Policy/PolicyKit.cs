@@ -437,10 +437,13 @@ internal static class PolicyKit
     /// Статус плана по лимитам авто-подтверждения. <c>AutoApproved</c>, только если <paramref name="autoAllowed"/> и ВСЕ строки — покупки, каждая заявка
     /// ≤ <see cref="ExecutionLimitsOptions.AutoPerOrderRub"/> и Σ плана + уже авто-подтверждённое за сутки ≤ <see cref="ExecutionLimitsOptions.AutoPerDayRub"/>.
     /// Freedom: только при <see cref="ExecutionLimitsOptions.FreedomAutoUsd"/> &gt; 0 и заявке не выше него. Иначе <c>PendingApproval</c>.
+    /// Задача 67 (#1): КАЖДАЯ строка обязана пройти белый список в коде (<see cref="AutoWhitelist.LineRejection"/>: фонд без выплат из корзины «liquidity»),
+    /// флаги корзин его только сужают.
     /// </summary>
     public static string DecideStatus(PolicyInput input, IReadOnlyList<TradePlanLine> lines, bool autoAllowed)
     {
         if (!autoAllowed || lines.Count == 0 || lines.Any(l => l.Side != PlanSides.Buy)) return PlanStatuses.PendingApproval;
+        if (lines.Any(l => AutoWhitelist.LineRejection(input, l) is not null)) return PlanStatuses.PendingApproval;
 
         if (input.Broker == BrokerIds.Freedom)
         {
