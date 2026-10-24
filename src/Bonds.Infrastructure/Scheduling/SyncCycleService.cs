@@ -182,6 +182,10 @@ public sealed class SyncCycleService : ISyncCycleRunner
         // здоровье синка (GET /api/sync/status) отражало причину сбоя явным флагом, а не требовало
         // от фронта парсить текст ошибки. Заведённый Account уже найден выше — "пользователь есть".
         var tokenProvider = sp.GetRequiredService<ITInvestTokenProvider>();
+
+        // T-67E (minor 1): токен и счёт — ОДНОГО пользователя. Без привязки провайдер берёт «основного пользователя» (первый users.id), а основной счёт —
+        // первый счёт T-Invest: у разных пользователей это разные записи, и счёт владельца синкался бы чужим токеном. Привязка — ДО первого чтения токена в скоупе.
+        if ((await accounts.GetByIdAsync(accountId.Value))?.UserId is { } ownerUserId) tokenProvider.UseUser(ownerUserId);
         var tokenStatus = await tokenProvider.GetTokenStatusAsync(ct);
         result.TokenMissingOrInvalid = tokenStatus is TInvestTokenStatus.NotConfigured or TInvestTokenStatus.DecryptionFailed;
 

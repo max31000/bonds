@@ -161,10 +161,10 @@ public class SyncCycleServiceTests
     }
 
     [Fact]
-    public async Task T67_TwoUsersWithTInvestRead_EachSyncedWithOwnTokenIntoOwnAccount_OwnerPathUnchanged()
+    public async Task T67_TwoUsersWithTInvestRead_EachSyncedWithOwnTokenIntoOwnAccount_OwnerPathBoundToOwner()
     {
         // Задача 67 (#5): владелец (user 1, основной счёт 1 / BA-1) — как раньше, без привязки провайдера; второй пользователь с валидным tinvest_read
-        // (user 2, счёт 2 / BA-2) — в отдельном скоупе с UseUser(2): клиент T-Invest строится по ЕГО токену, синк идёт в ЕГО счёт.
+        // (user 2, счёт 2 / BA-2) — в отдельном скоупе с UseUser(2): клиент T-Invest строится по ЕГО токену, синк идёт в ЕГО счёт. T-67E: путь владельца — UseUser(1).
         SetupNoPositionsHappyPath();
         _credentialRecords = new Mock<IUserCredentialRepository>();
         _credentialRecords.Setup(r => r.ListUserIdsAsync("tinvest_read", "ok")).ReturnsAsync([1UL, 2UL]);
@@ -180,7 +180,7 @@ public class SyncCycleServiceTests
 
         result.HasErrors.Should().BeFalse();
         _tokenProvider.Verify(t => t.UseUser(2UL), Times.Once);
-        _tokenProvider.Verify(t => t.UseUser(1UL), Times.Never, "путь владельца не меняется");
+        _tokenProvider.Verify(t => t.UseUser(1UL), Times.Once, "T-67E: путь владельца привязан к владельцу основного счёта — токен и счёт одного пользователя");
         _tInvest.Verify(c => c.GetPortfolioAsync(BrokerAccountId, It.IsAny<CancellationToken>()), Times.Once);
         _tInvest.Verify(c => c.GetPortfolioAsync("BA-2", It.IsAny<CancellationToken>()), Times.Once);
         _accounts.Verify(a => a.CreateAsync(It.IsAny<Account>()), Times.Never, "счёт второго пользователя уже есть");
