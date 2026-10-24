@@ -45,6 +45,7 @@ public class PlanExecutionEngineTests
     private readonly CountingSync _sync = new();
     private readonly ExecutionOptions _options = new() { Enabled = true };
     private readonly ExecutionLimitsOptions _limits = new();
+    private readonly FakeFillHistory _fills = new();
 
     /// <summary>Корзины пользователя: «Ликвидность» с авто-покупкой и TMON — белый список AutoApproved.</summary>
     private readonly List<CapitalBasket> _baskets =
@@ -75,7 +76,20 @@ public class PlanExecutionEngineTests
         baskets.Setup(b => b.GetByUserAsync(UserId, It.IsAny<string?>())).ReturnsAsync(() => _baskets);
         return new PlanExecutionEngine(
             _plans, _orders, meta.Object, accounts.Object, _credentialRecords.Object, baskets.Object, _gateway, _gate, _notifier, _sync, monitor,
-            Options.Create(_limits), Options.Create(new PolicyOptions()), NullLogger<PlanExecutionEngine>.Instance);
+            Options.Create(_limits), Options.Create(new PolicyOptions()), NullLogger<PlanExecutionEngine>.Instance, tinvestFills: _fills);
+    }
+
+    /// <summary>Журнал сделок T-Invest (задача 67, #17) — сделки задаёт тест.</summary>
+    private sealed class FakeFillHistory : ITInvestFillHistory
+    {
+        public List<BrokerFill> Fills { get; } = [];
+        public int Calls { get; private set; }
+
+        public Task<IReadOnlyList<BrokerFill>> GetFillsAsync(ulong userId, string brokerAccountId, DateTime fromUtc, CancellationToken ct)
+        {
+            Calls++;
+            return Task.FromResult<IReadOnlyList<BrokerFill>>(Fills.Where(f => f.AtUtc >= fromUtc).ToList());
+        }
     }
 
     private void Book(string uid, decimal bid, decimal ask, DateTime at) => _gateway.Books[uid] = new GatewayOrderBook(bid, ask, at.AddSeconds(-3));
@@ -232,6 +246,35 @@ public class PlanExecutionEngineTests
 
         _gateway.PostCount.Should().Be(0, "заявка с тем же client_order_id уже у брокера — повторной отправки нет");
         _orders.All.Single().Should().Match<TradeOrder>(o => o.Status == TradeOrderStatuses.Submitted && o.BrokerOrderId == "BRK-1");
+    }
+
+    [Theory]
+    [InlineData(10, TradeOrderStatuses.Filled, PlanStatuses.Done)]
+    [InlineData(4, TradeOrderStatuses.Failed, PlanStatuses.PartiallyDone)]
+    public async Task T67_UnknownToBroker_FillsRestoredFromOperationsHistory_NotResubmitted(int pieces, string orderStatus, string planStatus)
+    {
+        // Задача 67 (#17): GetOrderState → NotFound, но журнал операций (GetOperationsByCursor, клиент на чтение) показывает сделки TMON после created_at —
+        // lots_filled восстанавливается по ним; повторной отправки нет. Ручная продажа того же фонда и сделка ДО заявки не засчитываются.
+        var plan = AddPlan(PlanStatuses.Submitting);
+        Book(FundUid, 166.50m, 166.60m, Noon);
+        await _orders.InsertAsync(new TradeOrder
+        {
+            PlanId = plan.Id, LineNo = 1, Attempt = 1, ClientOrderId = Guid.NewGuid().ToString("D"), Status = TradeOrderStatuses.New, LimitPrice = 166.57m,
+            PriceUnit = OrderPriceUnits.Currency, LotsRequested = 10, Currency = "RUB", CreatedAt = Noon.AddMinutes(-1), UpdatedAt = Noon.AddMinutes(-1),
+        });
+        _fills.Fills.Add(new BrokerFill(null, FundUid, PlanSides.Buy, pieces, 166.55m, Noon.AddSeconds(-50)));
+        _fills.Fills.Add(new BrokerFill(null, FundUid, PlanSides.Sell, 3m, 166.60m, Noon.AddSeconds(-40)));
+        _fills.Fills.Add(new BrokerFill(null, FundUid, PlanSides.Buy, 7m, 166.40m, Noon.AddHours(-3)));
+
+        await Engine().RunTickAsync(Noon.AddMinutes(5));
+
+        var order = _orders.All.Single();
+        order.Status.Should().Be(orderStatus);
+        order.LotsFilled.Should().Be(pieces);
+        order.AvgFillPrice.Should().Be(166.55m);
+        _gateway.PostCount.Should().Be(0, "заявка могла дойти до брокера — повторно не отправляется");
+        _plans[plan.Id].Status.Should().Be(planStatus);
+        _fills.Calls.Should().BeGreaterThan(0);
     }
 
     [Fact]

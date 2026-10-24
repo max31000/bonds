@@ -111,7 +111,8 @@ public sealed class PlanExecutionEngine
         IOptions<ExecutionLimitsOptions> limits,
         IOptions<PolicyOptions> policy,
         ILogger<PlanExecutionEngine> logger,
-        IFreedomOrderGateway? freedomGateway = null)
+        IFreedomOrderGateway? freedomGateway = null,
+        ITInvestFillHistory? tinvestFills = null)
     {
         _plans = plans;
         _orders = orders;
@@ -127,7 +128,7 @@ public sealed class PlanExecutionEngine
         _limits = limits.Value;
         _policy = policy.Value;
         _logger = logger;
-        _venues[Brokers.TInvest] = new TInvestExecutionVenue(gateway, gate, accounts, credentialRecords, logger);
+        _venues[Brokers.TInvest] = new TInvestExecutionVenue(gateway, gate, accounts, credentialRecords, logger, meta, tinvestFills);
         if (freedomGateway is not null) _venues[Brokers.Freedom] = new FreedomExecutionVenue(freedomGateway, gate, accounts, credentialRecords, orders, logger);
     }
 
@@ -664,10 +665,43 @@ public sealed class PlanExecutionEngine
             if (ctx.NowUtc - since < Opt.UnconfirmedOrderTimeout) return RefreshOutcome.Pending;
 
             // Брокер заявку не знает: отправки не было или она потеряна. Повторно НЕ отправляем — закрываем строку и просим проверить вручную.
+            // Задача 67 (#17): сначала — история сделок: исполненное по ней восстанавливает lots_filled (иначе строка «докупила» бы уже купленное).
+            HistoryFill? fill = null;
+            try
+            {
+                fill = await venue.FillsFromHistoryAsync(session, ctx.UserId, order, line, ctx.NowUtc, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogWarning("Execution: trades history unavailable for {ClientOrderId} ({Error}) — closing as unknown state", order.ClientOrderId, ex.GetType().Name);
+            }
+
+            order.UpdatedAt = ctx.NowUtc;
+            if (fill is { Lots: > 0 } f)
+            {
+                order.LotsFilled = Math.Max(order.LotsFilled, Math.Min(f.Lots, order.LotsRequested));
+                if (f.AvgPricePerPiece is { } avg) order.AvgFillPrice = avg;
+                if (order.LotsFilled >= order.LotsRequested)
+                {
+                    order.Status = TradeOrderStatuses.Filled;
+                    order.ErrorCode = null;
+                    order.ErrorMessage = "Состояние заявки у брокера не найдено — исполнение восстановлено по истории сделок";
+                }
+                else
+                {
+                    order.Status = TradeOrderStatuses.Failed;
+                    order.ErrorCode = TradeOrderErrorCodes.UnknownState;
+                    order.ErrorMessage = $"Состояние заявки не подтвердилось у брокера; по истории сделок исполнено {order.LotsFilled} из {order.LotsRequested} лот(ов) — проверьте терминал";
+                }
+
+                _logger.LogWarning("Execution: order {ClientOrderId} unknown to broker — {Lots} lot(s) restored from trades history", order.ClientOrderId, order.LotsFilled);
+                await _orders.UpdateAsync(order);
+                return RefreshOutcome.Updated;
+            }
+
             order.Status = TradeOrderStatuses.Failed;
             order.ErrorCode = TradeOrderErrorCodes.UnknownState;
             order.ErrorMessage = "Состояние заявки не подтвердилось у брокера — повторно не отправлялась, проверьте терминал";
-            order.UpdatedAt = ctx.NowUtc;
             await _orders.UpdateAsync(order);
             return RefreshOutcome.Updated;
         }

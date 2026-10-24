@@ -48,6 +48,9 @@ public sealed record VenueFees(bool Complete, decimal? ExpectedFee, string? Note
 /// </summary>
 public sealed record VenueLimits(int MaxAttempts, TimeSpan RepriceAfter, int MaxFeeRechecks);
 
+/// <summary>Исполненное по истории сделок (задача 67, #17): <see cref="Lots"/> — целые лоты, <see cref="AvgPricePerPiece"/> — средняя цена штуки (валюта сделки).</summary>
+public sealed record HistoryFill(long Lots, decimal? AvgPricePerPiece);
+
 /// <summary>
 /// Брокер для исполнителя (задача 66): одна реализация на брокера поверх его ЕДИНСТВЕННОГО торгового шлюза (<see cref="ITInvestOrderGateway"/>, <see cref="IFreedomOrderGateway"/>).
 /// Общая логика (порядок строк, предполётные проверки, идемпотентность, перевыставление, снятие перед закрытием, итоги) — в <see cref="PlanExecutionEngine"/>.
@@ -92,6 +95,13 @@ public interface IExecutionVenue
 
     Task CancelAsync(VenueSession session, ulong userId, TradeOrder order, CancellationToken ct);
 
+    /// <summary>
+    /// Задача 67 (#17): брокер заявку не знает (состояние null после таймаута) — сколько по ней исполнено по ИСТОРИИ СДЕЛОК (T-Invest — журнал операций по
+    /// инструменту и стороне с <c>created_at</c>, Freedom — <c>getTradesHistory</c> по <c>order_id</c>). null — сделок нет или сверить нечем. Сбой — исключение
+    /// (движок логирует и закрывает заявку как раньше).
+    /// </summary>
+    Task<HistoryFill?> FillsFromHistoryAsync(VenueSession session, ulong userId, TradeOrder order, TradePlanLine line, DateTime nowUtc, CancellationToken ct);
+
     /// <summary>Перечитывает комиссию (и цену исполнения) исполненных заявок строки — меняет <paramref name="lineOrders"/>; вызывающий сохраняет.</summary>
     Task<VenueFees> RefreshFeesAsync(VenueSession session, ulong userId, TradePlanLine line, IReadOnlyList<TradeOrder> lineOrders, DateTime nowUtc, CancellationToken ct);
 
@@ -107,15 +117,56 @@ public sealed class TInvestExecutionVenue : IExecutionVenue
     private readonly IAccountRepository _accounts;
     private readonly IUserCredentialRepository _credentialRecords;
     private readonly ILogger _logger;
+    private readonly IInstrumentTradingMetaRepository? _meta;
+    private readonly ITInvestFillHistory? _fills;
 
     public TInvestExecutionVenue(
-        ITInvestOrderGateway gateway, IExecutionGateResolver gate, IAccountRepository accounts, IUserCredentialRepository credentialRecords, ILogger logger)
+        ITInvestOrderGateway gateway, IExecutionGateResolver gate, IAccountRepository accounts, IUserCredentialRepository credentialRecords, ILogger logger,
+        IInstrumentTradingMetaRepository? meta = null, ITInvestFillHistory? fills = null)
     {
         _gateway = gateway;
         _gate = gate;
         _accounts = accounts;
         _credentialRecords = credentialRecords;
         _logger = logger;
+        _meta = meta;
+        _fills = fills;
+    }
+
+    /// <summary>Окно сверки по журналу: сделки не раньше <c>created_at − 30 с</c> (расхождение часов).</summary>
+    public static readonly TimeSpan HistoryWindowBefore = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// Задача 67 (#17): заявка у брокера не найдена — исполненные сделки ТОГО ЖЕ инструмента (uid или figi из метаданных торгов) и ТОЙ ЖЕ стороны с
+    /// <c>created_at − 30 с</c> по журналу операций (клиент на чтение пользователя). Штуки → целые лоты, не больше запрошенного. Сделку по номеру заявки журнал
+    /// не связывает — ручная сделка в том же инструменте в это окно тоже будет засчитана (консервативно: строка не докупит лишнего).
+    /// </summary>
+    public async Task<HistoryFill?> FillsFromHistoryAsync(
+        VenueSession session, ulong userId, TradeOrder order, TradePlanLine line, DateTime nowUtc, CancellationToken ct)
+    {
+        if (_fills is null || _meta is null || !session.CanManageOrders || line.LotSize <= 0m) return null;
+        var meta = (await _meta.GetByKeysAsync(Brokers.TInvest, [line.InstrumentKey]) ?? []).FirstOrDefault();
+        if (meta is null || (string.IsNullOrWhiteSpace(meta.Uid) && string.IsNullOrWhiteSpace(meta.Figi))) return null;
+
+        var since = order.CreatedAt - HistoryWindowBefore;
+        var fills = (await _fills.GetFillsAsync(userId, session.BrokerAccountId, since, ct))
+            .Where(f => f.Side == line.Side && f.AtUtc >= since
+                        && ((!string.IsNullOrWhiteSpace(meta.Uid) && string.Equals(f.InstrumentUid, meta.Uid, StringComparison.OrdinalIgnoreCase))
+                            || (!string.IsNullOrWhiteSpace(meta.Figi) && string.Equals(f.Figi, meta.Figi, StringComparison.OrdinalIgnoreCase))))
+            .ToList();
+        return ToHistoryFill(fills.Select(f => (f.Pieces, f.PricePerPiece)).ToList(), line.LotSize, order.LotsRequested);
+    }
+
+    /// <summary>Штуки сделок → целые лоты (не больше <paramref name="maxLots"/>) и средняя цена штуки (по сделкам с ценой); лотов 0 — null.</summary>
+    internal static HistoryFill? ToHistoryFill(IReadOnlyList<(decimal Pieces, decimal? Price)> fills, decimal lotSize, long maxLots)
+    {
+        var pieces = fills.Sum(f => f.Pieces);
+        var lots = Math.Min(maxLots, (long)Math.Floor(pieces / lotSize));
+        if (lots <= 0) return null;
+        var priced = fills.Where(f => f.Price is > 0m).ToList();
+        var pricedPieces = priced.Sum(f => f.Pieces);
+        decimal? avg = pricedPieces > 0m ? priced.Sum(f => f.Pieces * f.Price!.Value) / pricedPieces : null;
+        return new HistoryFill(lots, avg);
     }
 
     public string Broker => Brokers.TInvest;
@@ -454,6 +505,23 @@ public sealed class FreedomExecutionVenue : IExecutionVenue
                 && o.LimitPrice is { } p && Math.Abs(p - order.LimitPrice) <= tolerance
                 && o.PlacedAtUtc is { } at && at >= order.CreatedAt - ReconcileWindowBefore && at <= order.CreatedAt + ReconcileWindowAfter)
             .ToList();
+    }
+
+    /// <summary>
+    /// Задача 67 (#17): заявка с известным id брокера пропала из списка заявок — исполненное по <c>getTradesHistory</c> (связь сделки с заявкой по
+    /// <c>order_id</c>, как при сверке комиссии). Без id брокера сделки к заявке не привязать — null.
+    /// </summary>
+    public async Task<HistoryFill?> FillsFromHistoryAsync(
+        VenueSession session, ulong userId, TradeOrder order, TradePlanLine line, DateTime nowUtc, CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(order.BrokerOrderId)) return null;
+        var from = DateOnly.FromDateTime(order.CreatedAt).AddDays(-1);
+        var to = DateOnly.FromDateTime(nowUtc).AddDays(1);
+        var trades = (await _gateway.GetTradesAsync(userId, from, to, ct))
+            .Where(t => string.Equals(t.OrderId, order.BrokerOrderId, StringComparison.Ordinal))
+            .Select(t => (t.Quantity, (decimal?)t.Price))
+            .ToList();
+        return TInvestExecutionVenue.ToHistoryFill(trades, line.LotSize > 0m ? line.LotSize : 1m, order.LotsRequested);
     }
 
     public Task CancelAsync(VenueSession session, ulong userId, TradeOrder order, CancellationToken ct)

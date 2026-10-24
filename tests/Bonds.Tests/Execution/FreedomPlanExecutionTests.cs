@@ -591,6 +591,27 @@ public class FreedomPlanExecutionTests
     // ─── Комиссия ──────────────────────────────────────────────────────────────────────────
 
     [Fact]
+    public async Task T67_KnownOrderVanishesFromOrderList_FillRestoredFromTradesHistoryByOrderId()
+    {
+        // Задача 67 (#17): заявка с id брокера пропала из списка заявок (NotFound) — до закрытия как unknown_state исполнение сверяется по getTradesHistory
+        // (сделки по order_id): исполнено 3 из 3 → Filled, повторной отправки нет.
+        var plan = AddPlan(Noon);
+        Quote("VUAA.EU", 147.65m, 147.75m);
+        await Tick(Noon);
+        var brokerId = OrdersOf(plan).Single().BrokerOrderId!;
+        _freedom.Fill(brokerId, 3, 147.70m, "853000009", 1.73m, "europe", "funds");
+        _freedom.Orders.Remove(brokerId);
+
+        await Tick(Noon.AddMinutes(6));
+
+        var order = OrdersOf(plan).Single();
+        order.Status.Should().Be(TradeOrderStatuses.Filled);
+        order.LotsFilled.Should().Be(3);
+        order.AvgFillPrice.Should().Be(147.70m);
+        _freedom.PostCount.Should().Be(1);
+    }
+
+    [Fact]
     public async Task Fill_FeeMatchesModelByActualRoute_PlanDone_NoMismatch()
     {
         var plan = AddPlan(Noon);

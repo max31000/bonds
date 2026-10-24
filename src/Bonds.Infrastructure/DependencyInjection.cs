@@ -278,6 +278,7 @@ public static class DependencyInjection
         services.AddScoped<Bonds.Infrastructure.Execution.IFreedomOrderGateway, Bonds.Infrastructure.Execution.FreedomOrderGateway>();
         services.AddScoped<Bonds.Infrastructure.Execution.IExecutionNotifier, Bonds.Infrastructure.Telegram.TelegramExecutionNotifier>();
         services.AddSingleton<Bonds.Infrastructure.Execution.IPortfolioSyncTrigger, Bonds.Infrastructure.Execution.PortfolioSyncTrigger>();
+        services.AddScoped<Bonds.Infrastructure.Execution.ITInvestFillHistory, Bonds.Infrastructure.Execution.TInvestFillHistory>(); // задача 67 (#17)
         services.AddScoped<Bonds.Infrastructure.Execution.PlanExecutionEngine>();
         // Взаимоисключение тиков между экземплярами и со сменой торгового токена: MySQL GET_LOCK на отдельном соединении.
         services.AddSingleton<Bonds.Infrastructure.Execution.IPlanExecutorLock>(sp => new Bonds.Infrastructure.Execution.MySqlPlanExecutorLock(GetConnStr(sp)));
