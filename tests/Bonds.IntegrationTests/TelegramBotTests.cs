@@ -298,6 +298,25 @@ public class TelegramBotTests
     }
 
     [Fact]
+    public async Task T67_SameUpdateIdTwice_PlanCommandHandledOnce()
+    {
+        // Задача 67 (#16): Telegram прислал тот же апдейт повторно (offset не успел сохраниться до рестарта) — /withdraw и /inflow не строят второй план.
+        var (_, tg) = await NewUserAsync();
+        var id = Interlocked.Increment(ref _updateId);
+        var update = new BotUpdate(id, new BotIncomingMessage(tg, "private", tg, "T", "/withdraw 1000"), null);
+
+        await SendAsync(update);
+        var afterFirst = Bot.SentTo(tg).Count;
+        await SendAsync(update);
+
+        afterFirst.Should().Be(1, "первый раз команда обработана (ответ — план или причина)");
+        Bot.SentTo(tg).Count.Should().Be(afterFirst, "повтор того же update_id игнорируется");
+
+        await SendAsync(new BotUpdate(Interlocked.Increment(ref _updateId), new BotIncomingMessage(tg, "private", tg, "T", "/inflow 500"), null));
+        Bot.SentTo(tg).Count.Should().Be(afterFirst + 1, "новый апдейт обрабатывается");
+    }
+
+    [Fact]
     public async Task T67_Withdrawn_ReleasesCashHoldOfWithdrawPlans()
     {
         var (userId, tg) = await NewUserAsync();

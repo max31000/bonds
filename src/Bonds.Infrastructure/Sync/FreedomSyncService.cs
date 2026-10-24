@@ -124,7 +124,20 @@ public sealed class FreedomSyncService
 
         var credentials = new FreedomCredentials(publicKey, privateKey);
 
-        var info = await _api.GetUserInfoAsync(credentials, ct);
+        FreedomUserInfo info;
+        try
+        {
+            info = await _api.GetUserInfoAsync(credentials, ct);
+        }
+        catch (FreedomApiException ex) when (ex.IsAuthRejected && !ex.IsTransient)
+        {
+            // Задача 67 (#16): брокер отверг ключ (401/403) — ключ помечается invalid (синк и ворота его больше не используют, «Подключения» покажут причину).
+            _logger.LogWarning("Freedom sync: key of user {UserId} rejected by the broker (401/403) — marked invalid", userId);
+            await _credentials.MarkInvalidAsync(userId, CredentialProviders.Freedom, "Freedom отклонил ключ (401/403) — сохраните ключи заново");
+            result.Errors.Add($"Freedom (пользователь {userId}): ключ отклонён брокером");
+            return false;
+        }
+
         var account = await EnsureAccountAsync(userId, info);
         await RefreshMetaAsync(userId, info);
 

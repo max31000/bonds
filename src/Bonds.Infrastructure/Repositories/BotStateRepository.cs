@@ -17,6 +17,17 @@ public class BotStateRepository : IBotStateRepository
         return await conn.ExecuteScalarAsync<string?>("SELECT `value` FROM bot_state WHERE `key` = @Key", new { Key = key });
     }
 
+    public async Task<bool> TryAdvanceAsync(string key, long value)
+    {
+        using var conn = new MySqlConnection(_connectionString);
+        await conn.ExecuteAsync("INSERT IGNORE INTO bot_state (`key`, `value`) VALUES (@Key, '0')", new { Key = key });
+        // Условие — в WHERE: «совпавших» строк 1 ровно тогда, когда отметка была меньше (MySqlConnector по умолчанию считает совпавшие строки).
+        var matched = await conn.ExecuteAsync(
+            "UPDATE bot_state SET `value` = @Value WHERE `key` = @Key AND CAST(`value` AS SIGNED) < @Number",
+            new { Key = key, Value = value.ToString(System.Globalization.CultureInfo.InvariantCulture), Number = value });
+        return matched > 0;
+    }
+
     public async Task SetAsync(string key, string value)
     {
         using var conn = new MySqlConnection(_connectionString);

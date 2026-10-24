@@ -50,6 +50,9 @@ public static class CredentialsEndpoints
             .ToList());
     }
 
+    /// <summary>Максимальная длина значения поля секрета (символов, после trim) — задача 67 (#16).</summary>
+    public const int MaxFieldLength = 4096;
+
     private static async Task<IResult> PutCredential(
         string provider,
         CredentialPutRequestDto request,
@@ -75,6 +78,9 @@ public static class CredentialsEndpoints
             {
                 return ValidationFailure($"Поле «{field.Title}» обязательно");
             }
+
+            // Задача 67 (#16): длина поля ограничена — секреты брокеров короче, а мегабайтное поле ушло бы в шифрование, БД и валидатор брокера.
+            if (value.Trim().Length > MaxFieldLength) return ValidationFailure($"Поле «{field.Title}» длиннее {MaxFieldLength} символов");
 
             fields[field.Name] = value.Trim();
         }

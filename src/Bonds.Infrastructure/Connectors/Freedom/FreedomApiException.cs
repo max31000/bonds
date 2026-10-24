@@ -24,6 +24,10 @@ public sealed class FreedomApiException : Exception
         || Message.Contains("HTTP 429", StringComparison.Ordinal)
         || IsTransientText(Message);
 
+    /// <summary>Брокер отверг ключ (HTTP 401/403) — ключ невалиден (задача 67, #16), в отличие от <see cref="IsTransient"/>.</summary>
+    public bool IsAuthRejected =>
+        Message.Contains("HTTP 401", StringComparison.Ordinal) || Message.Contains("HTTP 403", StringComparison.Ordinal);
+
     /// <summary>Текст брокера о перегрузке/лимите частоты («too many requests», «rate limit», «слишком много запросов», «try again later»).</summary>
     public static bool IsTransientText(string? text) =>
         !string.IsNullOrWhiteSpace(text)

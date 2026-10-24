@@ -122,6 +122,22 @@ public class FreedomSyncServiceTests
         (shortPos.Ticker, shortPos.Quantity, shortPos.MarketValue).Should().Be(("TSLA.US", -2m, -480m));
     }
 
+    [Theory]
+    [InlineData("HTTP 401 Unauthorized", true)]
+    [InlineData("HTTP 403 Forbidden", true)]
+    [InlineData("HTTP 503 Service Unavailable", false)]
+    public async Task T67_Sync_KeyRejected401Or403_MarksCredentialInvalid_TransientDoesNot(string message, bool invalid)
+    {
+        // Задача 67 (#16): 401/403 на синке — ключ freedom помечается invalid; временный сбой (5xx) ключ не трогает.
+        _api.Setup(a => a.GetUserInfoAsync(It.IsAny<FreedomCredentials>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new FreedomApiException("getAllUserTexInfo", message));
+
+        await Create().SyncAllAsync();
+
+        _store.Verify(s => s.MarkInvalidAsync(1, "freedom", It.IsAny<string>()), invalid ? Times.Once() : Times.Never());
+        _accounts.Items.Should().BeEmpty();
+    }
+
     [Fact]
     public async Task Sync_LegacyRurBalance_IsStoredAsRub()
     {

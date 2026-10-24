@@ -38,6 +38,14 @@ public class TelegramBotPollingServiceTests
             Values[key] = value;
             return Task.CompletedTask;
         }
+
+        public Task<bool> TryAdvanceAsync(string key, long value)
+        {
+            var current = Values.TryGetValue(key, out var v) && long.TryParse(v, out var n) ? n : 0;
+            if (current >= value) return Task.FromResult(false);
+            Values[key] = value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            return Task.FromResult(true);
+        }
     }
 
     private sealed class RecordingHandler : ITelegramUpdateHandler

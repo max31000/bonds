@@ -40,6 +40,12 @@ public sealed class TelegramBotUpdateHandler : ITelegramUpdateHandler
     private readonly TelegramBotOptions _options;
     private readonly TimeProvider _time;
     private readonly ILogger<TelegramBotUpdateHandler> _logger;
+    private readonly IBotStateRepository? _state;
+
+    /// <summary>Отметка последнего апдейта, по которому пользователь строил план (задача 67, #16: повтор того же update_id плана не создаёт).</summary>
+    public static string PlanCommandMarkKey(ulong userId) => "plan_cmd_update_" + userId;
+
+    public const string CallbackFailedText = "Ошибка, попробуйте ещё раз.";
 
     public TelegramBotUpdateHandler(
         ITelegramBotClient bot,
@@ -51,8 +57,10 @@ public sealed class TelegramBotUpdateHandler : ITelegramUpdateHandler
         Bonds.Infrastructure.Execution.IExecutionGateResolver gate,
         IOptions<TelegramBotOptions> options,
         TimeProvider time,
-        ILogger<TelegramBotUpdateHandler> logger)
+        ILogger<TelegramBotUpdateHandler> logger,
+        IBotStateRepository? state = null)
     {
+        _state = state;
         _bot = bot;
         _users = users;
         _plans = plans;
@@ -70,7 +78,7 @@ public sealed class TelegramBotUpdateHandler : ITelegramUpdateHandler
         try
         {
             if (update.Callback is { } callback) await HandleCallbackAsync(callback, ct);
-            else if (update.Message is { } message) await HandleMessageAsync(message, ct);
+            else if (update.Message is { } message) await HandleMessageAsync(message, update.UpdateId, ct);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -80,12 +88,26 @@ public sealed class TelegramBotUpdateHandler : ITelegramUpdateHandler
         {
             // Без объекта исключения целиком: в нём может оказаться что угодно из сетевого слоя. Тип + сообщение (в TelegramApiException/HttpRequestException оно очищено).
             _logger.LogWarning("Telegram update {UpdateId} failed: {ErrorType}: {Message}", update.UpdateId, ex.GetType().Name, ex.Message);
+
+            // Задача 67 (#16): нажатие кнопки всё равно получает ответ (иначе «часики» висят, а человек не знает, что ничего не произошло). Если ответ уже
+            // был дан до сбоя, Telegram вернёт ошибку — её глушим.
+            if (update.Callback is { } failed)
+            {
+                try
+                {
+                    await _bot.AnswerCallbackQueryAsync(failed.Id, CallbackFailedText, true, ct);
+                }
+                catch (Exception answerEx) when (answerEx is not OperationCanceledException)
+                {
+                    _logger.LogInformation("Telegram callback {UpdateId}: error answer not delivered ({ErrorType})", update.UpdateId, answerEx.GetType().Name);
+                }
+            }
         }
     }
 
     // ─── Сообщения и команды ───────────────────────────────────────────────────────────────
 
-    private async Task HandleMessageAsync(BotIncomingMessage message, CancellationToken ct)
+    private async Task HandleMessageAsync(BotIncomingMessage message, long updateId, CancellationToken ct)
     {
         // Только личка с самим собой: группы и каналы молча игнорируем (бот не должен раскрывать капитал в общем чате).
         if (message.ChatType != PrivateChat || message.ChatId != message.FromId) return;
@@ -99,6 +121,8 @@ public sealed class TelegramBotUpdateHandler : ITelegramUpdateHandler
 
         var command = BotCommandParser.Parse(message.Text);
         var now = _time.GetUtcNow().UtcDateTime;
+        var duplicatePlanCommand = command.Kind is BotCommandKind.Inflow or BotCommandKind.Withdraw or BotCommandKind.Exit
+                                   && !await IsNewPlanCommandAsync(user.Id, updateId);
         try
         {
             switch (command.Kind)
@@ -111,6 +135,10 @@ public sealed class TelegramBotUpdateHandler : ITelegramUpdateHandler
                     break;
                 case BotCommandKind.Plans:
                     await ReplyPlansAsync(message.ChatId, user.Id, now, ct);
+                    break;
+                case BotCommandKind.Inflow or BotCommandKind.Withdraw or BotCommandKind.Exit when duplicatePlanCommand:
+                    // Задача 67 (#16): тот же update_id (Telegram прислал апдейт повторно — offset не успел сохраниться) второй план не строит.
+                    _logger.LogInformation("Telegram update {UpdateId}: plan command already handled — skipped", updateId);
                     break;
                 case BotCommandKind.Inflow:
                     await CreatePlanAsync(message.ChatId, user.Id, PlanRules.P2Inflow, new PlanParams(Amount: command.Amount, Portfolio: command.Portfolio), now, ct);
@@ -205,6 +233,10 @@ public sealed class TelegramBotUpdateHandler : ITelegramUpdateHandler
         var message = BotTexts.Plans(await OpenPlansAsync(userId, now), _options.WebBaseUrl, _options.MaxListedPlans);
         await ReplyAsync(chatId, message.Html, message.Keyboard, ct);
     }
+
+    /// <summary>Апдейт с командой плана новый (отметка пользователя поднята до него); без хранилища — всегда новый.</summary>
+    private async Task<bool> IsNewPlanCommandAsync(ulong userId, long updateId) =>
+        _state is null || await _state.TryAdvanceAsync(PlanCommandMarkKey(userId), updateId);
 
     // ─── Кнопки ────────────────────────────────────────────────────────────────────────────
 
